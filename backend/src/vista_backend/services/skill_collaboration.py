@@ -19,7 +19,6 @@ here reviews what a skill does.
 """
 
 import asyncio
-import hashlib
 import shutil
 import tarfile
 import uuid
@@ -223,14 +222,6 @@ def unpack_skill(archive: Path, dest: Path) -> Skill:
             raise SkillImportError(f"The skill's archive is damaged: {e}") from e
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        while chunk := f.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _pack_for_publish(row: SkillTable, archive: Path) -> dict[str, Any]:
     """Pack the row's folder into `archive` and return its manifest. Blocking."""
     folder = settings.data_dir / row.path
@@ -250,16 +241,11 @@ def _pack_for_publish(row: SkillTable, archive: Path) -> dict[str, Any]:
     ).model_dump(mode="json")
 
 
-def _stage(archive: Path, blob_ref: str, staged: Path, name: str) -> Skill:
+def _stage(archive: Path, staged: Path, name: str) -> Skill:
     """
-    Check a downloaded archive against its version's digest, unpack it into
-    `staged` and name the skill `name`. Blocking.
+    Unpack a downloaded archive, already checked against its version's digest
+    by `download_blob`, into `staged` and name the skill `name`. Blocking.
     """
-    if _sha256(archive) != blob_ref:
-        raise CollaborationError(
-            "The skill downloaded from the collaboration server does not match "
-            "the version it was published as."
-        )
     try:
         skill = unpack_skill(archive, staged)
         if skill.name != name:
@@ -520,12 +506,14 @@ async def import_skill(
         async with work_dir() as tmp:
             archive = tmp / ARCHIVE_NAME
             await client.download_blob(
-                item_id, number, archive, max_bytes=MAX_ARCHIVE_BYTES
+                item_id,
+                number,
+                archive,
+                blob_ref=remote.blob_ref,
+                max_bytes=MAX_ARCHIVE_BYTES,
             )
             staged = tmp / "skill"
-            skill = await asyncio.to_thread(
-                _stage, archive, remote.blob_ref, staged, name
-            )
+            skill = await asyncio.to_thread(_stage, archive, staged, name)
             path = new_storage_path()
             dest = settings.data_dir / path
             dest.parent.mkdir(parents=True, exist_ok=True)

@@ -53,6 +53,7 @@ export type SharingCode =
   | "name_taken"
   | "name_invalid"
   | "skill_conflict"
+  | "knowledge_base_conflict"
   | "collaboration_unavailable"
   | "collaboration_refused"
   | "collaboration_error";
@@ -66,6 +67,8 @@ export type SharingRefusal = {
   headVersion: number | null;
   /** With a project's `skill_conflict`: the skill that needs a choice first. */
   skill?: string | null;
+  /** With a project's `knowledge_base_conflict`: the knowledge base, by slug. */
+  knowledgeBase?: string | null;
 };
 
 export type Published = { ok: true; skill: SkillSummary };
@@ -91,6 +94,7 @@ export async function refusal(res: Response): Promise<SharingRefusal> {
     code: typeof body.code === "string" ? (body.code as SharingCode) : null,
     headVersion: typeof body.head_version === "number" ? body.head_version : null,
     ...(typeof body.skill === "string" ? { skill: body.skill } : {}),
+    ...(typeof body.knowledge_base === "string" ? { knowledgeBase: body.knowledge_base } : {}),
   };
 }
 
@@ -201,7 +205,9 @@ export function sharingLabel(
 }
 
 /** What importing this skill would do here, for its button. */
-export function importAction(skill: RemoteSkill): {
+export function importAction(
+  skill: Pick<RemoteSkill, "local" | "name_taken" | "head_version">,
+): {
   label: string;
   kind: "import" | "rename" | "update" | "revert" | "current";
 } {

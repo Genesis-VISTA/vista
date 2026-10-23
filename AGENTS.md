@@ -154,9 +154,21 @@ every write to its files must set `modified`. Projects are items of kind `projec
 (`services/project_collaboration.py`): a manifest built field by field from `ProjectPublic`
 (never the row) that references skill versions, published after the skills it loads and
 imported with them; `/projects` publishes and imports. A project records the same four fields,
-and every write that changes its `ProjectCreate` fields must set `modified`. Backend tests
-mount the server in-process (the `collab_server` fixture) through the backend's dev extra, so
-run them with `--extra dev`.
+and every write that changes its `ProjectCreate` fields must set `modified`. Knowledge bases
+are items of kind `knowledge-base` (`services/knowledge_base_collaboration.py`): a tar of the
+PDFs and a snapshot of the index (SQLite backup API, under the indexer's lock), sent through
+the server's streamed upload (`POST /blobs/stream`); a project references them and recurses
+into them.
+An import never writes over a store: it unpacks into `<slug>/store-<id>/` and points
+`<slug>/CURRENT` at it. The MCP server, which has no database, finds stores on disk
+(`rag_mcp._store_path`) and checks each one's folder before every search (`_refresh_kb`), so
+nothing has to tell it about a replaced, reindexed or deleted store. Its signal is the BM25
+corpus, so any code that writes a store must rewrite the corpus afterwards
+(`build_rag.write_bm25_corpus`); `chroma.sqlite3` is no signal, as merely opening a store
+writes it. Close ChromaDB clients
+(`client.close()` or `with`) rather than dropping them: one left open serves a store rebuilt
+at its path from the old one. Backend tests mount the server in-process (the `collab_server`
+fixture) through the backend's dev extra, so run them with `--extra dev`.
 
 ### Frontend (UI)
 Launches Next.js dev server on :3000

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCollaborationForTests, type CollaborationStatus } from "@/lib/collaboration";
 import {
   importSummary,
+  publishedFirst,
   projectImportAction,
   projectSharingLabel,
   publishProject,
@@ -31,6 +32,7 @@ import ProjectsPage from "@/app/projects/page";
 
 const SERVER = "http://127.0.0.1:8002";
 const ITEM = "22222222-2222-4222-8222-222222222222";
+const KB_ITEM = "44444444-4444-4444-8444-444444444444";
 
 function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStatus {
   return {
@@ -77,7 +79,7 @@ function remote(overrides: Partial<RemoteProject> = {}): RemoteProject {
     published_by_name: "Bea",
     published_at: "2026-10-01T00:00:00+00:00",
     manifest: {
-      format: 1,
+      format: 2,
       name: "salt-lab",
       description: "Bea's molten salt project.",
       system_prompt: null,
@@ -85,7 +87,7 @@ function remote(overrides: Partial<RemoteProject> = {}): RemoteProject {
       usage_limits: {},
       forum_repo_url: null,
       skills: [{ name: "vllm-lux", bundled: false, remote_id: ITEM, version: 1 }],
-      knowledge_bases: [],
+      knowledge_bases: [{ slug: "salt-papers", remote_id: KB_ITEM, version: 1 }],
     },
     local: null,
     name_taken: false,
@@ -190,15 +192,36 @@ describe("importSummary", () => {
         { name: "mine", status: "kept", detail: "The project uses version 2; the copy here is version 3 here, and was kept." },
         { name: "theirs", status: "missing", detail: "Bundled with the publisher's VISTA, not this one." },
       ],
+      knowledgeBases: [
+        { slug: "salt-papers-2", status: "imported", detail: null },
+        { slug: "old-papers", status: "kept", detail: "The project uses version 1; the copy here is version 2 here, and was kept." },
+      ],
       forumError: "could not reach the forum",
     };
     expect(importSummary(result)).toBe(
       "Skills imported: vllm-lux. " +
         "mine: The project uses version 2; the copy here is version 3 here, and was kept. " +
         "theirs: Bundled with the publisher's VISTA, not this one. " +
+        "Knowledge bases imported: salt-papers-2. " +
+        "old-papers: The project uses version 1; the copy here is version 2 here, and was kept. " +
         "The Hypothesis Lab is not set up: could not reach the forum",
     );
-    expect(importSummary({ ...result, skills: [], forumError: null })).toBeNull();
+    expect(
+      importSummary({ ...result, skills: [], knowledgeBases: [], forumError: null }),
+    ).toBeNull();
+  });
+});
+
+describe("publishedFirst", () => {
+  it("names the skills and knowledge bases published before the project", () => {
+    const base = { ok: true as const, status: "published" as const, project: project() };
+    expect(publishedFirst({ ...base, skillsPublished: [], knowledgeBasesPublished: [] })).toBe("");
+    expect(
+      publishedFirst({ ...base, skillsPublished: ["a", "b"], knowledgeBasesPublished: ["salt-papers"] }),
+    ).toBe(", after publishing a, b and the knowledge base salt-papers");
+    expect(
+      publishedFirst({ ...base, skillsPublished: [], knowledgeBasesPublished: ["x", "y"] }),
+    ).toBe(", after publishing the knowledge bases x, y");
   });
 });
 
@@ -312,6 +335,29 @@ describe("the projects page", () => {
     expect(screen.getByRole("link", { name: "Open the Skills page" })).toHaveAttribute("href", "/skills");
   });
 
+  it("sends a knowledge base's conflict to the Knowledge Bases page", async () => {
+    routes["POST /api/projects/kb-salt/publish"] = () =>
+      json(
+        {
+          detail: "kb-salt was not published: its knowledge base salt-papers needs a choice first.",
+          code: "knowledge_base_conflict",
+          knowledge_base: "salt-papers",
+          knowledge_base_code: "version_conflict",
+        },
+        409,
+      );
+    await renderWith([row("kb-salt", { origin_server: SERVER, remote_id: ITEM, remote_version: 1, modified: true })]);
+    const publish = await screen.findByRole("button", { name: "Publish changes" });
+    await waitFor(() => expect(publish).toBeEnabled());
+    await userEvent.click(publish);
+    expect(await screen.findByText(/its knowledge base salt-papers needs a choice first/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open the Knowledge Bases page" })).toHaveAttribute(
+      "href",
+      "/knowledge-bases",
+    );
+    expect(screen.queryByRole("link", { name: "Open the Skills page" })).not.toBeInTheDocument();
+  });
+
   it("imports a project from the server and says what came with it", async () => {
     routes["GET /api/collaboration/projects"] = () => json([remote()]);
     routes[`POST /api/collaboration/projects/${ITEM}/import`] = () =>
@@ -319,6 +365,7 @@ describe("the projects page", () => {
         status: "imported",
         project: row("salt-lab", { origin_server: SERVER, remote_id: ITEM, remote_version: 1, modified: false }),
         skills: [{ name: "vllm-lux", status: "imported", detail: null }],
+        knowledge_bases: [{ slug: "salt-papers", status: "imported", detail: null }],
         forum_error: null,
       });
     await renderWith([]);
@@ -327,10 +374,12 @@ describe("the projects page", () => {
     await userEvent.click(open);
     const dialog = within(await screen.findByRole("dialog", { name: "Import a project" }));
     expect(await dialog.findByText("Bea's molten salt project.")).toBeInTheDocument();
+    expect(dialog.getByText("1 knowledge base")).toBeInTheDocument();
+    expect(dialog.getByText("salt-papers")).toHaveAttribute("title", "Knowledge base");
     await userEvent.click(dialog.getByRole("button", { name: "Import" }));
     expect(
       await screen.findByText(
-        "Imported salt-lab version 1. Skills imported: vllm-lux.",
+        "Imported salt-lab version 1. Skills imported: vllm-lux. Knowledge bases imported: salt-papers.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "Import a project" })).not.toBeInTheDocument();

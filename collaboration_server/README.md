@@ -37,14 +37,19 @@ for development and tests: no VISTA package starts one.
 | `GET /items/{id}/versions/{n}` | one version |
 | `GET /items/{id}/versions/{n}/blob` | its blob |
 | `POST /blobs` | multipart `file`: store a blob, returning `blob_ref` |
+| `POST /blobs/stream` | the raw body: store a blob too large for a multipart request, returning `blob_ref` |
 
-Writes need `X-Vista-Install-Id`; reads do not.
+Writes need `X-Vista-Install-Id`; reads do not. `max_blob_size` caps a blob either way. A
+streamed blob is written to disk as it arrives, never held whole.
 
 The server reads neither manifests nor blobs. What VISTA keeps in them, per kind, is the
 backend's business: a `skill` version's blob is the skill's folder as a gzipped tar and its
 manifest is read from the SKILL.md (`backend/src/vista_backend/services/skill_collaboration.py`);
 a `project` version has no blob, and its manifest holds the project's fields and references
-to the skill versions it loads (`backend/src/vista_backend/services/project_collaboration.py`).
+to the skill and knowledge base versions it uses
+(`backend/src/vista_backend/services/project_collaboration.py`); a `knowledge-base` version's
+blob is a tar of its PDFs and built index, streamed up, and its manifest says what
+built the index (`backend/src/vista_backend/services/knowledge_base_collaboration.py`).
 
 ## Test
 

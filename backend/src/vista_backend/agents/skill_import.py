@@ -59,10 +59,12 @@ _IGNORED_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv"})
 _IGNORED_FILES = frozenset({".DS_Store", "Thumbs.db"})
 
 
-def _clean_relpath(raw: str) -> PurePosixPath:
+def clean_relpath(raw: str) -> PurePosixPath:
     """
     Check one uploaded file's relative path; reject anything that could land
-    outside the skill directory.
+    outside the folder it is unpacked into, on any platform: backslashes and
+    `:` (a Windows drive or stream) included. The knowledge base unpacker uses
+    it too.
     """
     if not raw or "\\" in raw or ":" in raw or "\0" in raw:
         raise SkillImportError(f"Invalid file path in upload: {raw!r}")
@@ -100,7 +102,7 @@ def import_skill_from_files(
     user-facing problem.
     """
     marked = set(executable)
-    entries = [(_clean_relpath(raw), stream, raw in marked) for raw, stream in files]
+    entries = [(clean_relpath(raw), stream, raw in marked) for raw, stream in files]
     entries = [entry for entry in entries if not _is_ignored(entry[0])]
     if not entries:
         raise SkillImportError("No files were uploaded.")

@@ -15,9 +15,11 @@ name from the settings row). That is a stub, like the server's side of it.
 
 import asyncio
 import functools
+import hashlib
 import os
 import tempfile
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import quote
@@ -42,6 +44,8 @@ STATUS_TIMEOUT = httpx.Timeout(5.0)
 TRANSFER_TIMEOUT = httpx.Timeout(60.0, connect=5.0)
 HEAD_FETCHES = 8
 """ How many head versions a listing asks for at once. """
+UPLOAD_PART = 8 * 1024 * 1024
+""" How much of a streamed upload is read from disk at a time. """
 
 transport: httpx.AsyncBaseTransport | None = None
 """
@@ -160,6 +164,14 @@ def server_url(
     if settings.collaboration_server_url:
         return settings.collaboration_server_url, "config"
     return None, None
+
+
+def required_url(local: LocalSettingsPublic) -> str:
+    """The server address in effect; raises `CollaborationUnavailable` when none is set."""
+    url, _ = server_url(local)
+    if url is None:
+        raise CollaborationUnavailable(NOT_CONFIGURED)
+    return url
 
 
 def _detail(response: httpx.Response) -> str:
@@ -338,6 +350,43 @@ class CollaborationClient:
             )
         return blob.blob_ref
 
+    async def upload_large_blob(self, path: Path) -> str:
+        """
+        Upload a file too large for `upload_blob` (a knowledge base) as the raw
+        body of `POST /blobs/stream`, read from disk `UPLOAD_PART` bytes at a
+        time in a thread and sent chunked, and return its blob reference. The
+        server's reference must be the SHA-256 of what was read here.
+        """
+        try:
+            file = path.open("rb")
+        except OSError as error:
+            raise CollaborationError(f"Could not read {path}: {error}") from error
+        digest = hashlib.sha256()
+
+        def read_part() -> bytes:
+            part = file.read(UPLOAD_PART)
+            digest.update(part)
+            return part
+
+        async def body() -> AsyncIterator[bytes]:
+            while part := await asyncio.to_thread(read_part):
+                yield part
+
+        with file:
+            blob = await self._call(
+                _Blob,
+                "POST",
+                "/blobs/stream",
+                content=body(),
+                headers={"content-type": "application/octet-stream"},
+            )
+        if blob.blob_ref != digest.hexdigest():
+            raise CollaborationError(
+                f"The collaboration server at {self.base_url} stored something "
+                f"other than {path.name} as it was sent."
+            )
+        return blob.blob_ref
+
     async def publish_version(
         self,
         item_id: uuid.UUID,
@@ -365,11 +414,14 @@ class CollaborationClient:
         version: int,
         dest: Path,
         *,
+        blob_ref: str,
         max_bytes: int | None = None,
     ) -> None:
         """
-        Stream a version's blob to `dest`, which appears only once complete.
-        With `max_bytes`, a larger blob is refused before more of it is written.
+        Stream a version's blob to `dest`, which appears only once complete and
+        only if its SHA-256 is `blob_ref`, the version's reference: checked as
+        it is written, so the importer need not read it again. With
+        `max_bytes`, a larger blob is refused before more of it is written.
         """
         path = f"/items/{item_id}/versions/{version}/blob"
         try:
@@ -378,6 +430,7 @@ class CollaborationClient:
         except OSError as error:
             raise CollaborationError(f"Could not write {dest}: {error}") from error
         tmp = Path(tmp_name)
+        digest = hashlib.sha256()
         try:
             with os.fdopen(fd, "wb") as out:
                 try:
@@ -394,9 +447,15 @@ class CollaborationClient:
                                     f"{max_bytes // (1024 * 1024)} MB for {path}; "
                                     "refused."
                                 )
+                            digest.update(chunk)
                             out.write(chunk)
                 except httpx.HTTPError as error:
                     raise self._unreachable(error) from error
+            if digest.hexdigest() != blob_ref:
+                raise CollaborationError(
+                    f"What the collaboration server sent for {path} does not match "
+                    "the version it was published as."
+                )
             os.replace(tmp, dest)
         except OSError as error:
             tmp.unlink(missing_ok=True)

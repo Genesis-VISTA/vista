@@ -5,7 +5,12 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from ..db.db import SessionDep
-from ..services import collaboration, project_collaboration, skill_collaboration
+from ..services import (
+    collaboration,
+    knowledge_base_collaboration,
+    project_collaboration,
+    skill_collaboration,
+)
 from ..services.local_settings import LocalSettingsDep
 from .skills import SkillListItem, list_item, target_project
 
@@ -118,6 +123,56 @@ async def import_project(
     project's (`name_taken`), checked before anything is imported.
     """
     return await project_collaboration.import_project(
+        session,
+        local,
+        item_id,
+        version=body.version,
+        rename_to=body.rename_to,
+        replace_modified=body.replace_modified,
+    )
+
+
+@router.get("/knowledge-bases")
+async def list_knowledge_bases(
+    session: SessionDep, local: LocalSettingsDep, manifests: bool = True
+) -> list[knowledge_base_collaboration.RemoteKnowledgeBase]:
+    """
+    The collaboration server's knowledge bases, oldest first, each with this
+    installation's copy of it, if any, and its newest version's manifest
+    (`manifests=false` leaves that out, for one request to the server).
+    """
+    return await knowledge_base_collaboration.list_remote_knowledge_bases(
+        session, local, manifests=manifests
+    )
+
+
+class RemoteKnowledgeBaseImportRequest(BaseModel):
+    """Body for `POST /collaboration/knowledge-bases/{item_id}/import`."""
+
+    version: int | None = Field(default=None, ge=1)
+    """ The version to import; the newest by default. """
+    rename_to: str | None = None
+    """ The slug for a new knowledge base whose own is taken here. """
+    replace_modified: bool = False
+    """ Replace the changes made here to the copy already imported. """
+
+
+@router.post("/knowledge-bases/{item_id}/import")
+async def import_knowledge_base(
+    item_id: uuid.UUID,
+    body: RemoteKnowledgeBaseImportRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> knowledge_base_collaboration.KnowledgeBaseImportResult:
+    """
+    Import a knowledge base's PDFs and index from the collaboration server,
+    updating the copy already here if there is one. 409 with `code` when the
+    copy here has changes of its own (`modified`) or the slug is another
+    knowledge base's (`name_taken`, `name_invalid`); 409 without one when
+    its index was built with an embedding model or chromadb this VISTA
+    cannot search with, or the copy here is indexing.
+    """
+    return await knowledge_base_collaboration.import_knowledge_base(
         session,
         local,
         item_id,

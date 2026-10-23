@@ -16,6 +16,7 @@ import {
   isProjectOnServer,
   listRemoteProjects,
   projectSharingLabel,
+  publishedFirst,
   publishProject,
   type ProjectImported,
 } from "@/lib/project-sharing";
@@ -73,7 +74,11 @@ function ProjectsPageContent() {
   );
   const collab = useCollaboration();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;
-  const [notice, setNotice] = useState<{ text: string; skill?: string } | null>(null);
+  const [notice, setNotice] = useState<{
+    text: string;
+    skill?: string;
+    knowledgeBase?: string;
+  } | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
   const [pendingPublish, setPendingPublish] = useState<Project | null>(null);
   const [conflict, setConflict] = useState<{ project: Project; refusal: SharingRefusal } | null>(
@@ -100,13 +105,17 @@ function ProjectsPageContent() {
       .catch(() => setSkillCatalog([]));
   }, []);
 
-  useEffect(() => {
-    refreshSkillCatalog();
+  const refreshKbCatalog = useCallback(() => {
     fetch("/api/knowledge-bases")
       .then((res) => res.json())
       .then((data) => setKbCatalog(Array.isArray(data) ? data : []))
       .catch(() => setKbCatalog([]));
-  }, [refreshSkillCatalog]);
+  }, []);
+
+  useEffect(() => {
+    refreshSkillCatalog();
+    refreshKbCatalog();
+  }, [refreshSkillCatalog, refreshKbCatalog]);
 
   // Strip `?new=1` from the URL after we've used it so refreshes don't
   // re-open the modal and the URL stays clean.
@@ -144,9 +153,7 @@ function ProjectsPageContent() {
     try {
       const result = await publishProject(project.name, opts);
       if (result.ok) {
-        const skills = result.skillsPublished.length
-          ? `, after publishing ${result.skillsPublished.join(", ")}`
-          : "";
+        const skills = publishedFirst(result);
         setNotice({
           text:
             result.status === "unchanged"
@@ -161,7 +168,11 @@ function ProjectsPageContent() {
         setConflict({ project, refusal: result });
         return;
       }
-      setNotice({ text: result.detail, skill: result.skill ?? undefined });
+      setNotice({
+        text: result.detail,
+        skill: result.skill ?? undefined,
+        knowledgeBase: result.knowledgeBase ?? undefined,
+      });
     } finally {
       setBusyName(null);
     }
@@ -192,8 +203,10 @@ function ProjectsPageContent() {
         : `Imported ${result.project.name} version ${result.project.remoteVersion}.`;
     const more = importSummary(result);
     setNotice({ text: more ? `${what} ${more}` : what });
-    // The import may have brought skills, which the project dialog lists.
+    // The import may have brought skills and knowledge bases, which the
+    // project dialog lists.
     refreshSkillCatalog();
+    refreshKbCatalog();
     void refresh();
     refreshHeads();
   }
@@ -234,6 +247,12 @@ function ProjectsPageContent() {
             <>
               {" "}
               <Link href="/skills">Open the Skills page</Link>
+            </>
+          )}
+          {notice.knowledgeBase && (
+            <>
+              {" "}
+              <Link href="/knowledge-bases">Open the Knowledge Bases page</Link>
             </>
           )}
         </div>
@@ -323,7 +342,7 @@ function ProjectsPageContent() {
         open={pendingPublish !== null}
         title="Publish project"
         message={pendingPublish
-          ? `Publish "${pendingPublish.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts skills that are not on the server, or have changed, are published first. Anyone who can reach that server can see and import them. A published version stays there; you can publish newer ones.`
+          ? `Publish "${pendingPublish.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts skills and knowledge bases that are not on the server, or have changed, are published first: a knowledge base with its PDFs and index, which can take a while. Anyone who can reach that server can see and import them. A published version stays there; you can publish newer ones.`
           : ""}
         confirmLabel="Publish"
         onCancel={() => setPendingPublish(null)}

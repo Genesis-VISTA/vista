@@ -267,7 +267,9 @@ async def test_a_publish_is_never_turned_into_a_get_by_a_redirect(
         with pytest.raises(CollaborationUnavailable, match="redirects to"):
             await client.create_item("skill", "x", manifest={})
         with pytest.raises(CollaborationUnavailable, match="redirects to"):
-            await client.download_blob(uuid.uuid4(), 1, tmp_path / "d")
+            await client.download_blob(
+                uuid.uuid4(), 1, tmp_path / "d", blob_ref="0" * 64
+            )
     assert methods == ["POST", "GET"]
     assert not (tmp_path / "d").exists()
 
@@ -309,8 +311,42 @@ async def test_publish_and_import_round_trip(collab_server, session, tmp_path):
         }
 
         dest = tmp_path / "imported" / "skill.tar.gz"
-        await client.download_blob(item.id, 1, dest)
+        await client.download_blob(item.id, 1, dest, blob_ref=ref)
         assert dest.read_bytes() == archive.read_bytes()
+
+
+async def test_a_download_must_be_the_version_published(
+    collab_server, session, tmp_path
+):
+    """Checked as it is written: a mismatch leaves nothing behind."""
+    local = await _set_url(session, URL)
+    archive = tmp_path / "skill.tar.gz"
+    archive.write_bytes(b"the bytes published")
+    async with collaboration.client_for(local) as client:
+        ref = await client.upload_blob(archive)
+        item = await client.create_item("skill", "x", manifest={}, blob_ref=ref)
+        dest = tmp_path / "imported" / "skill.tar.gz"
+        with pytest.raises(CollaborationError, match="does not match"):
+            await client.download_blob(item.id, 1, dest, blob_ref="0" * 64)
+    assert not dest.exists()
+    assert list(dest.parent.iterdir()) == []
+
+
+async def test_a_large_blob_is_streamed_up(
+    collab_server, session, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(collaboration, "UPLOAD_PART", 7)
+    local = await _set_url(session, URL)
+    archive = tmp_path / "kb.tar"
+    archive.write_bytes(b"0123456789" * 5)
+    async with collaboration.client_for(local) as client:
+        ref = await client.upload_large_blob(archive)
+        item = await client.create_item(
+            "knowledge-base", "x", manifest={}, blob_ref=ref
+        )
+        dest = tmp_path / "back.tar"
+        await client.download_blob(item.id, 1, dest, blob_ref=ref)
+    assert dest.read_bytes() == archive.read_bytes()
 
 
 async def test_client_refusals_are_named(collab_server, session, tmp_path):
@@ -323,7 +359,7 @@ async def test_client_refusals_are_named(collab_server, session, tmp_path):
         item = await client.create_item("skill", "x", manifest={})
         dest = tmp_path / "none"
         with pytest.raises(CollaborationError, match="no blob"):
-            await client.download_blob(item.id, 1, dest)
+            await client.download_blob(item.id, 1, dest, blob_ref="0" * 64)
         assert not dest.exists()
         assert list(tmp_path.glob(".none-*")) == []  # no partial download left
 
@@ -385,7 +421,9 @@ async def test_a_failed_download_by_conflict_is_a_conflict(
     local = await _set_url(session, URL)
     async with collaboration.client_for(local) as client:
         with pytest.raises(VersionConflict):
-            await client.download_blob(uuid.uuid4(), 1, tmp_path / "d")
+            await client.download_blob(
+                uuid.uuid4(), 1, tmp_path / "d", blob_ref="0" * 64
+            )
 
 
 async def test_local_file_errors_are_collaboration_errors(
@@ -399,4 +437,6 @@ async def test_local_file_errors_are_collaboration_errors(
             await client.upload_blob(tmp_path / "missing.tar.gz")
         item = await client.create_item("skill", "x", manifest={})
         with pytest.raises(CollaborationError, match="Could not write"):
-            await client.download_blob(item.id, 1, blocker / "inside" / "d")
+            await client.download_blob(
+                item.id, 1, blocker / "inside" / "d", blob_ref="0" * 64
+            )

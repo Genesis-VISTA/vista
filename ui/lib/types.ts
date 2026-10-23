@@ -195,6 +195,12 @@ export type KnowledgeBase = {
   updated_at: string;
   /** Live indexer progress, or null when no run is in flight. */
   index_progress?: IndexProgress | null;
+  /** The collaboration server it was published to or imported from; null until then. */
+  origin_server?: string | null;
+  remote_id?: string | null;
+  remote_version?: number | null;
+  /** Changed here since `remote_version` (true for one never published). */
+  modified?: boolean;
 };
 
 /** Trimmed shape returned by `GET /api/knowledge-bases`. */

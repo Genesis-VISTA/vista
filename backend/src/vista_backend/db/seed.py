@@ -4,6 +4,7 @@ import uuid
 from pathlib import Path
 from contextlib import nullcontext
 from urllib.parse import quote
+from typing import Any
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -260,7 +261,9 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
             f"{kb_dir / 'pdfs'}."
         )
 
-    client = chromadb.PersistentClient(
+    # Closed when done: an open client would stay this process's client for
+    # the path (`indexer.invalidate_rag_cache`).
+    client: Any = chromadb.PersistentClient(
         path=str(rag_db), settings=ChromaSettings(anonymized_telemetry=False)
     )
     try:
@@ -269,6 +272,8 @@ def _assert_knowledge_base_indexed(kb_dir: Path) -> None:
         raise RuntimeError(
             f"Knowledge base {corpus} has an unreadable vector store: {exc}"
         ) from exc
+    finally:
+        client.close()
 
     if count == 0:
         raise RuntimeError(

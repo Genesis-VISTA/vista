@@ -152,6 +152,10 @@ export const KNOWLEDGE_BASE = {
   build_status: "ready",
   publication_count: 0,
   publications: [],
+  origin_server: null,
+  remote_id: null,
+  remote_version: null,
+  modified: true,
 };
 
 export const KNOWLEDGE_BASES = [KNOWLEDGE_BASE];

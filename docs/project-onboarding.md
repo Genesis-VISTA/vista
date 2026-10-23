@@ -204,11 +204,16 @@ published*, *Version 2*, *Differs here from version 2*, *Version 3
 available*), and **Publish** sends it. The skills it loads go first: each one
 that is not on the server, or has changed since its version, is published, and
 the project's version names them by item and version. Skills bundled with
-VISTA are named as bundled and never published. Knowledge bases are named by
-slug only; they are not published yet. A project that loads a skill not on
-this computer is not published until the skill is removed from it. If a skill
-needs a choice (someone published it since your version), the project is not
-published, and the page points you to `/skills` to resolve it.
+VISTA are named as bundled and never published. The knowledge bases it
+searches go next, the same way, each with its PDFs and its index (see
+[Knowledge bases](#knowledge-bases-on-the-collaboration-server) below). A
+project that loads a skill or searches a knowledge base not on this computer is
+not published until it is removed from the project, unless the version you
+imported named it: then the new version names it as that one did. A project
+whose knowledge base is indexing waits until it has finished. If a skill or
+knowledge base needs a choice (someone published it since your version), the
+project is not published, and the page points you to `/skills` or
+`/knowledge-bases` to resolve it.
 
 The project's own conflicts work as a skill's do: if someone published the
 project since your version, you choose **Use the server's version**, **Publish
@@ -228,8 +233,11 @@ projects. **Import** brings the project and the skills it loads:
   nothing, and a publish from here names it as bundled again; if a different
   skill here has its name, it is left out and the project is marked as
   differing here;
-- knowledge bases are kept by slug, whether or not this computer has them;
-  importing them comes later.
+- the knowledge bases it searches are handled like its skills: a version not
+  here is imported, under the first free `<slug>-<n>` if another knowledge base
+  has its slug; an older unchanged copy is updated; a newer or changed copy is
+  kept. If one was indexed with an embedding model or chromadb this VISTA cannot
+  search with, nothing is imported, and the page says which.
 
 The page says which of these happened. The imported project gets an id of its
 own, and a name the projects page would accept: if the server's is not one, you
@@ -237,6 +245,24 @@ are asked for another. A copy of the same project here is updated in place, and 
 here you are asked first. A different project with the same name asks for a new
 name. If its Hypothesis Lab's repository cannot be reached from here, the
 project is imported anyway, and the page gives the reason.
+
+## Knowledge bases on the collaboration server
+
+A knowledge base is shared on its own page, `/knowledge-bases`, the same way.
+Its details say where it stands (*Not published*, *Version 2*, *Changed here
+since version 2*), and **Publish** uploads its PDFs and a snapshot of its index,
+so whoever imports it can search it at once, without indexing anything. It
+cannot be published while it is indexing. Renaming it, editing its description,
+adding a PDF or deleting one marks it changed.
+
+**Import** lists the server's knowledge bases with what each would download and
+which embedding model indexed it. One indexed with another model, or another
+revision of it, is refused before anything is downloaded: its vectors would not
+match the queries this VISTA makes. A slug taken here asks for another; a copy
+of the same knowledge base is updated in place, and if it was changed here you
+are asked first. An update is unpacked into a new folder beside the old one and
+switched to, so a search running at the time reads the old index or the new
+one, never half of either.
 
 ## How a project drives the agent
 
@@ -273,9 +299,12 @@ the Next.js proxies in [ui/app/api/projects/](../ui/app/api/projects).
 | `POST`   | `/projects`                   | Create. 409 on duplicate `name`.                                 |
 | `PUT`    | `/projects/{name}`            | Full overwrite. 409 if the new name collides with another row.   |
 | `DELETE` | `/projects/{name}`            | Hard delete. 204 on success.                                     |
-| `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills first. |
+| `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills and knowledge bases first. |
 | `GET`    | `/collaboration/projects`     | The server's projects, with any copy here.                       |
-| `POST`   | `/collaboration/projects/{id}/import` | Import with its skills (`{version?, rename_to?, replace_modified?}`). |
+| `POST`   | `/collaboration/projects/{id}/import` | Import with its skills and knowledge bases (`{version?, rename_to?, replace_modified?}`). |
+| `POST`   | `/knowledge-bases/{slug}/publish` | Publish a knowledge base's PDFs and index (`{on_top_of?, as_new?}`). |
+| `GET`    | `/collaboration/knowledge-bases` | The server's knowledge bases, with any copy here.            |
+| `POST`   | `/collaboration/knowledge-bases/{id}/import` | Import one (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/projects/{name}/agent/run`  | Run one agent turn (stateless; pass `message_history`).           |
 
 ## Troubleshooting

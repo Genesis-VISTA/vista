@@ -1,5 +1,9 @@
+import asyncio
+import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException
 from sqlmodel import select
@@ -10,13 +14,78 @@ from ..db.schemas import (
     KnowledgeBaseCreate,
     KnowledgeBaseTable,
     KnowledgeBaseUpdate,
+    Publication,
     is_valid_slug,
 )
 from ..utils import indexer
 
 
+CURRENT_STORE_FILE = "CURRENT"
+"""
+In a knowledge base's folder, the file naming the subfolder that holds its
+current PDFs and store (`<name>/pdfs`, `<name>/rag_db`), for a knowledge base
+an import wrote. The MCP server has no database, so it finds a knowledge base's
+store on disk; an import lands in a new subfolder and replaces this file to
+switch to it, never writing over the store the MCP server has open. Kept in
+lockstep with `vista_mcp_server.rag_mcp._CURRENT_STORE_FILENAME`.
+"""
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def kb_folder(slug: str) -> Path:
+    """A knowledge base's own folder: `<knowledge_bases_dir>/<slug>`."""
+    return settings.knowledge_bases_dir / slug
+
+
+_locks: dict[str, asyncio.Lock] = {}
+
+
+def kb_lock(slug: str) -> asyncio.Lock:
+    """
+    The lock a publish or import of the knowledge base with `slug` holds from
+    its checks to its commit, and an import until the store it replaced is
+    removed: two interleaved, an import's `CURRENT` and row could name
+    different stores, and each would remove the other's.
+    """
+    return _locks.setdefault(slug, asyncio.Lock())
+
+
+def read_current(kb_dir: Path) -> str | None:
+    """The subfolder `CURRENT` names, or None without one."""
+    try:
+        return (kb_dir / CURRENT_STORE_FILE).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def write_current(kb_dir: Path, name: str | None) -> None:
+    """Point `CURRENT` at `name`, in one step; None removes it."""
+    pointer = kb_dir / CURRENT_STORE_FILE
+    if name is None:
+        pointer.unlink(missing_ok=True)
+        return
+    tmp = kb_dir / f".{CURRENT_STORE_FILE}.tmp"
+    tmp.write_text(name, encoding="utf-8")
+    os.replace(tmp, pointer)
+
+
+def kb_content(kb: KnowledgeBaseTable) -> tuple[Any, ...]:
+    """
+    What `modified` tracks: the name, the description and which PDFs it
+    holds. Not `updated_at`, which reading a knowledge base also moves (the
+    reconciler records what it finds on disk and in the index).
+    """
+    files = sorted(
+        (p.filename, p.size)
+        for p in (
+            Publication.model_validate(p) if isinstance(p, dict) else p
+            for p in kb.publications
+        )
+    )
+    return kb.name, kb.description, tuple(files)
 
 
 async def list_kbs(session: AsyncSession) -> list[KnowledgeBaseTable]:
@@ -56,10 +125,21 @@ async def create_kb(
         raise HTTPException(
             status_code=409, detail=f"Slug already in use: {payload.slug}"
         )
+    if kb_lock(payload.slug).locked():
+        raise HTTPException(
+            status_code=409,
+            detail=f"A knowledge base is being imported as {payload.slug}.",
+        )
 
     kb_dir = settings.knowledge_bases_dir / payload.slug
     pdfs_dir = kb_dir / "pdfs"
     rag_db_path = kb_dir / "rag_db"
+    # What a deletion could not remove (on Windows, a store the MCP server
+    # held open) must not be served as this new knowledge base: the MCP server
+    # prefers the store `CURRENT` names.
+    write_current(kb_dir, None)
+    for leftover in kb_dir.glob("store-*"):
+        shutil.rmtree(leftover, ignore_errors=True)
     pdfs_dir.mkdir(parents=True, exist_ok=True)
     rag_db_path.mkdir(parents=True, exist_ok=True)
 
@@ -88,6 +168,8 @@ async def update_kb(
 ) -> KnowledgeBaseTable:
     kb = await get_kb(session, slug)
     data = updates.model_dump(exclude_unset=True)
+    if any(getattr(kb, key) != value for key, value in data.items()):
+        kb.modified = True
     for key, value in data.items():
         setattr(kb, key, value)
     kb.updated_at = _now_iso()
@@ -110,7 +192,7 @@ async def delete_kb(session: AsyncSession, slug: str) -> tuple[str, str]:
 
     await session.delete(kb)
 
-    indexer._clear_progress(rag_db_path)
+    indexer.clear_progress(rag_db_path)
     indexer.invalidate_rag_cache(rag_db_path)
 
     return pdfs_dir, rag_db_path

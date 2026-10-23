@@ -73,12 +73,12 @@ def test_indexing_encoder_names_the_same_model() -> None:
     name, in two services, that no import connects. `build_rag.py` lives at the
     repo root and is not importable from here, so it is asserted by reading it.
     """
-    assert BUILD_RAG.is_file(), f"expected build_rag.py at {BUILD_RAG}"
-    assert f'text_model: str = "{EXPECTED_MODEL}"' in BUILD_RAG.read_text(
-        encoding="utf-8"
-    ), (
-        f"build_rag.py's text_model default has drifted from "
+    assert _build_rag_constant("TEXT_MODEL") == EXPECTED_MODEL, (
+        f"build_rag.py's TEXT_MODEL has drifted from "
         f"settings.rag_model ({settings.rag_model!r})"
+    )
+    assert "text_model: str = TEXT_MODEL," in BUILD_RAG.read_text(encoding="utf-8"), (
+        "TextRAG's text_model default is no longer TEXT_MODEL"
     )
 
 
@@ -92,12 +92,13 @@ def test_both_encoders_pin_the_same_revision() -> None:
     assert len(revision) == 40 and all(c in "0123456789abcdef" for c in revision), (
         f"rag_model_revision must be a full commit hash, got {revision!r}"
     )
-    assert f'text_model_revision: str = "{revision}"' in BUILD_RAG.read_text(
-        encoding="utf-8"
-    ), (
-        f"build_rag.py's text_model_revision default has drifted from "
+    assert _build_rag_constant("TEXT_MODEL_REVISION") == revision, (
+        f"build_rag.py's TEXT_MODEL_REVISION has drifted from "
         f"settings.rag_model_revision ({revision!r})"
     )
+    assert "text_model_revision: str = TEXT_MODEL_REVISION," in BUILD_RAG.read_text(
+        encoding="utf-8"
+    ), "TextRAG's text_model_revision default is no longer TEXT_MODEL_REVISION"
 
 
 # ---------------------------------------------------------------------------

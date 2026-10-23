@@ -36,6 +36,10 @@ class FakeTextRAG:
         self.force_reindex = force_reindex
         self.llm_credentials = llm_credentials
         self.indexed: list[Path] = []
+        self.corpus_writes = 0
+
+    def write_bm25_corpus(self):
+        self.corpus_writes += 1
 
     def index_single_pdf(self, pdf_path, progress_cb=None):
         self.indexed.append(Path(pdf_path))
@@ -97,6 +101,8 @@ async def test_nested_pdfs_are_indexed(tmp_path, fake_rag):
         pdfs / "thermo/nested.pdf",
         pdfs / "thermo/2024/deep.pdf",
     ]
+    # The BM25 corpus is rebuilt once, after the run's PDFs are in the store.
+    assert fake_rag[0].corpus_writes == 1
 
 
 async def test_traversal_entries_are_dropped(tmp_path, fake_rag):

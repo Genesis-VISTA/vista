@@ -122,3 +122,18 @@ async def upload_blob(
     """
     ref, size = await blobs.store(file, settings.blobs_dir, settings.max_blob_size)
     return BlobPublic(blob_ref=ref, size=size)
+
+
+@router.post("/blobs/stream", status_code=201)
+async def upload_blob_stream(
+    request: Request, identity: IdentityDep, settings: SettingsDep
+) -> BlobPublic:
+    """
+    Store a blob sent as the raw request body, for one too large for a
+    multipart `POST /blobs` (a knowledge base). It is written to disk as it
+    arrives, never held whole. Returns its reference, the SHA-256 of its bytes.
+    """
+    ref, size = await blobs.store_stream(
+        request.stream(), settings.blobs_dir, settings.max_blob_size
+    )
+    return BlobPublic(blob_ref=ref, size=size)

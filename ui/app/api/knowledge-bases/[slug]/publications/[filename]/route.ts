@@ -107,8 +107,18 @@ export async function DELETE(
     return NextResponse.json({ ok: false, error: "Knowledge base not in project scope." }, { status: 403 });
   }
   if (!upstream.ok && upstream.status !== 204) {
+    // The backend says why (a 409 while the knowledge base is indexing).
+    let detail: unknown = null;
+    try {
+      detail = ((await upstream.json()) as { detail?: unknown }).detail;
+    } catch {
+      // no body to read
+    }
     return NextResponse.json(
-      { ok: false, error: `Delete failed (${upstream.status}).` },
+      {
+        ok: false,
+        error: typeof detail === "string" && detail ? detail : `Delete failed (${upstream.status}).`,
+      },
       { status: upstream.status }
     );
   }

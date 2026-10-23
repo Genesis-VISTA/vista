@@ -148,7 +148,8 @@ class ProjectTable(ProjectBase, ProjectSharing, table=True):
 # Lowercase letters, digits, and dashes only. 1–80 chars. Must start and
 # end with an alphanumeric character. Matches the URL-safe slug convention
 # used by Projects and Skills elsewhere in the codebase.
-_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$"
+_SLUG_RE = re.compile(SLUG_PATTERN)
 
 
 def is_valid_slug(slug: str) -> bool:
@@ -273,6 +274,27 @@ class KnowledgeBaseBase(SQLModel):
     """ ISO timestamp of the most recent successful indexer run. """
 
 
+class KnowledgeBaseSharing(SQLModel):
+    """
+    Where a knowledge base stands with the collaboration server. Never set
+    through `KnowledgeBaseCreate` or `KnowledgeBaseUpdate`: publishing and
+    importing set it, and every write to the knowledge base sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this knowledge base was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version its PDFs and index were published as or imported from. """
+    modified: bool = True
+    """
+    Changed here since `remote_version`: set by a change of name or
+    description and by adding or deleting a PDF, cleared by a publish or an
+    import. True for one never published, seeded ones included.
+    """
+
+
 class KnowledgeBaseCreate(SQLModel):
     """
     Fields the user can set when creating a Knowledge Base via the API.
@@ -293,13 +315,13 @@ class KnowledgeBaseUpdate(SQLModel):
     description: str | None = None
 
 
-class KnowledgeBasePublic(KnowledgeBaseBase):
+class KnowledgeBasePublic(KnowledgeBaseBase, KnowledgeBaseSharing):
     id: uuid.UUID
     created_at: str
     updated_at: str
 
 
-class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
+class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """Knowledge Base SQL model."""
 
     __tablename__: str = "knowledge_base"

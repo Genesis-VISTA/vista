@@ -20,7 +20,7 @@ export function PublishConflictModal({
   onPublishAsNew,
 }: {
   name: string;
-  noun: "skill" | "project";
+  noun: "skill" | "project" | "knowledge base";
   refusal: SharingRefusal;
   onCancel: () => void;
   onTakeServers: () => void;

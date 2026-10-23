@@ -115,7 +115,8 @@ export function ProjectImportModal({
           <p style={{ margin: 0 }}>
             Projects published to the collaboration server
             {collab.status?.url ? ` at ${collab.status.url}` : ""}. Importing one
-            imports the skills it loads too: it is your decision to trust them.
+            imports the skills it loads and the knowledge bases it searches too:
+            it is your decision to trust them.
           </p>
           {!collab.available ? (
             <div className="hub-unavailable" role="status">
@@ -167,6 +168,11 @@ export function ProjectImportModal({
                             {manifest.skills.length}{" "}
                             {manifest.skills.length === 1 ? "skill" : "skills"}
                           </span>
+                          <span className="hub-card-meta-sep">·</span>
+                          <span>
+                            {manifest.knowledge_bases.length}{" "}
+                            {manifest.knowledge_bases.length === 1 ? "knowledge base" : "knowledge bases"}
+                          </span>
                         </>
                       )}
                       {project.local && project.local.name !== project.name && (
@@ -182,11 +188,16 @@ export function ProjectImportModal({
                         </>
                       )}
                     </div>
-                    {manifest && manifest.skills.length > 0 && (
+                    {manifest && manifest.skills.length + manifest.knowledge_bases.length > 0 && (
                       <div className="hub-card-tags">
                         {manifest.skills.map((skill) => (
                           <span key={skill.name} className="hub-card-tag">
                             {skill.name}
+                          </span>
+                        ))}
+                        {manifest.knowledge_bases.map((kb) => (
+                          <span key={`kb:${kb.remote_id}`} className="hub-card-tag" title="Knowledge base">
+                            {kb.slug}
                           </span>
                         ))}
                       </div>

@@ -66,6 +66,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     check_legacy_token_env()
 
+    # Nothing a publish or import was working on survives a restart.
+    from ..services.knowledge_base_collaboration import clear_incoming
+
+    await asyncio.to_thread(clear_incoming)
+
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
         await mcp_server.list_tools()

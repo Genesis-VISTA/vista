@@ -1,12 +1,14 @@
 /**
  * Projects on the collaboration server: the import list, publishing a project
- * (with the skills it loads) and importing one (with the skill versions it
- * names), through the `/api/projects/{name}/publish` and
- * `/api/collaboration/projects*` proxies.
+ * (with the skills it loads and the knowledge bases it searches) and importing
+ * one (with the versions of them it names), through the
+ * `/api/projects/{name}/publish` and `/api/collaboration/projects*` proxies.
  *
  * Refusals are the skills' `SharingRefusal`, plus `skill_conflict`: a skill the
  * project loads needs a choice on the Skills page before the project can be
- * published (`skill` names it). Controls read `useCollaboration()` first.
+ * published (`skill` names it), and `knowledge_base_conflict`, the same for a
+ * knowledge base on the Knowledge Bases page (`knowledgeBase`). Controls read
+ * `useCollaboration()` first.
  */
 
 import type { ProjectPublic } from "@/lib/agent-events";
@@ -21,6 +23,13 @@ export type SkillRef = {
   version: number | null;
 };
 
+/** A knowledge base a published project searches (backend `KnowledgeBaseRef`). */
+export type KnowledgeBaseRef = {
+  slug: string;
+  remote_id: string;
+  version: number;
+};
+
 /** What a version of a project is (backend `ProjectManifest`). */
 export type ProjectManifest = {
   format: number;
@@ -31,8 +40,7 @@ export type ProjectManifest = {
   usage_limits: Record<string, unknown>;
   forum_repo_url: string | null;
   skills: SkillRef[];
-  /** Slugs, carried as they are: not resolved on import yet. */
-  knowledge_bases: string[];
+  knowledge_bases: KnowledgeBaseRef[];
 };
 
 /** A project on the collaboration server (backend `RemoteProject`). */
@@ -58,6 +66,8 @@ export type ProjectPublished = {
   project: Project;
   /** Skills published first, because they were not on the server or had changed. */
   skillsPublished: string[];
+  /** The same for its knowledge bases, by slug. */
+  knowledgeBasesPublished: string[];
 };
 
 /** What an import did about one skill the project loads (backend `SkillOutcome`). */
@@ -67,11 +77,19 @@ export type SkillOutcome = {
   detail: string | null;
 };
 
+/** What an import did about one knowledge base the project searches (backend `KnowledgeBaseOutcome`). */
+export type KnowledgeBaseOutcome = {
+  slug: string;
+  status: "imported" | "updated" | "unchanged" | "kept";
+  detail: string | null;
+};
+
 export type ProjectImported = {
   ok: true;
   status: "imported" | "updated" | "unchanged";
   project: Project;
   skills: SkillOutcome[];
+  knowledgeBases: KnowledgeBaseOutcome[];
   /** Why the Hypothesis Lab could not be set up; the import stands. */
   forumError: string | null;
 };
@@ -108,12 +126,14 @@ export async function publishProject(
     status: ProjectPublished["status"];
     project: ProjectPublic;
     skills_published: string[];
+    knowledge_bases_published?: string[];
   };
   return {
     ok: true,
     status: body.status,
     project: fromPublic(body.project),
     skillsPublished: body.skills_published ?? [],
+    knowledgeBasesPublished: body.knowledge_bases_published ?? [],
   };
 }
 
@@ -136,6 +156,7 @@ export async function importRemoteProject(
     status: ProjectImported["status"];
     project: ProjectPublic;
     skills?: SkillOutcome[];
+    knowledge_bases?: KnowledgeBaseOutcome[];
     forum_error?: string | null;
   };
   return {
@@ -143,6 +164,7 @@ export async function importRemoteProject(
     status: body.status,
     project: fromPublic(body.project),
     skills: body.skills ?? [],
+    knowledgeBases: body.knowledge_bases ?? [],
     forumError: body.forum_error ?? null,
   };
 }
@@ -194,6 +216,20 @@ export function projectImportAction(project: RemoteProject): {
   return { label: "Imported ✓", kind: "current" };
 }
 
+/**
+ * What a publish sent beyond the project itself, as a clause for its notice
+ * (", after publishing a, b and the knowledge base c"), or "" when nothing.
+ */
+export function publishedFirst(result: ProjectPublished): string {
+  const parts: string[] = [];
+  if (result.skillsPublished.length) parts.push(result.skillsPublished.join(", "));
+  const kbs = result.knowledgeBasesPublished;
+  if (kbs.length) {
+    parts.push(`the knowledge ${kbs.length === 1 ? "base" : "bases"} ${kbs.join(", ")}`);
+  }
+  return parts.length ? `, after publishing ${parts.join(" and ")}` : "";
+}
+
 /** A sentence on what an import did beyond the project itself, or null when nothing needs saying. */
 export function importSummary(result: ProjectImported): string | null {
   const parts: string[] = [];
@@ -203,6 +239,11 @@ export function importSummary(result: ProjectImported): string | null {
     if ((s.status === "kept" || s.status === "missing") && s.detail) {
       parts.push(`${s.name}: ${s.detail}`);
     }
+  }
+  const kbs = result.knowledgeBases.filter((k) => k.status === "imported" || k.status === "updated");
+  if (kbs.length) parts.push(`Knowledge bases imported: ${kbs.map((k) => k.slug).join(", ")}.`);
+  for (const k of result.knowledgeBases) {
+    if (k.status === "kept" && k.detail) parts.push(`${k.slug}: ${k.detail}`);
   }
   if (result.forumError) parts.push(`The Hypothesis Lab is not set up: ${result.forumError}`);
   return parts.length ? parts.join(" ") : null;

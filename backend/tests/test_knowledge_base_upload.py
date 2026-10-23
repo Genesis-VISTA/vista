@@ -29,7 +29,7 @@ async def kb_client(engine, tmp_path, monkeypatch):
     from vista_backend.db.db import get_engine
 
     async def _index_publications(*, rag_db_path, pdfs_dir, filenames, **_):
-        kb_api.indexer._clear_progress(rag_db_path)
+        kb_api.indexer.clear_progress(rag_db_path)
         return [
             {
                 "filename": f,

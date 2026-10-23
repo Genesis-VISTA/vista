@@ -71,7 +71,7 @@ class CollabSettings(BaseSettings):
     """ SQLAlchemy async database URL. Defaults to SQLite in `data_dir`. """
 
     max_blob_size: ByteSize = ByteSize(2 * 1024**3)
-    """ The largest blob `POST /blobs` accepts, in bytes. """
+    """ The largest blob `POST /blobs` or `POST /blobs/stream` accepts, in bytes. """
 
     @property
     def blobs_dir(self) -> Path:

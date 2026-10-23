@@ -31,9 +31,11 @@ Environment variables:
                                     mps, then cpu). `build_rag.py` reads the
                                     same variable when indexing.
 """
+import asyncio
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated as A, Any, Optional
@@ -55,6 +57,14 @@ from .metrics import stage as metrics_stage
 # each KB's ChromaDB store. 
 _BM25_CORPUS_FILENAME = "bm25_corpus.json"
 
+# The file in a KB's folder naming the subfolder that holds its current
+# store, as `<name>/rag_db`. The backend writes it when it imports a knowledge
+# base: the import lands in a new folder and this file is replaced to point at
+# it, so the store being searched is never written over. Kept in lockstep
+# with `vista_backend.services.knowledge_base.CURRENT_STORE_FILE`.
+_CURRENT_STORE_FILENAME = "CURRENT"
+_STORE_DIR_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+
 logger = logging.getLogger(__name__)
 
 # Matches the slug format used by the backend's KnowledgeBaseTable.
@@ -63,16 +73,31 @@ logger = logging.getLogger(__name__)
 # backend's schemas module — see comment there for the rationale.
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
 
+_Stamp = tuple[int, int, int, int] | None
+""" What a file is right now (device, inode, size, mtime), or None if absent. """
+
+
+def _stamp(path: Path) -> _Stamp:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
 
 @dataclass
 class _KbHandle:
-    """Per-KB ChromaDB handles, populated at lifespan startup."""
+    """Per-KB ChromaDB handles, opened on first use and reopened when replaced."""
 
     slug: str
     db_path: Path
     text_collection: chromadb.Collection | None
     citation_collection: chromadb.Collection | None
     bm25: BM25Okapi | None = None
+    client: Any = None
+    """ The store's ChromaDB client, closed when the handle is replaced or dropped. """
+    bm25_stamp: _Stamp = None
+    """ The BM25 corpus file's `_stamp` when the store was opened. """
 
 
 
@@ -88,19 +113,44 @@ def _looks_like_chroma_store(path: Path) -> bool:
     return path.is_dir() and (path / "chroma.sqlite3").is_file()
 
 
+def _store_path(kb_dir: Path) -> Path | None:
+    """
+    The ChromaDB store a KB's folder serves, or None when it has none.
+
+      1. `<kb_dir>/<name>/rag_db/`, when `<kb_dir>/CURRENT` holds `<name>`:
+         a knowledge base the backend imported (see `_CURRENT_STORE_FILENAME`).
+         A `CURRENT` that names no store is no store: falling back would serve
+         one the backend has replaced.
+      2. `<kb_dir>/rag_db/` — the canonical per-KB layout shared with the
+         backend.
+      3. `<kb_dir>` itself when that directory is a ChromaDB store (the
+         legacy single-directory layout).
+    """
+    pointer = kb_dir / _CURRENT_STORE_FILENAME
+    if pointer.is_file():
+        try:
+            name = pointer.read_text(encoding="utf-8").strip()
+        except OSError:
+            return None
+        store = kb_dir / name / "rag_db"
+        if _STORE_DIR_RE.match(name) and _looks_like_chroma_store(store):
+            return store.resolve()
+        return None
+    nested = kb_dir / "rag_db"
+    if _looks_like_chroma_store(nested):
+        return nested.resolve()
+    if _looks_like_chroma_store(kb_dir):
+        return kb_dir.resolve()
+    return None
+
+
 def _discover_kb_paths() -> list[tuple[str, Path]]:
     """
-    Return [(slug, chroma_path), ...] for every KB the MCP server can serve.
-
-    Discovery order:
-      1. `settings.knowledge_bases_dir/<slug>/rag_db/` — the canonical
-         per-KB layout shared with the backend.
-      2. `settings.knowledge_bases_dir/<slug>/` itself when that directory
-         is a ChromaDB store (the legacy single-directory layout).
-
-    Duplicate slugs are de-duplicated keeping the first hit.
+    Return [(slug, chroma_path), ...] for every KB the MCP server can serve:
+    each subdirectory of `settings.knowledge_bases_dir` named like a slug
+    that has a store (`_store_path`).
     """
-    discovered: dict[str, Path] = {}
+    discovered: list[tuple[str, Path]] = []
 
     root = settings.knowledge_bases_dir
     if root.is_dir():
@@ -110,14 +160,11 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
             slug = child.name
             if not _SLUG_RE.match(slug):
                 continue
-            nested = child / "rag_db"
-            if _looks_like_chroma_store(nested):
-                discovered.setdefault(slug, nested.resolve())
-                continue
-            if _looks_like_chroma_store(child):
-                discovered.setdefault(slug, child.resolve())
+            store = _store_path(child)
+            if store is not None:
+                discovered.append((slug, store))
 
-    return [(slug, path) for slug, path in discovered.items()]
+    return discovered
 
 
 def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
@@ -174,6 +221,7 @@ def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
 
     # PALISADE G3 hybrid-retrieval defense (Semantic Chameleon
     # arXiv 2603.18034). 
+    bm25_stamp = _stamp(db_path / _BM25_CORPUS_FILENAME)
     bm25 = _load_bm25_corpus(slug, db_path)
 
     return _KbHandle(
@@ -182,7 +230,24 @@ def _open_kb(slug: str, db_path: Path) -> _KbHandle | None:
         text_collection=text_collection,
         citation_collection=citation_collection,
         bm25=bm25,
+        client=client,
+        bm25_stamp=bm25_stamp,
     )
+
+
+def _close(handle: _KbHandle) -> None:
+    """
+    Release a KB's ChromaDB client. ChromaDB keeps one client per path for the
+    whole process; until it is closed, a new store at the same path would be
+    read through the old one, and on Windows its folder could not be removed.
+    """
+    if handle.client is None:
+        return
+    try:
+        handle.client.close()
+    except Exception as exc:  # noqa: BLE001 -- closing must not fail a search
+        logger.warning("RAG: could not close ChromaDB for %s: %s", handle.slug, exc)
+    handle.client = None
 
 
 def _register_new_kbs() -> list[str]:
@@ -203,6 +268,40 @@ def _register_new_kbs() -> list[str]:
             _kbs[slug] = handle
             added.append(slug)
     return added
+
+
+def _refresh_kb(slug: str) -> None:
+    """
+    Bring a registered KB up to date with its folder before it is searched.
+
+    The backend changes a KB under a running server, and never tells the
+    server: an import points `CURRENT` at a new store, a deletion removes the
+    folder (and a new KB may take the slug), indexing or deleting a PDF writes
+    the store. An open ChromaDB client sees none of it. So each search
+    compares the folder with what the handle opened -- two `stat`s and
+    `CURRENT` -- and reopens the store or drops the KB.
+
+    What marks a write is the BM25 corpus: every backend path that writes a
+    store rewrites it in one step afterwards (`build_rag.write_bm25_corpus`),
+    so its stamp changes, and a store deleted and built again has another
+    one, or none. Not `chroma.sqlite3` itself: merely opening a store writes
+    it, which the backend does each time it lists its knowledge bases.
+    """
+    handle = _kbs.get(slug)
+    if handle is None:
+        return
+    store = _store_path(settings.knowledge_bases_dir / slug)
+    if store is None:
+        logger.info("RAG: %s no longer has a store; dropping it", slug)
+        _close(_kbs.pop(slug))
+        return
+    corpus = _stamp(store / _BM25_CORPUS_FILENAME)
+    if store != handle.db_path or corpus != handle.bm25_stamp:
+        logger.info("RAG: %s's store at %s has changed; reopening", slug, store)
+        _close(_kbs.pop(slug))
+        reopened = _open_kb(slug, store)
+        if reopened is not None:
+            _kbs[slug] = reopened
 
 
 @lifespan
@@ -231,8 +330,10 @@ async def app_lifespan(server):
 
     yield  # server runs
 
-    # Cleanup (SentenceTransformer and ChromaDB don't need explicit close)
+    # Cleanup (SentenceTransformer needs no explicit close)
     _encoder = None
+    for handle in _kbs.values():
+        _close(handle)
     _kbs.clear()
 
 
@@ -306,8 +407,12 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
     Look up the KB handle for `kb_slug`. Returns (handle, error_message).
 
     A slug that isn't registered triggers one rescan first: the KB may have
-    been created and indexed in the UI since the server started.
+    been created and indexed in the UI since the server started. One that is
+    is checked against its folder first (`_refresh_kb`): it may have been
+    replaced, deleted or reindexed since it was opened.
     """
+    for slug in [kb_slug] if kb_slug else list(_kbs):
+        _refresh_kb(slug)
     if not _kbs or (kb_slug and kb_slug not in _kbs):
         _register_new_kbs()
 
@@ -466,47 +571,61 @@ async def rag_search(
     `hybrid=True` is preserved as intent but the returned
     results are unchanged from the legacy path.
     """
-    handle, err = _resolve_kb(kb_slug)
-    if err is not None or handle is None:
-        return err or "ERROR: unable to resolve a Knowledge Base."
+    # In a thread: finding the KB may reopen its store or reload its BM25
+    # corpus, and embedding and searching are blocking too. One search at a
+    # time, as before, now off the event loop the other tools share.
+    return await asyncio.to_thread(_search, query, kb_slug, n_results, hybrid, alpha)
 
-    if handle.text_collection is None:
-        return (
-            f"ERROR: Knowledge Base {handle.slug!r} has no text_chunks "
-            f"collection loaded ({handle.db_path}). The KB exists on disk "
-            "but its index may not have been built yet."
-        )
 
-    n_results = max(1, min(n_results, 20))
+_search_lock = threading.Lock()
 
-    if hybrid:
-        formatted = _hybrid_retrieve(handle, query, n_results, alpha)
-        if formatted is not None:
-            return formatted
-        # Fall through to vector-only on hybrid degradation. We
-        # log inside `_hybrid_retrieve` so the operator sees why.
 
-    with metrics_stage("rag.embed", tool_name="rag_search"):
-        query_embedding = _embed(query)
-    with metrics_stage("rag.dense", tool_name="rag_search"):
-        raw = handle.text_collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-        )
+def _search(
+    query: str, kb_slug: str | None, n_results: int, hybrid: bool, alpha: float
+) -> str:
+    """`rag_search`'s work, blocking: under `_search_lock`, so `_kbs` has one writer."""
+    with _search_lock:
+        handle, err = _resolve_kb(kb_slug)
+        if err is not None or handle is None:
+            return err or "ERROR: unable to resolve a Knowledge Base."
 
-    if not raw["documents"] or not raw["documents"][0]:
-        return (
-            f"No relevant passages found for the query in Knowledge Base "
-            f"{handle.slug!r}."
-        )
+        if handle.text_collection is None:
+            return (
+                f"ERROR: Knowledge Base {handle.slug!r} has no text_chunks "
+                f"collection loaded ({handle.db_path}). The KB exists on disk "
+                "but its index may not have been built yet."
+            )
 
-    # Build response with citations
-    with metrics_stage("rag.citation", tool_name="rag_search"):
-        return _format_results(
-            handle,
-            documents=raw["documents"][0],
-            metadatas=raw["metadatas"][0],
-        )
+        n_results = max(1, min(n_results, 20))
+
+        if hybrid:
+            formatted = _hybrid_retrieve(handle, query, n_results, alpha)
+            if formatted is not None:
+                return formatted
+            # Fall through to vector-only on hybrid degradation. We
+            # log inside `_hybrid_retrieve` so the operator sees why.
+
+        with metrics_stage("rag.embed", tool_name="rag_search"):
+            query_embedding = _embed(query)
+        with metrics_stage("rag.dense", tool_name="rag_search"):
+            raw = handle.text_collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+            )
+
+        if not raw["documents"] or not raw["documents"][0]:
+            return (
+                f"No relevant passages found for the query in Knowledge Base "
+                f"{handle.slug!r}."
+            )
+
+        # Build response with citations
+        with metrics_stage("rag.citation", tool_name="rag_search"):
+            return _format_results(
+                handle,
+                documents=raw["documents"][0],
+                metadatas=raw["metadatas"][0],
+            )
 
 
 def _hybrid_retrieve(

@@ -6,14 +6,15 @@ A project is an item of kind `project` whose versions have a manifest and no
 blob. The manifest is built field by field from `ProjectPublic` (never by
 serializing the table row, which carries ids and collaboration state), and
 names each skill the project loads by reference: an item and version on the
-same server, or `bundled` for a skill every installation ships with. Knowledge
-bases are carried by slug, as they are, and not resolved yet (Step 6).
+same server, or `bundled` for a skill every installation ships with. Each
+knowledge base it searches is a reference too, an item and version.
 
-Publishing publishes every skill the project loads that is not on the server in
-effect or has changed since (`skill_collaboration.publish_skill`), then the
-project, as a compare-and-set on `remote_version` like a skill. Importing
-imports the skill versions that are not here, then creates the project, with an
-id of its own, or updates the copy already here, and sets up its Hypothesis Lab
+Publishing publishes every skill and knowledge base the project uses that is not
+on the server in effect or has changed since (`skill_collaboration.publish_skill`,
+`knowledge_base_collaboration.publish_knowledge_base`), then the project, as a
+compare-and-set on `remote_version` like a skill. Importing imports the skill and
+knowledge base versions that are not here, then creates the project, with an id
+of its own, or updates the copy already here, and sets up its Hypothesis Lab
 without letting an unreachable forum fail the import.
 """
 
@@ -29,6 +30,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..agents.skills import SKILL_NAME_PATTERN
 from ..db.schemas import (
+    SLUG_PATTERN,
+    KnowledgeBaseTable,
     LocalSettingsPublic,
     ProjectCreate,
     ProjectPublic,
@@ -37,21 +40,31 @@ from ..db.schemas import (
 )
 from . import local_settings
 from .collaboration import (
-    NOT_CONFIGURED,
     CollaborationError,
     CollaborationRefused,
-    CollaborationUnavailable,
     RemoteVersion,
     SharingConflict,
     VersionConflict,
     client_for,
     list_with_heads,
+    required_url,
     server_url,
 )
 from .project import (
     get_project_by_name,
     get_project_by_name_optional,
     project_content,
+)
+from .knowledge_base import get_kb_optional
+from .knowledge_base_collaboration import (
+    KnowledgeBaseConflict,
+    check_importable,
+    check_space,
+    import_knowledge_base,
+    linked_knowledge_base,
+    manifest_of,
+    publish_knowledge_base,
+    require_idle,
 )
 from .project_agent import invalidate_agents
 from .skill_collaboration import (
@@ -65,8 +78,11 @@ from .skill_collaboration import (
 from .skills import get_skill, get_skill_optional
 
 PROJECT_KIND = "project"
-MANIFEST_FORMAT = 1
-""" Bumped when a project manifest changes meaning; another format is not imported. """
+MANIFEST_FORMAT = 2
+"""
+Bumped when a project manifest changes meaning; another format is not imported.
+2: knowledge bases are references (`KnowledgeBaseRef`), not slugs.
+"""
 
 
 class ProjectConflict(SharingConflict):
@@ -74,7 +90,9 @@ class ProjectConflict(SharingConflict):
     A project publish or import that needs the researcher's choice first.
     `skill_conflict`: a skill the project loads could not be published or
     imported, and is resolved on the Skills page or the Skill Hub; `skill` and
-    `skill_code` say which and why.
+    `skill_code` say which and why. `knowledge_base_conflict`: the same for a
+    knowledge base it searches (`knowledge_base`, `knowledge_base_code`),
+    resolved on the Knowledge Bases page.
     """
 
     def __init__(
@@ -87,6 +105,7 @@ class ProjectConflict(SharingConflict):
             "name_taken",
             "name_invalid",
             "skill_conflict",
+            "knowledge_base_conflict",
         ],
         **extra: Any,
     ):
@@ -118,6 +137,18 @@ class SkillRef(BaseModel):
         return self
 
 
+class KnowledgeBaseRef(BaseModel):
+    """A knowledge base a published project searches: a version of a `knowledge-base` item."""
+
+    slug: Annotated[str, Field(pattern=SLUG_PATTERN)]
+    """
+    Its slug in the publisher's project, a label for display and the slug an
+    import starts from; the item and version say which it is.
+    """
+    remote_id: uuid.UUID
+    version: int = Field(ge=1)
+
+
 class ProjectManifest(BaseModel):
     """What a version of a project is: its fields, and what it loads by reference."""
 
@@ -130,8 +161,7 @@ class ProjectManifest(BaseModel):
     usage_limits: dict[str, Any] = {}
     forum_repo_url: str | None = None
     skills: list[SkillRef] = []
-    knowledge_bases: list[str] = []
-    """ Slugs, carried as they are: not resolved on import yet (Step 6). """
+    knowledge_bases: list[KnowledgeBaseRef] = []
 
 
 class RemoteProject(BaseModel):
@@ -161,6 +191,8 @@ class ProjectPublishResult(BaseModel):
     project: ProjectPublic
     skills_published: list[str]
     """ The skills published first, because they were not on the server or had changed. """
+    knowledge_bases_published: list[str] = []
+    """ The same for its knowledge bases, by slug. """
 
 
 ImportStatus = Literal["imported", "updated", "unchanged"]
@@ -182,10 +214,27 @@ class SkillOutcome(BaseModel):
     detail: str | None = None
 
 
+KnowledgeBaseOutcomeStatus = Literal["imported", "updated", "unchanged", "kept"]
+
+
+class KnowledgeBaseOutcome(BaseModel):
+    """What an import did about one knowledge base the project searches."""
+
+    slug: str
+    """ Its slug here. """
+    status: KnowledgeBaseOutcomeStatus
+    """
+    `unchanged`: the version was here already. `kept`: a copy here at another
+    version, or with changes of its own, was used as it is; `detail` says which.
+    """
+    detail: str | None = None
+
+
 class ProjectImportResult(BaseModel):
     status: ImportStatus
     project: ProjectPublic
     skills: list[SkillOutcome] = []
+    knowledge_bases: list[KnowledgeBaseOutcome] = []
     forum_error: str | None = None
     """ Why the project's Hypothesis Lab could not be set up; the import stands. """
 
@@ -196,13 +245,6 @@ def _project_manifest(version: RemoteVersion) -> ProjectManifest | None:
     except ValidationError:
         return None
     return manifest if manifest.format == MANIFEST_FORMAT else None
-
-
-def _required_url(local: LocalSettingsPublic) -> str:
-    url, _ = server_url(local)
-    if url is None:
-        raise CollaborationUnavailable(NOT_CONFIGURED)
-    return url
 
 
 async def _linked_project(
@@ -321,7 +363,84 @@ async def _publish_skills(
     return refs, published
 
 
-def _build_manifest(public: ProjectPublic, skills: list[SkillRef]) -> ProjectManifest:
+async def _check_knowledge_bases(
+    session: AsyncSession,
+    project: str,
+    slugs: list[str],
+    carried: dict[str, KnowledgeBaseRef],
+) -> None:
+    """
+    Refuse, before anything is published, a project that searches a knowledge
+    base that is not here and that the version built on did not name, or one
+    that is indexing.
+    """
+    absent = []
+    for slug in slugs:
+        kb = await get_kb_optional(session, slug)
+        if kb is None:
+            if slug not in carried:
+                absent.append(slug)
+        else:
+            require_idle(kb, f"publish {project}")
+    if absent:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{project} searches the knowledge "
+            f"{'base' if len(absent) == 1 else 'bases'} {', '.join(absent)}, "
+            f"which {'is' if len(absent) == 1 else 'are'} not on this computer. "
+            "Remove them from the project before publishing it.",
+        )
+
+
+async def _publish_knowledge_bases(
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    project: str,
+    slugs: list[str],
+    carried: dict[str, KnowledgeBaseRef],
+) -> tuple[list[KnowledgeBaseRef], list[str]]:
+    """
+    A reference to each knowledge base in `slugs`, publishing first each one
+    that is not on the server in effect or has changed since. Returns the
+    references and the slugs published. One that is not here is referenced
+    as the version built on referenced it (`carried`, checked by
+    `_check_knowledge_bases`); one that needs the researcher's choice stops
+    the project's publish before it is sent.
+    """
+    refs: list[KnowledgeBaseRef] = []
+    published: list[str] = []
+    for slug in slugs:
+        if await get_kb_optional(session, slug) is None:
+            refs.append(carried[slug])
+            continue
+        try:
+            result = await publish_knowledge_base(session, local, slug)
+        except KnowledgeBaseConflict as e:
+            raise ProjectConflict(
+                f"{project} was not published: its knowledge base {slug} needs a "
+                f"choice first. {e.detail} Resolve it on the Knowledge Bases page, "
+                "then publish the project again.",
+                "knowledge_base_conflict",
+                knowledge_base=slug,
+                knowledge_base_code=e.code,
+            ) from e
+        kb = result.knowledge_base
+        if result.status == "published":
+            published.append(slug)
+        assert kb.remote_id is not None and kb.remote_version is not None
+        refs.append(
+            KnowledgeBaseRef(
+                slug=slug, remote_id=kb.remote_id, version=kb.remote_version
+            )
+        )
+    return refs, published
+
+
+def _build_manifest(
+    public: ProjectPublic,
+    skills: list[SkillRef],
+    knowledge_bases: list[KnowledgeBaseRef],
+) -> ProjectManifest:
     """The manifest, field by field: nothing of the row goes that is not named here."""
     return ProjectManifest(
         name=public.name,
@@ -331,7 +450,7 @@ def _build_manifest(public: ProjectPublic, skills: list[SkillRef]) -> ProjectMan
         usage_limits=dict(public.usage_limits),
         forum_repo_url=public.forum_repo_url,
         skills=skills,
-        knowledge_bases=list(public.knowledge_bases),
+        knowledge_bases=knowledge_bases,
     )
 
 
@@ -339,14 +458,18 @@ def _blank_to_none(value: Any) -> Any:
     return None if isinstance(value, str) and not value.strip() else value
 
 
-def _skill_keys(manifest: ProjectManifest) -> list[tuple[Any, ...]]:
+def _references(manifest: ProjectManifest) -> list[tuple[Any, ...]]:
     """
-    Which skills a manifest loads: a bundled skill by name, any other by item
-    and version (its name is a label, which an import may have changed here).
+    Which skills a manifest loads, and which knowledge bases it searches: a
+    bundled skill by name, anything else by item and version (its name is a
+    label, which an import may have changed here).
     """
     return [
         ("bundled", ref.name) if ref.bundled else (ref.remote_id, ref.version)
         for ref in manifest.skills
+    ] + [
+        ("knowledge-base", ref.remote_id, ref.version)
+        for ref in manifest.knowledge_bases
     ]
 
 
@@ -381,7 +504,8 @@ async def publish_project(
     """
     Publish the project as the next version of its item on the server in
     effect, or as a new item if it has none there (or `as_new`), after
-    publishing the skills it loads that are not there or have changed.
+    publishing the skills it loads and the knowledge bases it searches that
+    are not there or have changed.
 
     The next version is built on `remote_version`, or on `on_top_of`, a head the
     researcher was shown. A head past it raises `ProjectConflict`
@@ -390,11 +514,11 @@ async def publish_project(
     skills published. A project whose manifest would equal the version it
     records is not published again, unless `on_top_of` or `as_new` asks: as
     the project is not modified, its own fields are that version's, so only
-    the skill versions it loads can differ.
+    the skill and knowledge base versions it uses can differ.
     A write to the project while it is published leaves it modified.
     """
     row = await get_project_by_name(session, name)
-    url = _required_url(local)
+    url = required_url(local)
     public = ProjectPublic.model_validate(row)
     before = project_content(row)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
@@ -420,21 +544,28 @@ async def publish_project(
                 raise _stale(name, parent, head, public.remote_version)
 
         carried = {ref.name for ref in base.skills if ref.bundled} if base else set()
+        carried_kbs = {ref.slug: ref for ref in base.knowledge_bases} if base else {}
+        slugs = list(dict.fromkeys(public.knowledge_bases))
+        await _check_knowledge_bases(session, name, slugs, carried_kbs)
         refs, published = await _publish_skills(
             session, local, name, list(dict.fromkeys(public.skills)), carried
         )
-        new = _build_manifest(public, refs)
+        kb_refs, kbs_published = await _publish_knowledge_bases(
+            session, local, name, slugs, carried_kbs
+        )
+        new = _build_manifest(public, refs, kb_refs)
         manifest = new.model_dump(mode="json")
 
         if linked:
             assert public.remote_id is not None and parent is not None
             if on_top_of is None and not public.modified and base is not None:
-                if _skill_keys(base) == _skill_keys(new):
+                if _references(base) == _references(new):
                     await reread(session, row)
                     return ProjectPublishResult(
                         status="unchanged",
                         project=ProjectPublic.model_validate(row),
                         skills_published=published,
+                        knowledge_bases_published=kbs_published,
                     )
             try:
                 version = await client.publish_version(
@@ -463,6 +594,7 @@ async def publish_project(
         status="published",
         project=ProjectPublic.model_validate(row),
         skills_published=published,
+        knowledge_bases_published=kbs_published,
     )
 
 
@@ -586,6 +718,142 @@ async def _import_skills(
     return list(dict.fromkeys(names)), outcomes, diverged
 
 
+async def _free_slug(session: AsyncSession, base: str) -> str:
+    """`base`, or the first `<base>-<n>` from 2 that no knowledge base here has."""
+    taken = set((await session.exec(select(KnowledgeBaseTable.slug))).all())
+    slug, n = base, 2
+    while slug in taken:
+        slug = f"{base[: 79 - len(str(n))]}-{n}"
+        n += 1
+    return slug
+
+
+KbPlan = Literal["import", "update", "unchanged", "kept"]
+
+
+async def _plan_knowledge_bases(
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    url: str,
+    project: str,
+    refs: list[KnowledgeBaseRef],
+) -> list[KbPlan]:
+    """
+    What the import will do about each knowledge base, checked before anything
+    is imported: a version this VISTA would download must be one whose index
+    it can search (else `409`), a copy it would update must not be indexing
+    (`409`), and all it would download must fit on the disk (`507`), else the
+    whole import is refused.
+    """
+    plans: list[KbPlan] = []
+    fetch: list[KnowledgeBaseRef] = []
+    for ref in refs:
+        copy = await linked_knowledge_base(session, url, ref.remote_id)
+        if copy is None:
+            plan: KbPlan = "import"
+        elif copy.remote_version == ref.version and not copy.modified:
+            plan = "unchanged"
+        elif (copy.remote_version or 0) < ref.version and not copy.modified:
+            plan = "update"
+            require_idle(copy, f"import {project}")
+        else:
+            plan = "kept"
+        plans.append(plan)
+        if plan in ("import", "update"):
+            fetch.append(ref)
+    if fetch:
+        download = 0
+        async with client_for(local) as client:
+            for ref in fetch:
+                kb_manifest = manifest_of(
+                    await client.get_version(ref.remote_id, ref.version)
+                )
+                if kb_manifest is None:
+                    raise CollaborationError(
+                        f"{project} searches {ref.slug}, whose version {ref.version} "
+                        "on the collaboration server is not a knowledge base this "
+                        "VISTA can import."
+                    )
+                try:
+                    await check_importable(kb_manifest)
+                except HTTPException as e:
+                    raise HTTPException(
+                        status_code=e.status_code,
+                        detail=f"{project} was not imported: {e.detail}",
+                    ) from e
+                download += kb_manifest.archive_size
+        check_space(download, f"Importing {project}'s knowledge bases")
+    return plans
+
+
+async def _import_knowledge_bases(
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    url: str,
+    project: str,
+    refs: list[KnowledgeBaseRef],
+    plans: list[KbPlan],
+) -> tuple[list[str], list[KnowledgeBaseOutcome]]:
+    """
+    Make each referenced knowledge base available here, as `plans` says;
+    returns the slugs the project searches and what was done about each. A new
+    one takes the reference's slug, or the first free `<slug>-<n>`. A copy
+    here newer, or with changes of its own, is kept and used, like a skill's.
+    A knowledge base's own conflict stops the import as
+    `knowledge_base_conflict`.
+    """
+    slugs: list[str] = []
+    outcomes: list[KnowledgeBaseOutcome] = []
+    for ref, plan in zip(refs, plans):
+        try:
+            if plan == "import":
+                kb = (
+                    await import_knowledge_base(
+                        session,
+                        local,
+                        ref.remote_id,
+                        version=ref.version,
+                        rename_to=await _free_slug(session, ref.slug),
+                    )
+                ).knowledge_base
+                outcome = KnowledgeBaseOutcome(slug=kb.slug, status="imported")
+            else:
+                copy = await linked_knowledge_base(session, url, ref.remote_id)
+                assert copy is not None  # planned from it
+                slug, here, modified = copy.slug, copy.remote_version, copy.modified
+                if plan == "update":
+                    await import_knowledge_base(
+                        session, local, ref.remote_id, version=ref.version
+                    )
+                    outcome = KnowledgeBaseOutcome(slug=slug, status="updated")
+                elif plan == "unchanged":
+                    outcome = KnowledgeBaseOutcome(slug=slug, status="unchanged")
+                else:
+                    why = (
+                        f"has changes made here since version {here}"
+                        if modified
+                        else f"is version {here} here"
+                    )
+                    outcome = KnowledgeBaseOutcome(
+                        slug=slug,
+                        status="kept",
+                        detail=f"The project uses version {ref.version}; the copy "
+                        f"here {why}, and was kept.",
+                    )
+        except KnowledgeBaseConflict as e:
+            raise ProjectConflict(
+                f"{project} was not imported: its knowledge base {ref.slug} needs a "
+                f"choice first. {e.detail} Resolve it on the Knowledge Bases page, "
+                "then import the project again.",
+                "knowledge_base_conflict",
+                knowledge_base=ref.slug,
+                knowledge_base_code=e.code,
+            ) from e
+        slugs.append(outcome.slug)
+        outcomes.append(outcome)
+    return list(dict.fromkeys(slugs)), outcomes
+
+
 def _name_taken(name: str) -> ProjectConflict:
     return ProjectConflict(
         f"A project named {name} is already here. Choose a new name to import "
@@ -637,7 +905,8 @@ async def import_project(
 ) -> ProjectImportResult:
     """
     Import a version (by default the head) of a project on the server in
-    effect, with the skill versions it loads that are not here.
+    effect, with the skill and knowledge base versions it uses that are not
+    here.
 
     The project already here from the same item is updated in place, keeping
     its id and name; with local changes, that needs `replace_modified`, else
@@ -646,14 +915,15 @@ async def import_project(
     item or `rename_to`; a name in use is `name_taken`. Both are checked before
     any skill is imported.
 
-    The project's fields are checked before any skill is imported too. A
-    project that ends up differing from the version, because a skill here was
-    kept or left out, is marked modified.
+    The project's fields are checked before any skill is imported too, and so
+    is every knowledge base it would download (`_plan_knowledge_bases`). A
+    project that ends up differing from the version, because a bundled skill
+    here shadows one it names, is marked modified.
 
     Its Hypothesis Lab is set up as a save would, but a forum that cannot be
     reached does not fail the import: the reason is in `forum_error`.
     """
-    url = _required_url(local)
+    url = required_url(local)
     async with client_for(local) as client:
         item = await client.get_item(item_id)
         if item.kind != PROJECT_KIND:
@@ -694,7 +964,7 @@ async def import_project(
             description=_blank_to_none(manifest.description),
             system_prompt=_blank_to_none(manifest.system_prompt),
             skills=[],
-            knowledge_bases=list(dict.fromkeys(manifest.knowledge_bases)),
+            knowledge_bases=[],
             tools=manifest.tools,
             usage_limits=manifest.usage_limits,
             forum_repo_url=_blank_to_none(manifest.forum_repo_url),
@@ -705,10 +975,15 @@ async def import_project(
             f"a project this VISTA can import: {e.errors()[0]['msg']}."
         ) from e
 
+    kb_refs = list({ref.remote_id: ref for ref in manifest.knowledge_bases}.values())
+    kb_plans = await _plan_knowledge_bases(session, local, url, name, kb_refs)
     skills, outcomes, diverged = await _import_skills(
         session, local, url, name, manifest.skills
     )
     fields.skills = skills
+    fields.knowledge_bases, kb_outcomes = await _import_knowledge_bases(
+        session, local, url, name, kb_refs, kb_plans
+    )
 
     if existing is None:
         # Asked again: the skills took a while, and project names are unique
@@ -746,5 +1021,6 @@ async def import_project(
         status=status,
         project=ProjectPublic.model_validate(row),
         skills=outcomes,
+        knowledge_bases=kb_outcomes,
         forum_error=forum_error,
     )

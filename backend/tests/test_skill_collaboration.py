@@ -23,7 +23,6 @@ from vista_backend.services import collaboration, local_settings
 from vista_backend.services.collaboration import CollaborationClient
 from vista_backend.services.skill_collaboration import (
     SkillManifest,
-    _stage,
     pack_skill,
     unpack_skill,
 )
@@ -206,13 +205,6 @@ def test_a_damaged_archive_is_refused(tmp_path):
     archive.write_bytes(b"not a tar at all")
     with pytest.raises(SkillImportError, match="cannot be read|damaged"):
         unpack_skill(archive, tmp_path / "out")
-
-
-def test_an_archive_that_is_not_the_version_published_is_refused(tmp_path):
-    archive = tmp_path / "demo.tar.gz"
-    pack_skill(_skill_folder(tmp_path, "demo"), archive)
-    with pytest.raises(collaboration.CollaborationError, match="does not match"):
-        _stage(archive, "0" * 64, tmp_path / "staged", "demo")
 
 
 # ---------------------------------------------------------------------------
