@@ -53,7 +53,7 @@ const ROUTES = [
   { path: "/", gutter: 0 },
   { path: "/projects", gutter: 30 },
   { path: "/skills", gutter: 30 },
-  { path: "/datasets", gutter: 30 },
+  { path: "/files", gutter: 30 },
   { path: "/skill-hub", gutter: 30 },
   { path: "/knowledge-bases", gutter: 0 },
   { path: "/knowledge-bases/project", gutter: 0 },
@@ -115,7 +115,7 @@ test.describe("shared shell", () => {
     for (const [route, title] of [
       ["/", "Conversations"],
       ["/skills", "Skills"],
-      ["/datasets", "Datasets"],
+      ["/files", "Files"],
       ["/skill-hub", "Skill Hub"],
       ["/knowledge-bases/project", "Knowledge Bases"],
     ] as const) {

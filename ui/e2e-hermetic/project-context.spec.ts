@@ -36,7 +36,7 @@ test.describe("project context", () => {
   // project, not what you were doing.
   test("switching project keeps you on the page you were on", async ({ page }) => {
     await openMoltenSalt(page);
-    await page.goto("/datasets");
+    await page.goto("/files");
 
     const switcher = page.locator(".project-switcher-button");
     await expect(switcher).toHaveText("molten-salt");
@@ -45,8 +45,8 @@ test.describe("project context", () => {
     await page.getByRole("option", { name: "alloy-design" }).click();
 
     await expect(switcher).toHaveText("alloy-design");
-    await expect(page).toHaveURL(/\/datasets$/);
-    await expect(page.getByRole("heading", { level: 1, name: "Datasets" })).toBeVisible();
+    await expect(page).toHaveURL(/\/files$/);
+    await expect(page.getByRole("heading", { level: 1, name: "Files" })).toBeVisible();
   });
 
   test("the switcher closes on Escape and marks the active project", async ({ page }) => {
@@ -67,36 +67,6 @@ test.describe("project context", () => {
 
     await page.keyboard.press("Escape");
     await expect(menu).toBeHidden();
-  });
-
-  test("datasets clearly separates uploads from generated results", async ({ page }) => {
-    await openMoltenSalt(page);
-
-    await stub!.setRoute("GET /api/files/uploads", [
-      {
-        name: "input.csv",
-        size: 1024,
-        modifiedAt: "2026-01-01T00:00:00Z",
-        source: "upload",
-      },
-    ]);
-    await stub!.setRoute("GET /api/files/outputs", [
-      {
-        name: "analysis/figure.png",
-        size: 2048,
-        modifiedAt: "2026-01-01T00:00:00Z",
-        source: "generated",
-      },
-    ]);
-
-    await page.getByRole("link", { name: "Datasets", exact: true }).click();
-
-    await expect(page.getByRole("heading", { level: 2, name: "Uploads" })).toBeVisible();
-    await expect(
-      page.getByRole("heading", { level: 2, name: "Generated Results & Logs" }),
-    ).toBeVisible();
-    await expect(page.locator(".upload-item").filter({ hasText: "analysis/figure.png" }))
-      .toContainText("2.0 KB · Modified");
   });
 
   // Chat is the only route with nothing to show without a project.
@@ -125,9 +95,9 @@ test.describe("project context", () => {
     expect(await page.evaluate(() => localStorage.getItem("vista.activeProject.v1"))).toBeNull();
   });
 
-  // Datasets and skills stay reachable and offer the same way out.
+  // Files and skills stay reachable and offer the same way out.
   for (const [route, title] of [
-    ["/datasets", "Datasets"],
+    ["/files", "Files"],
     ["/skills", "Skills"],
   ] as const) {
   test(`${route} asks for a project in place`, async ({ page }) => {
@@ -152,7 +122,7 @@ test.describe("project context", () => {
   // "Usable from anywhere" has to include the case where you have no project
   // yet, otherwise the only way to get one is still a page you navigate to.
   test("the switcher can pick a project when none is selected", async ({ page }) => {
-    await page.goto("/datasets");
+    await page.goto("/files");
 
     const switcher = page.locator(".project-switcher-button");
     await expect(switcher).toHaveText("No project");
@@ -161,7 +131,7 @@ test.describe("project context", () => {
     await page.getByRole("option", { name: "molten-salt" }).click();
 
     await expect(switcher).toHaveText("molten-salt");
-    await expect(page).toHaveURL(/\/datasets$/);
+    await expect(page).toHaveURL(/\/files$/);
     await expect(page.locator(".project-required")).toHaveCount(0);
   });
 
@@ -186,7 +156,7 @@ test.describe("project context", () => {
 
     for (const [label, url] of [
       ["Skills", /\/skills$/],
-      ["Datasets", /\/datasets$/],
+      ["Files", /\/files$/],
     ] as const) {
       await page.locator(".nav-rail").getByRole("link", { name: label, exact: true }).click();
       await expect(page).toHaveURL(url);
@@ -230,7 +200,7 @@ test.describe("projects page", () => {
 
     const card = page.locator(".project-card").filter({ hasText: "molten-salt" });
     await expect(card.locator(".project-card-stats")).toContainText("1 conversation");
-    await expect(card.locator(".project-card-stats")).toContainText("0 datasets");
+    await expect(card.locator(".project-card-stats")).toContainText("0 files");
 
     const requests = await stub.requests();
     const perProject = requests.filter((r) => r.includes("project_name=molten-salt"));

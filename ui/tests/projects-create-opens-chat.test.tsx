@@ -87,11 +87,11 @@ describe("creating a project", () => {
   });
 
   it("goes where the researcher was headed when chat sent them here", async () => {
-    writePendingDestination("/datasets");
+    writePendingDestination("/files");
 
     await createProjectNamed("chloride-salts");
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/datasets"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/files"));
     expect(readActiveProjectName()).toBe("chloride-salts");
   });
 

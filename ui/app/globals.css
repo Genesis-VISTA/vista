@@ -300,7 +300,6 @@
 .chat-list,
 .output-top,
 .output-bottom,
-.upload-list,
 .reference-list,
 .modal-body,
 .output-card {
@@ -312,7 +311,6 @@
 .chat-list::-webkit-scrollbar,
 .output-top::-webkit-scrollbar,
 .output-bottom::-webkit-scrollbar,
-.upload-list::-webkit-scrollbar,
 .reference-list::-webkit-scrollbar,
 .modal-body::-webkit-scrollbar,
 .output-card::-webkit-scrollbar {
@@ -324,7 +322,6 @@
 .chat-list::-webkit-scrollbar-track,
 .output-top::-webkit-scrollbar-track,
 .output-bottom::-webkit-scrollbar-track,
-.upload-list::-webkit-scrollbar-track,
 .reference-list::-webkit-scrollbar-track,
 .modal-body::-webkit-scrollbar-track,
 .output-card::-webkit-scrollbar-track {
@@ -336,7 +333,6 @@
 .chat-list::-webkit-scrollbar-thumb,
 .output-top::-webkit-scrollbar-thumb,
 .output-bottom::-webkit-scrollbar-thumb,
-.upload-list::-webkit-scrollbar-thumb,
 .reference-list::-webkit-scrollbar-thumb,
 .modal-body::-webkit-scrollbar-thumb,
 .output-card::-webkit-scrollbar-thumb {
@@ -349,7 +345,6 @@
 .chat-list::-webkit-scrollbar-thumb:hover,
 .output-top::-webkit-scrollbar-thumb:hover,
 .output-bottom::-webkit-scrollbar-thumb:hover,
-.upload-list::-webkit-scrollbar-thumb:hover,
 .reference-list::-webkit-scrollbar-thumb:hover,
 .modal-body::-webkit-scrollbar-thumb:hover,
 .output-card::-webkit-scrollbar-thumb:hover {
@@ -419,7 +414,7 @@ main {
 }
 
 /* A pane sitting directly in a list-route body must not add a second gutter:
-   the body already carries the artboard's 26/30, and skills and datasets were
+   the body already carries the artboard's 26/30, and skills and files were
    inset 42/46 against skill-hub's 30 because .panel-body added its own. */
 .app-page-body > .panel > .panel-body {
   padding: 0;
@@ -1259,21 +1254,10 @@ textarea.input {
   margin-bottom: 12px;
 }
 
-.catalog-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
 .model-label {
   font-size: 12px;
   color: var(--muted);
   font-weight: 600;
-}
-
-.catalog-label {
-  font-size: 14px;
 }
 
 .model-select {
@@ -1416,25 +1400,53 @@ textarea.input {
   white-space: nowrap;
 }
 
-.upload-list {
+/* Files page: two trees beside a preview, stacking on narrow widths. */
+.files-toolbar {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 280px;
-  overflow: auto;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
-/* A named group of uploads, not an object in its own right. It used to wear
-   a border, a 12px radius and a white fill, which made a card out of the
-   container and left white item cards sitting inside a white card. The label
-   is what separates one group from the next. */
-.upload-section {
+.files-dropzone {
+  min-height: 64px;
+  height: 64px;
+}
+
+.files-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .files-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.files-trees {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.files-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.upload-section-title {
+.files-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.files-section-title {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
@@ -1443,38 +1455,197 @@ textarea.input {
   color: var(--ink);
 }
 
-.upload-item {
-  position: relative;
-  padding: 8px 10px;
-  padding-right: 132px;
-  border-radius: var(--r-card);
-  border: 1px solid var(--line);
-  background: var(--surface);
+.files-tree,
+.files-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.upload-name {
+.files-tree {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 4px 0;
+}
+
+.files-folder,
+.files-file {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-right: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
   font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-folder {
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
 }
 
-.upload-meta {
-  margin-top: 2px;
+.files-folder:hover,
+.files-row:hover {
+  background: var(--surface-2);
+}
+
+.files-caret {
+  width: 10px;
+  color: var(--muted);
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.files-row.selected {
+  background: var(--brand-tint);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.files-file {
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.files-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.files-file-meta {
   font-size: 11px;
   color: var(--muted);
 }
 
-.upload-actions {
-  position: absolute;
-  top: 6px;
-  right: 8px;
+.files-row-actions {
   display: flex;
   gap: 5px;
+  flex: 0 0 auto;
 }
 
-.upload-action-btn {
-  padding: 4px 6px;
+.files-shown-in {
+  padding-right: 8px;
+  padding-bottom: 5px;
   font-size: 11px;
-  border-radius: 7px;
+  color: var(--muted);
+}
+
+.files-shown-in a {
+  color: var(--brand);
+}
+
+.files-preview-pane {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+
+@media (max-width: 900px) {
+  .files-preview-pane {
+    position: static;
+  }
+}
+
+.files-preview-empty {
+  padding: 24px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-card);
+  text-align: center;
+  font-size: 13px;
+}
+
+/* FilePreview, shared with the artifacts column. */
+.file-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.file-preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.file-preview-text {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-preview-markdown {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.file-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.file-preview-table th,
+.file-preview-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.file-preview-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.file-preview img {
+  max-width: 100%;
+  height: auto;
 }
 
 .chat-list {
@@ -4021,7 +4192,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Standalone page wrapper (used by /datasets, /skills)               */
+/*  Standalone page wrapper (used by /files, /skills)               */
 /* ------------------------------------------------------------------ */
 
 .standalone-page {

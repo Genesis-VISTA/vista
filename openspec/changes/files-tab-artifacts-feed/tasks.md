@@ -24,9 +24,9 @@
 
 ## 5. Files page
 
-- [ ] 5.1 Read the Next docs in `ui/node_modules/next/dist/docs/` on `useSearchParams` and Suspense. Then replace `ui/app/datasets/` with `ui/app/files/page.tsx`: Outputs and Uploads trees, each labelled with its sandbox path; upload, drag-drop, download and delete kept; the catalog dropdown gone; `FilePreview` beside the tree; selection in `?kind=&path=`; "Shown in <chat>" linking to `/?chat=&run=&step=`. Rename the NavRail entry and icon and the `project-stats` field and label. Verify with `cd ui && npm run lint` and `npm test`
-- [ ] 5.2 Reload the listing when any chat in the project leaves `working`, through `useChatRunStatus`. Verify with a unit test using `resetChatRunStatusForTests` and a stubbed fetch
-- [ ] 5.3 Update `ui/e2e-hermetic/shell.spec.ts`, `project-context.spec.ts` and `ui/tests/projects-create-opens-chat.test.tsx` from datasets to files. Add a hermetic spec `ui/e2e-hermetic/files.spec.ts`: the trees render from fixture data, `?kind=outputs&path=run1/plot.png` opens that file with its preview, and "Shown in" links to the chat URL. Verify with `cd ui && npm run test:e2e:hermetic`
+- [x] 5.1 Read the Next docs in `ui/node_modules/next/dist/docs/` on `useSearchParams` and Suspense. Then replace `ui/app/datasets/` with `ui/app/files/page.tsx`: Outputs and Uploads trees, each labelled with its sandbox path; upload, drag-drop, download and delete kept; the catalog dropdown gone; `FilePreview` beside the tree; selection in `?kind=&path=`; "Shown in <chat>" linking to `/?chat=&run=&step=`. Rename the NavRail entry and icon and the `project-stats` field and label. Verify with `cd ui && npm run lint` and `npm test`
+- [x] 5.2 Reload the listing when any chat in the project leaves `working`, through `useChatRunStatus`. Verify with a unit test using `resetChatRunStatusForTests` and a stubbed fetch
+- [x] 5.3 Update `ui/e2e-hermetic/shell.spec.ts`, `project-context.spec.ts` and `ui/tests/projects-create-opens-chat.test.tsx` from datasets to files. Add a hermetic spec `ui/e2e-hermetic/files.spec.ts`: the trees render from fixture data, `?kind=outputs&path=run1/plot.png` opens that file with its preview, and "Shown in" links to the chat URL. Verify with `cd ui && npm run test:e2e:hermetic`
 
 ## 6. Artifacts feed and opening a chat at a turn
 

@@ -131,7 +131,7 @@ function ProjectsPageContent() {
             <h2 className="projects-empty-title">No projects yet</h2>
             <p className="projects-empty-body">
               A project is a working context: its own system prompt, the skills and
-              tools the agent may use, and the conversations and datasets that
+              tools the agent may use, and the conversations and files that
               belong to it. Chat starts here, so this is the first thing to make.
             </p>
             <button
@@ -218,7 +218,7 @@ function ProjectCard({
           </span>
           <span aria-hidden="true">·</span>
           <span>
-            {stats.datasets} {stats.datasets === 1 ? "dataset" : "datasets"}
+            {stats.files} {stats.files === 1 ? "file" : "files"}
           </span>
           {stats.lastActive && (
             <>

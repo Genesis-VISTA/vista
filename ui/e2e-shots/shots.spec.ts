@@ -38,7 +38,7 @@ async function withProject(page: Page, overrides: Record<string, unknown>) {
 const LABEL = process.env.SHOT_LABEL ?? "after";
 const OUT = process.env.SHOT_DIR ?? `shots/${LABEL}`;
 
-/** Datasets and outputs, which the browser suite leaves empty. */
+/** Uploads and outputs, which the browser suite leaves empty. */
 const OVERRIDES = {
   "GET /api/files/uploads": [
     { name: "flibe-density.csv", size: 20480, modifiedAt: "2026-01-01T00:00:00+00:00", source: "upload" },
@@ -55,7 +55,7 @@ const ROUTES = [
   ["chat", "/"],
   ["projects", "/projects"],
   ["skills", "/skills"],
-  ["datasets", "/datasets"],
+  ["files", "/files"],
   ["skill-hub", "/skill-hub"],
   ["knowledge-bases", "/knowledge-bases/project"],
 ] as const;

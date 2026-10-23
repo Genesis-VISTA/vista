@@ -188,7 +188,7 @@ const SCREENS: { name: string; go: (page: Page, stub: Stub) => Promise<void> }[]
   },
   { name: "skill-hub", go: async (page) => void (await page.goto("/skill-hub")) },
   { name: "knowledge-bases", go: async (page) => void (await page.goto("/knowledge-bases/project")) },
-  { name: "datasets", go: async (page) => void (await page.goto("/datasets")) },
+  { name: "files", go: async (page) => void (await page.goto("/files")) },
   { name: "hypothesis-lab", go: async (page) => void (await page.goto("/hypothesis-lab")) },
   {
     name: "settings",
