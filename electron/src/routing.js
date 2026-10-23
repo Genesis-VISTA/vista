@@ -41,6 +41,29 @@ export function classify(origin, url) {
 }
 
 /**
+ * Chromium's built-in PDF viewer. It shows a PDF by loading itself as a frame
+ * inside the PDF's window, so a guard that refuses every non-http(s) frame
+ * leaves the viewer an empty shell.
+ */
+const PDF_VIEWER_ORIGIN = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai';
+
+/**
+ * Whether a frame navigation is the PDF viewer loading inside a PDF's window.
+ * Only ever true for that one extension; the caller allows it for subframes.
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+export function isPdfViewerFrame(url) {
+  try {
+    const target = new URL(url);
+    return `${target.protocol}//${target.host}` === PDF_VIEWER_ORIGIN;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * The origin of the address the window was started with.
  *
  * @param {string} url

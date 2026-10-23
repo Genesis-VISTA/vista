@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseArgs } from './args.js';
 import { allowPermission } from './permissions.js';
-import { classify, originOf } from './routing.js';
+import { classify, isPdfViewerFrame, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
@@ -204,6 +204,8 @@ app.on('web-contents-created', (_event, contents) => {
     // A sandboxed card's own document has no http address; refusing it would
     // leave the card blank. Only a subframe can be one of these.
     if (!event.isMainFrame && (event.url === 'about:srcdoc' || event.url === 'about:blank')) return;
+    // A PDF's window shows it through Chromium's viewer, itself a subframe.
+    if (!event.isMainFrame && isPdfViewerFrame(event.url)) return;
     const route = classify(origin, event.url);
     if (route === 'in-app') return;
     event.preventDefault();
