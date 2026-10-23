@@ -1012,6 +1012,49 @@ async def test_a_newer_copy_of_a_knowledge_base_is_kept(
     assert (await _kb_row(session, "salt-papers")).remote_version == 2
 
 
+async def test_a_seeded_knowledge_base_is_the_copy_here_not_a_duplicate(
+    collab_server, session
+):
+    from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
+    from vista_backend.services.knowledge_base_collaboration import KB_KIND
+
+    await _use_server(session)
+    kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
+    make_kb(kb_dir)
+    seed = seed_item_id(
+        MOLTEN_SALT_KB_ID, "The molten-salt-papers papers", None, kb_dir / "pdfs"
+    )
+    session.add(
+        kb_row(
+            kb_dir,
+            "molten-salt-papers",
+            id=MOLTEN_SALT_KB_ID,
+            modified=False,
+            seed_item=seed,
+        )
+    )
+    await session.commit()
+    # Another installation, which seeded the same corpus, published a project on it.
+    async with _other_install() as other:
+        await other.create_item(
+            KB_KIND, "molten-salt-papers", manifest={}, item_id=seed
+        )
+    item_id = await _publish_project_elsewhere(
+        knowledge_bases=[
+            KnowledgeBaseRef(slug="molten-salt-papers", remote_id=seed, version=1)
+        ]
+    )
+    with api_client(session) as (client, _):
+        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
+    assert res.status_code == 200, res.text
+    [outcome] = res.json()["knowledge_bases"]
+    assert (outcome["slug"], outcome["status"]) == ("molten-salt-papers", "unchanged")
+    assert res.json()["project"]["knowledge_bases"] == ["molten-salt-papers"]
+    kb = await _kb_row(session, "molten-salt-papers")
+    assert (kb.remote_id, kb.remote_version, kb.modified) == (seed, 1, False)
+    assert list(kb_dir.glob("store-*")) == []
+
+
 async def test_a_knowledge_base_that_needs_a_choice_stops_the_import(
     collab_server, session, tmp_path, monkeypatch
 ):

@@ -14,6 +14,8 @@ is also the real prebuilt-package path, where the launcher places the store
 before seeding runs.
 """
 
+from pathlib import Path
+
 import pytest
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -320,6 +322,11 @@ async def test_knowledge_base_row_matches_the_token_path(seeded_either_source):
     assert row.build_status == "ready"
     assert row.pdfs_dir.endswith("knowledge-bases/molten-salt-papers/pdfs")
     assert row.rag_db_path.endswith("knowledge-bases/molten-salt-papers/rag_db")
+    # Unchanged, and the collaboration item every installation's seed is.
+    assert row.modified is False
+    assert row.seed_item == seed_module.seed_item_id(
+        row.id, row.name, row.description, Path(row.pdfs_dir)
+    )
 
 
 async def test_project_knowledge_base_list_matches_the_token_path(

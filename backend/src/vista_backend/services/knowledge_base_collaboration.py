@@ -237,11 +237,54 @@ def _version(text: str) -> tuple[int, int, int] | None:
     return major, minor, patch
 
 
+def is_unchanged_seed(row: KnowledgeBaseTable) -> bool:
+    """
+    `row` is a seeded knowledge base as VISTA seeded it, so its `seed_item`:
+    unchanged since, and published as nothing else.
+    """
+    return (
+        row.seed_item is not None
+        and not row.modified
+        and row.remote_id in (None, row.seed_item)
+        and row.remote_version in (None, 1)
+    )
+
+
+async def _seed_matching(
+    session: AsyncSession, item_id: uuid.UUID
+) -> KnowledgeBaseTable | None:
+    """The unchanged seeded knowledge base here that is item `item_id`, if any."""
+    rows = (
+        await session.exec(
+            select(KnowledgeBaseTable).where(KnowledgeBaseTable.seed_item == item_id)
+        )
+    ).all()
+    return next((row for row in rows if is_unchanged_seed(row)), None)
+
+
+async def _link_seed(
+    session: AsyncSession, row: KnowledgeBaseTable, url: str, item_id: uuid.UUID
+) -> KnowledgeBaseTable:
+    """Record that seeded `row` is version 1 of `item_id` on `url`, unchanged."""
+    row.origin_server = url
+    row.remote_id = item_id
+    row.remote_version = 1
+    row.modified = False
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
 async def linked_knowledge_base(
     session: AsyncSession, url: str | None, item_id: uuid.UUID
 ) -> KnowledgeBaseTable | None:
-    """The knowledge base here published as, or imported from, item `item_id` on `url`."""
-    return (
+    """
+    The knowledge base here published as, or imported from, item `item_id` on
+    `url`. An unchanged seeded one that is that item (`seed_item`) is linked
+    to it now, and is the one.
+    """
+    row = (
         await session.exec(
             select(KnowledgeBaseTable).where(
                 KnowledgeBaseTable.origin_server == url,
@@ -249,6 +292,11 @@ async def linked_knowledge_base(
             )
         )
     ).first()
+    if row is None and url is not None:
+        seed = await _seed_matching(session, item_id)
+        if seed is not None:
+            row = await _link_seed(session, seed, url, item_id)
+    return row
 
 
 def require_idle(kb: KnowledgeBaseTable, doing: str) -> None:
@@ -409,7 +457,19 @@ async def list_remote_knowledge_bases(
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, KB_KIND, heads=manifests)
     rows = list((await session.exec(select(KnowledgeBaseTable))).all())
-    linked = {r.remote_id: r for r in rows if r.remote_id and r.origin_server == url}
+    linked = {
+        r.remote_id: LocalCopy(
+            name=r.slug, remote_version=r.remote_version, modified=r.modified
+        )
+        for r in rows
+        if r.remote_id and r.origin_server == url
+    }
+    # An unchanged seed is its item already: importing it only links it.
+    for r in rows:
+        if r.seed_item is not None and is_unchanged_seed(r):
+            linked[r.seed_item] = LocalCopy(
+                name=r.slug, remote_version=1, modified=False
+            )
     slugs = {r.slug for r in rows}
     listed = []
     for item, fetched in listed_items:
@@ -424,13 +484,7 @@ async def list_remote_knowledge_bases(
                 published_by_name=fetched.created_by_name if fetched else None,
                 published_at=fetched.created_at if fetched else None,
                 manifest=manifest_of(fetched) if fetched else None,
-                local=LocalCopy(
-                    name=copy.slug,
-                    remote_version=copy.remote_version,
-                    modified=copy.modified,
-                )
-                if copy
-                else None,
+                local=copy,
                 name_taken=copy is None and item.name in slugs,
             )
         )
@@ -472,6 +526,10 @@ async def publish_knowledge_base(
     nothing here. One published there with no change since is not published
     again (`unchanged`), unless `on_top_of` or `as_new` asks. A change made
     while it is published leaves it modified.
+
+    An unchanged seed is its `seed_item`: created under that id by the first
+    installation to publish it, and only linked by every other. A seed changed
+    here is published as a new item, so the seed's own stays as VISTA seeds it.
     """
     url = required_url(local)
     async with kb_lock(slug):
@@ -495,6 +553,15 @@ async def _publish(
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
         return KnowledgeBasePublishResult(status="unchanged", knowledge_base=public)
+    if row.remote_id is not None and row.remote_id == row.seed_item:
+        # The seed's item stays as VISTA seeds it: changed here, this is new.
+        linked = False
+    seed_id = row.seed_item if not as_new and is_unchanged_seed(row) else None
+    if seed_id is not None:
+        # Another installation published this seed already: link it, send nothing.
+        async with client_for(local) as client:
+            if await _item_exists(client, seed_id):
+                return await _seed_published(session, row, url, seed_id)
     before = kb_content(row)
     here = await indexer.store_format()
     # A knowledge base nothing has been indexed into has no store yet.
@@ -564,9 +631,15 @@ async def _publish(
                 ) from e
             remote_id, remote_version = row.remote_id, version.version
         else:
-            item = await client.create_item(
-                KB_KIND, slug, manifest=manifest, blob_ref=blob_ref
-            )
+            try:
+                item = await client.create_item(
+                    KB_KIND, slug, manifest=manifest, blob_ref=blob_ref, item_id=seed_id
+                )
+            except CollaborationRefused as e:
+                if seed_id is None or e.status_code != 409:
+                    raise
+                # Another installation published this seed while this one packed.
+                return await _seed_published(session, row, url, seed_id)
             remote_id, remote_version = item.id, item.head_version
 
     await reread(session, row)
@@ -579,6 +652,27 @@ async def _publish(
     await session.refresh(row)
     return KnowledgeBasePublishResult(
         status="published", knowledge_base=KnowledgeBasePublic.model_validate(row)
+    )
+
+
+async def _item_exists(client: CollaborationClient, item_id: uuid.UUID) -> bool:
+    try:
+        await client.get_item(item_id)
+    except CollaborationRefused as e:
+        if e.status_code != 404:
+            raise
+        return False
+    return True
+
+
+async def _seed_published(
+    session: AsyncSession, row: KnowledgeBaseTable, url: str, item_id: uuid.UUID
+) -> KnowledgeBasePublishResult:
+    """A seeded knowledge base found on the server already, linked to it."""
+    await reread(session, row)
+    row = await _link_seed(session, row, url, item_id)
+    return KnowledgeBasePublishResult(
+        status="unchanged", knowledge_base=KnowledgeBasePublic.model_validate(row)
     )
 
 

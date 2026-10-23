@@ -317,9 +317,20 @@ class CollaborationClient:
         *,
         manifest: dict[str, Any],
         blob_ref: str | None = None,
+        item_id: uuid.UUID | None = None,
     ) -> RemoteItem:
-        """A new item, published with its version 1."""
-        body = {"kind": kind, "name": name, "manifest": manifest, "blob_ref": blob_ref}
+        """
+        A new item, published with its version 1. `item_id` chooses its id;
+        one an item has already is `CollaborationRefused` (409).
+        """
+        body: dict[str, Any] = {
+            "kind": kind,
+            "name": name,
+            "manifest": manifest,
+            "blob_ref": blob_ref,
+        }
+        if item_id is not None:
+            body["id"] = str(item_id)
         return await self._call(RemoteItem, "POST", "/items", json=body)
 
     async def get_item(self, item_id: uuid.UUID) -> RemoteItem:

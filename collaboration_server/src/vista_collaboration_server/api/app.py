@@ -12,7 +12,7 @@ from .. import API_VERSION
 from ..config import CollabSettings
 from ..db.db import init_db, make_engine
 from ..db.schemas import ServerVersion
-from ..services.items import NotFound, VersionConflict
+from ..services.items import ItemExists, NotFound, VersionConflict
 from .items import router as items_router
 
 log = logging.getLogger("vista.collaboration")
@@ -58,6 +58,10 @@ def create_app(settings: CollabSettings | None = None) -> FastAPI:
     @app.exception_handler(NotFound)
     async def _not_found(request: Request, exc: NotFound) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ItemExists)
+    async def _exists(request: Request, exc: ItemExists) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(VersionConflict)
     async def _conflict(request: Request, exc: VersionConflict) -> JSONResponse:

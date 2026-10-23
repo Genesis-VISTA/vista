@@ -77,6 +77,12 @@ class ItemVersionTable(CollabTable, table=True):
 class ItemCreate(SQLModel):
     """A new item and its version 1, created together."""
 
+    id: uuid.UUID | None = None
+    """
+    The item's id, when the client must know it beforehand: one every client
+    derives alike, so that whichever creates the item first, the others find
+    it. `409` if an item has it already. None: the server chooses.
+    """
     kind: Kind
     name: str = Field(min_length=1, max_length=200)
     manifest: dict[str, Any]

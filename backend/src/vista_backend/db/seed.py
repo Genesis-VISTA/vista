@@ -1,3 +1,4 @@
+import json
 import logging
 import shutil
 import uuid
@@ -325,6 +326,51 @@ async def _science_enabled(client) -> bool:
     return settings.seed_science_projects
 
 
+MOLTEN_SALT_KB_ID = uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b")
+SEED_ITEM_NAMESPACE = uuid.UUID("0f6c1f4e-5d2a-4b8e-9c3d-7a1e2b4c6d8f")
+""" The namespace of `seed_item_id`'s ids. Never changed: it would orphan every published seed. """
+
+
+def seed_item_id(
+    kb_id: uuid.UUID, name: str, description: str | None, pdfs_dir: Path
+) -> uuid.UUID:
+    """
+    The collaboration item a seeded knowledge base is, on any server.
+
+    Every installation seeds the same corpus under the same fixed id, so the
+    item's id is derived from that id and what was seeded (name, description,
+    and the PDFs by path and size), the same everywhere. The first to publish
+    the seed creates the item under that id; every other installation's seed
+    is linked to it, uploading and downloading nothing. A corpus that changed
+    between releases derives another.
+    """
+    pdfs = sorted(
+        (path.relative_to(pdfs_dir).as_posix(), path.stat().st_size)
+        for path in pdfs_dir.rglob("*")
+        if path.suffix.lower() == ".pdf" and path.is_file() and not path.is_symlink()
+    )
+    key = json.dumps([str(kb_id), name, description, pdfs])
+    return uuid.uuid5(SEED_ITEM_NAMESPACE, key)
+
+
+def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTable:
+    """A seeded knowledge base's row, unchanged since seeding, its `seed_item` set."""
+    pdfs_dir = kb_dir / "pdfs"
+    return KnowledgeBaseTable(
+        id=kb_id,
+        pdfs_dir=str(pdfs_dir),
+        rag_db_path=str(kb_dir / "rag_db"),
+        shared_with_mcp=True,
+        publications=[],
+        build_status="ready",
+        modified=False,
+        seed_item=seed_item_id(
+            kb_id, fields["name"], fields.get("description"), pdfs_dir
+        ),
+        **fields,
+    )
+
+
 async def seed_db(engine: AsyncEngine) -> None:
     """
     Seed the DB with default data on first run, and a no-op thereafter.
@@ -458,8 +504,9 @@ async def seed_db(engine: AsyncEngine) -> None:
         if science:
             _assert_knowledge_base_indexed(molten_salt_kb_dir)
             session.add(
-                KnowledgeBaseTable(
-                    id=uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b"),
+                _seeded_kb(
+                    MOLTEN_SALT_KB_ID,
+                    molten_salt_kb_dir,
                     slug=molten_salt_kb_dir.name,
                     name="Molten Salt Papers",
                     description=(
@@ -467,11 +514,6 @@ async def seed_db(engine: AsyncEngine) -> None:
                         "phase behavior, and tritium breeding. Shares its PDF folder and "
                         "ChromaDB index with the MCP server's rag_search tool."
                     ),
-                    pdfs_dir=str(molten_salt_kb_dir / "pdfs"),
-                    rag_db_path=str(molten_salt_kb_dir / "rag_db"),
-                    shared_with_mcp=True,
-                    publications=[],
-                    build_status="ready",
                     last_built_at=now,
                     created_at=now,
                     updated_at=now,
@@ -559,8 +601,9 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
     if kb is None and await _acquire_ai_safety_corpus():
         kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
         now = now_iso()
-        kb = KnowledgeBaseTable(
-            id=AI_SAFETY_KB_ID,
+        kb = _seeded_kb(
+            AI_SAFETY_KB_ID,
+            kb_dir,
             slug=AI_SAFETY_SLUG,
             name="AI Safety Papers",
             description=(
@@ -570,11 +613,6 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
                 "privacy in autonomous driving. Shares its PDF folder and ChromaDB "
                 "index with the MCP server's rag_search tool."
             ),
-            pdfs_dir=str(kb_dir / "pdfs"),
-            rag_db_path=str(kb_dir / "rag_db"),
-            shared_with_mcp=True,
-            publications=[],
-            build_status="ready",
             last_built_at=now,
             created_at=now,
             updated_at=now,

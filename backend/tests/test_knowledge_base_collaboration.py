@@ -31,11 +31,13 @@ from harness.knowledge_bases import (
     write_pdf,
 )
 from vista_backend.config import settings
+from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
 from vista_backend.db.schemas import KnowledgeBaseTable, LocalSettingsUpdate
 from vista_backend.services import local_settings
 from vista_backend.services.collaboration import CollaborationClient
 from vista_backend.services.knowledge_base import CURRENT_STORE_FILE
 from vista_backend.services.knowledge_base_collaboration import (
+    KB_KIND,
     ArchiveError,
     incompatibility,
     unpack_knowledge_base,
@@ -787,3 +789,136 @@ async def test_a_new_import_leaves_untracked_data_in_its_folder(
     assert Path(res.json()["knowledge_base"]["rag_db_path"]).parent.name.startswith(
         "store-"
     )
+
+
+# ---------------------------------------------------------------------------
+# Seeded knowledge bases: one item on the server, however many installations
+# ---------------------------------------------------------------------------
+
+SEED = "molten-salt-papers"
+
+
+async def _seed_seeded(session) -> KnowledgeBaseTable:
+    """The molten-salt seed as every installation seeds it: unchanged, never published."""
+    kb_dir = settings.knowledge_bases_dir / SEED
+    make_kb(kb_dir)
+    row = kb_row(kb_dir, SEED, id=MOLTEN_SALT_KB_ID, modified=False)
+    row.seed_item = seed_item_id(row.id, row.name, row.description, kb_dir / "pdfs")
+    session.add(row)
+    await session.commit()
+    got = await _kb(session, SEED)
+    assert got is not None
+    return got
+
+
+async def _forget_publishing(session) -> None:
+    """Make this installation one that never published or imported the seed."""
+    row = await _kb(session, SEED)
+    assert row is not None
+    row.origin_server = row.remote_id = row.remote_version = None
+    session.add(row)
+    await session.commit()
+
+
+async def test_the_first_to_publish_a_seed_creates_its_item(collab_server, session):
+    await _use_server(session)
+    seed = (await _seed_seeded(session)).seed_item
+    assert seed is not None
+    with api_client(session) as (client, _):
+        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "published"
+    assert res.json()["knowledge_base"]["remote_id"] == str(seed)
+    async with _other_install() as other:
+        assert (await other.get_item(seed)).name == SEED
+
+
+async def test_a_seed_published_elsewhere_is_linked_without_uploading(
+    collab_server, session
+):
+    await _use_server(session)
+    seed = (await _seed_seeded(session)).seed_item
+    assert seed is not None
+    async with _other_install() as other:
+        await other.create_item(KB_KIND, SEED, manifest={}, item_id=seed)
+    with api_client(session) as (client, _):
+        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+    assert res.status_code == 200, res.text
+    kb = res.json()["knowledge_base"]
+    assert res.json()["status"] == "unchanged"
+    assert (kb["origin_server"], kb["remote_id"], kb["remote_version"]) == (
+        URL,
+        str(seed),
+        1,
+    )
+    assert kb["modified"] is False
+    async with _other_install() as other:
+        assert [v.version for v in await other.list_versions(seed)] == [1]
+        assert len(await other.list_items(KB_KIND)) == 1
+
+
+async def test_importing_a_seed_links_the_copy_here_without_downloading(
+    collab_server, session
+):
+    await _use_server(session)
+    await _seed_seeded(session)
+    with api_client(session) as (client, _):
+        published = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+    seed = published.json()["knowledge_base"]["remote_id"]
+    await _forget_publishing(session)
+    with api_client(session) as (client, _):
+        listed = (await client.get("/collaboration/knowledge-bases")).json()
+        res = await client.post(
+            f"/collaboration/knowledge-bases/{seed}/import", json={}
+        )
+    (entry,) = listed
+    assert entry["local"] == {"name": SEED, "remote_version": 1, "modified": False}
+    assert entry["name_taken"] is False
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "unchanged"
+    kb = res.json()["knowledge_base"]
+    assert (kb["slug"], kb["remote_id"], kb["modified"]) == (SEED, seed, False)
+    # Nothing was unpacked: the seed's own store is the one searched.
+    kb_dir = settings.knowledge_bases_dir / SEED
+    assert not (kb_dir / CURRENT_STORE_FILE).exists()
+    assert list(kb_dir.glob("store-*")) == []
+
+
+@pytest.mark.parametrize("linked_first", [True, False])
+async def test_a_changed_seed_is_published_as_an_item_of_its_own(
+    collab_server, session, linked_first
+):
+    await _use_server(session)
+    seed = (await _seed_seeded(session)).seed_item
+    with api_client(session) as (client, _):
+        if linked_first:
+            await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+        await client.put(f"/knowledge-bases/{SEED}", json={"name": "Mine"})
+        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+        again = await client.put(f"/knowledge-bases/{SEED}", json={"name": "Mine 2"})
+        next_one = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+    assert again.status_code == 200, again.text
+    assert res.status_code == 200, res.text
+    kb = res.json()["knowledge_base"]
+    assert res.json()["status"] == "published"
+    assert kb["remote_id"] != str(seed)
+    assert kb["remote_version"] == 1
+    # Linked to its own item from then on: the next change is its version 2.
+    assert next_one.json()["knowledge_base"]["remote_id"] == kb["remote_id"]
+    assert next_one.json()["knowledge_base"]["remote_version"] == 2
+    async with _other_install() as other:
+        if linked_first:
+            assert [v.version for v in await other.list_versions(seed)] == [1]
+        else:
+            assert seed not in {i.id for i in await other.list_items(KB_KIND)}
+
+
+def test_a_seed_item_is_derived_from_what_was_seeded(tmp_path):
+    pdfs = tmp_path / "pdfs"
+    write_pdf(pdfs / "a.pdf")
+    seed = seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs)
+    assert seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs) == seed
+    assert seed_item_id(uuid.uuid4(), "Papers", None, pdfs) != seed
+    assert seed_item_id(MOLTEN_SALT_KB_ID, "Other", None, pdfs) != seed
+    write_pdf(pdfs / "b.pdf")
+    assert seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs) != seed

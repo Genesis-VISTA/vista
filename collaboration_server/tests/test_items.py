@@ -102,6 +102,21 @@ async def test_an_item_is_created_with_its_first_version(client):
     assert versions[0]["created_by"] == str(INSTALL_ID)
 
 
+async def test_an_item_can_be_created_with_an_id_of_the_clients(client, anon):
+    chosen = uuid.uuid4()
+    body = {"id": str(chosen), "kind": "knowledge-base", "name": "kb", "manifest": {}}
+    res = await client.post("/items", json=body)
+    assert res.status_code == 201, res.text
+    assert res.json()["id"] == str(chosen)
+    again = await client.post("/items", json={**body, "manifest": {"n": 2}})
+    assert again.status_code == 409
+    # The first is untouched, and the server still works after the refusal.
+    versions = (await anon.get(f"/items/{chosen}/versions")).json()
+    assert [v["manifest"] for v in versions] == [{}]
+    assert len((await client.get("/items")).json()) == 1
+    await _item(client)
+
+
 async def test_list_items_filters_by_kind(client):
     skill = await _item(client, "skill", "a")
     project = await _item(client, "project", "b")

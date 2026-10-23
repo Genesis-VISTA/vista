@@ -12,6 +12,7 @@ to do about it.
 import uuid
 
 from sqlalchemy import update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -26,6 +27,10 @@ from .identity import Identity
 
 class NotFound(Exception):
     """No such item, or no such version of one; the message says which."""
+
+
+class ItemExists(Exception):
+    """A create named an id that an item has already."""
 
 
 class VersionConflict(Exception):
@@ -45,6 +50,7 @@ async def create_item(
 ) -> ItemTable:
     """The item and its version 1, committed together."""
     item = ItemTable(
+        id=data.id or uuid.uuid4(),
         kind=data.kind,
         name=data.name,
         created_by=identity.install_id,
@@ -63,7 +69,12 @@ async def create_item(
             created_by_name=identity.display_name,
         )
     )
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as e:
+        # Only the id can collide: the version's key is the item's.
+        await session.rollback()
+        raise ItemExists(f"An item with the id {item.id} exists already.") from e
     await session.refresh(item)
     return item
 

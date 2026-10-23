@@ -291,7 +291,8 @@ class KnowledgeBaseSharing(SQLModel):
     """
     Changed here since `remote_version`: set by a change of name or
     description and by adding or deleting a PDF, cleared by a publish or an
-    import. True for one never published, seeded ones included.
+    import. True for one never published, except a seeded one, which is
+    False until changed (see `KnowledgeBaseTable.seed_item`).
     """
 
 
@@ -332,6 +333,12 @@ class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """ ISO timestamp set at row insert time. """
     updated_at: str = Field(default="")
     """ ISO timestamp updated on every write. """
+    seed_item: uuid.UUID | None = None
+    """
+    For a seeded knowledge base, the collaboration item it is, unchanged, on
+    any server (`seed.seed_item_id`); None for any other. That item is only
+    ever VISTA's seed: changed here, it is published as an item of its own.
+    """
 
 
 class IndexProgress(BaseModel):
