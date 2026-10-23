@@ -56,6 +56,7 @@ beforeEach(() => {
   status = [];
   outputs = [];
   search.current = "";
+  window.sessionStorage.clear();
   replace.mockReset();
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
@@ -175,5 +176,25 @@ describe("Files page", () => {
     expect(folder("folder-a")).toHaveAttribute("aria-expanded", "true");
     expect(folder("nestd")).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("preview")).toHaveTextContent("folder-a/nestd/deep file.txt");
+  });
+
+  it("reopens the folders that were open when the researcher comes back", async () => {
+    outputs = [
+      { name: "folder-a/nestd/deep file.txt", size: 5, modifiedAt: "2026-01-01T00:00:00Z", shown_in: null },
+      { name: "folder-b/other.txt", size: 5, modifiedAt: "2026-01-01T00:00:00Z", shown_in: null },
+    ];
+    const folder = (name: string) => screen.getByRole("button", { name });
+    const first = render(<FilesPage />);
+    await advance(0);
+    act(() => folder("folder-a").click());
+    act(() => folder("nestd").click());
+    // Off to a chat: the page goes away.
+    first.unmount();
+
+    render(<FilesPage />);
+    await advance(0);
+    expect(folder("folder-a")).toHaveAttribute("aria-expanded", "true");
+    expect(folder("nestd")).toHaveAttribute("aria-expanded", "true");
+    expect(folder("folder-b")).toHaveAttribute("aria-expanded", "false");
   });
 });

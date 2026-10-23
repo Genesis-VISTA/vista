@@ -11,7 +11,9 @@ import {
   ancestorFolders,
   buildTree,
   filesHref,
+  readOpenFolders,
   shownInHref,
+  writeOpenFolders,
   type FileKind,
   type ListedFile,
   type TreeNode,
@@ -93,6 +95,8 @@ function FilesPageInner() {
   const [openFolders, setOpenFolders] = useState<ReadonlySet<string>>(new Set());
   /** The selection whose folders were last opened, so each selection opens them once. */
   const [openedFor, setOpenedFor] = useState("");
+  /** The project whose remembered folders `openFolders` was loaded from. */
+  const [foldersFor, setFoldersFor] = useState<string | null>(null);
   const projectQuery = projectName
     ? `?project_name=${encodeURIComponent(projectName)}`
     : "";
@@ -150,14 +154,26 @@ function FilesPageInner() {
   // A new selection (a click or the URL) opens the folders above it and closes
   // none: folders the researcher opened stay open. Adjusted while rendering
   // rather than in an effect, so the tree never paints with them shut.
+  const ancestorsOfSelection = selected
+    ? ancestorFolders(selected.path).map((p) => `${selected.kind}:${p}`)
+    : [];
+  // Coming back to Files (or switching project) reopens the folders that were open
+  // last time this session, plus any above the selection.
+  if (projectName && projectName !== foldersFor) {
+    setFoldersFor(projectName);
+    setOpenFolders(new Set([...readOpenFolders(projectName), ...ancestorsOfSelection]));
+  }
   const selectionKey = selected ? `${selected.kind}:${selected.path}` : "";
   if (selectionKey !== openedFor) {
     setOpenedFor(selectionKey);
     if (selected) {
-      const ancestors = ancestorFolders(selected.path).map((p) => `${selected.kind}:${p}`);
-      setOpenFolders((prev) => new Set([...prev, ...ancestors]));
+      setOpenFolders((prev) => new Set([...prev, ...ancestorsOfSelection]));
     }
   }
+
+  useEffect(() => {
+    if (projectName && foldersFor === projectName) writeOpenFolders(projectName, openFolders);
+  }, [projectName, foldersFor, openFolders]);
 
   function isOpen(kind: FileKind, path: string): boolean {
     return openFolders.has(`${kind}:${path}`);

@@ -106,3 +106,32 @@ export function shownInHref(shown: ShownIn): string {
 export function filesHref(kind: FileKind, path: string): string {
   return `/files?${new URLSearchParams({ kind, path }).toString()}`;
 }
+
+/*
+ * The folders open on the Files page, per project. sessionStorage, not
+ * localStorage: they should survive going to a chat and back, not a restart.
+ */
+const OPEN_FOLDERS_KEY = "vista.filesOpenFolders.v1.";
+
+export function readOpenFolders(project: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const parsed: unknown = JSON.parse(
+      window.sessionStorage.getItem(OPEN_FOLDERS_KEY + project) ?? "[]",
+    );
+    return new Set(
+      Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === "string") : [],
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+export function writeOpenFolders(project: string, open: ReadonlySet<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(OPEN_FOLDERS_KEY + project, JSON.stringify([...open]));
+  } catch {
+    // Private mode or blocked storage: folders simply start closed next time.
+  }
+}
