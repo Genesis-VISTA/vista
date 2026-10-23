@@ -205,6 +205,9 @@ renderer by extension:
   tens of files, not thousands. No caching until measured.
 - **[`chat_title` in `shown_in` goes stale after a rename]** → It is read at listing time,
   not stored.
+- **[The CSP `sandbox` keyword blanks the PDF viewer]** → Spiked (task 4.0): Chromium's viewer renders
+  such a PDF in an Electron 44 child window with VISTA's `webPreferences` and in Chrome, so PDFs keep
+  the same headers as every other file.
 - **[The safety headers break an existing consumer]**: chat's current `display_file` image is
   an `<img>` on the same route. → `<img>` is unaffected by `nosniff` with a correct image
   type, or by a document CSP. The download path is unchanged.

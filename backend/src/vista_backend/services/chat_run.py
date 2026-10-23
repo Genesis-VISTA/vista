@@ -27,6 +27,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import (
     McpElicitationEvent,
+    ProjectAgent,
     ProjectAgentResult,
     ProjectAgentResultEvent,
     RunCapture,
@@ -377,6 +378,26 @@ async def resolve_prompt(
                 prompt_id=elicitation_id,
             )
     return True
+
+
+def _note_display(run: ChatRun, agent: ProjectAgent, event: object) -> None:
+    """
+    Called for every event of the run's stream (files-tab-artifacts-feed design §1).
+
+    Remembers each `display_file` call's `uri` by `tool_call_id`. When that call's
+    result arrives without an `error`, maps the uri to `(kind, path)`, stats the host
+    file under `agent.output_dir` / `agent.uploads_dir` now, and holds a
+    `DisplayedFileTable` row on the run for `_write_displays`.
+    """
+    raise NotImplementedError  # TODO(2.3)
+
+
+async def _write_displays(run: ChatRun) -> None:
+    """
+    Save the records `_note_display` held, in the run's common tail beside
+    `_write_row`, so done, failed, stopped and interrupted runs all keep theirs.
+    """
+    raise NotImplementedError  # TODO(2.3)
 
 
 async def _write_row(
