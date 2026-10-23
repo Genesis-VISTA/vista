@@ -4,6 +4,8 @@ import hashlib
 
 import pytest
 
+from vista_collaboration_server.services import blobs
+
 pytestmark = pytest.mark.anyio
 
 
@@ -40,6 +42,19 @@ async def test_a_streamed_body_is_one_blob(client, settings):
     assert item.status_code == 201, item.text
     blob = await client.get(f"/items/{item.json()['id']}/versions/1/blob")
     assert blob.content == b"knowledge base"
+
+
+async def test_a_body_larger_than_a_write_is_written_whole(
+    client, settings, monkeypatch
+):
+    """Written in `CHUNK`-sized pieces as it arrives, and a remainder after."""
+    monkeypatch.setattr(blobs, "CHUNK", 4)
+    body = b"molten fluoride salt"
+    res = await _stream(client, [body[:3], body[3:11], body[11:]])
+    assert res.status_code == 201, res.text
+    ref = res.json()["blob_ref"]
+    assert ref == hashlib.sha256(body).hexdigest()
+    assert (settings.blobs_dir / ref[:2] / ref).read_bytes() == body
 
 
 async def test_a_streamed_body_over_the_limit_is_413_and_not_kept(client, settings):

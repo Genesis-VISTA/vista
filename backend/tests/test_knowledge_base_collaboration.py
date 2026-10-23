@@ -35,7 +35,7 @@ from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
 from vista_backend.db.schemas import KnowledgeBaseTable, LocalSettingsUpdate
 from vista_backend.services import local_settings
 from vista_backend.services.collaboration import CollaborationClient
-from vista_backend.services.knowledge_base import CURRENT_STORE_FILE
+from vista_backend.services.knowledge_base import CURRENT_STORE_FILE, read_current
 from vista_backend.services.knowledge_base_collaboration import (
     KB_KIND,
     ArchiveError,
@@ -217,6 +217,28 @@ async def test_a_stale_head_is_a_conflict_with_the_choices(
     assert on_top.json()["knowledge_base"]["remote_version"] == 3
 
 
+async def test_a_knowledge_base_gone_from_the_server_is_published_as_new(
+    collab_server, session
+):
+    await _use_server(session)
+    await _seed_kb(session)
+    with api_client(session) as (client, _):
+        await client.post("/knowledge-bases/salt-papers/publish", json={})
+        row = await _kb(session, "salt-papers")
+        gone = uuid.uuid4()
+        row.remote_id, row.modified = gone, True
+        session.add(row)
+        await session.commit()
+        res = await client.post("/knowledge-bases/salt-papers/publish", json={})
+        as_new = await client.post(
+            "/knowledge-bases/salt-papers/publish", json={"as_new": True}
+        )
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "remote_missing"
+    assert as_new.status_code == 200, as_new.text
+    assert as_new.json()["knowledge_base"]["remote_id"] not in (None, str(gone))
+
+
 # ---------------------------------------------------------------------------
 # Listing and importing
 # ---------------------------------------------------------------------------
@@ -392,6 +414,109 @@ async def test_an_update_lands_beside_the_store_and_switches_to_it(
     assert not Path(first["rag_db_path"]).parent.exists()
 
 
+async def _import_twice(session, tmp_path) -> tuple[str, dict, str]:
+    """
+    Version 1 imported here, and version 2 published elsewhere: the import
+    URL, the copy here, and the store `CURRENT` names.
+    """
+    async with _other_install() as other:
+        item_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")
+    url = f"/collaboration/knowledge-bases/{item_id}/import"
+    with api_client(session) as (client, _):
+        first = (await client.post(url, json={})).json()["knowledge_base"]
+    async with _other_install() as other:
+        await publish_kb_elsewhere(
+            other,
+            tmp_path,
+            "salt-papers",
+            item_id=item_id,
+            parent=1,
+            sources={"c.pdf": ["two"]},
+        )
+    store = read_current(settings.knowledge_bases_dir / "salt-papers")
+    assert store is not None
+    return url, first, store
+
+
+async def _left_as_it_was(session, first: dict, store: str) -> None:
+    """The copy here is version 1, on the store the MCP server was reading."""
+    kb_dir = settings.knowledge_bases_dir / "salt-papers"
+    assert read_current(kb_dir) == store
+    assert [p.name for p in kb_dir.glob("store-*")] == [store]
+    assert store_sources(Path(first["rag_db_path"])) == {"a.pdf": 1}
+    kb = await _kb(session, "salt-papers")
+    assert (kb.remote_version, kb.rag_db_path) == (1, first["rag_db_path"])
+
+
+async def test_an_update_refused_after_downloading_leaves_the_store_in_use(
+    collab_server, session, tmp_path, monkeypatch
+):
+    """Indexing begun here while the update downloaded: it is not switched to."""
+    await _use_server(session)
+    url, first, store = await _import_twice(session, tmp_path)
+    download = CollaborationClient.download_blob
+
+    async def indexing_meanwhile(self, *args, **kwargs):
+        await download(self, *args, **kwargs)
+        indexer.register_pending(first["rag_db_path"], total=1)
+
+    monkeypatch.setattr(CollaborationClient, "download_blob", indexing_meanwhile)
+    try:
+        with api_client(session) as (client, _):
+            res = await client.post(url, json={})
+    finally:
+        indexer.clear_progress(first["rag_db_path"])
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "modified"
+    await _left_as_it_was(session, first, store)
+
+
+async def test_an_update_whose_commit_fails_leaves_the_store_in_use(
+    collab_server, session, tmp_path, monkeypatch
+):
+    """`CURRENT` points back at the old store and the new one is removed."""
+    await _use_server(session)
+    url, first, store = await _import_twice(session, tmp_path)
+    kb_dir = settings.knowledge_bases_dir / "salt-papers"
+    commit = session.commit
+
+    async def locked_once_switched():
+        if read_current(kb_dir) != store:
+            raise RuntimeError("database is locked")
+        await commit()
+
+    monkeypatch.setattr(session, "commit", locked_once_switched)
+    with api_client(session) as (client, _), pytest.raises(RuntimeError):
+        await client.post(url, json={})
+    await _left_as_it_was(session, first, store)
+
+
+async def test_a_knowledge_base_made_here_while_downloading_keeps_its_slug(
+    collab_server, session, tmp_path, monkeypatch
+):
+    await _use_server(session)
+    async with _other_install() as other:
+        item_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")
+    download = CollaborationClient.download_blob
+
+    async def made_meanwhile(self, *args, **kwargs):
+        await download(self, *args, **kwargs)
+        await _seed_kb(session, sources={"mine.pdf": ["my chunk"]})
+
+    monkeypatch.setattr(CollaborationClient, "download_blob", made_meanwhile)
+    with api_client(session) as (client, _):
+        res = await client.post(
+            f"/collaboration/knowledge-bases/{item_id}/import", json={}
+        )
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "name_taken"
+    kb_dir = settings.knowledge_bases_dir / "salt-papers"
+    assert read_current(kb_dir) is None
+    assert list(kb_dir.glob("store-*")) == []
+    assert store_sources(kb_dir / "rag_db") == {"mine.pdf": 1}
+    assert (await _kb(session, "salt-papers")).remote_id is None
+
+
 async def test_local_changes_are_replaced_only_when_asked(
     collab_server, session, tmp_path
 ):
@@ -491,6 +616,23 @@ async def test_deleting_a_pdf_deletes_its_rows_and_rewrites_the_bm25_corpus(
     kb = await _kb(session, "salt-papers")
     assert [p["filename"] for p in kb.publications] == ["a.pdf"]
     assert kb.modified is True
+
+
+async def test_a_pdf_the_index_keeps_is_not_deleted(session, monkeypatch):
+    """The index first: if its rows cannot be deleted, nothing is."""
+    kb_dir = await _seed_kb(session)
+
+    async def refused(rag_db_path, source):
+        raise RuntimeError("index is locked")
+
+    monkeypatch.setattr(indexer, "delete_source", refused)
+    with api_client(session) as (client, _):
+        res = await client.delete("/knowledge-bases/salt-papers/publications/a.pdf")
+    assert res.status_code == 500
+    assert "could not be removed from the index" in res.json()["detail"]
+    assert (kb_dir / "pdfs" / "a.pdf").is_file()
+    kb = await _kb(session, "salt-papers")
+    assert [p["filename"] for p in kb.publications] == ["a.pdf"]
 
 
 async def test_deleting_a_pdf_is_refused_while_indexing(session):
@@ -898,6 +1040,34 @@ async def test_a_seed_published_elsewhere_is_linked_without_uploading(
     assert kb["modified"] is False
     async with _other_install() as other:
         assert [v.version for v in await other.list_versions(seed)] == [1]
+        assert len(await other.list_items(KB_KIND)) == 1
+
+
+async def test_a_seed_published_elsewhere_while_packing_is_linked(
+    collab_server, session, monkeypatch
+):
+    """Both installations found no item; the second to create it links the first's."""
+    await _use_server(session)
+    seed = (await _seed_seeded(session)).seed_item
+    assert seed is not None
+    upload = CollaborationClient.upload_large_blob
+
+    async def published_meanwhile(self, *args, **kwargs):
+        async with _other_install() as other:
+            await other.create_item(KB_KIND, SEED, manifest={}, item_id=seed)
+        return await upload(self, *args, **kwargs)
+
+    monkeypatch.setattr(CollaborationClient, "upload_large_blob", published_meanwhile)
+    with api_client(session) as (client, _):
+        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
+    assert res.status_code == 200, res.text
+    kb = res.json()["knowledge_base"]
+    assert (kb["remote_id"], kb["remote_version"], kb["modified"]) == (
+        str(seed),
+        1,
+        False,
+    )
+    async with _other_install() as other:
         assert len(await other.list_items(KB_KIND)) == 1
 
 

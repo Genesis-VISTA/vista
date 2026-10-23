@@ -24,7 +24,11 @@ from vista_backend.db.schemas import (
     ProjectTable,
     SkillTable,
 )
-from vista_backend.services import collaboration, local_settings
+from vista_backend.services import (
+    collaboration,
+    local_settings,
+    project_collaboration,
+)
 from vista_backend.services.collaboration import CollaborationClient
 from vista_backend.services.project_collaboration import (
     KnowledgeBaseRef,
@@ -394,6 +398,34 @@ async def test_a_stale_publish_is_refused_before_any_skill_is_published(
     assert as_new.status_code == 200, as_new.text
     assert as_new.json()["project"]["remote_id"] != first["project"]["remote_id"]
     assert as_new.json()["project"]["remote_version"] == 1
+
+
+async def test_a_publish_that_lands_while_skills_are_published_wins(
+    collab_server, session, monkeypatch
+):
+    """The compare-and-set refuses this one; the skills it published stay so."""
+    await _use_server(session)
+    await seed_project(session, name="salt")
+    publish_skills = project_collaboration._publish_skills
+    with api_client(session) as (client, _):
+        first = (await client.post("/projects/salt/publish", json={})).json()
+        item_id = uuid.UUID(first["project"]["remote_id"])
+        await client.post("/skills", json={**_skill("salt-density"), "project": "salt"})
+
+        async def published_meanwhile(*args, **kwargs):
+            published = await publish_skills(*args, **kwargs)
+            await _republish_project_elsewhere(item_id, 1, name="salt")
+            return published
+
+        monkeypatch.setattr(
+            project_collaboration, "_publish_skills", published_meanwhile
+        )
+        lost = await client.post("/projects/salt/publish", json={})
+    assert lost.status_code == 409, lost.text
+    assert lost.json()["code"] == "version_conflict"
+    assert (lost.json()["head_version"], lost.json()["remote_version"]) == (2, 1)
+    assert (await _project(session, "salt")).remote_version == 1
+    assert (await _skill_row(session, "salt-density")).remote_version == 1
 
 
 async def test_a_project_gone_from_the_server_can_be_published_as_new(
@@ -1043,6 +1075,31 @@ async def test_a_newer_copy_of_a_knowledge_base_is_kept(
     assert "version 2 here" in outcome["detail"]
     assert res.json()["project"]["knowledge_bases"] == ["salt-papers"]
     assert res.json()["project"]["modified"] is False
+    assert (await _kb_row(session, "salt-papers")).remote_version == 2
+
+
+async def test_an_older_copy_of_a_knowledge_base_is_updated(
+    collab_server, session, tmp_path
+):
+    await _use_server(session)
+    async with _other_install() as other:
+        kb_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")
+    with api_client(session) as (client, _):
+        await client.post(f"/collaboration/knowledge-bases/{kb_id}/import", json={})
+        async with _other_install() as other:
+            await publish_kb_elsewhere(
+                other, tmp_path, "salt-papers", item_id=kb_id, parent=1
+            )
+        item_id = await _publish_project_elsewhere(
+            knowledge_bases=[
+                KnowledgeBaseRef(slug="salt-papers", remote_id=kb_id, version=2)
+            ]
+        )
+        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
+    assert res.status_code == 200, res.text
+    [outcome] = res.json()["knowledge_bases"]
+    assert (outcome["slug"], outcome["status"]) == ("salt-papers", "updated")
+    assert res.json()["project"]["knowledge_bases"] == ["salt-papers"]
     assert (await _kb_row(session, "salt-papers")).remote_version == 2
 
 

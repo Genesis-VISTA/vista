@@ -266,3 +266,18 @@ def test_without_a_slug_only_the_kb_searched_is_reopened(data_dir):
     handle, err = rag_mcp._resolve_kb(None)
     assert err is None and handle is not None
     assert handle.slug == "salt-papers" and handle is not handles["salt-papers"]
+
+
+def test_a_search_reads_the_store_an_import_switched_to(data_dir, monkeypatch):
+    """`rag_search`'s own path: off the event loop, the KB refreshed first."""
+    monkeypatch.setattr(rag_mcp, "_embed", lambda text: [0.1, 0.2, 0.3])
+    _import_store(data_dir, "salt-papers", "store-aaaa")
+    assert "chunk of store-aaaa" in rag_mcp._search(
+        "salt", "salt-papers", 5, False, 0.5
+    )
+
+    _import_store(data_dir, "salt-papers", "store-bbbb")
+    found = rag_mcp._search("salt", "salt-papers", 5, False, 0.5)
+
+    assert "chunk of store-bbbb" in found
+    assert "chunk of store-aaaa" not in found
