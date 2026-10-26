@@ -25,6 +25,8 @@ the collaboration server, whose identity is the install, not a login.
 - **BREAKING**: a database from before this change does not work with it and is not
   migrated: delete it by hand (`data/vista.db`) and start fresh. VISTA is in early
   development, and its data is not kept.
+  `incompatible-data-reset` now detects such a database at startup and offers Back up and
+  reset in the startup window instead of deleting by hand.
 - Tests: the user-referencing backend tests are rewritten; tenant-isolation, dev-identity and
   membership tests are deleted; `loadgen.py --users` and the identity header go from
   `backend/scripts/`; `docs/evaluation-runbook.md` Phase D follows.

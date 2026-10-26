@@ -36,6 +36,8 @@ A database from before this change is not migrated or detected: its `user_id` co
 NOT NULL foreign keys to `app_user`, so inserts into it fail, and the researcher deletes it
 by hand. Agreed with the maintainer: VISTA is in early development and its data is not
 kept, so migration code would be weight with no user.
+`incompatible-data-reset` now detects such a database at startup and offers Back up and reset
+in the startup window instead of deleting by hand.
 
 ### D5: The API path is `/settings`
 

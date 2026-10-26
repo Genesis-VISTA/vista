@@ -39,5 +39,5 @@
   - Back up and reset moves everything but the caches and logs into `backups/<UTC>/`, names the folder, and Show Folder opens it;
   - the README names the projects, skills and knowledge bases and where they are;
   - VISTA then opens as on a first run, with the bundled knowledge bases searchable and no download.
-- [ ] 4.2 Add one line to `AGENTS.md` under Backend, using the `writing-for-agents` skill: a schema change that isn't additive (a dropped, renamed or retyped column, or a NOT NULL column without a server default) makes every existing install prompt the researcher to back up and reset. Prefer additive changes. Verify the line is there and `./scripts/ci-local.sh docs` passes.
-- [ ] 4.3 Add a line to `openspec/changes/single-user-backend/` (its proposal BREAKING bullet and design D4) saying that this change replaces "delete it by hand" with the reset prompt. Verify that `openspec validate --all` passes.
+- [x] 4.2 Add one line to `AGENTS.md` under Backend, using the `writing-for-agents` skill: a schema change that isn't additive (a dropped, renamed or retyped column, or a NOT NULL column without a server default) makes every existing install prompt the researcher to back up and reset. Prefer additive changes. Verify the line is there and `./scripts/ci-local.sh docs` passes.
+- [x] 4.3 Add a line to `openspec/changes/single-user-backend/` (its proposal BREAKING bullet and design D4) saying that this change replaces "delete it by hand" with the reset prompt. Verify that `openspec validate --all` passes.
