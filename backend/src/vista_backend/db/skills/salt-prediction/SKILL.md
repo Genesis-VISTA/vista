@@ -22,4 +22,4 @@ Example:
 skills/salt-prediction/scripts/predict_salt.py --formula NaCl --comp "Pure Salt"
 ```
 
-This prints a `SUMMARY_JSON` line and a `Plot saved to ...` path that should be displayed to the user.
+This prints a `SUMMARY_JSON` line and a `Plot saved to ...` path; call `display_file` with that path to show the plot to the user.

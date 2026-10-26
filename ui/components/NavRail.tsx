@@ -127,13 +127,11 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Datasets",
-    href: "/datasets",
+    label: "Files",
+    href: "/files",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <ellipse cx="12" cy="5" rx="8" ry="3" />
-        <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
-        <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+        <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2.5h7.5A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1 -2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z" />
       </svg>
     ),
   },

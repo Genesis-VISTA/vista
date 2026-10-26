@@ -72,6 +72,11 @@ export type ChatMessage = {
    * its bubbles, so a partly saved thread is redrawn rather than duplicated.
    */
   run_id?: string;
+  /**
+   * On a tool-call step: the call's id, so a link to the turn that showed a file
+   * can find the step. Bubbles from before this was recorded lack it.
+   */
+  tool_call_id?: string;
 };
 
 /* ---------------------------------------------------------------------- */

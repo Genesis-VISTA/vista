@@ -10,8 +10,10 @@ from ..db.schemas import (
     ChatSessionUpdate,
 )
 from ..services import chat_session as chat_session_service
+from ..services import displayed_files as displayed_files_service
 from ..services import project as project_service
 from ..services.chat_run import chat_run_registry, live_status
+from ..services.displayed_files import DisplayedFileInfo
 
 
 router = APIRouter(prefix="/projects", tags=["chat-sessions"])
@@ -101,4 +103,15 @@ async def delete_chat_session(
         session,
         project_id=project.id,
         chat_session_id=chat_session_id,
+    )
+
+
+@router.get("/{project_name}/chat-sessions/{chat_session_id}/displayed-files")
+async def list_displayed_files(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    session: SessionDep,
+) -> list[DisplayedFileInfo]:
+    return await displayed_files_service.list_displayed_files(
+        session, project_name, chat_session_id
     )

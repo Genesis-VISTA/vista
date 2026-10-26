@@ -8,6 +8,7 @@ to a real SQLite file through the registry's session factory.
 
 import asyncio
 import json
+import os
 import uuid
 from contextlib import ExitStack, asynccontextmanager
 
@@ -21,13 +22,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import call, make_local_settings, make_project, say, seed_project
 from harness import scripted_model, step_model
 from vista_backend.agents.agents import ProjectAgent
-from vista_backend.db.schemas import ChatSessionTable
+from vista_backend.config import settings
+from vista_backend.db.schemas import ChatSessionTable, DisplayedFileTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.services.displayed_files import file_status
 from vista_backend.services.chat_run import (
     ChatRunRegistry,
     resolve_prompt,
@@ -56,6 +60,8 @@ class Env:
         self.agents: dict[uuid.UUID, ProjectAgent] = {}
         self.hang_started = asyncio.Event()
         self.registry = ChatRunRegistry()
+        self.display_errors: set[str] = set()
+        """ uris `display_file` answers with `{error}`, as the real tool does for a bad path. """
 
     async def conversation(self, steps, history=None) -> tuple[ChatSessionTable, tuple]:
         row = await chat_session_service.create_chat_session(
@@ -99,6 +105,26 @@ class Env:
             """Finishes at once."""
             return "job 42 submitted"
 
+        display_errors = self.display_errors
+
+        @toolset.tool_plain
+        def display_file(uri: str) -> dict[str, str]:
+            """Display a file to the user, shaped like vista_mcp_server's tool."""
+            if uri in display_errors:
+                return {"error": f"Could not resolve {uri}"}
+            return {
+                "uri": uri,
+                "mime_type": "image/png",
+                "filename": uri.rsplit("/", 1)[-1],
+            }
+
+        @toolset.tool_plain
+        def overwrite(path: str) -> str:
+            """Rewrite a file in the output folder, as a later run_bash would."""
+            target = agent.output_dir / path
+            target.write_bytes(target.read_bytes() + b" and more")
+            return "rewritten"
+
         @toolset.tool_plain
         async def hang() -> str:
             """Never finishes."""
@@ -127,7 +153,9 @@ class Env:
 
 
 @pytest.fixture
-async def env(engine, session, monkeypatch):
+async def env(engine, session, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)  # agents' output folders
+
     @asynccontextmanager
     async def get(key):
         yield holder.agents[key[0]]
@@ -488,3 +516,108 @@ async def test_a_watcher_that_sees_run_finished_finds_the_outcome_saved(env):
             assert saved.run_state == "done" and saved.run_unseen is True
             assert env.registry.get(row.id) is None, "no longer reported as running"
             assert [e["event"] for e in saved.run_events or []][-1] == "run_finished"
+
+
+# ─── Record of displayed files (files-tab-artifacts-feed 2.3) ────────────────
+
+
+def _plot(env: Env, row, path: str = "run1/plot.png") -> os.stat_result:
+    """Put a file in the conversation's output folder, as the agent's code would."""
+    target = env.agents[row.id].output_dir / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"\x89PNG fake")
+    return target.stat()
+
+
+async def _displays(env: Env, row) -> list[DisplayedFileTable]:
+    async with AsyncSession(env.engine) as s:
+        found = await s.exec(
+            select(DisplayedFileTable).where(
+                DisplayedFileTable.chat_session_id == row.id
+            )
+        )
+        return list(found.all())
+
+
+async def _display_call_id(env: Env, row) -> str:
+    saved = await env.row(row.id)
+    history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
+        saved.message_history
+    )
+    return next(
+        p.tool_call_id
+        for m in history
+        if isinstance(m, ModelResponse)
+        for p in m.parts
+        if isinstance(p, ToolCallPart) and p.tool_name == "display_file"
+    )
+
+
+async def test_a_successful_display_is_recorded(env):
+    row, key = await env.conversation(
+        [call("display_file", uri="/mnt/data/output/run1/plot.png"), say("here")]
+    )
+    stat = _plot(env, row)
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    assert record.project_id == env.project.id
+    assert record.run_id == run.run_id
+    assert record.tool_call_id == await _display_call_id(env, row)
+    assert (record.kind, record.path) == ("outputs", "run1/plot.png")
+    assert (record.size, record.mtime_ns) == (stat.st_size, stat.st_mtime_ns)
+    assert record.shown_at
+
+
+async def test_a_display_that_returns_an_error_is_not_recorded(env):
+    row, key = await env.conversation(
+        [call("display_file", uri="/mnt/data/output/run1/plot.png"), say("sorry")]
+    )
+    _plot(env, row)
+    env.display_errors.add("/mnt/data/output/run1/plot.png")
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    assert await _displays(env, row) == []
+
+
+async def test_a_stopped_run_still_records_what_it_displayed(env):
+    row, key = await env.conversation(
+        [
+            call("display_file", uri="/mnt/data/output/run1/plot.png"),
+            call("hang"),
+            say("unreachable"),
+        ]
+    )
+    _plot(env, row)
+
+    run = await env.start(row, key)
+    await _until(env.hang_started.is_set)
+    assert await env.registry.stop(row.id) is True
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    assert (record.kind, record.path) == ("outputs", "run1/plot.png")
+
+
+async def test_a_file_overwritten_later_in_the_run_reads_as_changed(env):
+    row, key = await env.conversation(
+        [
+            call("display_file", uri="/mnt/data/output/run1/plot.png"),
+            call("overwrite", path="run1/plot.png"),
+            say("done"),
+        ]
+    )
+    _plot(env, row)
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    output_dir = env.agents[row.id].output_dir
+    assert (
+        file_status(output_dir, record.path, record.size, record.mtime_ns) == "changed"
+    )

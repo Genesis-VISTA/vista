@@ -21,21 +21,24 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import TypeAdapter
+from pydantic_ai import FunctionToolCallEvent, FunctionToolResultEvent, ToolReturnPart
 from pydantic_ai.messages import ModelMessage
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import (
     McpElicitationEvent,
+    ProjectAgent,
     ProjectAgentResult,
     ProjectAgentResultEvent,
     RunCapture,
 )
 from ..agents.inference import describe_run_failure
 from ..db.db import get_engine
-from ..db.schemas import ChatSessionTable
+from ..db.schemas import ChatSessionTable, DisplayedFileTable
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from .displayed_files import sandbox_path_to_file
 from .project_agent import (
     ProjectAgentKey,
     project_agent_pool,
@@ -111,6 +114,10 @@ class ChatRun:
     resolved: set[str] = field(default_factory=set)
     _cond: asyncio.Condition = field(default_factory=asyncio.Condition)
     _started: asyncio.Event = field(default_factory=asyncio.Event)
+
+    # display file tracking
+    pending_display_files: dict[str, str] = field(default_factory=dict)
+    completed_display_files: list[DisplayedFileTable] = field(default_factory=list)
 
     async def append(
         self, kind: str, data: str, prompt_id: str | None = None
@@ -270,6 +277,7 @@ class ChatRunRegistry:
                         capture=run.capture,
                     ):
                         prompt_id = None
+                        _note_display(run, agent, event)
                         if isinstance(event, McpElicitationEvent):
                             # `resolve_prompt` answers it.
                             register_elicitation(event.elicitation_id, agent)
@@ -340,6 +348,8 @@ class ChatRunRegistry:
                     history=history,
                 )
             )
+
+            await asyncio.shield(_write_displays(run))
         except Exception:
             log.exception("Could not save chat run %s", run.run_id)
         finally:
@@ -377,6 +387,68 @@ async def resolve_prompt(
                 prompt_id=elicitation_id,
             )
     return True
+
+
+def _note_display(run: ChatRun, agent: ProjectAgent, event: object) -> None:
+    """
+    Called for every event of the run's stream (files-tab-artifacts-feed design §1).
+
+    Remembers each `display_file` call's `uri` by `tool_call_id`. When that call's
+    result arrives without an `error`, maps the uri to `(kind, path)`, stats the host
+    file under `agent.output_dir` / `agent.uploads_dir` now, and holds a
+    `DisplayedFileTable` row on the run for `_write_displays`.
+    """
+    if (
+        isinstance(event, (FunctionToolCallEvent, FunctionToolResultEvent))
+        and event.part.tool_name
+        and event.part.tool_name.rsplit("__", 1)[-1] == "display_file"
+    ):
+        if isinstance(event, FunctionToolCallEvent):
+            run.pending_display_files[event.part.tool_call_id] = (
+                event.part.args_as_dict()["uri"]
+            )
+        elif isinstance(event.part, ToolReturnPart):
+            this_id = event.part.tool_call_id
+            uri = run.pending_display_files.pop(this_id, None)
+            if isinstance(event.part.content, dict) and "error" in event.part.content:
+                return
+            if uri is None:
+                return
+            path_res = sandbox_path_to_file(uri)
+            if path_res is None:
+                return
+            kind, rel_path = path_res
+            root_dir = agent.uploads_dir if kind == "uploads" else agent.output_dir
+            file_path = root_dir / rel_path
+            try:
+                file_stats = file_path.stat()
+            except OSError:
+                return
+            run.completed_display_files.append(
+                DisplayedFileTable(
+                    project_id=run.project_id,
+                    chat_session_id=run.chat_session_id,
+                    run_id=run.run_id,
+                    tool_call_id=this_id,
+                    kind=kind,
+                    path=rel_path,
+                    shown_at=now_iso(),
+                    size=file_stats.st_size,
+                    mtime_ns=file_stats.st_mtime_ns,
+                )
+            )
+
+
+async def _write_displays(run: ChatRun) -> None:
+    """
+    Save the records `_note_display` held, in the run's common tail beside
+    `_write_row`, so done, failed, stopped and interrupted runs all keep theirs.
+    """
+    async with session_factory() as db:
+        db.add_all(run.completed_display_files)
+        await db.commit()
+
+    run.completed_display_files.clear()
 
 
 async def _write_row(

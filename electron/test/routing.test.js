@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { classify, originOf } from '../src/routing.js';
+import { classify, isPdfViewerFrame, originOf } from '../src/routing.js';
 
 const ORIGIN = 'http://127.0.0.1:3000';
 
@@ -56,6 +56,19 @@ for (const [name, url, expected] of CASES) {
 test('the origin is taken from the start URL, not matched as a prefix', () => {
   assert.equal(originOf('http://127.0.0.1:3000/projects?x=1'), ORIGIN);
   assert.equal(classify('http://127.0.0.1:3000/projects', 'http://127.0.0.1:3000/skills'), 'in-app');
+});
+
+test("Chromium's PDF viewer frame is recognised, and nothing else", () => {
+  const viewer = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai';
+  assert.equal(isPdfViewerFrame(`${viewer}/65d0f50e-fdd3-4bf4-a2f0-09724474deb9`), true);
+  assert.equal(isPdfViewerFrame(`${viewer}/index.html`), true);
+  // Any other extension, and the viewer's ID anywhere but the origin, stay refused.
+  assert.equal(isPdfViewerFrame('chrome-extension://aaaabbbbccccddddeeeeffffgggghhhh/x'), false);
+  assert.equal(isPdfViewerFrame('http://127.0.0.1:3000/mhjfbmdgcfjbbpaeojofohoefgiehjai'), false);
+  assert.equal(isPdfViewerFrame('https://mhjfbmdgcfjbbpaeojofohoefgiehjai/'), false);
+  assert.equal(isPdfViewerFrame('not a url'), false);
+  // It is not a route: the viewer is still no place to open or navigate to.
+  assert.equal(classify(ORIGIN, `${viewer}/x`), 'deny');
 });
 
 test('the dev server origin works the same way', () => {

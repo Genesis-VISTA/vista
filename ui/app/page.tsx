@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
@@ -36,7 +36,6 @@ import {
 } from "@/lib/projects";
 import { writePendingDestination } from "@/lib/pending-destination";
 import {
-  extractPlotPath,
   extractPredictionSummary,
   extractReferences,
   formatResultSummary,
@@ -70,6 +69,8 @@ import {
 import { readRefusedSend } from "@/lib/refused-send";
 import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
 import { RunStatusDot } from "@/components/RunStatusDot";
+import ArtifactFeed, { artifactElementId } from "@/components/ArtifactFeed";
+import { fetchDisplayedFiles, mergeFeed, type DisplayedFile } from "@/lib/displayed-files";
 
 type WorkspaceTab = "artifacts" | "activity" | "jobs";
 
@@ -139,7 +140,27 @@ function ArtifactImage({
   );
 }
 
+/**
+ * `useSearchParams` (the `chat` / `run` / `step` a link from the Files page carries)
+ * needs a Suspense boundary above it for the production build.
+ */
 export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatPage />
+    </Suspense>
+  );
+}
+
+/** The turn's answer: the last reply in the run, or failing that its last bubble. */
+function findTurnAnswer(messages: ChatMessage[], runId: string): ChatMessage | null {
+  const turn = messages.filter((m) => m.run_id === runId && !m.intermediate);
+  return [...turn].reverse().find((m) => m.role === "assistant") ?? turn[turn.length - 1] ?? null;
+}
+
+type DeepLink = { chat: string; run: string | null; step: string | null };
+
+function ChatPage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
@@ -253,6 +274,28 @@ export default function HomePage() {
    */
   const locallyCreatedSessionIdRef = useRef<string | null>(null);
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
+  /** The files shown in the open conversation, as recorded; and those shown since, before they are read back. */
+  const [recordedFiles, setRecordedFiles] = useState<DisplayedFile[]>([]);
+  const [provisionalFiles, setProvisionalFiles] = useState<DisplayedFile[]>([]);
+  const [feedLoaded, setFeedLoaded] = useState(false);
+  /** The conversation the loaded feed belongs to, so a jump never reads another's. */
+  const [feedLoadedFor, setFeedLoadedFor] = useState<string | null>(null);
+  const [feedRefresh, setFeedRefresh] = useState(0);
+  const feedItems = useMemo(
+    () => mergeFeed(provisionalFiles, recordedFiles),
+    [provisionalFiles, recordedFiles]
+  );
+  /** A turn to open once its conversation is on screen, and the bubbles it then scrolls to and highlights. */
+  const [pendingJump, setPendingJump] = useState<{
+    chat: string;
+    runId: string | null;
+    stepId: string | null;
+  } | null>(null);
+  const [turnFocus, setTurnFocus] = useState<{ ids: string[] } | null>(null);
+  const [chatNotFound, setChatNotFound] = useState(false);
+  const searchParams = useSearchParams();
+  const [deepLink, setDeepLink] = useState<DeepLink | null>(null);
+  const deepLinkHandledRef = useRef<DeepLink | null>(null);
 
   function toggleIntermediate(id: string) {
     setExpandedIntermediates((prev) => {
@@ -450,6 +493,129 @@ export default function HomePage() {
     latestResult,
     ackPending,
   ]);
+
+  // The feed is one conversation's: empty until its own list arrives.
+  useEffect(() => {
+    setRecordedFiles([]);
+    setProvisionalFiles([]);
+    setFeedLoaded(false);
+    setFeedLoadedFor(null);
+  }, [activeProject?.name, activeChatSessionId]);
+
+  // Read the record of displayed files on open, on a switch, and when a run finishes.
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !activeChatSessionId) return;
+    const controller = new AbortController();
+    fetchDisplayedFiles(projectName, activeChatSessionId, controller.signal)
+      .then((files) => {
+        setRecordedFiles(files);
+        // What the run showed is in the record now.
+        setProvisionalFiles([]);
+        setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
+      })
+      .catch(() => {
+        // Keep what is shown; the next run or switch reads it again.
+        if (controller.signal.aborted) return;
+        setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
+      });
+    return () => controller.abort();
+  }, [activeProject?.name, activeChatSessionId, feedRefresh]);
+
+  // A link to a conversation (and a turn in it) is read once, then cleared from the URL so a
+  // reload does not jump again. `router.replace("/")` does nothing on the page a full load
+  // opened with a query (the URL stays), so this is the native `history.replaceState` that
+  // Next documents as feeding `useSearchParams`.
+  useEffect(() => {
+    const chat = searchParams.get("chat");
+    if (!chat) return;
+    setDeepLink({ chat, run: searchParams.get("run"), step: searchParams.get("step") });
+    window.history.replaceState(null, "", "/");
+  }, [searchParams]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!deepLink || !projectName || deepLinkHandledRef.current === deepLink) return;
+    deepLinkHandledRef.current = deepLink;
+    void (async () => {
+      let known = false;
+      try {
+        known = (await listPersistedChatSessions(projectName)).some((s) => s.id === deepLink.chat);
+      } catch {
+        // Treated as not found: nothing to open.
+      }
+      setDeepLink(null);
+      if (!known) {
+        setChatNotFound(true);
+        return;
+      }
+      setChatNotFound(false);
+      setPendingJump({ chat: deepLink.chat, runId: deepLink.run, stepId: deepLink.step });
+      if (readActiveChatSessionId(projectName) !== deepLink.chat) {
+        writeActiveChatSessionId(projectName, deepLink.chat);
+        notifyActiveChatSessionChanged();
+      }
+    })();
+  }, [deepLink, activeProject?.name]);
+
+  // Open the turn once its conversation has loaded. A run the conversation does not
+  // contain opens it at the end, as it would have been.
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!pendingJump || !projectName || !isSessionHydrated) return;
+    if (
+      activeChatSessionId !== pendingJump.chat ||
+      hydratedSessionKeyRef.current !== `${projectName}:${pendingJump.chat}`
+    ) {
+      return;
+    }
+    // A link that names the display waits for the feed, so its card can be shown too.
+    if (pendingJump.stepId && feedLoadedFor !== pendingJump.chat) return;
+    setPendingJump(null);
+    const answer = pendingJump.runId ? findTurnAnswer(messages, pendingJump.runId) : null;
+    if (!answer) return;
+    // The file the researcher came from, in the feed; none for a display from
+    // before they were recorded, which opens the turn alone.
+    const card = pendingJump.stepId
+      ? feedItems.find(
+          (f) => f.run_id === pendingJump.runId && f.tool_call_id === pendingJump.stepId
+        )
+      : undefined;
+    if (card) setWorkspaceTab("artifacts");
+    setTurnFocus({
+      ids: card ? [`msg-${answer.id}`, artifactElementId(card)] : [`msg-${answer.id}`],
+    });
+  }, [
+    pendingJump,
+    activeProject?.name,
+    activeChatSessionId,
+    isSessionHydrated,
+    messages,
+    feedLoadedFor,
+    feedItems,
+  ]);
+
+  useEffect(() => {
+    if (!turnFocus) return;
+    const frame = requestAnimationFrame(() => {
+      for (const id of turnFocus.ids) {
+        document.getElementById(id)?.scrollIntoView({ block: "center" });
+      }
+    });
+    const timer = window.setTimeout(() => setTurnFocus(null), 2600);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [turnFocus]);
+
+  useEffect(() => {
+    if (!chatNotFound) return;
+    const timer = window.setTimeout(() => setChatNotFound(false), 8000);
+    return () => window.clearTimeout(timer);
+  }, [chatNotFound]);
 
   // Switching conversation, or leaving the chat page, stops watching a run. The
   // run carries on in the backend, and opening its conversation again re-attaches.
@@ -844,7 +1010,13 @@ export default function HomePage() {
         setPendingElicitation((current) => (current?.id === id ? null : current));
         setPendingToolApproval((current) => (current?.id === id ? null : current));
       },
-      scrollToLatest: () => requestAnimationFrame(() => scrollChatToLatest("smooth"))
+      scrollToLatest: () => requestAnimationFrame(() => scrollChatToLatest("smooth")),
+      showFile: (file) => {
+        if (live()) setProvisionalFiles((prev) => [file, ...prev]);
+      },
+      runFinished: () => {
+        if (live()) setFeedRefresh((n) => n + 1);
+      }
     };
   }
 
@@ -1332,6 +1504,9 @@ export default function HomePage() {
         <div className="panel-body" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           {isConversationListView ? (
             <div className="chat-list conversation-list-view">
+              {chatNotFound && (
+                <div className="chat-notice" role="status">Conversation not found</div>
+              )}
               {!activeProject && (
                 <div className="chat-bubble">
                   Select a project first to see its conversations.
@@ -1440,6 +1615,9 @@ export default function HomePage() {
           ) : isConversationOpen ? (
             <>
               <div ref={chatListRef} className="chat-list" onScroll={handleChatScroll}>
+                {chatNotFound && (
+                  <div className="chat-notice" role="status">Conversation not found</div>
+                )}
                 {activeChatSessionTitle && (
                   <div className="chat-session-banner">{activeChatSessionTitle}</div>
                 )}
@@ -1464,7 +1642,11 @@ export default function HomePage() {
                     is in the Activity tab, where there is room to say what it
                     was. */}
                 {conversationMessages.map((msg) => (
-                  <div key={msg.id} className={`chat-bubble ${msg.role}`}>
+                  <div
+                    key={msg.id}
+                    id={`msg-${msg.id}`}
+                    className={`chat-bubble ${msg.role}${turnFocus?.ids.includes(`msg-${msg.id}`) ? " turn-highlight" : ""}`}
+                  >
                     {msg.role === "assistant" ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     ) : (
@@ -1629,7 +1811,12 @@ export default function HomePage() {
                 step.id === latestIntermediateId ||
                 expandedIntermediates.has(step.id);
               return (
-                <div key={step.id} className="activity-step" data-expanded={expanded}>
+                <div
+                  key={step.id}
+                  id={`msg-${step.id}`}
+                  className="activity-step"
+                  data-expanded={expanded}
+                >
                   <span className="activity-step-dot" aria-hidden="true" />
                   <div className="activity-step-body">
                     {hasDetail ? (
@@ -1731,11 +1918,15 @@ export default function HomePage() {
           >
             <div className="output-split" ref={outputSplitRef}>
             <div className="output-top">
-              {!latestResult && <div className="chat-bubble">No figure yet.</div>}
+              {!latestResult && feedItems.length === 0 && (
+                <div className="chat-bubble">No figure yet.</div>
+              )}
               {latestResult && latestResult.ui?.kind === "html" && (
                 <SandboxedHtmlCard html={latestResult.ui.html} />
               )}
-              {latestResult && latestResult.ui?.kind === "file" && (
+              {/* A conversation from before displays were recorded has no feed; its
+                  last figure still shows, as it always did. */}
+              {latestResult && latestResult.ui?.kind === "file" && feedLoaded && feedItems.length === 0 && (
                 latestResult.ui.mimeType?.startsWith("image/") ? (
                   <ArtifactImage
                     url={latestResult.ui.url}
@@ -1748,9 +1939,10 @@ export default function HomePage() {
                   </a>
                 )
               )}
-              {latestResult && latestResult.ui?.kind !== "html" && latestResult.ui?.kind !== "file" && (
+              {latestResult && latestResult.ui?.kind !== "html" && latestResult.ui?.kind !== "file" && feedItems.length === 0 && (
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
               )}
+
               {latestPredictionSummary && (
                 <details className="reference-box" open>
                   <summary>Prediction Summary</summary>
@@ -1783,6 +1975,16 @@ export default function HomePage() {
                   </div>
                 </details>
               )}
+              <ArtifactFeed
+                items={feedItems}
+                projectName={activeProject?.name ?? null}
+                highlighted={turnFocus?.ids ?? []}
+                onZoom={setLightbox}
+                onJumpToTurn={(item) => {
+                  if (!activeChatSessionId) return;
+                  setPendingJump({ chat: activeChatSessionId, runId: item.run_id, stepId: null });
+                }}
+              />
             </div>
             </div>
           </div>
