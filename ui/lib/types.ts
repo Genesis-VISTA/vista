@@ -94,6 +94,8 @@ export type PublicationIndexStatus =
   | "indexed"
   | "failed";
 
+export type PublicationKind = "pdf" | "csv" | "tsv" | "text" | "markdown";
+
 export type PublicationCitationStatus =
   | "pending"
   | "extracted"
@@ -138,6 +140,10 @@ export type Publication = {
   citation_status?: PublicationCitationStatus | null;
   /** Error message from the citation LLM call when status='failed'. */
   citation_error?: string | null;
+  /** File format; absent on older rows, which are PDFs. */
+  kind?: PublicationKind;
+  /** Data rows in a CSV/TSV file; absent for other formats or when unknown. */
+  row_count?: number | null;
 };
 
 export type KnowledgeBaseBuildStatus = "pending" | "ready" | "stale" | "failed";

@@ -41,7 +41,7 @@ class FakeTextRAG:
     def write_bm25_corpus(self):
         self.corpus_writes += 1
 
-    def index_single_pdf(self, pdf_path, progress_cb=None):
+    def index_single_file(self, pdf_path, progress_cb=None):
         self.indexed.append(Path(pdf_path))
         return {
             "filename": Path(pdf_path).name,
@@ -209,6 +209,14 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     assert results[0]["status"] == "indexed"
     assert results[0]["citation_status"] == "disabled"
     assert fake_rag[0].extract_citations is False
+
+
+async def test_non_pdf_filename_reaches_index_single_file(fake_rag, tmp_path):
+    (tmp_path / "pdfs").mkdir()
+    (tmp_path / "pdfs" / "runs.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    results = await _index(tmp_path, ["runs.csv"])
+    assert results[0]["status"] == "indexed"
+    assert [p.name for p in fake_rag[0].indexed] == ["runs.csv"]
 
 
 def test_the_store_format_is_build_rags_without_importing_it():
