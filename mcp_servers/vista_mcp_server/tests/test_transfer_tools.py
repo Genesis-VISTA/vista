@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastmcp.exceptions import ToolError
+from fastmcp.server.elicitation import AcceptedElicitation
 
 import vista_mcp_server.transfer_mcp as t
 from vista_mcp_server.config import settings
@@ -62,6 +63,23 @@ def project(tmp_path) -> ProjectPaths:
     return ProjectPaths(
         output_dir=str(tmp_path / "output"), uploads_dir=str(tmp_path / "uploads")
     )
+
+
+class Approver:
+    """Stands in for the researcher: records each prompt and gives a set answer."""
+
+    def __init__(self, answer: bool = True):
+        self.answer = answer
+        self.messages: list[str] = []
+
+    async def __call__(self, message: str) -> bool:
+        self.messages.append(message)
+        return self.answer
+
+
+@pytest.fixture
+def approver() -> Approver:
+    return Approver()
 
 
 class Expired(FakeGlobusClient):
@@ -236,10 +254,10 @@ async def test_a_bad_download_path_is_refused_before_globus(globus, project, pat
 # --- uploading --------------------------------------------------------------
 
 
-async def test_an_upload_lands_in_the_transfers_folder(globus, project):
+async def test_an_upload_lands_in_the_transfers_folder(globus, project, approver):
     (Path(project.uploads_dir) / "salt.xyz").write_text("Li 0 0 0", encoding="utf-8")
     text = await t._upload_files(
-        CFG, project, "frontier", ["/mnt/data/uploads/salt.xyz"], "inputs"
+        CFG, project, "frontier", ["/mnt/data/uploads/salt.xyz"], "inputs", approver
     )
     assert globus.files["/r.jdoe.jobs/transfers/inputs/salt.xyz"] == b"Li 0 0 0"
     # From the folder holding /r, so a researcher who never submitted a job gets `.jobs` too.
@@ -249,18 +267,26 @@ async def test_an_upload_lands_in_the_transfers_folder(globus, project):
     assert text.splitlines()[-1] == "/r.jdoe.jobs/transfers/inputs/salt.xyz"
 
 
-async def test_an_upload_from_the_output_folder_to_the_transfers_root(globus, project):
+async def test_an_upload_from_the_output_folder_to_the_transfers_root(
+    globus, project, approver
+):
     (Path(project.output_dir) / "plot.png").write_bytes(b"png")
-    await t._upload_files(CFG, project, "odo", ["/mnt/data/output/plot.png"], "")
+    await t._upload_files(
+        CFG, project, "odo", ["/mnt/data/output/plot.png"], "", approver
+    )
     assert globus.files["/r.jdoe.jobs/transfers/plot.png"] == b"png"
 
 
-async def test_a_second_upload_replaces_the_first(globus, project):
+async def test_a_second_upload_replaces_the_first(globus, project, approver):
     source = Path(project.uploads_dir) / "salt.xyz"
     source.write_text("old", encoding="utf-8")
-    await t._upload_files(CFG, project, "odo", ["/mnt/data/uploads/salt.xyz"], "inputs")
+    await t._upload_files(
+        CFG, project, "odo", ["/mnt/data/uploads/salt.xyz"], "inputs", approver
+    )
     source.write_text("new", encoding="utf-8")
-    await t._upload_files(CFG, project, "odo", ["/mnt/data/uploads/salt.xyz"], "inputs")
+    await t._upload_files(
+        CFG, project, "odo", ["/mnt/data/uploads/salt.xyz"], "inputs", approver
+    )
     assert globus.files["/r.jdoe.jobs/transfers/inputs/salt.xyz"] == b"new"
 
 
@@ -268,12 +294,15 @@ async def test_a_second_upload_replaces_the_first(globus, project):
     "remote_dir", ["/lustre/orion/abc/proj-shared", "../src", "a/../../b", "a\\b"]
 )
 async def test_a_destination_outside_transfers_is_refused_before_globus(
-    globus, project, remote_dir
+    globus, project, approver, remote_dir
 ):
     (Path(project.uploads_dir) / "f").write_text("x", encoding="utf-8")
     with pytest.raises(ToolError, match="only under your transfers folder"):
-        await t._upload_files(CFG, project, "odo", ["/mnt/data/uploads/f"], remote_dir)
+        await t._upload_files(
+            CFG, project, "odo", ["/mnt/data/uploads/f"], remote_dir, approver
+        )
     assert globus.clients == 0
+    assert approver.messages == []
 
 
 @pytest.mark.parametrize(
@@ -286,14 +315,15 @@ async def test_a_destination_outside_transfers_is_refused_before_globus(
     ],
 )
 async def test_a_source_outside_the_project_or_not_a_file_is_refused(
-    globus, project, path
+    globus, project, approver, path
 ):
     with pytest.raises(ToolError, match="Cannot upload"):
-        await t._upload_files(CFG, project, "odo", [path], "")
+        await t._upload_files(CFG, project, "odo", [path], "", approver)
     assert globus.clients == 0
+    assert approver.messages == []
 
 
-async def test_two_sources_with_one_name_are_refused(globus, project):
+async def test_two_sources_with_one_name_are_refused(globus, project, approver):
     (Path(project.uploads_dir) / "a.txt").write_text("1", encoding="utf-8")
     (Path(project.output_dir) / "a.txt").write_text("2", encoding="utf-8")
     with pytest.raises(ToolError, match="same name"):
@@ -303,16 +333,83 @@ async def test_two_sources_with_one_name_are_refused(globus, project):
             "odo",
             ["/mnt/data/uploads/a.txt", "/mnt/data/output/a.txt"],
             "",
+            approver,
         )
     assert globus.clients == 0
+    assert approver.messages == []
 
 
-async def test_an_upload_needs_the_remote_folder(globus, project):
+async def test_an_upload_needs_the_remote_folder(globus, project, approver):
     (Path(project.uploads_dir) / "f").write_text("x", encoding="utf-8")
     cfg = CFG.model_copy(update={"odo_remote_dir": None})
     with pytest.raises(ToolError, match="Odo remote directory"):
-        await t._upload_files(cfg, project, "odo", ["/mnt/data/uploads/f"], "")
+        await t._upload_files(
+            cfg, project, "odo", ["/mnt/data/uploads/f"], "", approver
+        )
     assert globus.clients == 0
+    assert approver.messages == []
+
+
+# --- approval ---------------------------------------------------------------
+
+
+async def test_a_no_raises_the_not_approved_error():
+    with pytest.raises(t.TransferNotApproved) as raised:
+        await t._require_approval(Approver(False), "Upload?")
+    assert str(raised.value) == t.NOT_APPROVED
+    assert "Do not retry" in t.NOT_APPROVED and "approval" in t.NOT_APPROVED
+    await t._require_approval(Approver(True), "Upload?")
+
+
+async def test_the_prompt_names_the_destination_and_the_file_with_its_size(
+    globus, project, approver
+):
+    (Path(project.uploads_dir) / "salt.xyz").write_bytes(b"x" * 2048)
+    await t._upload_files(
+        CFG, project, "frontier", ["/mnt/data/uploads/salt.xyz"], "inputs", approver
+    )
+    [message] = approver.messages
+    assert message.splitlines()[0] == (
+        "Upload 1 file (2.0 KB) to Frontier, into /r.jdoe.jobs/transfers/inputs/:"
+    )
+    assert "salt.xyz" in message and "2.0 KB" in message
+    assert "replaces" not in message
+
+
+async def test_the_prompt_marks_only_the_file_it_replaces(globus, project, approver):
+    (Path(project.uploads_dir) / "salt.xyz").write_text("new", encoding="utf-8")
+    (Path(project.uploads_dir) / "mesh.h5").write_text("m", encoding="utf-8")
+    globus.ls_entries["/r.jdoe.jobs/transfers/inputs"] = [
+        {"name": "salt.xyz", "type": "file", "size": 3},
+        {"name": "mesh.h5", "type": "dir"},
+    ]
+    await t._upload_files(
+        CFG,
+        project,
+        "odo",
+        ["/mnt/data/uploads/salt.xyz", "/mnt/data/uploads/mesh.h5"],
+        "inputs",
+        approver,
+    )
+    [message] = approver.messages
+    assert message.startswith(
+        "Upload 2 files (4 B) to Odo, into /r.jdoe.jobs/transfers/inputs/:"
+    )
+    [salt] = [line for line in message.splitlines() if "salt.xyz" in line]
+    [mesh] = [line for line in message.splitlines() if "mesh.h5" in line]
+    assert "replaces the file there" in salt
+    assert "replaces" not in mesh
+
+
+async def test_a_declined_upload_into_a_new_folder_leaves_nothing(globus, project):
+    (Path(project.uploads_dir) / "f").write_text("x", encoding="utf-8")
+    no = Approver(False)
+    with pytest.raises(t.TransferNotApproved, match="did not approve"):
+        await t._upload_files(CFG, project, "odo", ["/mnt/data/uploads/f"], "fresh", no)
+    assert len(no.messages) == 1
+    assert globus.uploads == []
+    assert globus.mkdir_p_calls == []
+    assert globus.files == {}
 
 
 # --- an expired session -----------------------------------------------------
@@ -335,10 +432,15 @@ async def test_an_expired_session_on_a_download_is_not_a_missing_file(expired, p
         await t._download_files(CFG, Path(project.output_dir), "odo", ["/d/a.txt"])
 
 
-async def test_an_expired_session_on_an_upload(expired, project):
+async def test_an_expired_session_on_an_upload_comes_before_the_prompt(
+    expired, project, approver
+):
     (Path(project.uploads_dir) / "f").write_text("x", encoding="utf-8")
     with pytest.raises(GlobusSessionExpired, match="expired"):
-        await t._upload_files(CFG, project, "odo", ["/mnt/data/uploads/f"], "")
+        await t._upload_files(
+            CFG, project, "odo", ["/mnt/data/uploads/f"], "", approver
+        )
+    assert approver.messages == []
 
 
 # --- through the tool, as a call sees it ------------------------------------
@@ -349,8 +451,13 @@ async def test_a_tool_call_reads_paths_and_credentials_from_the_request(
 ):
     (Path(project.uploads_dir) / "f").write_text("x", encoding="utf-8")
     vista = {"user": CFG.model_dump(), "project_paths": project.model_dump()}
+
+    async def elicit(message, response_type=None):
+        return AcceptedElicitation(data=None)
+
     ctx = SimpleNamespace(
-        request_context=SimpleNamespace(meta=SimpleNamespace(vista=vista))
+        request_context=SimpleNamespace(meta=SimpleNamespace(vista=vista)),
+        elicit=elicit,
     )
     text = await t.hpc_upload_files(ctx, "odo", ["/mnt/data/uploads/f"], "in")
     assert "/r.jdoe.jobs/transfers/in/f" in text

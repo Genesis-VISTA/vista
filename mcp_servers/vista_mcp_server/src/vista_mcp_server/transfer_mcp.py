@@ -21,11 +21,13 @@ Lux moves files over SFTP.
 """
 from __future__ import annotations
 import functools, logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
+from fastmcp.server.elicitation import AcceptedElicitation
 from mcp.types import ToolAnnotations
 
 from .lib.globus import GlobusFileNotFound, create_globus_client
@@ -44,6 +46,38 @@ TRANSFERS = "transfers"
 
 SANDBOX_UPLOADS_DIR = PurePosixPath("/mnt/data/uploads")
 """ Where the researcher's uploaded files appear inside the sandbox. """
+
+
+Approve = Callable[[str], Awaitable[bool]]
+""" Shows the researcher a message and answers whether they agreed. """
+
+NOT_APPROVED = (
+    "The researcher did not approve this transfer, so nothing was moved. Do not retry it; "
+    "ask the researcher what they want instead. Transfers need the researcher's approval in a chat."
+)
+""" What the agent is told when the researcher declined, dismissed the prompt, or could not be asked. """
+
+
+class TransferNotApproved(ToolError):
+    def __init__(self):
+        super().__init__(NOT_APPROVED)
+
+
+async def _require_approval(approve: Approve, message: str) -> None:
+    if not await approve(message):
+        raise TransferNotApproved()
+
+
+def _elicit_approver(ctx: Context) -> Approve:
+    """ An `Approve` that asks the researcher through the chat; declined, dismissed or unanswerable is no. """
+    async def approve(message: str) -> bool:
+        try:
+            result = await ctx.elicit(message, response_type=None)
+        except Exception:
+            logging.warning("Could not ask the researcher to approve a transfer", exc_info=True)
+            return False
+        return isinstance(result, AcceptedElicitation)
+    return approve
 
 
 def _remote_path(path: str, cluster: TransferCluster) -> str:
@@ -211,7 +245,9 @@ async def hpc_upload_files(
         The absolute path on the cluster of each uploaded file.
     """
     meta = get_vista_meta(ctx)
-    return await _upload_files(meta.user, meta.project_paths, cluster, local_paths, remote_dir)
+    return await _upload_files(
+        meta.user, meta.project_paths, cluster, local_paths, remote_dir, _elicit_approver(ctx),
+    )
 
 
 def _transfer_subdir(remote_dir: str) -> str:
@@ -249,7 +285,7 @@ def _local_source(paths: ProjectPaths, path: str) -> Path:
 
 async def _upload_files(
     cfg: UserConfig, paths: ProjectPaths, cluster: TransferCluster,
-    local_paths: list[str], remote_dir: str,
+    local_paths: list[str], remote_dir: str, approve: Approve,
 ) -> str:
     if not local_paths:
         raise ToolError("Name at least one file to upload.")
@@ -267,6 +303,16 @@ async def _upload_files(
     collection_id = _olcf_collection_id(cluster)
     layout = layout.with_user(await globus.home_owner(collection_id=collection_id))
     target = f"{layout.jobs}/{TRANSFERS}" + (f"/{subdir}" if subdir else "")
+    # Listing `target` shows what the upload would replace; a folder that is not there yet
+    # replaces nothing. Hidden files are listed too, since `.env` being replaced must be named.
+    try:
+        existing = {
+            entry["name"] for entry in await globus.operation_ls(endpoint=collection_id, path=target)
+            if entry.get("type") == "file"
+        }
+    except GlobusFileNotFound:
+        existing = set()
+    await _require_approval(approve, _upload_prompt(cluster, target, sources, existing))
     # From the folder holding the remote folder, as the job sources do: `.jobs`
     # itself is missing until the researcher's first job or upload.
     await globus.operation_mkdir_p(endpoint=collection_id, path=target, parents_below=layout.parent)
@@ -277,3 +323,17 @@ async def _upload_files(
         uploaded.append(remote)
     logging.info(f"Transfer upload to {cluster}: {len(uploaded)} file(s) into {target}")
     return f"Uploaded to {cluster.title()}:\n" + "\n".join(uploaded)
+
+
+def _upload_prompt(cluster: TransferCluster, target: str, sources: list[Path], existing: set[str]) -> str:
+    sizes = [source.stat().st_size for source in sources]
+    noun = "file" if len(sources) == 1 else "files"
+    lines = [f"Upload {len(sources)} {noun} ({_human_size(sum(sizes))}) to {cluster.title()}, into {target}/:"]
+    name_width = max(len(source.name) for source in sources)
+    size_width = max(len(_human_size(size)) for size in sizes)
+    for source, size in zip(sources, sizes):
+        line = f"  {source.name:<{name_width}}  {_human_size(size):>{size_width}}"
+        if source.name in existing:
+            line += "   replaces the file there"
+        lines.append(line)
+    return "\n".join(lines)

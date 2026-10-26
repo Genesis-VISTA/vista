@@ -1,8 +1,8 @@
 ## 1. Approval step and uploads
 
-- [ ] 1.1 Add the approval step to `transfer_mcp.py`: an `approve: Callable[[str], Awaitable[bool]]` parameter type, a `TransferNotApproved(ToolError)` with the agreed text (not approved, don't retry, ask the researcher, transfers need approval in a chat), and a helper that raises it on `False`. Verify with a unit test in `mcp_servers/vista_mcp_server/tests/test_transfer_tools.py` that a `False` answer raises it with that text.
-- [ ] 1.2 Reorder `_upload_files`: argument checks, resolve `target`, Transfer `ls` of `target` (missing → nothing replaced), build the prompt (files, sizes, total, absolute destination, "replaces the file there"), ask, then `mkdir -p` and upload. Verify with tests: approve uploads as before, the prompt names the destination and a replaced file, and a decline leaves the fake with no upload and no new folder.
-- [ ] 1.3 Pass the fake approver through the existing upload tests (refused arguments stay refused with no prompt recorded), and verify `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest tests/test_transfer_tools.py` passes.
+- [x] 1.1 Add the approval step to `transfer_mcp.py`: an `approve: Callable[[str], Awaitable[bool]]` parameter type, a `TransferNotApproved(ToolError)` with the agreed text (not approved, don't retry, ask the researcher, transfers need approval in a chat), and a helper that raises it on `False`. Verify with a unit test in `mcp_servers/vista_mcp_server/tests/test_transfer_tools.py` that a `False` answer raises it with that text.
+- [x] 1.2 Reorder `_upload_files`: argument checks, resolve `target`, Transfer `ls` of `target` (missing → nothing replaced), build the prompt (files, sizes, total, absolute destination, "replaces the file there"), ask, then `mkdir -p` and upload. Verify with tests: approve uploads as before, the prompt names the destination and a replaced file, and a decline leaves the fake with no upload and no new folder.
+- [x] 1.3 Pass the fake approver through the existing upload tests (refused arguments stay refused with no prompt recorded), and verify `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest tests/test_transfer_tools.py` passes.
 
 ## 2. Downloads: change detection and approval
 
