@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -17,7 +18,7 @@ from ..agents.inference import (
     RejectedInferenceCredential,
 )
 from ..config import settings
-from ..db.db import get_engine, init_db
+from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.collaboration import (
     CollaborationError,
@@ -43,9 +44,35 @@ from .settings import router as settings_router
 from .skills import router as skills_router
 
 
+def _report_database_incompatible(refusal: DatabaseIncompatible) -> None:
+    """
+    Say why the database was refused, for the log and for the launcher.
+
+    The launcher sets `VISTA_STARTUP_FAILURE_FILE` and reads the code back when
+    this process exits before it is healthy; run on its own, nothing is written.
+    The caller re-raises, which makes uvicorn exit non-zero.
+    """
+    logging.getLogger(__name__).error(
+        "Refusing to start: %s (%s)", refusal.message, refusal.code
+    )
+    failure_file = os.environ.get("VISTA_STARTUP_FAILURE_FILE")
+    if failure_file:
+        try:
+            with open(failure_file, "w", encoding="utf-8") as f:
+                f.write(refusal.code + "\n")
+        except OSError:
+            logging.getLogger(__name__).exception(
+                "Could not write the startup failure file %s", failure_file
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    await init_db()
+    try:
+        await init_db()
+    except DatabaseIncompatible as refusal:
+        _report_database_incompatible(refusal)
+        raise
     # No run survives a restart: a row still `running` died with the last process.
     if await sweep_interrupted_runs():
         logging.getLogger(__name__).info(

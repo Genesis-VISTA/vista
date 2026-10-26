@@ -1,18 +1,18 @@
 ## 1. Backend: detect, refuse and index
 
-- [ ] 1.1 Port `backend/src/vista_backend/db/schema_check.py` and `backend/tests/test_schema_check.py` from `db-migrations` (`bae3f97b`) unchanged. Verify with `cd backend && uv run --extra dev pytest tests/test_schema_check.py -q`.
-- [ ] 1.2 In `db/db.py`, add `DatabaseIncompatible`, the code constant `DATABASE_INCOMPATIBLE = "database-incompatible"`, and the pre-engine check of D2 in `init_db`. Add `backend/tests/test_incompatible_database.py`, which verifies:
+- [x] 1.1 Port `backend/src/vista_backend/db/schema_check.py` and `backend/tests/test_schema_check.py` from `db-migrations` (`bae3f97b`) unchanged. Verify with `cd backend && uv run --extra dev pytest tests/test_schema_check.py -q`.
+- [x] 1.2 In `db/db.py`, add `DatabaseIncompatible`, the code constant `DATABASE_INCOMPATIBLE = "database-incompatible"`, and the pre-engine check of D2 in `init_db`. Add `backend/tests/test_incompatible_database.py`, which verifies:
   - a fresh and a missing database start and seed;
   - an additive gap (a missing nullable column or table) starts and is filled in;
   - an extra nullable column starts;
   - a missing NOT NULL column and an unwritten NOT NULL column each raise before any write, with the database's bytes unchanged and a message naming the column, the path and the remedy.
-- [ ] 1.3 Write `incompatible-data-index.json` beside a refused database (D6), listing projects (id, name), skills (name, path) and knowledge bases (slug, name), each query guarded. Verify in the same test file that:
+- [x] 1.3 Write `incompatible-data-index.json` beside a refused database (D6), listing projects (id, name), skills (name, path) and knowledge bases (slug, name), each query guarded. Verify in the same test file that:
   - the index lists what the database holds;
   - a database missing the `skill` table still gets an index without skills;
   - the database's bytes are unchanged.
-- [ ] 1.4 Copy `backend/tests/fixtures/db/v0.1.4.sql` from `db-migrations` (`4caf8a99`), with a comment in the test saying where it came from. Verify that `init_db` on it raises `DatabaseIncompatible` naming `chat_session.user_id` and `skill.is_public`, writes an index listing its four projects, its skills and its three knowledge bases, and leaves the database unchanged.
-- [ ] 1.5 In `api/api.py`'s lifespan, log a `DatabaseIncompatible`, write its code to `VISTA_STARTUP_FAILURE_FILE` when set, and re-raise (ported from `dadfdd15`). Verify with `backend/tests/test_startup_refusal.py`: with the variable set, the file holds `database-incompatible`; without it, no file is written. Either way it raises.
-- [ ] 1.6 Run `./scripts/ci-local.sh backend` and verify it is green.
+- [x] 1.4 Copy `backend/tests/fixtures/db/v0.1.4.sql` from `db-migrations` (`4caf8a99`), with a comment in the test saying where it came from. Verify that `init_db` on it raises `DatabaseIncompatible` naming `chat_session.user_id` and `skill.is_public`, writes an index listing its four projects, its skills and its three knowledge bases, and leaves the database unchanged.
+- [x] 1.5 In `api/api.py`'s lifespan, log a `DatabaseIncompatible`, write its code to `VISTA_STARTUP_FAILURE_FILE` when set, and re-raise (ported from `dadfdd15`). Verify with `backend/tests/test_startup_refusal.py`: with the variable set, the file holds `database-incompatible`; without it, no file is written. Either way it raises.
+- [x] 1.6 Run `./scripts/ci-local.sh backend` and verify it is green.
 
 ## 2. Launchers: report an exited service at once
 
