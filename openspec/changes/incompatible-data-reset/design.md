@@ -193,6 +193,52 @@ without it, from what it can see on disk:
 Without the index, skill names come from each folder's `SKILL.md`, and projects are listed by id
 only.
 
+**The researcher's work first.** Each index entry carries `comes_with_vista`. The backend sets it
+from what the current code ships:
+- a skill whose name is a bundled skill (`db/skills/`);
+- a project or knowledge base whose id is one that seeding creates (`db/seed.py`).
+
+The README then lists only entries whose folder exists in the backup. It lists the researcher's
+own skills, knowledge bases and projects first. VISTA's own come after, under one line saying
+they come back with VISTA and need no restoring. Without the index, nothing is marked, and
+everything found on disk is listed as the researcher's.
+
+**A restore prompt at the head of the README.** The README opens with a short paragraph and a
+prompt the researcher can paste into a coding agent such as Claude Code or Codex. The agent
+restores the researcher's own work through the new VISTA's HTTP API (`http://127.0.0.1:8001`,
+schema at `/openapi.json`, port overridable with `VISTA_BACKEND_PORT`), not by writing to any
+database. The API is the contract the new version keeps, whatever changed in the schema. The
+prompt:
+
+> This folder is a backup that VISTA made when it found my local data incompatible with the
+> version now installed. Read README.txt in this folder first. Then help me restore my own
+> work into the running VISTA, whose backend API is at http://127.0.0.1:8001 (its schema is at
+> /openapi.json).
+>
+> Rules:
+> - Never change, move or delete anything in this backup folder. Read vista.db only from a copy
+>   you make outside it, with sqlite3.
+> - Write only through the running VISTA's HTTP API. Never edit its database or data folder
+>   directly.
+> - Restore only the items README.txt lists as mine, not the ones it says come back with VISTA.
+> - In this order:
+>   - knowledge bases: create each and upload its PDFs;
+>   - skills: import each skill folder;
+>   - projects: recreate each with its description, instructions, skills and knowledge bases,
+>     then upload the files from its volumes folder to the project;
+>   - conversations: recreate them if the API allows it, otherwise save each one as a Markdown
+>     file in its project's files.
+> - Don't restore settings, API keys or credentials. I'll reconnect those in Settings.
+> - Before writing anything, show me what you plan to restore and wait for my go-ahead. At the
+>   end, tell me what was restored, what wasn't, and why.
+
+`data-reset.js` writes it verbatim, with the port filled in from `VISTA_BACKEND_PORT` when
+`main.js` has it, so the README matches the install.
+
+**Alternative considered:** a restore built into VISTA. That is a migration in all but name,
+which is what the team ruled out. A prompt costs nothing to ship, adapts to whatever the old
+data holds, and stays with the researcher's own agent and judgement.
+
 ### D7: After a reset, startup is a first run
 
 The state directory holds only the caches, the logs and `backups/`. The launcher reinstalls the

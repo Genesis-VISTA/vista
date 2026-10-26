@@ -56,7 +56,13 @@ project inputs and outputs, and everything else that is not a download cache or 
 then begin a fresh startup. Nothing SHALL be deleted. Once the data is moved, the window SHALL
 show the backup folder's location, say that the researcher's skills, knowledge bases and project
 files are there, and offer to open it. The backup folder SHALL contain a README explaining where
-each of those is inside it.
+each of those is inside it. The README SHALL list the researcher's own skills, knowledge bases and
+projects first, separately from the ones VISTA ships and recreates on a fresh start, and SHALL
+list only folders the backup holds. It SHALL open with a prompt the researcher can give a coding
+agent (such as Claude Code or Codex) to restore their work into the running VISTA. The prompt
+SHALL have the agent leave the backup unchanged, write only through the running VISTA's own
+interface, leave settings and credentials to the researcher, and confirm its plan with the
+researcher before writing anything.
 
 #### Scenario: Back up and reset
 
@@ -74,6 +80,21 @@ each of those is inside it.
 - **WHEN** the researcher opens the backup folder after a reset
 - **THEN** it holds the old database, every knowledge base, every skill and every project's
   inputs and outputs, and a README saying where each is
+
+#### Scenario: The README puts the researcher's work first
+
+- **WHEN** the backup holds skills, knowledge bases and projects both of the researcher's own
+  and of VISTA's bundled or seeded ones
+- **THEN** the README lists the researcher's own first with their folders, names VISTA's own
+  separately as coming back with VISTA, and lists no folder the backup does not hold
+
+#### Scenario: A restore prompt for a coding agent
+
+- **WHEN** the researcher opens the README
+- **THEN** it begins with a prompt to paste into a coding agent, which tells the agent to
+  restore the researcher's own work into the running VISTA through its API, to leave the backup
+  folder unchanged, to skip settings and credentials, and to confirm its plan with the
+  researcher before writing anything
 
 #### Scenario: Caches are kept
 

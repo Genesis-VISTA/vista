@@ -67,6 +67,8 @@ fresh, and where it is.
 - **THEN** it leaves, beside the database, a list of the projects, skills and knowledge bases
   the database records, with their names and where their files are, without changing the
   database
+- **AND** each entry says whether it is one VISTA ships and recreates on a fresh start (a
+  bundled skill, a seeded project or knowledge base) or the researcher's own
 - **AND** a part it cannot read from that database's shape is left out instead of failing the
   refusal
 
