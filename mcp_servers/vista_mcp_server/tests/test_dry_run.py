@@ -111,3 +111,18 @@ def test_config_env(monkeypatch):
     s = AppSettings()
     assert s.hpc_dry_run is True
     assert s.hpc_queue_delay_s == 3600.0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "bad", [{"constraint": "nvme\n#SBATCH -A other"}, {"reservation": "res 1"}]
+)
+async def test_dry_run_refuses_a_bad_constraint_or_reservation(monkeypatch, bad):
+    from fastmcp.exceptions import ToolError
+
+    import vista_mcp_server.submit_job_mcp as submit_job_mcp
+
+    monkeypatch.setattr(settings, "hpc_dry_run", True)
+    with pytest.raises(ToolError):
+        await submit_job_mcp.submit_hpc_job(None, job="example", cluster="odo", **bad)
+    assert dry_run._dry_jobs == {}

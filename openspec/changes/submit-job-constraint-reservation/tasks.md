@@ -2,11 +2,11 @@
 
 ## 1. Arguments and validation
 
-- [ ] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Validate them against the design's two patterns before `resolve_job` side effects and before the dry-run branch, raising `ToolError` with the argument name and the allowed characters. Verify with new tests in `tests/test_submit_job_spec.py`:
+- [x] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Validate them against the design's two patterns before `resolve_job` side effects and before the dry-run branch, raising `ToolError` with the argument name and the allowed characters. Verify with new tests in `tests/test_submit_job_spec.py`:
   - `nvme\n#SBATCH -A x` and `res 1` are refused, and no client is called.
   - In dry-run mode, a bad value records no job (`tests/test_dry_run.py`).
-- [ ] 1.2 Add the effective-constraint helper (the argument if given, else `defaults.iri.constraint`) and pass the effective constraint and the reservation into all four `_submit_*_job` functions. Verify the existing spec, Lux, skill-job, forge-pretrain and job-account tests still pass.
-- [ ] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
+- [x] 1.2 Add the effective-constraint helper (the argument if given, else `defaults.iri.constraint`) and pass the effective constraint and the reservation into all four `_submit_*_job` functions. Verify the existing spec, Lux, skill-job, forge-pretrain and job-account tests still pass.
+- [x] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
   - the constraint replaces the job's default, and the agent restates the default to keep it, e.g. `gpu&hbm80g`
   - which clusters take each argument
   - that Odo and Frontier verify both after submitting

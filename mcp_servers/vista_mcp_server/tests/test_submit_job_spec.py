@@ -9,15 +9,19 @@ setup/pre_launch, source sync, and the one folder layout every cluster shares
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 import vista_mcp_server.submit_job_mcp as submit_job_mcp
 from vista_mcp_server.config import settings
+from vista_mcp_server.lib.iri import IriDefaults
 from vista_mcp_server.lib.user_config import UserConfig
 from vista_mcp_server.submit_job_mcp import (
     AVAILABLE_JOBS,
     _get_olcf_job_status,
+    _effective_constraint,
     _get_perlmutter_job_status,
     _submit_frontier_job,
     _submit_odo_job,
@@ -368,3 +372,79 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
     text = await _get_perlmutter_job_status(user_cfg, "pm-2")
     assert "--- STDERR ---" in text
     assert "unrecognized arguments: --salt flibe_90Li6" in text
+
+
+# --- constraint and reservation arguments ------------------------------------
+
+
+def _tool_ctx(user_cfg: UserConfig):
+    vista = {"user": user_cfg.model_dump(), "project_paths": {"skills_dir": None}}
+    return SimpleNamespace(
+        request_context=SimpleNamespace(meta=SimpleNamespace(vista=vista))
+    )
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"constraint": "nvme\n#SBATCH -A x"},
+        {"constraint": "gpu\n"},
+        {"constraint": ""},
+        {"reservation": "res 1"},
+        {"reservation": "res\n"},
+        {"reservation": "a&b"},
+    ],
+)
+async def test_submit_refuses_an_injected_constraint_or_reservation(
+    monkeypatch, user_cfg, bad
+):
+    def _no_client(*args, **kwargs):
+        raise AssertionError("a client was created for a refused submission")
+
+    for name in (
+        "create_odo_iri_client",
+        "create_olcf_iri_client",
+        "create_iri_client",
+        "create_globus_client",
+    ):
+        monkeypatch.setattr(submit_job_mcp, name, _no_client)
+    monkeypatch.setattr(settings, "hpc_dry_run", False)
+
+    [arg] = bad
+    for cluster in ("odo", "perlmutter", "frontier", "lux"):
+        with pytest.raises(ToolError, match=arg) as exc:
+            await submit_job_mcp.submit_hpc_job(
+                _tool_ctx(user_cfg), job="example", cluster=cluster, **bad
+            )
+        assert "letters, digits" in str(exc.value)
+
+
+async def test_submit_accepts_a_constraint_and_reservation_in_the_allowed_set(
+    monkeypatch, user_cfg
+):
+    iri = FakeIriClient(job_id="odo-9")
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(ODO)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    monkeypatch.setattr(settings, "hpc_dry_run", False)
+
+    summary = await submit_job_mcp.submit_hpc_job(
+        _tool_ctx(user_cfg),
+        job="example",
+        cluster="odo",
+        constraint="gpu&hbm80g|[a-b]*,x:y.z_w-1",
+        reservation="my_res.1:a-b",
+    )
+    assert "job_id: odo-9" in summary
+    [(spec, _)] = iri.submitted
+    assert spec["attributes"]["custom_attributes"] == {
+        "constraint": "gpu&hbm80g|[a-b]*,x:y.z_w-1"
+    }
+
+
+def test_effective_constraint_replaces_the_job_default():
+    defaults = IriDefaults(iri={"constraint": "gpu&hbm80g"})
+    assert _effective_constraint(None, defaults) == "gpu&hbm80g"
+    assert _effective_constraint("nvme", defaults) == "nvme"
+    assert _effective_constraint("nvme", None) == "nvme"
+    assert _effective_constraint(None, None) is None

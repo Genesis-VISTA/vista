@@ -172,6 +172,12 @@ def test_list_skill_jobs(skills):
 async def test_the_tool_description_mentions_skill_jobs():
     [tool] = [t for t in await m.mcp.list_tools() if t.name == "submit_hpc_job"]
     assert "<skill>/<job>" in tool.description
+    # The per-submission constraint and reservation, and what each replaces or checks.
+    assert "constraint: Slurm node constraint" in tool.description
+    assert "restate" in tool.description and "gpu&hbm80g" in tool.description
+    assert "reservation: Name of a Slurm reservation" in tool.description
+    assert "all four clusters" in tool.description
+    assert "after submitting" in tool.description
 
 
 # --- the upload set ---------------------------------------------------------

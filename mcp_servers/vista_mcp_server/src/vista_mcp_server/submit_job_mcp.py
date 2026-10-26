@@ -450,6 +450,34 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     return _default_cluster(cfg)
 
 
+# What a Slurm constraint / reservation may contain. Both end up in a batch script
+# or an IRI payload, so anything else (a newline starting a new #SBATCH line, a
+# space) is refused before any side effect. `fullmatch`, because `$` lets a
+# trailing newline through.
+_CONSTRAINT_RE = re.compile(r"[A-Za-z0-9_.:,*&|\[\]-]+")
+_RESERVATION_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+
+
+def _validate_slurm_args(constraint: str | None, reservation: str | None) -> None:
+    if constraint is not None and not _CONSTRAINT_RE.fullmatch(constraint):
+        raise ToolError(
+            f"constraint {constraint!r} is not allowed: use only letters, digits and "
+            "the characters _ . : , * & | [ ] -"
+        )
+    if reservation is not None and not _RESERVATION_RE.fullmatch(reservation):
+        raise ToolError(
+            f"reservation {reservation!r} is not allowed: use only letters, digits and "
+            "the characters _ . : -"
+        )
+
+
+def _effective_constraint(constraint: str | None, defaults: IriDefaults | None) -> str | None:
+    """ The constraint argument replaces the job's default; it is never combined with it. """
+    if constraint is not None:
+        return constraint
+    return defaults.iri.constraint if defaults is not None else None
+
+
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
@@ -467,6 +495,14 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
             node_count: Number of nodes for the job (max: {MAX_NODES})
             duration: Time limit for the job in "h:mm:ss" format (max: {MAX_TIME})
             script_args: Extra arguments to pass to the script
+            constraint: Slurm node constraint for this submission, e.g. "gpu&hbm80g". It
+                replaces the job's default constraint rather than adding to it, so restate
+                the default (e.g. "gpu&hbm80g") to keep it. Omit it to use the job's default.
+                Letters, digits and _ . : , * & | [ ] - only. Taken by all four clusters.
+            reservation: Name of a Slurm reservation to run in. Omit it to run outside one.
+                Letters, digits and _ . : - only. Taken by all four clusters. Odo and
+                Frontier check after submitting that Slurm recorded the constraint and
+                reservation, and cancel the job if either was dropped.
 
         Returns:
             A multi-line ground-truth summary of the submitted job (job_id, cluster,
@@ -488,7 +524,10 @@ async def submit_hpc_job(
     node_count: int | None = None,
     duration: str | None = None,
     script_args: str | None = None,
+    constraint: str | None = None,
+    reservation: str | None = None,
 ) -> str:
+    _validate_slurm_args(constraint, reservation)
     meta = get_vista_meta(ctx)
     job_info = resolve_job(job, meta.project_paths.skills_dir)
     if node_count and (node_count > MAX_NODES or node_count <= 0):
@@ -505,6 +544,10 @@ async def submit_hpc_job(
         "perlmutter": f"{settings.nersc_machine} (NERSC)",
         "lux": "lux",
     }[cluster]
+
+    effective_constraint = _effective_constraint(
+        constraint, getattr(job_info.cluster_defaults, cluster),
+    )
 
     # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a synthetic
     # submit failure or an expired credential, surfaced as a tool error for
@@ -525,18 +568,22 @@ async def submit_hpc_job(
         elif cluster == "odo":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
                 cfg, job, node_count, duration_int, script_args, job_info=job_info,
+                constraint=effective_constraint, reservation=reservation,
             )
         elif cluster == "perlmutter":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_perlmutter_job(
                 cfg, job, node_count, duration_int, script_args, job_info=job_info,
+                constraint=effective_constraint, reservation=reservation,
             )
         elif cluster == "lux":
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_lux_job(
                 ctx, cfg, job, node_count, duration_int, script_args, job_info=job_info,
+                constraint=effective_constraint, reservation=reservation,
             )
         else:  # "frontier"
             job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
                 cfg, job, node_count, duration_int, script_args, job_info=job_info,
+                constraint=effective_constraint, reservation=reservation,
             )
 
     # Return a ground-truth summary so the LLM doesn't have to guess at submitted values.
@@ -562,7 +609,7 @@ async def submit_hpc_job(
 
 async def _submit_odo_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-    *, job_info: JobInfo | None = None,
+    *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Odo dispatch (OLCF open enclave): IRI compute + Globus file ops, the same
@@ -680,7 +727,7 @@ async def _submit_odo_job(
             "queue_name": defaults.iri.queue_name,
             "account": project,
             "duration": duration,
-            **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
+            **({"custom_attributes": {"constraint": constraint}} if constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
             "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
@@ -770,7 +817,7 @@ async def _require_writable_out(
 
 async def _submit_perlmutter_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-    *, job_info: JobInfo | None = None,
+    *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
 ) -> tuple[str, str, str, int, int]:
     """ Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
     if not cfg.nersc_account:
@@ -849,7 +896,7 @@ async def _submit_perlmutter_job(
     # can read it. Skip it for CPU-partition jobs (constraint="cpu"); otherwise Slurm
     # requests a gpu gres the CPU node can't satisfy and the step launch fails with
     # "Invalid generic resource (gres) specification" before the job script runs.
-    if defaults.iri.constraint != "cpu":
+    if constraint != "cpu":
         iri_env["SLURM_GPUS_PER_NODE"] = str(workers_per_node)
 
 
@@ -868,7 +915,7 @@ async def _submit_perlmutter_job(
             "queue_name": defaults.iri.queue_name,
             "account": cfg.nersc_account,
             "duration": duration,
-            "custom_attributes": {"constraint": defaults.iri.constraint},
+            "custom_attributes": {"constraint": constraint},
             **({"pre_launch": pre_launch} if pre_launch else {}),
             "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
@@ -913,7 +960,7 @@ async def _sync_perlmutter_sources(iri_client, local_job_dir: Path, src_dir: str
 
 async def _submit_frontier_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-    *, job_info: JobInfo | None = None,
+    *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Frontier dispatch (OLCF moderate enclave).
@@ -1045,7 +1092,7 @@ async def _submit_frontier_job(
             "queue_name": defaults.iri.queue_name,
             "account": project,
             "duration": duration,
-            **({"custom_attributes": {"constraint": defaults.iri.constraint}} if defaults.iri.constraint else {}),
+            **({"custom_attributes": {"constraint": constraint}} if constraint else {}),
             **({"pre_launch": pre_launch} if pre_launch else {}),
             "directory": layout.jobs,
             "stdout_path": layout.stdout_template,
@@ -1101,7 +1148,7 @@ def _lux_proxy_env() -> dict[str, str]:
 
 async def _submit_lux_job(
     ctx: Context, cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
-    *, job_info: JobInfo | None = None,
+    *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
 ) -> tuple[str, str, str, int, int]:
     """
     Lux dispatch: plain Slurm over SSH, since Lux has no IRI service.
@@ -1201,7 +1248,7 @@ async def _submit_lux_job(
         # only a queue the job's JSON names explicitly is passed to Slurm.
         partition=defaults.iri.partition,
         queue=defaults.iri.queue_name if "queue_name" in defaults.iri.model_fields_set else None,
-        constraint=defaults.iri.constraint,
+        constraint=constraint,
         exclusive=bool(defaults.resources.exclusive_node_use),
         ntasks_per_node=defaults.resources.processes_per_node,
         gpus_per_node=defaults.resources.gpus_per_node,
