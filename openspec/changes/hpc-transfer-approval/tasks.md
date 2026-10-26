@@ -20,7 +20,7 @@
 
 ## 4. UI: one-choice prompt as buttons
 
-- [ ] 4.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` for client components, then change `ui/components/ElicitationModal.tsx`: when the schema has exactly one property, required, a string `enum`, render the message with one button per enum value (labelled with it) that accepts with `{<property>: <value>}`; no form, no Submit, Decline or Cancel. Backdrop close still cancels. Verify with new cases in `ui/tests/ElicitationModal.test.tsx` (an Approve/Decline prompt shows exactly those two buttons and each accepts with its value; a login form with fields is unchanged).
+- [x] 4.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` for client components, then change `ui/components/ElicitationModal.tsx`: when the schema has exactly one property, required, a string `enum`, render the message with one button per enum value (labelled with it) that accepts with `{<property>: <value>}`; no form, no Submit, Decline or Cancel. Backdrop close still cancels. Verify with new cases in `ui/tests/ElicitationModal.test.tsx` (an Approve/Decline prompt shows exactly those two buttons and each accepts with its value; a login form with fields is unchanged).
 
 ## 5. Docs and verification
 
