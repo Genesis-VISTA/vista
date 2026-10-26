@@ -107,6 +107,46 @@ describe("ElicitationModal", () => {
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
+  describe("one choice", () => {
+    const CHOICE = {
+      type: "object",
+      title: "ScalarElicitationType",
+      required: ["value"],
+      properties: { value: { type: "string", title: "Value", enum: ["Approve", "Decline"] } },
+    };
+
+    it("shows exactly the two options as buttons, with no form", () => {
+      const { container } = setup({ message: "Download 2 files?", schema: CHOICE });
+      expect(screen.getByText("Download 2 files?")).toBeInTheDocument();
+      expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["Approve", "Decline"]);
+      expect(container.querySelector("form")).toBeNull();
+    });
+
+    it.each(["Approve", "Decline"])("accepts with %s as the value", async (label) => {
+      const { onSubmit } = setup({ schema: CHOICE });
+      await userEvent.click(screen.getByRole("button", { name: label }));
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith("elicit-1", "accept", { value: label });
+    });
+
+    it("disables both buttons after one press", async () => {
+      setup({ schema: CHOICE });
+      await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+      expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Decline" })).toBeDisabled();
+    });
+
+    it("still cancels when the backdrop is dismissed", async () => {
+      const { onSubmit, container } = setup({ schema: CHOICE });
+      await userEvent.click(container.querySelector(".modal-backdrop") as Element);
+      expect(onSubmit).toHaveBeenCalledExactlyOnceWith("elicit-1", "cancel");
+    });
+
+    it("keeps the form for an optional enum", () => {
+      setup({ schema: { ...CHOICE, required: [] } });
+      expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+    });
+  });
+
   it("renders without a message", () => {
     setup({ message: "" });
     expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();

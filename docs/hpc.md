@@ -3,7 +3,8 @@
 How VISTA submits jobs to remote clusters, what each researcher connects, and where a job's
 files go. To add or change the jobs the agent can submit, see [hpc-jobs.md](hpc-jobs.md).
 
-The agent submits only predefined jobs from `hpc_jobs/`, to four clusters:
+The agent submits only predefined jobs from `hpc_jobs/`, to four clusters. On Odo and Frontier
+it can also move files outside a job (see [Moving files outside a job](#moving-files-outside-a-job)).
 
 | Cluster | Compute | Files | Runs as |
 |---|---|---|---|
@@ -101,6 +102,7 @@ it, and never creates the directory itself:
 ```
 <remote dir>.<user>.jobs/<job>/src/  your sources, uploaded by VISTA; the job only reads them
                                      (src-<hash>/ for a skill's job, one per version)
+<remote dir>.<user>.jobs/transfers/  files you upload outside a job (Odo, Frontier)
 <remote dir>.out/log-<id>.out        Slurm stdout, with log-<id>.err beside it
 <remote dir>.out/<id>/               the job's outputs, exported to it as $VISTA_OUT
 <remote dir>.out/<job>/              state a job's runs share, exported as $VISTA_JOB_DIR
@@ -126,6 +128,46 @@ Lux and Frontier jobs if you give both the same one, can all write there. This i
 workaround: S3M tokens cannot use the IRI filesystem API yet, which would let VISTA create one
 folder as the automation user.
 
+## Moving files outside a job
+
+On Odo and Frontier the agent has three tools for files that no job of yours produced, or that
+a job should read. They need only your Globus connection for that cluster, not an S3M token,
+and they act as your own Globus identity, so the facility decides what you may read and write.
+
+- **`hpc_list_files`** lists any folder you can read, such as a project's data under
+  `proj-shared`, with each entry's type, size and path. A recursive listing lists hidden folders
+  (`.cache`, `.local`, ...) and `__pycache__` but marks them "not walked" rather than looking
+  inside; list one by its own path to see its contents.
+- **`hpc_download_files`** fetches any file you can read to
+  `/mnt/data/output/transfers/<cluster>/<its remote path>`, where the sandbox and file display
+  open it, and the local copy keeps the cluster's modification time. A file you already hold is
+  checked against the cluster (size and modification time, to the second) and fetched again only
+  if it changed, so you never need to delete a local copy to get a newer version. The reply
+  separates what was downloaded, what was already up to date, and what is not on the cluster. A
+  file you can read in a folder you cannot list still downloads. There is no size limit, so large
+  data is best left on the cluster for a job to process. A job's own outputs still come through
+  `get_hpc_job_outputs`.
+- **`hpc_upload_files`** sends files from the project's outputs or uploads to
+  `<remote dir>.<user>.jobs/transfers/` (a subfolder of your choosing below it), and nowhere else.
+  That fence stays as a second guard even though you approve each upload. A file of the same name
+  there is replaced. The tool reports each file's path on the cluster, which is what a job should
+  read.
+
+Uploads and downloads each ask you first, in the chat, with a prompt offering Approve and Decline.
+It names the cluster, each file that would move with its size, the total, and where the files
+land. An upload also names the files there that it replaces; a download names the local copies it
+replaces because the file changed on the cluster. Listing does not ask. You get one prompt per
+call, so the agent batches files into a single call. Declining or dismissing the prompt moves
+nothing, and the agent is told not to retry and to ask you what you want instead. A download with
+nothing to fetch asks nothing. A run that cannot show a prompt, such as a one-shot `/agent` API
+call with no chat, cannot transfer.
+
+If Globus cannot be reached for a download (the session expired, or it is not connected) and
+every requested file is already held, you get the local copies with a warning that the cluster
+could not be checked for newer versions. Otherwise the call fails, and an expired session is
+reported as expired by these tools, never as a missing file or an empty folder. Perlmutter and
+Lux are not offered: Perlmutter's IRI download is text-only, and Lux moves files over SFTP.
+
 ## Operational behaviour
 
 VISTA keeps no record of submitted jobs. Status, outputs and cancel take the cluster that
@@ -135,6 +177,7 @@ one.
 Job logs are tailed incrementally while a job runs: VISTA asks for the file's size, then reads
 only what is new since the last poll.
 
-To start VISTA without the job tools at all, set `VISTA_MCP_DISABLE_SERVERS=submit_job`. The
+To start VISTA without the job tools at all, set `VISTA_MCP_DISABLE_SERVERS=submit_job`, and
+without the file transfer tools, `transfer` (the two combine: `submit_job,transfer`). The
 thin macOS developer app disables live submission by default; see
 [development.md](development.md#the-thin-macos-developer-app).

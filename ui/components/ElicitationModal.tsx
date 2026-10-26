@@ -29,10 +29,37 @@ function buildUiSchema(schema: Record<string, unknown>): UiSchema {
   return ui;
 }
 
+/**
+ * A prompt that asks for one required string enum (an Approve/Decline
+ * question) is shown as one button per value instead of a form.
+ */
+export function singleChoice(
+  schema: Record<string, unknown>,
+): { key: string; options: string[] } | null {
+  const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  if (!props) return null;
+  const keys = Object.keys(props);
+  if (keys.length !== 1) return null;
+  const key = keys[0];
+  const required = schema.required;
+  if (!Array.isArray(required) || !required.includes(key)) return null;
+  const field = props[key];
+  const options = field?.enum;
+  if (field?.type !== "string" || !Array.isArray(options) || options.length === 0) return null;
+  if (!options.every((o) => typeof o === "string")) return null;
+  return { key, options: options as string[] };
+}
+
 export default function ElicitationModal({ id, message, schema, onSubmit }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
   const uiSchema = useMemo(() => buildUiSchema(schema), [schema]);
+  const choice = useMemo(() => singleChoice(schema), [schema]);
+
+  const handleChoose = (key: string, value: string) => {
+    setSubmitting(true);
+    onSubmit(id, "accept", { [key]: value });
+  };
 
   const handleAccept = (data: { formData?: Record<string, unknown> }) => {
     setSubmitting(true);
@@ -57,6 +84,21 @@ export default function ElicitationModal({ id, message, schema, onSubmit }: Prop
         </div>
         <div className="modal-body">
           {message && <p className="elicitation-message" style={{ whiteSpace: "pre-wrap" }}>{message}</p>}
+          {choice ? (
+            <div className="elicitation-actions">
+              {choice.options.map((option, i) => (
+                <button
+                  key={option}
+                  type="button"
+                  className={i === 0 ? "button" : "button ghost"}
+                  onClick={() => handleChoose(choice.key, option)}
+                  disabled={submitting}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          ) : (
           <Form
             schema={schema as RJSFSchema}
             uiSchema={uiSchema}
@@ -77,6 +119,7 @@ export default function ElicitationModal({ id, message, schema, onSubmit }: Prop
               </button>
             </div>
           </Form>
+          )}
         </div>
       </div>
     </div>

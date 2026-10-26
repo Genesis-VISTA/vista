@@ -13,8 +13,12 @@ raises ``GlobusFileNotFound`` rather than returning empty.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+
+import globus_sdk
+import requests
 
 from vista_mcp_server.lib.globus import GlobusFileNotFound
 
@@ -40,6 +44,38 @@ class FakeGlobusClient:
         self.files: dict[str, bytes] = {}
         # path -> list of entry dicts ({name, type, permissions})
         self.ls_entries: dict[str, list[dict[str, Any]]] = {}
+        self.unlistable: set[str] = set()
+        """Folders whose ``operation_ls`` is refused with a 403, as a shared folder the
+        researcher may read files in but not list is; ``operation_stat`` still answers."""
+
+    def seed_file(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        last_modified: str | None = "2026-10-21 14:03:07+00:00",
+    ) -> None:
+        """A readable file, listed in its folder with the size and ``last_modified``
+        (``YYYY-MM-DD HH:MM:SS+00:00``) Transfer gives; None leaves the time out."""
+        parent, name = path.rsplit("/", 1)
+        entries = self.ls_entries.setdefault(parent or "/", [])
+        entries[:] = [entry for entry in entries if entry.get("name") != name]
+        entry: dict[str, Any] = {"name": name, "type": "file", "size": len(content)}
+        if last_modified is not None:
+            entry["last_modified"] = last_modified
+        entries.append(entry)
+        self.files[path] = content
+
+    def rewrite_file(
+        self,
+        path: str,
+        content: bytes,
+        *,
+        last_modified: str | None = "2026-10-22 09:00:00+00:00",
+    ) -> None:
+        """The file changed on the cluster: new bytes, new size, new time."""
+        assert path in self.files, f"{path} was never seeded"
+        self.seed_file(path, content, last_modified=last_modified)
 
     def seed_remote_dir(self, base: str, *, parent_permissions: str = "2770") -> None:
         """Make the folder holding ``base`` exist, with ``parent_permissions``,
@@ -82,11 +118,14 @@ class FakeGlobusClient:
         recursive: bool = False,
         exclude_segments: tuple[str, ...] = (),
         max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
-        # exclude_segments/max_dirs bound the real client's recursive walk (one API
+        # exclude_segments/max_dirs/skip_hidden bound the real client's recursive walk (one API
         # round-trip per directory). Accepted here so callers can pass them; the fake
         # serves canned listings and has no traversal to prune.
         self.ls_calls.append((endpoint, path))
+        if path in self.unlistable:
+            raise _permission_denied(path)
         if path in self.ls_entries:
             return list(self.ls_entries[path])
         if recursive:
@@ -150,3 +189,18 @@ class FakeGlobusClient:
     ) -> None:
         self.uploads.append((collection_id, remote_path))
         self.files[remote_path] = local_path.read_bytes()
+
+
+def _permission_denied(path: str) -> globus_sdk.TransferAPIError:
+    """The real SDK error Transfer raises for a folder the identity may not list."""
+    response = requests.Response()
+    response.status_code = 403
+    response._content = json.dumps(
+        {"code": "PermissionDenied", "message": f"Permission denied on {path}"}
+    ).encode()
+    response.headers["Content-Type"] = "application/json"
+    response.reason = "Forbidden"
+    response.request = requests.Request(
+        "GET", "https://transfer.api.globus.org/v0.10/operation/endpoint/x/ls"
+    ).prepare()
+    return globus_sdk.TransferAPIError(response)
