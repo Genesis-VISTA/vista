@@ -33,7 +33,7 @@
 
 ## 4. Docs and manual validation
 
-- [ ] 4.1 Manual, not in PR CI. Build this branch with `scripts/build_local_package.sh`, and start it with `VISTA_HOME` pointing at a scratch folder holding a v0.1.4 database (loaded from `v0.1.4.sql`, or a copy of a real v0.1.4 install), plus some skills, a knowledge base and project files. Verify that:
+- [x] 4.1 Manual, not in PR CI. Build this branch with `scripts/build_local_package.sh`, and start it with `VISTA_HOME` pointing at a scratch folder holding a v0.1.4 database (loaded from `v0.1.4.sql`, or a copy of a real v0.1.4 install), plus some skills, a knowledge base and project files. Verify that:
   - the startup window shows the message within seconds, with Back up and reset and no Try Again;
   - Cancel moves nothing;
   - Back up and reset moves everything but the caches and logs into `backups/<UTC>/`, names the folder, and Show Folder opens it;
