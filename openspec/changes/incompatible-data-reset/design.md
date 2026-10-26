@@ -229,7 +229,8 @@ prompt:
 > - Don't restore conversations, settings, API keys or credentials. I'll reconnect those in
 >   Settings.
 > - Before writing anything, show me what you plan to restore and wait for my go-ahead. At the
->   end, tell me what was restored, what wasn't, and why.
+>   end, tell me what was restored, what wasn't, and why, and remind me to reload the VISTA
+>   window (Cmd+R, or Ctrl+R on Windows and Linux) to see the restored items.
 
 `data-reset.js` writes it verbatim, with the port filled in from `VISTA_BACKEND_PORT` when
 `main.js` has it, so the README matches the install.

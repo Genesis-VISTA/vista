@@ -215,8 +215,12 @@ test('the README begins with the restore prompt, naming the API and carrying eac
     'then upload the files from its volumes folder to the project.',
     'Don\'t restore conversations, settings, API keys or credentials',
     'show me what you plan to restore and wait for my go-ahead',
+    'remind me to reload the VISTA',
   ]) assert.ok(text.includes(rule), `the prompt lacks "${rule}"`);
   assert.ok(!text.includes('conversations: recreate'), 'conversations are not restored');
+  const notRestored = text.indexOf('Not restored: your inference provider, API keys and cluster connections.');
+  assert.ok(notRestored > text.indexOf('Your work'), 'the README tells the researcher to reconnect, after their work');
+  assert.ok(text.includes('Set them up again in Settings.'));
   rmSync(dir, { recursive: true, force: true });
 });
 

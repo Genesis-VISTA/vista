@@ -183,7 +183,8 @@ export function restorePromptLines(port = DEFAULT_BACKEND_PORT) {
     '- Don\'t restore conversations, settings, API keys or credentials. I\'ll reconnect those in',
     '  Settings.',
     '- Before writing anything, show me what you plan to restore and wait for my go-ahead. At the',
-    '  end, tell me what was restored, what wasn\'t, and why.',
+    '  end, tell me what was restored, what wasn\'t, and why, and remind me to reload the VISTA',
+    '  window (Cmd+R, or Ctrl+R on Windows and Linux) to see the restored items.',
   ];
 }
 
@@ -238,6 +239,9 @@ export function writeReadme(backupDir, { write = writeFileSync, port = DEFAULT_B
     ...section('Knowledge bases (upload the PDFs again from Knowledge Bases):', kbs.filter(mine).map(kbLine)),
     ...section('Skills (import again from Skills):', sks.filter(mine).map(skLine)),
     ...section('Projects (inputs and outputs):', prjs.filter(mine).map(prjLine)),
+    '',
+    'Not restored: your inference provider, API keys and cluster connections.',
+    'Set them up again in Settings.',
   ];
   if (vistaNames.length) {
     lines.push(
