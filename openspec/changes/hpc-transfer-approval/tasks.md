@@ -24,6 +24,6 @@
 
 ## 5. Docs and verification
 
-- [ ] 5.1 Update `docs/hpc.md` ("Moving files outside a job") for approval, the re-fetch of changed files and the offline warning. Update `AGENTS.md` only if it describes the transfer tools' behaviour. Verify by reading the diff.
-- [ ] 5.2 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh ui` (lint and test), not in a checkout running a `launch.sh` stack, and `openspec validate hpc-transfer-approval --strict`. Verify all pass.
+- [x] 5.1 Update `docs/hpc.md` ("Moving files outside a job") for approval, the re-fetch of changed files and the offline warning. Update `AGENTS.md` only if it describes the transfer tools' behaviour. Verify by reading the diff.
+- [x] 5.2 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh ui` (lint and test), not in a checkout running a `launch.sh` stack, and `openspec validate hpc-transfer-approval --strict`. Verify all pass.
 - [ ] 5.3 **Manual, live, out of PR CI (needs Globus for Odo):** in a chat, upload a chat attachment and decline (nothing on Odo), upload again and approve; download a file twice (second asks nothing), touch the remote file and download again (asks, re-fetches). Record the result in the MR.

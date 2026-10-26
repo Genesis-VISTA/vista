@@ -140,17 +140,33 @@ and they act as your own Globus identity, so the facility decides what you may r
   inside; list one by its own path to see its contents.
 - **`hpc_download_files`** fetches any file you can read to
   `/mnt/data/output/transfers/<cluster>/<its remote path>`, where the sandbox and file display
-  open it. A file already there is not fetched again; delete the local copy to fetch a newer
-  version. There is no size limit, so large data is best left on the cluster for a job to
-  process. A job's own outputs still come through `get_hpc_job_outputs`.
+  open it, and the local copy keeps the cluster's modification time. A file you already hold is
+  checked against the cluster (size and modification time, to the second) and fetched again only
+  if it changed, so you never need to delete a local copy to get a newer version. The reply
+  separates what was downloaded, what was already up to date, and what is not on the cluster. A
+  file you can read in a folder you cannot list still downloads. There is no size limit, so large
+  data is best left on the cluster for a job to process. A job's own outputs still come through
+  `get_hpc_job_outputs`.
 - **`hpc_upload_files`** sends files from the project's outputs or uploads to
-  `<remote dir>.<user>.jobs/transfers/` (a subfolder of your choosing below it), and nowhere else,
-  since no tool asks you before it writes. A file of the same name there is replaced. The tool
-  reports each file's path on the cluster, which is what a job should read.
+  `<remote dir>.<user>.jobs/transfers/` (a subfolder of your choosing below it), and nowhere else.
+  That fence stays as a second guard even though you approve each upload. A file of the same name
+  there is replaced. The tool reports each file's path on the cluster, which is what a job should
+  read.
 
-An expired Globus session is reported as expired by these tools too, never as a missing file or
-an empty folder. Perlmutter and Lux are not offered: Perlmutter's IRI download is text-only, and
-Lux moves files over SFTP.
+Uploads and downloads each ask you first, in the chat, with a prompt offering Approve and Decline.
+It names the cluster, each file that would move with its size, the total, and where the files
+land. An upload also names the files there that it replaces; a download names the local copies it
+replaces because the file changed on the cluster. Listing does not ask. You get one prompt per
+call, so the agent batches files into a single call. Declining or dismissing the prompt moves
+nothing, and the agent is told not to retry and to ask you what you want instead. A download with
+nothing to fetch asks nothing. A run that cannot show a prompt, such as a one-shot `/agent` API
+call with no chat, cannot transfer.
+
+If Globus cannot be reached for a download (the session expired, or it is not connected) and
+every requested file is already held, you get the local copies with a warning that the cluster
+could not be checked for newer versions. Otherwise the call fails, and an expired session is
+reported as expired by these tools, never as a missing file or an empty folder. Perlmutter and
+Lux are not offered: Perlmutter's IRI download is text-only, and Lux moves files over SFTP.
 
 ## Operational behaviour
 
