@@ -2,8 +2,8 @@
 The transfer tools move files to and from Odo and Frontier outside a job.
 
 Reads reach anything the researcher's Globus identity can read; writes reach only
-`<remote_dir>.<user>.jobs/transfers/`, because no tool asks the researcher before it
-runs. Every argument is checked before Globus is contacted, so a refused call costs no
+`<remote_dir>.<user>.jobs/transfers/`, and each upload and download asks the researcher
+first. Every argument is checked before Globus is contacted, so a refused call costs no
 round trip and leaves nothing behind. An expired session is reported as expired, never
 as a missing file or an empty folder.
 """
@@ -13,11 +13,14 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from fastmcp.exceptions import ToolError
+from fastmcp import Client, Context, FastMCP
+from fastmcp.client.elicitation import ElicitResult
+from fastmcp.exceptions import FastMCPDeprecationWarning, ToolError
 from fastmcp.server.elicitation import AcceptedElicitation
 
 import vista_mcp_server.transfer_mcp as t
@@ -121,6 +124,10 @@ async def test_the_descriptions_say_where_files_go(tool):
         assert "on the cluster" in text and "job" in text
     if tool == "hpc_download_files":
         assert "/mnt/data/output/transfers/<cluster>/" in text
+        assert "never delete a local copy" in text
+        assert "delete the local copy to fetch" not in text
+    if tool != "hpc_list_files":
+        assert "researcher approves each" in text and "one call" in text
 
 
 def test_the_server_can_be_left_out():
@@ -254,7 +261,7 @@ async def test_a_two_file_download_is_approved_once_and_keeps_the_remote_times(
     for name in ("a.nc", "b.nc"):
         local = local_copy(project, "odo", f"/lustre/orion/abc/proj-shared/{name}")
         assert int(local.stat().st_mtime) == REMOTE_TIME
-    assert text.splitlines()[0] == "Downloaded files:"
+    assert text.splitlines()[0] == "Downloaded from Odo:"
     assert len(text.splitlines()) == 3
 
 
@@ -278,8 +285,11 @@ async def test_nothing_to_fetch_asks_nothing(globus, project, approver):
     )
     assert len(approver.messages) == 1
     assert globus.downloads == [("odo-c", "/d/a.txt")]
-    assert text == first
-    assert "/mnt/data/output/transfers/odo/d/a.txt" in text
+    assert first.splitlines()[0] == "Downloaded from Odo:"
+    assert text.splitlines() == [
+        "Already up to date (not fetched):",
+        "/mnt/data/output/transfers/odo/d/a.txt",
+    ]
 
 
 async def test_a_file_that_changed_in_size_is_marked_and_fetched_again(
@@ -296,6 +306,29 @@ async def test_a_file_that_changed_in_size_is_marked_and_fetched_again(
     assert "changed on Odo, replaces your local copy" in approver.messages[1]
     assert "changed" not in approver.messages[0]
     assert local_copy(project, "odo", "/d/a.txt").read_bytes() == b"newer contents"
+
+
+async def test_the_report_splits_fetched_current_and_missing_files(
+    globus, project, approver
+):
+    for name in ("a", "b", "c"):
+        globus.seed_file(f"/d/{name}.txt", b"old")
+    out = Path(project.output_dir)
+    await t._download_files(CFG, out, "odo", ["/d/a.txt", "/d/b.txt"], approver)
+    globus.rewrite_file("/d/b.txt", b"newer contents")
+    text = await t._download_files(
+        CFG, out, "odo", ["/d/a.txt", "/d/b.txt", "/d/c.txt", "/d/gone.txt"], approver
+    )
+    root = "/mnt/data/output/transfers/odo/d"
+    assert text.splitlines() == [
+        "Downloaded from Odo:",
+        f"{root}/b.txt",
+        f"{root}/c.txt",
+        "Already up to date (not fetched):",
+        f"{root}/a.txt",
+        "Not on Odo:",
+        "/d/gone.txt",
+    ]
 
 
 async def test_a_file_changed_only_in_time_is_fetched_again(globus, project, approver):
@@ -355,7 +388,7 @@ async def test_a_missing_file_is_reported_and_the_rest_downloaded(
         CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
     )
     assert text.splitlines() == [
-        "Downloaded files:",
+        "Downloaded from Odo:",
         "/mnt/data/output/transfers/odo/d/b.txt",
         "Not on Odo:",
         "/d/a.txt",
@@ -374,7 +407,7 @@ async def test_a_path_given_twice_is_listed_fetched_and_reported_once(
     assert message.count("/d/a.txt") == 1
     assert globus.downloads == [("odo-c", "/d/a.txt")]
     assert text.splitlines() == [
-        "Downloaded files:",
+        "Downloaded from Odo:",
         "/mnt/data/output/transfers/odo/d/a.txt",
     ]
 
@@ -389,7 +422,7 @@ async def test_a_file_gone_before_its_download_is_reported_missing(
         CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
     )
     assert text.splitlines() == [
-        "Downloaded files:",
+        "Downloaded from Odo:",
         "/mnt/data/output/transfers/odo/d/b.txt",
         "Not on Odo:",
         "/d/a.txt",
@@ -641,7 +674,7 @@ async def test_an_expired_session_with_every_file_held_reports_the_copies(
     assert lines[0].startswith("Could not check Odo for newer versions:")
     assert "expired" in lines[0]
     assert lines[1:] == [
-        "Downloaded files:",
+        "Already up to date (not fetched):",
         "/mnt/data/output/transfers/odo/d/a.txt",
         "/mnt/data/output/transfers/odo/d/b.txt",
     ]
@@ -702,7 +735,7 @@ async def test_a_tool_call_reads_paths_and_credentials_from_the_request(
     vista = {"user": CFG.model_dump(), "project_paths": project.model_dump()}
 
     async def elicit(message, response_type=None):
-        return AcceptedElicitation(data=None)
+        return AcceptedElicitation(data="Approve")
 
     ctx = SimpleNamespace(
         request_context=SimpleNamespace(meta=SimpleNamespace(vista=vista)),
@@ -710,3 +743,63 @@ async def test_a_tool_call_reads_paths_and_credentials_from_the_request(
     )
     text = await t.hpc_upload_files(ctx, "odo", ["/mnt/data/uploads/f"], "in")
     assert "/r.jdoe.jobs/transfers/in/f" in text
+
+
+# --- the approval prompt, over a real MCP client ----------------------------
+
+
+async def ask(answer) -> tuple[bool, list[dict], list[warnings.WarningMessage]]:
+    """
+    What `_elicit_approver` answers when a client replies `answer` (an `ElicitResult`
+    or a value), the request schemas the client saw, and the warnings raised on the way.
+    """
+    probe = FastMCP("probe")
+
+    @probe.tool
+    async def approved(ctx: Context) -> bool:
+        return await t._elicit_approver(ctx)("Move the files?")
+
+    schemas: list[dict] = []
+
+    async def handler(message, response_type, params, context):
+        schemas.append(params.requestedSchema)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        async with Client(probe, elicitation_handler=handler) as client:
+            result = await client.call_tool("approved", {})
+    return result.data, schemas, caught
+
+
+@pytest.mark.parametrize(
+    "answer, approved",
+    [
+        ("Approve", True),
+        ("Decline", False),
+        (ElicitResult(action="decline"), False),
+        (ElicitResult(action="cancel"), False),
+        (RuntimeError("client cannot show it"), False),
+    ],
+)
+async def test_the_researchers_answer_decides_the_approval(answer, approved):
+    got, schemas, caught = await ask(answer)
+    assert got is approved
+    [schema] = schemas
+    [(name, prop)] = schema["properties"].items()
+    assert schema["required"] == [name]
+    assert prop["enum"] == ["Approve", "Decline"]
+    assert not [w for w in caught if issubclass(w.category, FastMCPDeprecationWarning)]
+
+
+async def test_a_client_that_cannot_elicit_is_a_no():
+    probe = FastMCP("probe")
+
+    @probe.tool
+    async def approved(ctx: Context) -> bool:
+        return await t._elicit_approver(ctx)("Move the files?")
+
+    async with Client(probe) as client:
+        assert (await client.call_tool("approved", {})).data is False

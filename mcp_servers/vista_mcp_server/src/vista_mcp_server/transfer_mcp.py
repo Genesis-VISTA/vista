@@ -12,10 +12,13 @@ they may read and write:
 - upload a project file into `<remote_dir>.<user>.jobs/transfers/` and nowhere
   else (Transfer `mkdir`, HTTPS `PUT`).
 
-Reads are unfenced because the facility already fences them. Writes are fenced
-to `transfers/` because nothing asks the researcher before a tool runs, so the
-folder is the only thing between an agent and their real files. It sits in the
-sources folder their identity already owns, so a job can read what lands there.
+Reads are unfenced because the facility already fences them. Uploads and
+downloads each ask the researcher first, an Approve/Decline prompt per call that
+lists what would move; a prompt that cannot be shown counts as a no. Uploads stay
+fenced to `transfers/` as a second guard: an approval is only as careful as the
+researcher reading it, and the fence limits what an approved upload can replace
+to files in a folder meant for this. It sits in the sources folder their
+identity already owns, so a job can read what lands there.
 Perlmutter and Lux are not offered: Perlmutter's IRI download is text-only and
 Lux moves files over SFTP.
 """
@@ -71,14 +74,14 @@ async def _require_approval(approve: Approve, message: str) -> None:
 
 
 def _elicit_approver(ctx: Context) -> Approve:
-    """ An `Approve` that asks the researcher through the chat; declined, dismissed or unanswerable is no. """
+    """ An `Approve` that asks the researcher through the chat; only an accepted "Approve" is a yes. """
     async def approve(message: str) -> bool:
         try:
-            result = await ctx.elicit(message, response_type=None)
+            result = await ctx.elicit(message, response_type=["Approve", "Decline"])
         except Exception:
             logging.warning("Could not ask the researcher to approve a transfer", exc_info=True)
             return False
-        return isinstance(result, AcceptedElicitation)
+        return isinstance(result, AcceptedElicitation) and result.data == "Approve"
     return approve
 
 
@@ -164,18 +167,20 @@ async def hpc_download_files(
 
     Any file your Globus identity can read can be fetched. Each lands at
     /mnt/data/output/transfers/<cluster>/<its remote path>, where the sandbox
-    and display_file can open it. A file already downloaded there is not fetched
-    again; delete the local copy to fetch a newer version. There is no size
-    limit, so check sizes with hpc_list_files first and leave large data on the
-    cluster for a job to process. For a job's own outputs, use
-    get_hpc_job_outputs.
+    and display_file can open it. The researcher approves each download, so put
+    every file you need in one call. A file already there is not fetched again
+    unless it changed on the cluster, in which case it is fetched again by
+    itself: never delete a local copy to refresh it. There is no size limit, so
+    check sizes with hpc_list_files first and leave large data on the cluster
+    for a job to process. For a job's own outputs, use get_hpc_job_outputs.
 
     Args:
         cluster: "odo" or "frontier".
         remote_paths: Absolute paths of the files on the cluster.
 
     Returns:
-        The sandbox path of each file, and any path that is not on the cluster.
+        The sandbox path of each file, split into those downloaded, those
+        already up to date and not fetched, and any path that is not on the cluster.
     """
     meta = get_vista_meta(ctx)
     output_dir = Path(meta.project_paths.require_output_dir())
@@ -217,7 +222,8 @@ async def _download_files(
             return offline
         raise
 
-    held: list[str] = []
+    fetched: set[str] = set()
+    current: list[str] = []
     missing: list[str] = []
     to_fetch: list[tuple[str, Path, dict[str, Any], bool]] = []
     for remote, local, sandbox in targets:
@@ -229,7 +235,7 @@ async def _download_files(
         elif _differs(local, entry):
             to_fetch.append((remote, local, entry, True))
         else:
-            held.append(str(sandbox))
+            current.append(str(sandbox))
     if to_fetch:
         await _require_approval(approve, _download_prompt(cluster, sandbox_root, to_fetch))
     sandbox_paths = {remote: str(sandbox) for remote, _, sandbox in targets}
@@ -242,12 +248,14 @@ async def _download_files(
             continue
         if (remote_time := _remote_time(entry)) is not None:
             os.utime(local, (remote_time, remote_time))
-        held.append(sandbox_paths[remote])
+        fetched.add(sandbox_paths[remote])
     logging.info(f"Transfer download from {cluster}: {len(to_fetch)} fetched, {len(missing)} missing")
 
     lines = []
-    if held:
-        lines += ["Downloaded files:", *(path for path in sandbox_paths.values() if path in held)]
+    if fetched:
+        lines += [f"Downloaded from {cluster.title()}:", *(path for path in sandbox_paths.values() if path in fetched)]
+    if current:
+        lines += ["Already up to date (not fetched):", *current]
     if missing:
         lines += [f"Not on {cluster.title()}:", *missing]
     return "\n".join(lines)
@@ -261,7 +269,7 @@ def _held_locally(
         return None
     return "\n".join([
         f"Could not check {cluster.title()} for newer versions: {reason}",
-        "Downloaded files:", *(str(sandbox) for _, _, sandbox in targets),
+        "Already up to date (not fetched):", *(str(sandbox) for _, _, sandbox in targets),
     ])
 
 
@@ -347,6 +355,7 @@ async def hpc_upload_files(
     Files can come only from /mnt/data/output or /mnt/data/uploads, and go only
     into your transfers folder on the cluster, <remote folder>.<user>.jobs/transfers,
     in the subfolder `remote_dir`. A file of the same name there is replaced.
+    The researcher approves each upload, so put every file you need in one call.
     Pass the reported remote paths to the job that should read them.
 
     Args:
