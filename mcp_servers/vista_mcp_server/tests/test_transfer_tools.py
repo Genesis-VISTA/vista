@@ -199,11 +199,22 @@ async def test_a_relative_or_climbing_path_is_refused_before_globus(globus, path
 
 # --- downloading ------------------------------------------------------------
 
+REMOTE_TIME = 1792591387
+""" 2026-10-21 14:03:07 UTC, the default `last_modified` of a seeded file. """
 
-async def test_a_download_mirrors_the_remote_path(globus, project):
-    globus.files["/lustre/orion/abc/data/a.nc"] = b"nc"
+
+def local_copy(project, cluster: str, remote: str) -> Path:
+    return Path(project.output_dir) / "transfers" / cluster / remote.lstrip("/")
+
+
+async def test_a_download_mirrors_the_remote_path(globus, project, approver):
+    globus.seed_file("/lustre/orion/abc/data/a.nc", b"nc")
     text = await t._download_files(
-        CFG, Path(project.output_dir), "frontier", ["/lustre/orion/abc/data/a.nc"]
+        CFG,
+        Path(project.output_dir),
+        "frontier",
+        ["/lustre/orion/abc/data/a.nc"],
+        approver,
     )
     local = (
         Path(project.output_dir)
@@ -219,19 +230,163 @@ async def test_a_download_mirrors_the_remote_path(globus, project):
     assert "/mnt/data/output/transfers/frontier/lustre/orion/abc/data/a.nc" in text
 
 
-async def test_a_second_download_is_served_locally(globus, project):
-    globus.files["/d/a.txt"] = b"a"
-    await t._download_files(CFG, Path(project.output_dir), "odo", ["/d/a.txt"])
-    text = await t._download_files(CFG, Path(project.output_dir), "odo", ["/d/a.txt"])
+async def test_a_two_file_download_is_approved_once_and_keeps_the_remote_times(
+    globus, project, approver
+):
+    globus.seed_file("/lustre/orion/abc/proj-shared/a.nc", b"a" * 1536)
+    globus.seed_file("/lustre/orion/abc/proj-shared/b.nc", b"b" * 512)
+    text = await t._download_files(
+        CFG,
+        Path(project.output_dir),
+        "odo",
+        ["/lustre/orion/abc/proj-shared/a.nc", "/lustre/orion/abc/proj-shared/b.nc"],
+        approver,
+    )
+    [message] = approver.messages
+    lines = message.splitlines()
+    assert lines[0] == (
+        "Download 2 files (2.0 KB) from Odo into /mnt/data/output/transfers/odo/:"
+    )
+    assert "/lustre/orion/abc/proj-shared/a.nc  1.5 KB" in lines[1]
+    assert "/lustre/orion/abc/proj-shared/b.nc   512 B" in lines[2]
+    assert "changed" not in message
+    assert globus.ls_calls == [("odo-c", "/lustre/orion/abc/proj-shared")]
+    for name in ("a.nc", "b.nc"):
+        local = local_copy(project, "odo", f"/lustre/orion/abc/proj-shared/{name}")
+        assert int(local.stat().st_mtime) == REMOTE_TIME
+    assert text.splitlines()[0] == "Downloaded files:"
+    assert len(text.splitlines()) == 3
+
+
+async def test_a_declined_download_writes_nothing(globus, project):
+    globus.seed_file("/d/a.txt", b"a")
+    no = Approver(False)
+    with pytest.raises(t.TransferNotApproved):
+        await t._download_files(CFG, Path(project.output_dir), "odo", ["/d/a.txt"], no)
+    assert len(no.messages) == 1
+    assert globus.downloads == []
+    assert not (Path(project.output_dir) / "transfers").exists()
+
+
+async def test_nothing_to_fetch_asks_nothing(globus, project, approver):
+    globus.seed_file("/d/a.txt", b"a")
+    first = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    text = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert len(approver.messages) == 1
     assert globus.downloads == [("odo-c", "/d/a.txt")]
-    assert globus.clients == 1
+    assert text == first
     assert "/mnt/data/output/transfers/odo/d/a.txt" in text
 
 
-async def test_a_missing_file_is_reported_and_the_rest_downloaded(globus, project):
-    globus.files["/d/b.txt"] = b"b"
+async def test_a_file_that_changed_in_size_is_marked_and_fetched_again(
+    globus, project, approver
+):
+    globus.seed_file("/d/a.txt", b"old")
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    globus.rewrite_file("/d/a.txt", b"newer contents")
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert "changed on Odo, replaces your local copy" in approver.messages[1]
+    assert "changed" not in approver.messages[0]
+    assert local_copy(project, "odo", "/d/a.txt").read_bytes() == b"newer contents"
+
+
+async def test_a_file_changed_only_in_time_is_fetched_again(globus, project, approver):
+    globus.seed_file("/d/a.txt", b"aaaa")
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    globus.rewrite_file("/d/a.txt", b"bbbb", last_modified="2026-10-23 00:00:00+00:00")
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert "changed on Odo" in approver.messages[1]
+    assert local_copy(project, "odo", "/d/a.txt").read_bytes() == b"bbbb"
+
+
+async def test_a_file_edited_locally_is_replaced_by_the_remote_one(
+    globus, project, approver
+):
+    globus.seed_file("/d/a.txt", b"aaaa")
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    local = local_copy(project, "odo", "/d/a.txt")
+    local.write_bytes(b"mine")
+    os.utime(local, (REMOTE_TIME + 500, REMOTE_TIME + 500))
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert "changed on Odo, replaces your local copy" in approver.messages[1]
+    assert local.read_bytes() == b"aaaa"
+
+
+async def test_without_a_remote_time_the_size_alone_decides(globus, project, approver):
+    globus.seed_file("/d/a.txt", b"aaaa", last_modified=None)
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    local = local_copy(project, "odo", "/d/a.txt")
+    os.utime(local, (1000, 1000))
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert len(approver.messages) == 1
+    globus.rewrite_file("/d/a.txt", b"bbbbbb", last_modified=None)
+    await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert len(approver.messages) == 2
+    assert local.read_bytes() == b"bbbbbb"
+
+
+async def test_a_missing_file_is_reported_and_the_rest_downloaded(
+    globus, project, approver
+):
+    globus.seed_file("/d/b.txt", b"b")
     text = await t._download_files(
-        CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"]
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
+    )
+    assert text.splitlines() == [
+        "Downloaded files:",
+        "/mnt/data/output/transfers/odo/d/b.txt",
+        "Not on Odo:",
+        "/d/a.txt",
+    ]
+    assert "a.txt" not in approver.messages[0]
+
+
+async def test_a_path_given_twice_is_listed_fetched_and_reported_once(
+    globus, project, approver
+):
+    globus.seed_file("/d/a.txt", b"a")
+    text = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d//a.txt"], approver
+    )
+    [message] = approver.messages
+    assert message.count("/d/a.txt") == 1
+    assert globus.downloads == [("odo-c", "/d/a.txt")]
+    assert text.splitlines() == [
+        "Downloaded files:",
+        "/mnt/data/output/transfers/odo/d/a.txt",
+    ]
+
+
+async def test_a_file_gone_before_its_download_is_reported_missing(
+    globus, project, approver
+):
+    globus.seed_file("/d/a.txt", b"a")
+    globus.seed_file("/d/b.txt", b"b")
+    del globus.files["/d/a.txt"]
+    text = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
     )
     assert text.splitlines() == [
         "Downloaded files:",
@@ -241,13 +396,44 @@ async def test_a_missing_file_is_reported_and_the_rest_downloaded(globus, projec
     ]
 
 
+async def test_a_missing_folder_is_reported_as_missing_files(globus, project, approver):
+    text = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/nowhere/a.txt"], approver
+    )
+    assert text.splitlines() == ["Not on Odo:", "/nowhere/a.txt"]
+    assert approver.messages == []
+
+
+async def test_a_folder_that_cannot_be_listed_is_read_file_by_file(
+    globus, project, approver
+):
+    globus.seed_file("/shared/a.txt", b"a")
+    globus.unlistable.add("/shared")
+    text = await t._download_files(
+        CFG,
+        Path(project.output_dir),
+        "odo",
+        ["/shared/a.txt", "/shared/gone.txt"],
+        approver,
+    )
+    assert globus.stat_calls == [
+        ("odo-c", "/shared/a.txt"),
+        ("odo-c", "/shared/gone.txt"),
+    ]
+    assert local_copy(project, "odo", "/shared/a.txt").read_bytes() == b"a"
+    assert "Not on Odo:\n/shared/gone.txt" in text
+
+
 @pytest.mark.parametrize("path", ["/lustre/../etc/passwd", "d/a.txt", "/"])
-async def test_a_bad_download_path_is_refused_before_globus(globus, project, path):
+async def test_a_bad_download_path_is_refused_before_globus(
+    globus, project, approver, path
+):
     with pytest.raises(ToolError):
         await t._download_files(
-            CFG, Path(project.output_dir), "odo", ["/d/fine.txt", path]
+            CFG, Path(project.output_dir), "odo", ["/d/fine.txt", path], approver
         )
     assert globus.clients == 0
+    assert approver.messages == []
     assert not (Path(project.output_dir) / "transfers").exists()
 
 
@@ -427,9 +613,72 @@ async def test_an_expired_session_on_a_listing(expired):
         await t._list_files(CFG, "odo", "/data", False)
 
 
-async def test_an_expired_session_on_a_download_is_not_a_missing_file(expired, project):
+async def test_an_expired_session_on_a_download_is_not_a_missing_file(
+    expired, project, approver
+):
     with pytest.raises(GlobusSessionExpired, match="expired"):
-        await t._download_files(CFG, Path(project.output_dir), "odo", ["/d/a.txt"])
+        await t._download_files(
+            CFG, Path(project.output_dir), "odo", ["/d/a.txt"], approver
+        )
+    assert approver.messages == []
+
+
+def hold(project, remote: str) -> None:
+    local = local_copy(project, "odo", remote)
+    local.parent.mkdir(parents=True, exist_ok=True)
+    local.write_bytes(b"held")
+
+
+async def test_an_expired_session_with_every_file_held_reports_the_copies(
+    expired, project, approver
+):
+    hold(project, "/d/a.txt")
+    hold(project, "/d/b.txt")
+    text = await t._download_files(
+        CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
+    )
+    lines = text.splitlines()
+    assert lines[0].startswith("Could not check Odo for newer versions:")
+    assert "expired" in lines[0]
+    assert lines[1:] == [
+        "Downloaded files:",
+        "/mnt/data/output/transfers/odo/d/a.txt",
+        "/mnt/data/output/transfers/odo/d/b.txt",
+    ]
+    assert approver.messages == []
+
+
+async def test_an_expired_session_with_one_file_not_held_still_raises(
+    expired, project, approver
+):
+    hold(project, "/d/a.txt")
+    with pytest.raises(GlobusSessionExpired, match="expired"):
+        await t._download_files(
+            CFG, Path(project.output_dir), "odo", ["/d/a.txt", "/d/b.txt"], approver
+        )
+    assert approver.messages == []
+
+
+async def test_not_connected_with_every_file_held_reports_the_copies(
+    globus, project, approver
+):
+    hold(project, "/d/a.txt")
+    text = await t._download_files(
+        UserConfig(), Path(project.output_dir), "odo", ["/d/a.txt"], approver
+    )
+    assert text.splitlines()[0].startswith("Could not check Odo for newer versions:")
+    assert "not connected for Odo" in text.splitlines()[0]
+    assert "/mnt/data/output/transfers/odo/d/a.txt" in text
+    assert approver.messages == []
+
+
+async def test_not_connected_with_a_file_not_held_still_raises(
+    globus, project, approver
+):
+    with pytest.raises(ToolError, match="not connected for Odo"):
+        await t._download_files(
+            UserConfig(), Path(project.output_dir), "odo", ["/d/a.txt"], approver
+        )
 
 
 async def test_an_expired_session_on_an_upload_comes_before_the_prompt(

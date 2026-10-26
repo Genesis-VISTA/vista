@@ -20,20 +20,22 @@ Perlmutter and Lux are not offered: Perlmutter's IRI download is text-only and
 Lux moves files over SFTP.
 """
 from __future__ import annotations
-import functools, logging
+import logging, os
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from pathlib import Path, PurePosixPath
-from typing import Literal
+from typing import Any, Literal
 
+import globus_sdk
 from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
 from fastmcp.server.elicitation import AcceptedElicitation
 from mcp.types import ToolAnnotations
 
-from .lib.globus import GlobusFileNotFound, create_globus_client
+from .lib.globus import GlobusFileNotFound, GlobusSessionExpired, create_globus_client
 from .lib.user_config import ProjectPaths, UserConfig, get_vista_meta
 from .submit_job_mcp import (
-    SANDBOX_OUTPUT_DIR, _confined_paths, _fetch_once, _layout, _olcf_collection_id,
+    SANDBOX_OUTPUT_DIR, _confined_paths, _layout, _olcf_collection_id,
 )
 
 
@@ -177,11 +179,14 @@ async def hpc_download_files(
     """
     meta = get_vista_meta(ctx)
     output_dir = Path(meta.project_paths.require_output_dir())
-    return await _download_files(meta.user, output_dir, cluster, remote_paths)
+    return await _download_files(
+        meta.user, output_dir, cluster, remote_paths, _elicit_approver(ctx),
+    )
 
 
 async def _download_files(
     cfg: UserConfig, output_dir: Path, cluster: TransferCluster, remote_paths: list[str],
+    approve: Approve,
 ) -> str:
     if not remote_paths:
         raise ToolError("Name at least one file to download.")
@@ -194,30 +199,139 @@ async def _download_files(
             local, sandbox = _confined_paths(local_root, sandbox_root, remote.lstrip("/"))
         except ValueError as e:
             raise ToolError(f'Cannot download "{path}": {e}.') from e
-        targets.append((remote, local, sandbox))
+        if all(remote != seen for seen, _, _ in targets):
+            targets.append((remote, local, sandbox))
 
-    globus = functools.cache(
-        lambda: create_globus_client(tokens=cfg.require_globus_token(cluster), cluster=cluster)
-    )
-    saved: list[str] = []
+    try:
+        tokens = cfg.require_globus_token(cluster)
+    except ToolError as e:
+        if (offline := _held_locally(targets, cluster, e)) is not None:
+            return offline
+        raise
+    globus = create_globus_client(tokens=tokens, cluster=cluster)
+    collection_id = _olcf_collection_id(cluster)
+    try:
+        remote_entries = await _remote_entries(globus, collection_id, [remote for remote, _, _ in targets])
+    except GlobusSessionExpired as e:
+        if (offline := _held_locally(targets, cluster, e)) is not None:
+            return offline
+        raise
+
+    held: list[str] = []
     missing: list[str] = []
+    to_fetch: list[tuple[str, Path, dict[str, Any], bool]] = []
     for remote, local, sandbox in targets:
+        entry = remote_entries[remote]
+        if entry is None:
+            missing.append(remote)
+        elif not (local.is_file() and local.stat().st_size > 0):
+            to_fetch.append((remote, local, entry, False))
+        elif _differs(local, entry):
+            to_fetch.append((remote, local, entry, True))
+        else:
+            held.append(str(sandbox))
+    if to_fetch:
+        await _require_approval(approve, _download_prompt(cluster, sandbox_root, to_fetch))
+    sandbox_paths = {remote: str(sandbox) for remote, _, sandbox in targets}
+    for remote, local, entry, _ in to_fetch:
         try:
-            await _fetch_once(
-                globus, collection_id=_olcf_collection_id(cluster),
-                remote_path=remote, local_path=local,
-            )
+            await globus.download_file(collection_id=collection_id, remote_path=remote, local_path=local)
         except GlobusFileNotFound:
+            # Gone since the listing.
             missing.append(remote)
             continue
-        saved.append(str(sandbox))
-    logging.info(f"Transfer download from {cluster}: {len(saved)} saved, {len(missing)} missing")
+        if (remote_time := _remote_time(entry)) is not None:
+            os.utime(local, (remote_time, remote_time))
+        held.append(sandbox_paths[remote])
+    logging.info(f"Transfer download from {cluster}: {len(to_fetch)} fetched, {len(missing)} missing")
 
     lines = []
-    if saved:
-        lines += ["Downloaded files:", *saved]
+    if held:
+        lines += ["Downloaded files:", *(path for path in sandbox_paths.values() if path in held)]
     if missing:
         lines += [f"Not on {cluster.title()}:", *missing]
+    return "\n".join(lines)
+
+
+def _held_locally(
+    targets: list[tuple[str, Path, PurePosixPath]], cluster: TransferCluster, reason: ToolError,
+) -> str | None:
+    """ The local copies with a warning, when Globus cannot be asked and every file is already held. """
+    if not all(local.is_file() and local.stat().st_size > 0 for _, local, _ in targets):
+        return None
+    return "\n".join([
+        f"Could not check {cluster.title()} for newer versions: {reason}",
+        "Downloaded files:", *(str(sandbox) for _, _, sandbox in targets),
+    ])
+
+
+async def _remote_entries(globus, collection_id: str, remotes: list[str]) -> dict[str, dict[str, Any] | None]:
+    """
+    Each remote path's file entry (size, last_modified), or None when it is not a file there.
+    One listing per folder; a folder that may not be listed has its files `stat`ed one by one.
+    """
+    by_folder: dict[str, list[str]] = {}
+    for remote in remotes:
+        by_folder.setdefault(str(PurePosixPath(remote).parent), []).append(remote)
+    entries: dict[str, dict[str, Any] | None] = {}
+    for folder, paths in by_folder.items():
+        found: dict[str, dict[str, Any]] = {}
+        try:
+            # Hidden files are not skipped: a requested `.env` must still be found.
+            found = {
+                entry["name"]: entry
+                for entry in await globus.operation_ls(endpoint=collection_id, path=folder)
+            }
+        except GlobusFileNotFound:
+            pass
+        except globus_sdk.TransferAPIError as e:
+            if e.http_status != 403:
+                raise
+            for path in paths:
+                try:
+                    found[PurePosixPath(path).name] = await globus.operation_stat(
+                        endpoint=collection_id, path=path,
+                    )
+                except GlobusFileNotFound:
+                    pass
+        for path in paths:
+            entry = found.get(PurePosixPath(path).name)
+            entries[path] = entry if entry and entry.get("type") == "file" else None
+    return entries
+
+
+def _remote_time(entry: dict[str, Any]) -> int | None:
+    """ The entry's `last_modified` as whole epoch seconds, or None when Transfer gave none. """
+    if not entry.get("last_modified"):
+        return None
+    return int(datetime.fromisoformat(entry["last_modified"]).timestamp())
+
+
+def _differs(local: Path, entry: dict[str, Any]) -> bool:
+    """ Whether the local copy is not the remote file: another size, or another time when the time is known. """
+    stat = local.stat()
+    if stat.st_size != int(entry.get("size") or 0):
+        return True
+    remote_time = _remote_time(entry)
+    return remote_time is not None and int(stat.st_mtime) != remote_time
+
+
+def _download_prompt(
+    cluster: TransferCluster, sandbox_root: PurePosixPath,
+    to_fetch: list[tuple[str, Path, dict[str, Any], bool]],
+) -> str:
+    sizes = [int(entry.get("size") or 0) for _, _, entry, _ in to_fetch]
+    noun = "file" if len(to_fetch) == 1 else "files"
+    lines = [
+        f"Download {len(to_fetch)} {noun} ({_human_size(sum(sizes))}) from {cluster.title()} into {sandbox_root}/:"
+    ]
+    path_width = max(len(remote) for remote, _, _, _ in to_fetch)
+    size_width = max(len(_human_size(size)) for size in sizes)
+    for (remote, _, _, changed), size in zip(to_fetch, sizes):
+        line = f"  {remote:<{path_width}}  {_human_size(size):>{size_width}}"
+        if changed:
+            line += f"   changed on {cluster.title()}, replaces your local copy"
+        lines.append(line)
     return "\n".join(lines)
 
 
