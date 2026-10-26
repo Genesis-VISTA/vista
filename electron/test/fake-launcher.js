@@ -47,6 +47,17 @@ async function run() {
     process.exit(1);
   }
 
+  // The backend refusing the local data, once; the restart after a reset succeeds.
+  if (scenario === 'incompatible' && attempt && !existsSync(attempt)) {
+    writeFileSync(attempt, 'refused-once\n', 'utf8');
+    emit('preflight', 'complete');
+    emit('backend', 'running', { label: 'Preparing VISTA' });
+    await pause(30);
+    emit('backend', 'failed', { code: 'database-incompatible' });
+    await pause(30);
+    process.exit(3);
+  }
+
   emit('preflight', 'complete');
   const phases = [
     ['resources', 'Installing bundled resources'],

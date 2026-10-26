@@ -20,16 +20,16 @@
 
 ## 3. Startup window: Back up and reset
 
-- [ ] 3.1 Add `'database-incompatible': 'Your local data is incompatible with this version of VISTA, please reset.'` to `FAILURE_MESSAGES` in `electron/src/startup-protocol.js`. Make the failure code reachable from the renderer's snapshot if it isn't already. Extend `electron/test/startup-protocol.test.js` to read the backend's code constant. Verify with `cd electron && npm test`.
-- [ ] 3.2 Add `electron/src/data-reset.js` (D5, D6). Given the state directory and a clock, it creates `backups/<UTC>/` and moves every top-level entry except the frozen keep-list (`backups`, `logs`, `huggingface`, `microsandbox`, `vista-data`) into it. It writes `README.txt` from `incompatible-data-index.json`, or from the disk without one. It returns the backup path and what moved, and on a failed rename it moves everything back. Add `electron/test/data-reset.test.js` on a temp directory, covering:
+- [x] 3.1 Add `'database-incompatible': 'Your local data is incompatible with this version of VISTA, please reset.'` to `FAILURE_MESSAGES` in `electron/src/startup-protocol.js`. Make the failure code reachable from the renderer's snapshot if it isn't already. Extend `electron/test/startup-protocol.test.js` to read the backend's code constant. Verify with `cd electron && npm test`.
+- [x] 3.2 Add `electron/src/data-reset.js` (D5, D6). Given the state directory and a clock, it creates `backups/<UTC>/` and moves every top-level entry except the frozen keep-list (`backups`, `logs`, `huggingface`, `microsandbox`, `vista-data`) into it. It writes `README.txt` from `incompatible-data-index.json`, or from the disk without one. It returns the backup path and what moved, and on a failed rename it moves everything back. Add `electron/test/data-reset.test.js` on a temp directory, covering:
   - what moves and what stays, including an unknown entry being moved;
   - a second reset beside an earlier backup;
   - rollback when a rename fails;
   - the README with the index (names the projects, skills and knowledge bases and where they are) and without it (skills named from `SKILL.md`, projects by id).
 
   Verify with `cd electron && npm test`.
-- [ ] 3.3 Wire `startup:reset-data` in `main.js`, with the `fromStartupWindow` guard. It acts only when the current failure code is `database-incompatible` and the launcher has stopped. It shows the confirmation, with Cancel as the default, then runs `data-reset.js`. It then shows the backup-location message with Show Folder and Continue, then retries. A failure stays on screen and is logged to `window.log`. Add `resetData()` to `startup-preload.cjs`. Verify the guard conditions with unit tests wherever the existing tests reach them, and with `./scripts/ci-local.sh electron`.
-- [ ] 3.4 Add the Back up and reset button to `startup.html` and `startup-renderer.js`, shown only for `database-incompatible`, which also hides Try Again. Verify with a renderer test if the existing tests cover the renderer. Otherwise verify by hand in 4.1.
+- [x] 3.3 Wire `startup:reset-data` in `main.js`, with the `fromStartupWindow` guard. It acts only when the current failure code is `database-incompatible` and the launcher has stopped. It shows the confirmation, with Cancel as the default, then runs `data-reset.js`. It then shows the backup-location message with Show Folder and Continue, then retries. A failure stays on screen and is logged to `window.log`. Add `resetData()` to `startup-preload.cjs`. Verify the guard conditions with unit tests wherever the existing tests reach them, and with `./scripts/ci-local.sh electron`.
+- [x] 3.4 Add the Back up and reset button to `startup.html` and `startup-renderer.js`, shown only for `database-incompatible`, which also hides Try Again. Verify with a renderer test if the existing tests cover the renderer. Otherwise verify by hand in 4.1.
 
 ## 4. Docs and manual validation
 

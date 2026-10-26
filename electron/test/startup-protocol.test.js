@@ -4,10 +4,13 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import {
+  DATABASE_INCOMPATIBLE,
   FAILURE_CODES,
+  failureActionsFor,
   formatDiagnostics,
   parseProgressLine,
   ProtocolError,
+  resetAllowed,
   StartupStateMachine,
 } from '../src/startup-protocol.js';
 
@@ -117,4 +120,45 @@ test('every failure code either launcher emits has its own message', () => {
   emitted.delete('code'); // die_with_code's own "$code" argument
   assert.ok(emitted.has('port-conflict') && emitted.has('package-path-too-long'), [...emitted].join(' '));
   for (const code of emitted) assert.ok(FAILURE_CODES.includes(code), `no message for ${code}`);
+
+  // The backend writes its own codes to the failure file the launchers pass on.
+  const database = readFileSync(
+    new URL('../../backend/src/vista_backend/db/db.py', import.meta.url), 'utf8');
+  const fromBackend = [...database.matchAll(/^DATABASE_[A-Z_]+ = "([a-z-]+)"/gm)].map((m) => m[1]);
+  assert.ok(fromBackend.includes('database-incompatible'), fromBackend.join(' '));
+  for (const code of fromBackend) assert.ok(FAILURE_CODES.includes(code), `no message for ${code}`);
+  assert.equal(DATABASE_INCOMPATIBLE, 'database-incompatible');
+});
+
+test('incompatible data reads as a reset prompt, with the code in the snapshot', () => {
+  const machine = new StartupStateMachine();
+  machine.acceptLine(event('preflight', 'running'));
+  machine.acceptLine(event('preflight', 'complete'));
+  machine.acceptLine(event('backend', 'running'));
+  const failed = machine.acceptLine(event('backend', 'failed', { code: 'database-incompatible' }));
+  assert.equal(failed.failureMessage, 'Your local data is incompatible with this version of VISTA, please reset.');
+  assert.equal(failed.failureCode, 'database-incompatible');
+  assert.deepEqual(failed.failureActions, ['backup-and-reset']);
+});
+
+test('other failures offer Try Again only, and a running startup offers nothing', () => {
+  const machine = new StartupStateMachine();
+  assert.deepEqual(machine.snapshot().failureActions, []);
+  machine.acceptLine(event('preflight', 'running'));
+  const failed = machine.acceptLine(event('preflight', 'failed', { code: 'port-conflict' }));
+  assert.deepEqual(failed.failureActions, ['retry']);
+  assert.equal(failed.failureCode, 'port-conflict');
+  assert.deepEqual(failureActionsFor('startup-error'), ['retry']);
+  assert.deepEqual(failureActionsFor('database-incompatible'), ['backup-and-reset']);
+  assert.deepEqual(new StartupStateMachine().failProtocol('x').failureActions, ['retry']);
+});
+
+test('a reset is allowed only for incompatible data once the launcher has stopped', () => {
+  const incompatible = { status: 'failed', failure: { code: 'database-incompatible' } };
+  assert.equal(resetAllowed(incompatible, null), true);
+  assert.equal(resetAllowed(incompatible, {}), false, 'launcher still stopping');
+  assert.equal(resetAllowed({ status: 'failed', failure: { code: 'port-conflict' } }, null), false);
+  assert.equal(resetAllowed({ status: 'starting', failure: null }, null), false);
+  assert.equal(resetAllowed({ status: 'ready', failure: { code: 'database-incompatible' } }, null), false);
+  assert.equal(resetAllowed(null, null), false);
 });

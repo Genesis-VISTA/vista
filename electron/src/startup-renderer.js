@@ -7,6 +7,7 @@ const failure = /** @type {HTMLElement | null} */ (document.querySelector('#fail
 const failureMessage = document.querySelector('#failure-message');
 const firstRunNote = /** @type {HTMLElement | null} */ (document.querySelector('#first-run-note'));
 const retry = /** @type {HTMLButtonElement | null} */ (document.querySelector('#retry'));
+const backupAndReset = /** @type {HTMLButtonElement | null} */ (document.querySelector('#backup-and-reset'));
 const sandboxNotice = /** @type {HTMLElement | null} */ (document.querySelector('#sandbox-notice'));
 
 /** @param {unknown} value */
@@ -34,7 +35,15 @@ function render(snapshot) {
   if (firstRunNote) firstRunNote.hidden = snapshot.status === 'failed';
   if (failure) failure.hidden = snapshot.status !== 'failed';
   if (failureMessage) failureMessage.textContent = text(snapshot.failureMessage);
-  if (retry) retry.disabled = snapshot.canRetry !== true;
+  const actions = Array.isArray(snapshot.failureActions) ? snapshot.failureActions : [];
+  if (retry) {
+    retry.hidden = !actions.includes('retry');
+    retry.disabled = snapshot.canRetry !== true;
+  }
+  if (backupAndReset) {
+    backupAndReset.hidden = !actions.includes('backup-and-reset');
+    backupAndReset.disabled = snapshot.canRetry !== true;
+  }
   if (sandboxNotice) {
     sandboxNotice.textContent = text(snapshot.notice);
     sandboxNotice.hidden = !sandboxNotice.textContent;
@@ -43,6 +52,18 @@ function render(snapshot) {
 
 bridge?.onState(render);
 document.querySelector('#retry')?.addEventListener('click', () => bridge?.retry());
+document.querySelector('#backup-and-reset')?.addEventListener('click', async (event) => {
+  // Until the next state update, so a second click cannot start a second reset.
+  const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+  button.disabled = true;
+  try {
+    const started = await bridge?.resetData();
+    // Cancelled or failed: nothing changes state, so offer it again.
+    if (!started) button.disabled = false;
+  } catch {
+    button.disabled = false;
+  }
+});
 document.querySelector('#open-logs')?.addEventListener('click', () => bridge?.openLogs());
 document.querySelector('#quit')?.addEventListener('click', () => bridge?.quit());
 document.querySelector('#copy-diagnostics')?.addEventListener('click', async (event) => {

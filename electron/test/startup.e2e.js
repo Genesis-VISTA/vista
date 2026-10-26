@@ -1,6 +1,6 @@
 // @ts-check
 import { test, expect, _electron as electron } from '@playwright/test';
-import { readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,6 +104,56 @@ test('failure enables retry only after cleanup, then transitions normally', asyn
   await expect(fixture.startup.locator('#retry')).toBeEnabled();
   await fixture.startup.locator('#retry').click();
   await mainWindow(fixture.application);
+  expect(readFileSync(fixture.count, 'utf8').trim().split('\n')).toHaveLength(2);
+  await fixture.application.close();
+  rmSync(fixture.directory, { recursive: true, force: true });
+});
+
+test('incompatible data offers Back up and reset, which moves the data and starts again', async () => {
+  const fixture = await launchStartup('incompatible');
+  await expect(fixture.startup.locator('#failure')).toBeVisible();
+  await expect(fixture.startup.locator('#failure-message')).toHaveText(
+    'Your local data is incompatible with this version of VISTA, please reset.');
+  await expect(fixture.startup.locator('#backup-and-reset')).toBeVisible();
+  await expect(fixture.startup.locator('#backup-and-reset')).toBeEnabled();
+  await expect(fixture.startup.locator('#retry')).toBeHidden();
+  await expect(fixture.startup.locator('#open-logs')).toBeVisible();
+  await expect(fixture.startup.locator('#quit')).toBeVisible();
+
+  const state = path.join(fixture.directory, 'state');
+  mkdirSync(path.join(state, 'volumes', 'p-1'), { recursive: true });
+  writeFileSync(path.join(state, 'vista.db'), 'old', 'utf8');
+  mkdirSync(path.join(state, 'huggingface'), { recursive: true });
+
+  // Answer the two dialogs as a researcher would: confirm, then Continue.
+  await fixture.application.evaluate(({ dialog }) => {
+    const answers = [1, 0, 1]; // Cancel first, then confirm and Continue
+    /** @type {any[]} */
+    const shown = [];
+    /** @type {any} */ (globalThis).shownDialogs = shown;
+    dialog.showMessageBox = /** @type {any} */ (async (/** @type {any} */ _window, /** @type {any} */ options) => {
+      shown.push(options);
+      return { response: answers.shift() ?? 1 };
+    });
+  });
+  await fixture.startup.locator('#backup-and-reset').click();
+  await expect.poll(() => fixture.application.evaluate(() => /** @type {any} */ (globalThis).shownDialogs.length)).toBe(1);
+  // Cancelled: nothing moved, the failure still shows.
+  expect(existsSync(path.join(state, 'vista.db'))).toBe(true);
+  expect(existsSync(path.join(state, 'backups'))).toBe(false);
+  await expect(fixture.startup.locator('#backup-and-reset')).toBeVisible();
+  await fixture.startup.locator('#backup-and-reset').click();
+  await mainWindow(fixture.application);
+
+  const shown = await fixture.application.evaluate(() => /** @type {any} */ (globalThis).shownDialogs);
+  expect(shown).toHaveLength(3);
+  expect(shown[0]).toMatchObject({ buttons: ['Back up and reset', 'Cancel'], defaultId: 1 });
+  const [backup] = readdirSync(path.join(state, 'backups'));
+  expect(shown[2].message).toContain(path.join(state, 'backups', backup));
+  expect(existsSync(path.join(state, 'vista.db'))).toBe(false);
+  expect(existsSync(path.join(state, 'backups', backup, 'vista.db'))).toBe(true);
+  expect(existsSync(path.join(state, 'backups', backup, 'README.txt'))).toBe(true);
+  expect(existsSync(path.join(state, 'huggingface'))).toBe(true);
   expect(readFileSync(fixture.count, 'utf8').trim().split('\n')).toHaveLength(2);
   await fixture.application.close();
   rmSync(fixture.directory, { recursive: true, force: true });
