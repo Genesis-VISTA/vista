@@ -555,8 +555,25 @@ function Stop-VistaServices {
   }
 }
 
-function Wait-For([string]$Url, [int]$Seconds, [string]$LogFile, [string]$What) {
+# Waits for $Url to answer, for up to $Seconds. A service that has exited stops
+# the wait at once: the backend writes why to VISTA_STARTUP_FAILURE_FILE
+# (`database-incompatible`, say), and that code is reported if it is a token the
+# protocol accepts; anything else, or no file, is startup-error.
+function Wait-For([string]$Url, [int]$Seconds, [string]$LogFile, [string]$What, $Service) {
   for ($i = 0; $i -lt $Seconds; $i++) {
+    if ($Service.HasExited) {
+      $code = ''
+      if (Test-Path -LiteralPath $STARTUP_FAILURE_FILE) {
+        $first = Get-Content -LiteralPath $STARTUP_FAILURE_FILE -TotalCount 1 -ErrorAction SilentlyContinue
+        if ($first) { $code = "$first".Trim() }
+      }
+      if ($code -cnotmatch '^[a-z][a-z0-9-]{0,63}$') { $code = 'startup-error' }
+      [Console]::Error.WriteLine('')
+      [Console]::Error.WriteLine("error: $What stopped before it was ready. Last lines of ${LogFile}:")
+      Get-Content $LogFile -Tail 15 -ErrorAction SilentlyContinue | ForEach-Object { [Console]::Error.WriteLine($_) }
+      Send-StartupEvent $CURRENT_PHASE failed -Code $code -LogFile $CURRENT_LOG
+      exit 1
+    }
     & curl.exe -s -o NUL -m 5 $Url
     if ($LASTEXITCODE -eq 0) { return }
     Start-Sleep -Seconds 1
@@ -592,13 +609,18 @@ function Wait-ForStopRequest {
 Log "VISTA $VERSION"
 Log "Starting services (logs in $LOGS)..."
 
+# The backend writes the code of a database it refuses here (see Wait-For).
+$STARTUP_FAILURE_FILE = "$LOGS\startup-failure"
+Remove-Item -LiteralPath $STARTUP_FAILURE_FILE -Force -ErrorAction SilentlyContinue
+$env:VISTA_STARTUP_FAILURE_FILE = $STARTUP_FAILURE_FILE
+
 try {
   $CURRENT_PHASE = 'mcp'
   $CURRENT_LOG = 'mcp.log'
   Send-StartupEvent mcp running -Label 'Starting scientific tools'
-  $null = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
+  $mcp = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
     "--transport=http --port $MCP_PORT")
-  Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server'
+  Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server' $mcp
   Send-StartupEvent mcp ready
 
   if ($FIRST_RUN) {
@@ -607,8 +629,8 @@ try {
   $CURRENT_PHASE = 'backend'
   $CURRENT_LOG = 'backend.log'
   Send-StartupEvent backend running -Label 'Preparing VISTA'
-  $null = Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
-  Wait-For "$env:VISTA_BACKEND_URL/openapi.json" 600 "$LOGS\backend.log" 'the backend'
+  $backend = Start-VistaService 'backend' "`"$PACKAGE\app\backend\.venv\Scripts\vista-backend.exe`""
+  Wait-For "$env:VISTA_BACKEND_URL/openapi.json" 600 "$LOGS\backend.log" 'the backend' $backend
   Send-StartupEvent backend ready
 
   $CURRENT_PHASE = 'ui'
@@ -616,8 +638,8 @@ try {
   Send-StartupEvent ui running -Label 'Starting the interface'
   $env:PORT = $UI_PORT
   $env:HOSTNAME = '127.0.0.1'
-  $null = Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
-  Wait-For "http://127.0.0.1:$UI_PORT/" 120 "$LOGS\ui.log" 'the web interface'
+  $ui = Start-VistaService 'ui' "`"$PACKAGE\node\node.exe`" `"$PACKAGE\app\ui\server.js`""
+  Wait-For "http://127.0.0.1:$UI_PORT/" 120 "$LOGS\ui.log" 'the web interface' $ui
 
   # 127.0.0.1, not localhost: it is what the UI binds, and localhost can
   # resolve to ::1 first. It is also the origin the window's storage is kept

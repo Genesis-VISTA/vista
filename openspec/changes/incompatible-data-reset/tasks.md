@@ -16,7 +16,7 @@
 
 ## 2. Launchers: report an exited service at once
 
-- [ ] 2.1 Port the `wait_for` / `Wait-For` PID check and `VISTA_STARTUP_FAILURE_FILE` handling to `scripts/package_launcher.sh` and `.ps1` from `dadfdd15`. Port the supervised-test cases with `database-incompatible` as the code. Verify with `./scripts/ci-local.sh launcher`, including the PowerShell run under pwsh, and `./scripts/ci-local.sh install lint`.
+- [x] 2.1 Port the `wait_for` / `Wait-For` PID check and `VISTA_STARTUP_FAILURE_FILE` handling to `scripts/package_launcher.sh` and `.ps1` from `dadfdd15`. Port the supervised-test cases with `database-incompatible` as the code. Verify with `./scripts/ci-local.sh launcher`, including the PowerShell run under pwsh, and `./scripts/ci-local.sh install lint`.
 
 ## 3. Startup window: Back up and reset
 
