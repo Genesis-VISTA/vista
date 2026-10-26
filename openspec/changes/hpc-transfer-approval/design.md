@@ -45,10 +45,26 @@ can be tested in the MCP server with no backend.
 
 **Helpers take an `approve` callable.** It is
 `approve: Callable[[str], Awaitable[bool]]` (message in, approved out). The tool wrapper builds
-it from `ctx.elicit(message, response_type=None)`: `AcceptedElicitation` → `True`, declined or
-cancelled → `False`. The helpers stay free of `Context`, so tests pass a fake approver that
-records the message and answers. The approval step is a small shared function that raises a
-`TransferNotApproved` (`ToolError`) with the agreed text when the answer is no.
+it with `_elicit_approver(ctx)`, from
+`ctx.elicit(message, response_type=["Approve", "Decline"])`: accepted with `Approve` → `True`;
+accepted with `Decline`, declined, or cancelled → `False`. The helpers stay free of `Context`,
+so tests pass a fake approver that records the message and answers. The approval step is a
+small shared function that raises a `TransferNotApproved` (`ToolError`) with the agreed text
+when the answer is no. Each wrapper got its approver in the group that changed its helper's
+signature (uploads in group 1, downloads in group 2), so no commit leaves a tool unable to run.
+
+**An explicit choice, not an empty form.** FastMCP 3.3 deprecates `response_type=None` (an
+empty-schema form), warning that some clients render it as an empty, non-functional form, and
+will remove it. A two-answer choice is a supported schema: one required string field, `value`,
+with `enum: ["Approve", "Decline"]`. It works in any MCP client as a choice, and VISTA's UI
+shows it as two buttons.
+- *Alternative:* `response_type=bool`, a checkbox and Submit. Clumsier for a yes/no.
+- *Alternative:* keep the empty form. Breaks on the FastMCP upgrade that removes it.
+
+**A prompt that cannot be shown is a no.** If `ctx.elicit` raises, `_elicit_approver` logs it
+and answers no. Nothing moves, which fails safe, and the agent gets the same not-approved
+message. The cost is that a fault in the prompt path reads as a refusal; the log keeps it
+visible.
 
 **One failure for declined, dismissed and "cannot ask".** The MCP server sees all three as a
 no (a run with elicitation off answers `cancel`, as a dismissed modal does). A separate signal
@@ -92,6 +108,18 @@ If step 2 raises `GlobusSessionExpired`, or the not-connected `ToolError` from
 with a warning naming the cluster and the error's message. Otherwise the error propagates as
 today.
 
+The listing does not skip hidden files, so a requested `.env` is still found. A path given
+twice (after normalising) is one target. A file that is gone by the time it is fetched
+(`GlobusFileNotFound` from `download_file`) is reported as not on the cluster, and the rest
+still download.
+
+**The report says what happened to each file.** It has up to three sections: `Downloaded from
+<Cluster>:` (fetched by this call), `Already up to date (not fetched):` (current local copies),
+and `Not on <Cluster>:`. A single "Downloaded files" list left the agent unable to tell a fetch
+from a cache hit, and with the old tool description it told the researcher a re-fetched file
+had been reused. The offline report keeps its warning line, followed by the files as already
+held.
+
 **Order inside `_upload_files`:**
 1. Argument checks.
 2. `_layout` and `home_owner`, to resolve `target`.
@@ -100,7 +128,7 @@ today.
 5. `mkdir -p`.
 6. Upload.
 
-The `ls` uses the same `skip_hidden` / non-recursive call as listing.
+The `ls` is non-recursive and does not skip hidden files, so replacing a `.env` is named.
 
 **Prompt text.** Plain text, one file per line, sizes from `_human_size`, for example:
 
@@ -115,10 +143,11 @@ Download 2 files (2.0 GB) from Odo into /mnt/data/output/transfers/odo/:
   /lustre/orion/abc/proj-shared/b.nc   0.5 GB   changed on Odo, replaces your local copy
 ```
 
-**UI: `ElicitationModal` with no properties.** When `requested_schema.properties` is empty or
-absent, the modal renders the message and two buttons, Approve (accept with `{}`) and Decline,
-with no RJSF form and no Cancel button. Closing the backdrop still sends `cancel`. Forms with
-fields render as before.
+**UI: `ElicitationModal` with one choice.** When `requested_schema` has exactly one property,
+it is required, and it is a string `enum`, the modal renders the message and one button per enum
+value, labelled with the value; a button accepts with `{<property>: <value>}`. There is no RJSF
+form and no Submit, Decline or Cancel button. Closing the backdrop still sends `cancel`. Every
+other form renders as before, so the Lux login is unchanged.
 
 ## Risks / Trade-offs
 

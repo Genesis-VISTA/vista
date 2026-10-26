@@ -19,8 +19,11 @@ it), so the transfer tools can ask in the same way.
   When the cluster cannot be reached to check, local copies are served with a warning.
 - A declined transfer tells the agent not to retry and to ask the researcher instead. A run that
   cannot show a prompt (a one-shot API call with no chat) cannot transfer.
-- A prompt with nothing to fill in offers Approve and Decline rather than Submit, Decline and
-  Cancel.
+- The approval prompt is an explicit choice between Approve and Decline (not FastMCP's deprecated
+  empty form), and a prompt offering one such choice is shown as one button per answer rather
+  than a form with Submit, Decline and Cancel.
+- The download report separates files downloaded by the call from files already up to date, and
+  the tool description stops telling the agent to delete a local copy to refresh it.
 - The upload fence (`<remote>.<user>.jobs/transfers/`) stays as it is.
 
 ## Capabilities
@@ -33,7 +36,7 @@ it), so the transfer tools can ask in the same way.
 
 - `hpc-file-transfer`: uploads and downloads need the researcher's approval; downloads re-fetch a
   changed remote file and say when they could not check; hermetic coverage includes approval.
-- `chat-runs`: a prompt with no fields to fill in is shown as an approve/decline question.
+- `chat-runs`: a prompt offering one choice among fixed answers is shown as one button per answer.
 
 ## Impact
 

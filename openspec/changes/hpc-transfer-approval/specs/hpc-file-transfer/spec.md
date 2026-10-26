@@ -14,10 +14,12 @@ move: one already held locally and current, or one that is not on the cluster. W
 would move, the tool SHALL NOT ask, and SHALL report as it would after an approval.
 
 Nothing SHALL be written on the cluster, including any folder, before the researcher approves an
-upload. When the researcher declines or dismisses the prompt, the call SHALL fail, saying the
+upload. The prompt SHALL offer two answers, Approve and Decline, and only Approve SHALL count as
+approval. When the researcher declines or dismisses the prompt, the call SHALL fail, saying the
 transfer was not approved, that the agent must not retry it, and that it should ask the
-researcher what they want instead. A run that cannot show the researcher a prompt SHALL get the
-same failure, which SHALL also say that transfers need the researcher's approval in a chat.
+researcher what they want instead. A run that cannot show the researcher a prompt, or a prompt
+that fails to be shown, SHALL get the same failure, which SHALL also say that transfers need the
+researcher's approval in a chat.
 
 #### Scenario: Approving an upload
 - **WHEN** researcher `jdoe`, with Frontier remote folder `/r`, has an agent upload `/mnt/data/uploads/salt.xyz` (12 KB) to destination `inputs`, and approves the prompt
@@ -74,8 +76,9 @@ hpc-job-submission, Researcher's own Globus credential), and SHALL need no S3M t
 system SHALL hand each transfer tool call the researcher's settings and credentials, as it
 does for the job tools, and SHALL NOT hand them to tools that are neither. The tool
 descriptions SHALL say to leave bulk data on the cluster for a job to process there, that
-uploads land only in the researcher's `transfers/` folder, and that the researcher approves
-each upload and download.
+uploads land only in the researcher's `transfers/` folder, that the researcher approves
+each upload and download, and that a download fetches a file again by itself when it changed on
+the cluster, so a local copy need never be deleted to refresh it.
 
 #### Scenario: Another cluster is refused
 - **WHEN** an agent calls any transfer tool with `cluster="perlmutter"` or `cluster="lux"`
@@ -97,11 +100,13 @@ each upload and download.
 The download tool SHALL take a list of absolute remote paths and SHALL save each file in the
 project's output folder at `transfers/<cluster>/<remote path without its leading slash>`,
 reporting each one's sandbox path (`/mnt/data/output/transfers/...`), so that the sandbox and
-file display can open it. Any file the researcher's identity can read SHALL be downloadable,
-and the system SHALL impose no size limit. A path that is not on the cluster SHALL be reported
-as missing while the other files are still downloaded. A relative path, one containing `..`, or
-`/` itself SHALL be refused without contacting the cluster. An interrupted download SHALL NOT
-leave a partial file at the reported path.
+file display can open it. The report SHALL say, for each file, whether it was downloaded by
+this call or was already up to date and not fetched. Any file the researcher's identity can
+read, hidden or not, SHALL be downloadable, and the system SHALL impose no size limit. A path
+that is not on the cluster SHALL be reported as missing while the other files are still
+downloaded. A path given more than once SHALL be treated as one file. A relative path, one
+containing `..`, or `/` itself SHALL be refused without contacting the cluster. An interrupted
+download SHALL NOT leave a partial file at the reported path.
 
 A downloaded file SHALL keep the remote file's modification time. A file already saved there,
 not empty, and matching the remote file's size and modification time (to the second) SHALL NOT
@@ -120,11 +125,11 @@ not held locally SHALL fail as it would without the local copies.
 
 #### Scenario: Already downloaded
 - **WHEN** the same file is downloaded a second time, the first copy is still there, and the remote file is unchanged
-- **THEN** it is not fetched from the cluster again, and the same sandbox path is reported
+- **THEN** it is not fetched from the cluster again, and the same sandbox path is reported as already up to date
 
 #### Scenario: Changed on the cluster
 - **WHEN** a file is downloaded again after the remote file was rewritten, with the same size but a later modification time
-- **THEN** it is fetched again, after approval, and the local copy holds the new contents
+- **THEN** it is fetched again, after approval, the local copy holds the new contents, and it is reported as downloaded
 
 #### Scenario: Edited locally
 - **WHEN** a downloaded file's local copy was edited in the sandbox and it is downloaded again

@@ -13,12 +13,14 @@
 
 ## 3. Tool wrappers
 
-- [ ] 3.1 Build `approve` in the `hpc_upload_files` / `hpc_download_files` wrappers from `ctx.elicit(message, response_type=None)` (accept → `True`, decline or cancel → `False`). Update the tool descriptions to say the researcher approves each upload and download, and to batch paths into one call. Verify with a FastMCP in-memory client test using an `elicitation_handler` that accepts, declines and cancels, plus the existing description test.
-- [ ] 3.2 Update the `transfer_mcp.py` module docstring, which says nothing asks the researcher, to describe the approval step and why the upload fence stays. Verify by reading the diff.
+- [ ] 3.1 Change `_elicit_approver` (already wired into both wrappers) to `ctx.elicit(message, response_type=["Approve", "Decline"])`: accepted with `Approve` → `True`; accepted with `Decline`, declined, cancelled, or raising → `False`. Verify with a FastMCP in-memory client test using an `elicitation_handler` that answers Approve, answers Decline, declines and cancels, checking that the request's schema is the two-answer choice and that no deprecation warning is raised.
+- [ ] 3.2 Split the download report into `Downloaded from <Cluster>:`, `Already up to date (not fetched):` and `Not on <Cluster>:`; the offline report lists its files as already up to date after its warning. Verify with the existing download tests updated: a first download is under Downloaded, a second unchanged one under Already up to date, a re-fetch of a changed file under Downloaded.
+- [ ] 3.3 Update the tool descriptions: the researcher approves each upload and download; batch paths into one call; a download re-fetches a file that changed on the cluster by itself, so never delete a local copy to refresh it (remove "delete the local copy to fetch a newer version"). Verify with the existing description test, extended to check the download description no longer says to delete.
+- [ ] 3.4 Update the `transfer_mcp.py` module docstring, which says nothing asks the researcher, to describe the approval step and why the upload fence stays. Verify by reading the diff.
 
-## 4. UI: approve/decline prompt
+## 4. UI: one-choice prompt as buttons
 
-- [ ] 4.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` for client components, then change `ui/components/ElicitationModal.tsx`: with no schema properties, render the message with Approve (accept `{}`) and Decline, no form and no Cancel. Backdrop close still cancels. Verify with new cases in `ui/tests/ElicitationModal.test.tsx` (no-field prompt shows only Approve and Decline and sends the right actions; a form with fields is unchanged).
+- [ ] 4.1 Read the relevant Next.js docs in `ui/node_modules/next/dist/docs/` for client components, then change `ui/components/ElicitationModal.tsx`: when the schema has exactly one property, required, a string `enum`, render the message with one button per enum value (labelled with it) that accepts with `{<property>: <value>}`; no form, no Submit, Decline or Cancel. Backdrop close still cancels. Verify with new cases in `ui/tests/ElicitationModal.test.tsx` (an Approve/Decline prompt shows exactly those two buttons and each accepts with its value; a login form with fields is unchanged).
 
 ## 5. Docs and verification
 

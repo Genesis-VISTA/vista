@@ -1,16 +1,17 @@
 ## ADDED Requirements
 
-### Requirement: A prompt with nothing to fill in is a yes-or-no question
+### Requirement: A prompt offering one choice is shown as buttons
 
-An MCP form elicitation that asks for no fields SHALL be shown as its message with two answers,
-Approve and Decline. Approve SHALL accept it and Decline SHALL decline it. Closing the prompt
-without answering SHALL dismiss it, as it does any prompt. An elicitation that asks for fields
-SHALL be shown as before.
+An MCP form elicitation whose only field is a required choice among a few fixed answers SHALL be
+shown as its message with one button per answer, labelled with that answer, and no form, Submit,
+Decline or Cancel. A button SHALL accept the prompt with its answer. Closing the prompt without
+answering SHALL dismiss it, as it does any prompt. Any other elicitation SHALL be shown as before.
 
 #### Scenario: A transfer approval
 
-- **WHEN** a tool asks the researcher to approve an upload, with no fields to fill in
-- **THEN** the prompt shows the tool's message with Approve and Decline, and no Submit or Cancel
+- **WHEN** a tool asks the researcher to approve an upload, offering the answers Approve and Decline
+- **THEN** the prompt shows the tool's message with an Approve and a Decline button, and nothing else
+- **AND** pressing Decline accepts the prompt with the answer Decline
 
 #### Scenario: A login form is unchanged
 
