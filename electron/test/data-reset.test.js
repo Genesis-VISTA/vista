@@ -7,7 +7,7 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { backupData, KEEP, resetData, writeReadme } from '../src/data-reset.js';
+import { backupData, KEEP, resetData, restorePromptLines, writeReadme } from '../src/data-reset.js';
 
 const NOW = new Date('2026-10-26T14:03:09.123Z');
 
@@ -109,27 +109,69 @@ test('nothing to reset is an error, not an empty backup', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('the README names everything and where it is, from the backend index', () => {
+/** A state directory whose index marks some entries as VISTA's own. */
+function makeIndexed() {
   const { dir, put } = makeState();
+  put('knowledge-bases/molten-salt-papers/pdfs/b.pdf');
+  put('storage/aaaa/SKILL.md', '---\nname: salt-analysis\n---\n');
+  put('volumes/p-vista/out.txt');
   put('incompatible-data-index.json', JSON.stringify({
     database: 'vista.db',
-    projects: [{ id: 'p-1', name: 'Salt study', files: 'volumes/p-1' }],
-    skills: [{ name: 'salt-density', path: 'storage/9f1c' }],
-    knowledge_bases: [{ slug: 'molten-salts', name: 'Molten salts', pdfs: 'knowledge-bases/molten-salts/pdfs' }],
+    projects: [
+      { id: 'p-vista', name: 'molten-salt', files: 'volumes/p-vista', comes_with_vista: true },
+      { id: 'p-1', name: 'Salt study', files: 'volumes/p-1', comes_with_vista: false },
+      { id: 'p-gone', name: 'Never had files', files: 'volumes/p-gone', comes_with_vista: false },
+    ],
+    skills: [
+      { name: 'salt-analysis', path: 'storage/aaaa', comes_with_vista: true },
+      { name: 'salt-density', path: 'storage/9f1c', comes_with_vista: false },
+    ],
+    knowledge_bases: [
+      { slug: 'molten-salt-papers', name: 'Molten Salt Papers', pdfs: 'knowledge-bases/molten-salt-papers/pdfs', comes_with_vista: true },
+      { slug: 'molten-salts', name: 'Molten salts', pdfs: 'knowledge-bases/molten-salts/pdfs', comes_with_vista: false },
+      { slug: 'kb-gone', name: 'Gone', pdfs: 'knowledge-bases/kb-gone/pdfs', comes_with_vista: false },
+    ],
   }));
+  return dir;
+}
+
+test('the README lists the researcher\'s own work first, VISTA\'s apart, from the backend index', () => {
+  const dir = makeIndexed();
   const { backupDir, readme } = resetData(dir, { now: NOW });
   assert.equal(readme, path.join(backupDir, 'README.txt'));
   const text = readFileSync(String(readme), 'utf8');
   for (const expected of [
     'Database: vista.db', 'Molten salts (molten-salts): knowledge-bases/molten-salts/pdfs',
     'salt-density: storage/9f1c', 'Salt study (p-1): volumes/p-1',
-    'install the earlier VISTA release', 'can be deleted',
+    'install the earlier VISTA release', 'can be deleted', 'Paths are relative to this folder',
   ]) assert.ok(text.includes(expected), `README lacks "${expected}"`);
+
+  const work = text.indexOf('\nYour work\n');
+  const comes = text.indexOf('\nComes back with VISTA (nothing to restore)\n');
+  assert.ok(work > 0 && comes > work, 'own work, then VISTA\'s');
+  const own = text.slice(work, comes);
+  const vista = text.slice(comes, text.indexOf('\nDatabase:'));
+  assert.ok(own.includes('salt-density') && own.includes('Salt study') && own.includes('Molten salts'));
+  assert.ok(!own.includes('salt-analysis') && !own.includes('molten-salt-papers') && !own.includes('(p-vista)'));
+  assert.ok(vista.includes('Skills: salt-analysis'));
+  assert.ok(vista.includes('Knowledge bases: Molten Salt Papers'));
+  assert.ok(vista.includes('Projects: molten-salt'));
+  assert.ok(!vista.includes('salt-density'));
+  assert.ok(text.indexOf('Database:') > comes, 'the database line follows the lists');
   assert.ok(existsSync(path.join(backupDir, 'incompatible-data-index.json')), 'the index moves too');
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('without an index the README reads the disk: skills by SKILL.md, projects by id', () => {
+test('a listed folder that is not in the backup is left out', () => {
+  const dir = makeIndexed();
+  const { readme } = resetData(dir, { now: NOW });
+  const text = readFileSync(String(readme), 'utf8');
+  assert.ok(!text.includes('Never had files') && !text.includes('p-gone'));
+  assert.ok(!text.includes('kb-gone') && !text.includes('Gone'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('without an index everything found on disk is the researcher\'s: skills by SKILL.md, projects by id', () => {
   const { dir } = makeState();
   mkdirSync(path.join(dir, 'storage', 'no-skill-file'));
   const { readme } = resetData(dir, { now: NOW });
@@ -138,15 +180,53 @@ test('without an index the README reads the disk: skills by SKILL.md, projects b
   assert.ok(text.includes('no-skill-file: storage/no-skill-file'));
   assert.ok(text.includes('p-1: volumes/p-1'));
   assert.ok(text.includes('molten-salts: knowledge-bases/molten-salts/pdfs'));
+  assert.ok(!text.includes('Comes back with VISTA'));
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('an index with an empty list reads as none', () => {
+test('an index with empty lists, and an unreadable one, read as none found / the disk', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'vista-reset-'));
   writeFileSync(path.join(dir, 'incompatible-data-index.json'),
     '{"database":"vista.db","projects":[],"skills":[],"knowledge_bases":[]}', 'utf8');
   const text = readFileSync(writeReadme(dir), 'utf8');
-  assert.equal((text.match(/^ {2}none$/gm) ?? []).length, 3);
+  assert.equal((text.match(/^ {2}- none found$/gm) ?? []).length, 0);
+  assert.equal((text.match(/^ {2}none found$/gm) ?? []).length, 3);
+  assert.ok(!text.includes('Comes back with VISTA'));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('the README begins with the restore prompt, naming the API and carrying each rule', () => {
+  const { dir } = makeState();
+  const { readme } = resetData(dir, { now: NOW });
+  const text = readFileSync(String(readme), 'utf8');
+  const prompt = text.indexOf('This folder is a backup that VISTA made');
+  assert.ok(prompt > 0, 'the prompt is in the README');
+  assert.ok(prompt < text.indexOf('Your work'), 'the prompt comes before the lists');
+  assert.ok(text.indexOf('coding agent') < prompt, 'a short paragraph opens it');
+  assert.ok(text.includes('http://127.0.0.1:8001 (its schema is at'));
+  assert.ok(text.includes('/openapi.json'));
+  for (const rule of [
+    'Never change, move or delete anything in this backup folder',
+    'Write only through the running VISTA\'s HTTP API',
+    'Restore only the items README.txt lists as mine, not the ones it says come back with VISTA',
+    'knowledge bases: create each and upload its PDFs',
+    'skills: import each skill folder',
+    'projects: recreate each with its description, instructions, skills and knowledge bases,',
+    'then upload the files from its volumes folder to the project.',
+    'Don\'t restore conversations, settings, API keys or credentials',
+    'show me what you plan to restore and wait for my go-ahead',
+  ]) assert.ok(text.includes(rule), `the prompt lacks "${rule}"`);
+  assert.ok(!text.includes('conversations: recreate'), 'conversations are not restored');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('the prompt takes the backend port it is given', () => {
+  const { dir } = makeState();
+  const { readme } = resetData(dir, { now: NOW, port: 18001 });
+  const text = readFileSync(String(readme), 'utf8');
+  assert.ok(text.includes('http://127.0.0.1:18001 (its schema'));
+  assert.ok(!text.includes(':8001'));
+  assert.ok(restorePromptLines().join('\n').includes('http://127.0.0.1:8001'));
   rmSync(dir, { recursive: true, force: true });
 });
 

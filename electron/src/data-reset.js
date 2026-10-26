@@ -115,9 +115,10 @@ function skillName(skillDir) {
  * What the backup holds, from the backend's index or else from the disk.
  *
  * @param {string} backupDir
- * @returns {{ database: string, projects: Array<{ id: string, name?: string, files: string }>,
- *   skills: Array<{ name: string, path: string }>,
- *   knowledgeBases: Array<{ slug: string, name?: string, pdfs: string }> }}
+ * @returns {{ database: string,
+ *   projects: Array<{ id: string, name?: string, files: string, vista?: boolean }>,
+ *   skills: Array<{ name: string, path: string, vista?: boolean }>,
+ *   knowledgeBases: Array<{ slug: string, name?: string, pdfs: string, vista?: boolean }> }}
  */
 function inventory(backupDir) {
   const indexPath = path.join(backupDir, INDEX_NAME);
@@ -125,12 +126,15 @@ function inventory(backupDir) {
     try {
       const index = JSON.parse(readFileSync(indexPath, 'utf8'));
       const list = (/** @type {unknown} */ value) => (Array.isArray(value) ? value : []);
+      const vista = (/** @type {{ comes_with_vista?: unknown }} */ entry) => entry.comes_with_vista === true;
       return {
         database: typeof index.database === 'string' ? index.database : 'vista.db',
-        projects: list(index.projects).map((p) => ({ id: String(p.id), name: p.name, files: String(p.files) })),
-        skills: list(index.skills).map((s) => ({ name: String(s.name), path: String(s.path) })),
+        projects: list(index.projects).map((p) => ({
+          id: String(p.id), name: p.name, files: String(p.files), vista: vista(p),
+        })),
+        skills: list(index.skills).map((s) => ({ name: String(s.name), path: String(s.path), vista: vista(s) })),
         knowledgeBases: list(index.knowledge_bases).map((k) => ({
-          slug: String(k.slug), name: k.name, pdfs: String(k.pdfs),
+          slug: String(k.slug), name: k.name, pdfs: String(k.pdfs), vista: vista(k),
         })),
       };
     } catch { /* an unreadable index: fall back to the disk */ }
@@ -148,38 +152,106 @@ function inventory(backupDir) {
   };
 }
 
+export const DEFAULT_BACKEND_PORT = 8001;
+
 /**
- * Write README.txt into a backup folder, saying where each thing is.
+ * The prompt a researcher pastes into a coding agent to restore their work
+ * (incompatible-data-reset D6). It is written to the README verbatim, with the
+ * running backend's port filled in.
+ *
+ * @param {number} [port]
+ * @returns {string[]} its lines
+ */
+export function restorePromptLines(port = DEFAULT_BACKEND_PORT) {
+  return [
+    'This folder is a backup that VISTA made when it found my local data incompatible with the',
+    'version now installed. Read README.txt in this folder first. Then help me restore my own',
+    `work into the running VISTA, whose backend API is at http://127.0.0.1:${port} (its schema is at`,
+    '/openapi.json).',
+    '',
+    'Rules:',
+    '- Never change, move or delete anything in this backup folder. Read vista.db only from a copy',
+    '  you make outside it, with sqlite3.',
+    '- Write only through the running VISTA\'s HTTP API. Never edit its database or data folder',
+    '  directly.',
+    '- Restore only the items README.txt lists as mine, not the ones it says come back with VISTA.',
+    '- In this order:',
+    '  - knowledge bases: create each and upload its PDFs;',
+    '  - skills: import each skill folder;',
+    '  - projects: recreate each with its description, instructions, skills and knowledge bases,',
+    '    then upload the files from its volumes folder to the project.',
+    '- Don\'t restore conversations, settings, API keys or credentials. I\'ll reconnect those in',
+    '  Settings.',
+    '- Before writing anything, show me what you plan to restore and wait for my go-ahead. At the',
+    '  end, tell me what was restored, what wasn\'t, and why.',
+  ];
+}
+
+/**
+ * Write README.txt into a backup folder, saying where each thing is: the
+ * researcher's own work first, then what comes back with VISTA.
+ *
+ * Only entries whose folder is in the backup are listed. An entry is VISTA's
+ * only if the backend's index marked it `comes_with_vista`; without an index
+ * nothing is marked, and everything found on disk is the researcher's.
  *
  * @param {string} backupDir
- * @param {{ write?: typeof writeFileSync }} [options] write is for tests
+ * @param {{ write?: typeof writeFileSync, port?: number }} [options] write is for tests
  * @returns {string} the README's path
  */
-export function writeReadme(backupDir, { write = writeFileSync } = {}) {
+export function writeReadme(backupDir, { write = writeFileSync, port = DEFAULT_BACKEND_PORT } = {}) {
   const { database, projects, skills, knowledgeBases } = inventory(backupDir);
+  const present = (/** @type {string} */ rel) => existsSync(path.join(backupDir, rel));
+  const kbs = knowledgeBases.filter((k) => present(k.pdfs));
+  const sks = skills.filter((s) => present(s.path));
+  const prjs = projects.filter((p) => present(p.files));
+  const mine = (/** @type {{ vista?: boolean }} */ e) => !e.vista;
+  const theirs = (/** @type {{ vista?: boolean }} */ e) => e.vista === true;
+
+  const section = (
+    /** @type {string} */ title, /** @type {string[]} */ items,
+  ) => [title, ...(items.length ? items.map((i) => `  - ${i}`) : ['  none found'])];
+  const kbLine = (/** @type {typeof kbs[number]} */ k) => `${k.name ? `${k.name} (${k.slug})` : k.slug}: ${k.pdfs}`;
+  const skLine = (/** @type {typeof sks[number]} */ s) => `${s.name}: ${s.path}`;
+  const prjLine = (/** @type {typeof prjs[number]} */ p) => `${p.name ? `${p.name} (${p.id})` : p.id}: ${p.files}`;
+
+  const vistaNames = [
+    ['Knowledge bases', kbs.filter(theirs).map((k) => k.name || k.slug)],
+    ['Skills', sks.filter(theirs).map((s) => s.name)],
+    ['Projects', prjs.filter(theirs).map((p) => p.name || p.id)],
+  ].filter(([, names]) => names.length);
+
   const lines = [
     'VISTA backup',
     '============',
     '',
     'VISTA moved your local data here when it found it was incompatible with the',
-    'version you installed. Nothing was deleted.',
+    'version you installed. Nothing was deleted. A coding agent such as Claude Code or',
+    'Codex can help restore your work: paste the prompt below into it.',
+    '',
+    'Prompt for a coding agent:',
+    '',
+    ...restorePromptLines(port).map((line) => (line ? `    ${line}` : '')),
+    '',
+    'Your work',
+    '---------',
+    ...section('Knowledge bases (upload the PDFs again from Knowledge Bases):', kbs.filter(mine).map(kbLine)),
+    ...section('Skills (import again from Skills):', sks.filter(mine).map(skLine)),
+    ...section('Projects (inputs and outputs):', prjs.filter(mine).map(prjLine)),
+  ];
+  if (vistaNames.length) {
+    lines.push(
+      '',
+      'Comes back with VISTA (nothing to restore)',
+      '------------------------------------------',
+      ...vistaNames.map(([title, names]) => `  ${title}: ${[...names].join(', ')}`),
+    );
+  }
+  lines.push(
     '',
     `Database: ${database}`,
     '  Your conversations, projects, settings and connections. It opens only with the',
     '  VISTA release that wrote it.',
-    '',
-    'Knowledge bases (upload the PDFs again from Knowledge Bases):',
-    ...(knowledgeBases.length
-      ? knowledgeBases.map((k) => `  - ${k.name ? `${k.name} (${k.slug})` : k.slug}: ${k.pdfs}`)
-      : ['  none']),
-    '',
-    'Skills (import again from Skills):',
-    ...(skills.length ? skills.map((s) => `  - ${s.name}: ${s.path}`) : ['  none']),
-    '',
-    'Projects (inputs and outputs):',
-    ...(projects.length
-      ? projects.map((p) => `  - ${p.name ? `${p.name} (${p.id})` : p.id}: ${p.files}`)
-      : ['  none']),
     '',
     'Paths are relative to this folder.',
     '',
@@ -188,7 +260,7 @@ export function writeReadme(backupDir, { write = writeFileSync } = {}) {
     '',
     'This folder can be deleted once nothing in it is needed.',
     '',
-  ];
+  );
   const readme = path.join(backupDir, 'README.txt');
   write(readme, lines.join('\n'), 'utf8');
   return readme;
@@ -199,7 +271,7 @@ export function writeReadme(backupDir, { write = writeFileSync } = {}) {
  * written is reported beside the result and never thrown: the reset happened.
  *
  * @param {string} stateDir
- * @param {{ now?: Date, rename?: typeof renameSync, write?: typeof writeFileSync }} [options]
+ * @param {{ now?: Date, rename?: typeof renameSync, write?: typeof writeFileSync, port?: number }} [options]
  * @returns {{ backupDir: string, moved: string[], readme: string | null, readmeError?: string }}
  */
 export function resetData(stateDir, options) {

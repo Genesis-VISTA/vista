@@ -225,10 +225,9 @@ prompt:
 >   - knowledge bases: create each and upload its PDFs;
 >   - skills: import each skill folder;
 >   - projects: recreate each with its description, instructions, skills and knowledge bases,
->     then upload the files from its volumes folder to the project;
->   - conversations: recreate them if the API allows it, otherwise save each one as a Markdown
->     file in its project's files.
-> - Don't restore settings, API keys or credentials. I'll reconnect those in Settings.
+>     then upload the files from its volumes folder to the project.
+> - Don't restore conversations, settings, API keys or credentials. I'll reconnect those in
+>   Settings.
 > - Before writing anything, show me what you plan to restore and wait for my go-ahead. At the
 >   end, tell me what was restored, what wasn't, and why.
 

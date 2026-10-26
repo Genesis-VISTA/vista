@@ -20,7 +20,7 @@ from sqlalchemy import create_engine
 from sqlmodel import SQLModel
 
 from vista_backend.config import settings
-from vista_backend.db import db as db_module, schemas  # noqa: F401
+from vista_backend.db import db as db_module, schemas, seed as seed_module  # noqa: F401
 from vista_backend.db.db import (
     DATABASE_INCOMPATIBLE,
     INDEX_FILE_NAME,
@@ -254,14 +254,16 @@ async def test_the_index_lists_what_the_database_holds(start):
                 "id": "01234567-89ab-cdef-0123-456789abcdef",
                 "name": "P One",
                 "files": "volumes/01234567-89ab-cdef-0123-456789abcdef",
+                "comes_with_vista": False,
             }
         ],
-        "skills": [{"name": "sk", "path": "storage/abc"}],
+        "skills": [{"name": "sk", "path": "storage/abc", "comes_with_vista": False}],
         "knowledge_bases": [
             {
                 "slug": "kb-one",
                 "name": "KB One",
                 "pdfs": "knowledge-bases/kb-one/pdfs",
+                "comes_with_vista": False,
             }
         ],
     }
@@ -347,3 +349,18 @@ async def test_a_v0_1_4_database_is_refused_and_indexed(start):
     }
     for kb in index["knowledge_bases"]:
         assert kb["pdfs"] == f"knowledge-bases/{kb['slug']}/pdfs"
+    assert {k["slug"]: k["comes_with_vista"] for k in index["knowledge_bases"]} == {
+        "molten-salt-papers": True,
+        "ai-safety": True,
+        "fixture-kb": False,
+    }
+    assert {p["name"]: p["comes_with_vista"] for p in index["projects"]} == {
+        "alloy-design": True,
+        "molten-salt": True,
+        "ai-safety-autonomous-labs": True,
+        "fixture-project": False,
+    }
+    bundled = {d.name for d in seed_module._bundled_skill_dirs()}
+    assert all(s["comes_with_vista"] == (s["name"] in bundled) for s in index["skills"])
+    # the fixture's 13 skills are all bundled today, with no researcher's own
+    assert sum(s["comes_with_vista"] for s in index["skills"]) == 13

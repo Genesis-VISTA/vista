@@ -17,7 +17,18 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from .schema_check import schema_problems
-from .seed import seed_db, sync_bundled_skills, sync_default_projects
+from .seed import (
+    AI_SAFETY_KB_ID,
+    AI_SAFETY_PROJECT_ID,
+    ALLOY_DESIGN_PROJECT_ID,
+    MOLTEN_SALT_KB_ID,
+    MOLTEN_SALT_PROJECT_ID,
+    _bundled_skill_dirs,
+    seed_db,
+    sync_bundled_skills,
+    sync_default_projects,
+)
+from ..agents.skills import read_skill
 
 
 @functools.cache
@@ -193,6 +204,27 @@ def _relative_to_data(stored: str, data_dir: Path) -> str:
         return stored
 
 
+def _vista_ships() -> tuple[set[str], set[str], set[str]]:
+    """
+    What this version of VISTA brings with it, as (bundled skill names, seeded
+    project ids, seeded knowledge base ids), ids in dashed form.
+    """
+    skills: set[str] = set()
+    for src in _bundled_skill_dirs():
+        skills.add(src.name)
+        try:
+            skills.add(read_skill(src).name)
+        except Exception:  # noqa: BLE001 - best effort; the folder name still counts
+            logging.getLogger(__name__).debug("Unreadable bundled skill %s", src)
+    projects = {
+        str(ALLOY_DESIGN_PROJECT_ID),
+        str(MOLTEN_SALT_PROJECT_ID),
+        str(AI_SAFETY_PROJECT_ID),
+    }
+    kbs = {str(MOLTEN_SALT_KB_ID), str(AI_SAFETY_KB_ID)}
+    return skills, projects, kbs
+
+
 def _write_incompatible_index(conn: sqlite3.Connection, path: Path) -> None:
     """
     Write `incompatible-data-index.json` beside a refused database: what it
@@ -213,14 +245,24 @@ def _write_incompatible_index(conn: sqlite3.Connection, path: Path) -> None:
             log.debug("Incompatible-data index: no %s to list", what, exc_info=True)
             return []
 
+    bundled_skills, seeded_projects, seeded_kbs = _vista_ships()
     index = {
         "database": path.name,
         "projects": [
-            {"id": _dashed(i), "name": n, "files": f"volumes/{_dashed(i)}"}
+            {
+                "id": _dashed(i),
+                "name": n,
+                "files": f"volumes/{_dashed(i)}",
+                "comes_with_vista": _dashed(i) in seeded_projects,
+            }
             for i, n in rows("SELECT id, name FROM project", "projects")
         ],
         "skills": [
-            {"name": n, "path": _relative_to_data(str(p), data_dir)}
+            {
+                "name": n,
+                "path": _relative_to_data(str(p), data_dir),
+                "comes_with_vista": n in bundled_skills,
+            }
             for n, p in rows("SELECT name, path FROM skill", "skills")
         ],
         "knowledge_bases": [
@@ -228,9 +270,11 @@ def _write_incompatible_index(conn: sqlite3.Connection, path: Path) -> None:
                 "slug": s,
                 "name": n,
                 "pdfs": _relative_to_data(str(d), data_dir),
+                "comes_with_vista": _dashed(i) in seeded_kbs,
             }
-            for s, n, d in rows(
-                "SELECT slug, name, pdfs_dir FROM knowledge_base", "knowledge bases"
+            for s, n, d, i in rows(
+                "SELECT slug, name, pdfs_dir, id FROM knowledge_base",
+                "knowledge bases",
             )
         ],
     }

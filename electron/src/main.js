@@ -23,7 +23,7 @@ import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
 import { resolvePackage } from './package-root.js';
-import { resetData } from './data-reset.js';
+import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
 import { formatDiagnostics, resetAllowed, StartupStateMachine } from './startup-protocol.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
@@ -548,7 +548,9 @@ app.whenReady().then(() => {
         if (!resetAllowed(launcherController.current, launcherController.child)) return false;
         let result;
         try {
-          result = resetData(stateDirectory);
+          result = resetData(stateDirectory, {
+            port: Number(process.env.VISTA_BACKEND_PORT) || DEFAULT_BACKEND_PORT,
+          });
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
           console.error(`vista-window: reset failed: ${reason}`);
