@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SkillsPage from "@/app/skills/page";
 
 /*
- * The Skills page under the first-boot tour: it reports a skill being opened,
- * closes the detail when the tour moves on to Load, and loads nothing itself.
+ * The Skills page under the first-boot tour: a skill counts as read when its
+ * detail is closed, the detail stays open while it is read, and the page loads
+ * nothing itself.
  */
 
 const { tourPosition, tourReport } = vi.hoisted(() => ({
@@ -67,25 +68,26 @@ describe("Skills page during the tour", () => {
     expect(document.querySelector('[data-tour="skills:import"]')).toHaveTextContent("Import…");
   });
 
-  it("reports a skill being opened, and loads nothing", async () => {
+  it("reports a skill as read only when its detail is closed, and loads nothing", async () => {
     tourPosition.current = { step: "skills", subStep: "open-skill" };
     render(<SkillsPage />);
     await userEvent.click(await screen.findByText("Other One"));
     await screen.findByText("What it does");
+    expect(tourReport).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.queryByText("What it does")).not.toBeInTheDocument());
     expect(tourReport).toHaveBeenCalledExactlyOnceWith("skill-opened");
     expect(updateProject).not.toHaveBeenCalled();
   });
 
-  it("closes the detail when the tour moves on to Load", async () => {
+  it("keeps the detail open while the skill is read", async () => {
     tourPosition.current = { step: "skills", subStep: "open-skill" };
     const view = render(<SkillsPage />);
     await userEvent.click(await screen.findByText("Other One"));
     await screen.findByText("What it does");
-
-    tourPosition.current = { step: "skills", subStep: "load" };
-    view.rerender(<SkillsPage />);
-    await waitFor(() => expect(screen.queryByText("What it does")).not.toBeInTheDocument());
-    expect(updateProject).not.toHaveBeenCalled();
+    act(() => view.rerender(<SkillsPage />));
+    expect(screen.getByText("What it does")).toBeInTheDocument();
   });
 
   it("leaves the detail open when no tour is running", async () => {
@@ -94,6 +96,6 @@ describe("Skills page during the tour", () => {
     await screen.findByText("What it does");
     act(() => view.rerender(<SkillsPage />));
     expect(screen.getByText("What it does")).toBeInTheDocument();
-    expect(tourReport).toHaveBeenCalledTimes(1);
+    expect(tourReport).not.toHaveBeenCalled();
   });
 });

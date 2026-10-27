@@ -151,19 +151,16 @@ export default function SkillsPage() {
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
-      tour.report("skill-opened");
     } catch {
       // ignore
     }
   }
 
-  // The tour moves from reading a skill to the Load button behind its detail,
-  // so the detail closes as it leaves reading.
-  const tourPastReading = tour.position?.step === "skills" && tour.position.subStep !== "open-skill";
-  const [pastReading, setPastReading] = useState(false);
-  if (tourPastReading !== pastReading) {
-    setPastReading(tourPastReading);
-    if (tourPastReading) setSelected(null);
+  // Closing a skill's detail is what tells the tour it was read, so the tour
+  // moves on to Load only once the researcher is done reading.
+  function closeDetail() {
+    setSelected(null);
+    tour.report("skill-opened");
   }
 
   const term = filter.trim().toLowerCase();
@@ -385,7 +382,7 @@ export default function SkillsPage() {
       </div>
 
       {selected && (
-        <div className="modal-backdrop" onClick={() => setSelected(null)}>
+        <div className="modal-backdrop" onClick={closeDetail}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="panel-header">
               <div className="panel-title">
@@ -397,7 +394,7 @@ export default function SkillsPage() {
               <button
                 type="button"
                 className="button ghost"
-                onClick={() => setSelected(null)}
+                onClick={closeDetail}
               >
                 Close
               </button>

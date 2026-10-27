@@ -56,6 +56,7 @@
   - on completion, show the finish coachmark with the documentation link and write `finished`.
 
   Verify with vitest of the failure mapping, and in the e2e spec in 6.1
+- [x] 5.8 Skills: count a skill as read when its detail is closed, not when it opens, and keep the detail open while it is read (found trying the tour: it jumped to Load at once). Verify with `ui/tests/SkillsPage.test.tsx`: opening reports nothing; Close reports `skill-opened`; the detail stays open during `open-skill`
 
 ## 6. Harnesses and end-to-end
 
