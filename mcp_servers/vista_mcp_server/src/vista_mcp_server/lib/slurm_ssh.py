@@ -88,6 +88,7 @@ def render_batch_script(
     partition: str | None = None,
     queue: str | None = None,
     constraint: str | None = None,
+    reservation: str | None = None,
     exclusive: bool = False,
     ntasks_per_node: int | None = None,
     gpus_per_node: int | None = None,
@@ -116,6 +117,8 @@ def render_batch_script(
         directives.append(f"-q {queue}")
     if constraint:
         directives.append(f"-C {constraint}")
+    if reservation:
+        directives.append(f"--reservation={reservation}")
     if exclusive:
         directives.append("--exclusive")
     # Launchers that srun with --export=ALL (DeepSpeed's slurm runner) pass the

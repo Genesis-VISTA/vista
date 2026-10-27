@@ -1191,6 +1191,7 @@ async def _submit_lux_job(
 
     conn = await _lux_conn(
         ctx, "submit_hpc_job", job=job, node_count=nodes, duration=duration, script_args=script_args,
+        constraint=constraint, reservation=reservation,
     )
 
     layout = layout.with_user(await slurm_ssh.username(conn))
@@ -1249,6 +1250,7 @@ async def _submit_lux_job(
         partition=defaults.iri.partition,
         queue=defaults.iri.queue_name if "queue_name" in defaults.iri.model_fields_set else None,
         constraint=constraint,
+        reservation=reservation,
         exclusive=bool(defaults.resources.exclusive_node_use),
         ntasks_per_node=defaults.resources.processes_per_node,
         gpus_per_node=defaults.resources.gpus_per_node,

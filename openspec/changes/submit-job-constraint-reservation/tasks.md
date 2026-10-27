@@ -15,8 +15,8 @@
 
 ## 2. Lux
 
-- [ ] 2.1 Add `reservation` to `slurm_ssh.render_batch_script`, rendering `--reservation=<name>`. Verify by extending `test_render_batch_script_optional_directives`.
-- [ ] 2.2 Pass the effective constraint and the reservation from `_submit_lux_job`, and add both to the `_lux_conn(ctx, "submit_hpc_job", ...)` prompt arguments. Verify that a `test_lux_submit.py` test submitting with `constraint="nvme", reservation="train1"` finds `#SBATCH -C nvme` and `#SBATCH --reservation=train1`.
+- [x] 2.1 Add `reservation` to `slurm_ssh.render_batch_script`, rendering `--reservation=<name>`. Verify by extending `test_render_batch_script_optional_directives`.
+- [x] 2.2 Pass the effective constraint and the reservation from `_submit_lux_job`, and add both to the `_lux_conn(ctx, "submit_hpc_job", ...)` prompt arguments. Verify that a `test_lux_submit.py` test submitting with `constraint="nvme", reservation="train1"` finds `#SBATCH -C nvme` and `#SBATCH --reservation=train1`.
 
 ## 3. IRI clusters
 

@@ -124,6 +124,27 @@ async def test_submit_renders_sbatch_header_and_env(lux):
     assert "set -- MODEL=forge-m --flag" in script
 
 
+async def test_submit_passes_constraint_and_reservation(lux):
+    await m._submit_lux_job(
+        None,
+        CFG,
+        "lux-demo",
+        None,
+        None,
+        None,
+        constraint="nvme",
+        reservation="train1",
+    )
+    script = _submitted_script(lux)
+    assert "#SBATCH -C nvme" in script
+    assert "#SBATCH --reservation=train1" in script
+
+
+async def test_submit_without_reservation_has_no_reservation_directive(lux):
+    await m._submit_lux_job(None, CFG, "lux-demo", None, None, None)
+    assert "--reservation" not in _submitted_script(lux)
+
+
 async def test_submit_uploads_sources_but_not_metadata(lux):
     await m._submit_lux_job(None, CFG, "lux-demo", 2, 600, None)
     # README / cluster_defaults / job.lux.slurm / setup_lux.sh are inlined or run
@@ -354,11 +375,13 @@ async def test_render_batch_script_optional_directives():
         partition="batch",
         queue="debug",
         constraint="nvme",
+        reservation="train1",
     )
     assert "#SBATCH -t 1:02:05" in script
     assert "#SBATCH -p batch" in script
     assert "#SBATCH -q debug" in script
     assert "#SBATCH -C nvme" in script
+    assert "#SBATCH --reservation=train1" in script
     assert "--exclusive" not in script
     assert script.startswith("#!/bin/bash -l\n")
     assert script.endswith("echo hi\n")
