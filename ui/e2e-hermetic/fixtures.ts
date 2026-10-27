@@ -19,6 +19,9 @@ export const SETTINGS = {
   collaboration_server_url: null,
   email: "hermetic@example.invalid",
   hpc_hidden_clusters: [] as string[],
+  // The first-boot tour would open over every page these specs drive.
+  onboarding_tour: null,
+  onboarding_tour_enabled: false,
 };
 
 const OK = (message: string) => ({ ok: true, reason: null, message });

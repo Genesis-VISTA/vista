@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  completesOnNext,
   nextTourStep,
   type Acknowledgement,
   type TourEvent,
@@ -103,5 +104,30 @@ describe("nextTourStep", () => {
   it("moves past welcome on Next even before any state is stored", () => {
     const out = nextTourStep(input({ acknowledged: new Set<Acknowledgement>(["welcome:intro"]) }));
     expect(out).toEqual({ step: "project", subStep: "open" });
+  });
+});
+
+describe("completesOnNext", () => {
+  it("is false for the eight action sub-steps", () => {
+    const actions: [TourStepId, string][] = [
+      ["project", "open"],
+      ["model", "credential"],
+      ["model", "pick"],
+      ["knowledge-bases", "open-kb"],
+      ["skills", "open-skill"],
+      ["files", "open-examples"],
+      ["hpc", "open-card"],
+      ["first-question", "send"],
+    ];
+    for (const [step, sub] of actions) expect(completesOnNext(step, sub)).toBe(false);
+  });
+
+  it("is true for the rest", () => {
+    expect(completesOnNext("welcome", "intro")).toBe(true);
+    expect(completesOnNext("knowledge-bases", "add-files")).toBe(true);
+    expect(completesOnNext("skills", "load")).toBe(true);
+    expect(completesOnNext("skills", "import")).toBe(true);
+    expect(completesOnNext("hpc", "settings")).toBe(true);
+    expect(completesOnNext("first-question", "finish")).toBe(true);
   });
 });

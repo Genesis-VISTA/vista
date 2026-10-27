@@ -1,6 +1,7 @@
 import "./globals.css";
 import { Suspense, type ReactNode } from "react";
 import { NavRail } from "@/components/NavRail";
+import { TourProvider } from "@/components/TourProvider";
 import { THEME_INIT_SCRIPT } from "@/lib/theme-init";
 
 export const metadata = {
@@ -21,15 +22,19 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body>
-        <div className="app-shell">
-          {/* NavRail reads useSearchParams to highlight the active entry,
-              which requires a Suspense boundary or Next will bail the
-              whole tree out of static prerender. */}
-          <Suspense fallback={<aside className="nav-rail expanded" aria-label="Primary navigation" />}>
-            <NavRail />
-          </Suspense>
-          <div className="app-content">{children}</div>
-        </div>
+        {/* A client component around the server-rendered shell: it only
+            passes `children` through, so the pages stay server components. */}
+        <TourProvider>
+          <div className="app-shell">
+            {/* NavRail reads useSearchParams to highlight the active entry,
+                which requires a Suspense boundary or Next will bail the
+                whole tree out of static prerender. */}
+            <Suspense fallback={<aside className="nav-rail expanded" aria-label="Primary navigation" />}>
+              <NavRail />
+            </Suspense>
+            <div className="app-content">{children}</div>
+          </div>
+        </TourProvider>
       </body>
     </html>
   );

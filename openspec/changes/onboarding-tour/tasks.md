@@ -25,15 +25,15 @@
 
 ## 4. Tour shell
 
-- [ ] 4.1 Add `driver.js` to `ui/package.json`, pinned exactly to the newest release that is at least two weeks old (1.9.0 when this was written). Verify with `cd ui && npm install` and `npm run build`
-- [ ] 4.2 Add `ui/components/TourProvider.tsx`, mounted around `.app-shell` in `ui/app/layout.tsx`:
+- [x] 4.1 Add `driver.js` to `ui/package.json`, pinned exactly to the newest release that is at least two weeks old (1.9.0 when this was written). Verify with `cd ui && npm install` and `npm run build`
+- [x] 4.2 Add `ui/components/TourProvider.tsx`, mounted around `.app-shell` in `ui/app/layout.tsx`:
   - it reads settings, inference state and the active project, holds the session's events, computes `nextTourStep`, and persists `step` and `status` through `updateSettings`;
   - it exposes `useTour()` and `useTourEvent()`, which do nothing when no tour is running;
   - it does not open when `onboarding_tour_enabled` is false, or when the status is finished or exited.
 
   Read the Next docs in `ui/node_modules/next/dist/docs/` on client components in layouts first. Verify with vitest: a null state renders the welcome step; `onboarding_tour_enabled: false` renders nothing; Exit writes `exited`
-- [ ] 4.3 Render each step with `driver.highlight()` on its `data-tour` target (design.md §3). The popover body and its buttons (Next, Skip this step, Exit tutorial) are VISTA's, rendered through `onPopoverRender`; Escape exits; a missing target waits through a `MutationObserver` with a timeout; a step with no target uses a centred popover. Restyle driver.js in `ui/app/globals.css` with theme tokens. Verify with `node scripts/check-colors.mjs` (via `./scripts/ci-local.sh ui lint`) and `ui/e2e-hermetic/theme.spec.ts` in light and dark
-- [ ] 4.4 Render `NavRail` expanded while the tour is open, without writing `vista.navRail.collapsed.v1`. Verify with vitest: with the stored value collapsed, the rail is expanded during the tour and collapsed after it, and the stored value is unchanged
+- [x] 4.3 Render each step with `driver.highlight()` on its `data-tour` target (design.md §3). The popover body and its buttons (Next, Skip this step, Exit tutorial) are VISTA's, rendered through `onPopoverRender`; Escape exits; a missing target waits through a `MutationObserver` with a timeout; a step with no target uses a centred popover. Restyle driver.js in `ui/app/globals.css` with theme tokens. Verify with `node scripts/check-colors.mjs` (via `./scripts/ci-local.sh ui lint`) and `ui/e2e-hermetic/theme.spec.ts` in light and dark
+- [x] 4.4 Render `NavRail` expanded while the tour is open, without writing `vista.navRail.collapsed.v1`. Verify with vitest: with the stored value collapsed, the rail is expanded during the tour and collapsed after it, and the stored value is unchanged
 
 ## 5. Steps
 

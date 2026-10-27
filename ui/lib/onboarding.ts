@@ -125,3 +125,23 @@ export function nextTourStep(input: TourInput): TourPosition | null {
 
   return null;
 }
+
+/** The sub-steps the researcher completes by doing something, so they have no Next. */
+const ACTION_SUB_STEPS: ReadonlySet<string> = new Set([
+  "project:open",
+  "model:credential",
+  "model:pick",
+  "knowledge-bases:open-kb",
+  "skills:open-skill",
+  "files:open-examples",
+  "hpc:open-card",
+  "first-question:send",
+]);
+
+/**
+ * Whether a coachmark is passed with Next. The others wait for the researcher's
+ * action (or app state), so their coachmark offers only Skip this step and Exit.
+ */
+export function completesOnNext(step: TourStepId, subStep: string): boolean {
+  return !ACTION_SUB_STEPS.has(`${step}:${subStep}`);
+}

@@ -15,6 +15,7 @@ import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
 import { UserSettingsModal } from "./UserSettingsModal";
+import { useTour } from "./TourProvider";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
 
@@ -166,15 +167,20 @@ export function NavRail() {
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
   const settingsModal = useSettingsModal();
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
-  const collapsed = useSyncExternalStore(
+  const storedCollapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
     railGetServerSnapshot
   );
+  // The tour points at labelled entries, so it borrows an expanded rail. The
+  // stored choice is neither read nor written meanwhile, and returns after.
+  const { running: touring } = useTour();
+  const collapsed = storedCollapsed && !touring;
 
   function toggle() {
+    if (touring) return;
     setTip(null);
-    setRailCollapsed(!collapsed);
+    setRailCollapsed(!storedCollapsed);
   }
 
   /**
