@@ -49,13 +49,13 @@
 
 ## 5. Site PR (genesis-vista.github.io, outside this repo)
 
-- [ ] 5.1 Rework the site draft: remove its own sync script and the Reference and Developers
+- [x] 5.1 Rework the site draft: remove its own sync script and the Reference and Developers
   nav entries; in `pages.yml`, sparse-check out the latest release's `docs/` and
   `scripts/docs_site/`, run its `sync_docs.py`, and build with `-f mkdocs.generated.yml`;
   gitignore the generated config. Keep the link-colour fix and the ModSim tutorial links.
   Verify locally against this branch's checkout: the strict build passes and the pages match
   the draft's.
-- [ ] 5.2 Open this repo's MR and the site PR as drafts, each linking to the other. The site
+- [x] 5.2 Open this repo's MR and the site PR as drafts, each linking to the other. The site
   PR states that its build fails until a release carries the manifest.
 
 ## 6. Go live (after merge)
