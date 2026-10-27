@@ -591,9 +591,15 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         frontier_globus_https_token="g-https",
         frontier_remote_dir=base,
     )
-    job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_frontier_job(
-        cfg, "forge-pretrain", None, None, "MODEL=forge-s"
-    )
+    (
+        job_id,
+        log_path,
+        err_path,
+        out_dir,
+        nodes,
+        duration,
+        _,
+    ) = await m._submit_frontier_job(cfg, "forge-pretrain", None, None, "MODEL=forge-s")
     assert (job_id, nodes, duration) == ("777", 16, 1800)
     assert out_dir == f"{base}.out/777"
     # The account is whatever project the token belongs to.

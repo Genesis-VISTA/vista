@@ -91,7 +91,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     globus.seed_remote_dir(ODO)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_odo_job(
+    job_id, log_path, err_path, out_dir, nodes, duration, _ = await _submit_odo_job(
         user_cfg,
         "example",
         node_count=None,
@@ -192,7 +192,15 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     globus.seed_remote_dir(FRONTIER)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_frontier_job(
+    (
+        job_id,
+        log_path,
+        err_path,
+        out_dir,
+        nodes,
+        duration,
+        _,
+    ) = await _submit_frontier_job(
         user_cfg,
         "example",
         node_count=None,
@@ -567,3 +575,177 @@ async def test_the_sdk_keeps_the_reservation_and_constraint_vista_sends(
     attributes = converted["attributes"]
     assert attributes["reservation_id"] == "train1"
     assert attributes["custom_attributes"]["constraint"] == "gpu&hbm80g"
+
+
+# --- post-submit check: OLCF may drop the constraint or reservation -----------
+
+DROPPED = {"constraints": "", "reservation": {"id": 0, "name": ""}}
+APPLIED = {"constraints": "nvme", "reservation": {"id": 7, "name": "train1"}}
+
+
+async def _olcf_submit(monkeypatch, user_cfg, cluster, iri, **kwargs):
+    """Call the per-cluster function directly; returns its tuple."""
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir({"odo": ODO, "frontier": FRONTIER}[cluster])
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    submit = {"odo": _submit_odo_job, "frontier": _submit_frontier_job}[cluster]
+    return await submit(
+        user_cfg,
+        "example",
+        node_count=None,
+        duration_int=None,
+        script_args=None,
+        job_info=submit_job_mcp.resolve_job("example"),
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_dropped_constraint_cancels_and_names_the_alternatives(
+    monkeypatch, user_cfg, cluster
+):
+    iri = FakeIriClient(s3m=DROPPED)
+    with pytest.raises(ToolError) as exc:
+        await _olcf_submit(monkeypatch, user_cfg, cluster, iri, constraint="nvme")
+    msg = str(exc.value)
+    assert "OLCF did not pass the constraint 'nvme' to Slurm" in msg
+    assert "iri-job-1" in msg
+    assert "Perlmutter" in msg and "Lux" in msg
+    assert iri.cancelled == ["iri-job-1"]
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_dropped_reservation_cancels(monkeypatch, user_cfg, cluster):
+    # The constraint was applied; only the reservation is empty.
+    iri = FakeIriClient(
+        s3m={"constraints": "nvme", "reservation": {"id": 0, "name": ""}}
+    )
+    with pytest.raises(ToolError, match="reservation 'train1'") as exc:
+        await _olcf_submit(
+            monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
+        )
+    assert "constraint" not in str(exc.value).split("Slurm")[0]
+    assert iri.cancelled == ["iri-job-1"]
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_applied_constraint_and_reservation_are_kept(
+    monkeypatch, user_cfg, cluster
+):
+    iri = FakeIriClient(s3m=APPLIED)
+    result = await _olcf_submit(
+        monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
+    )
+    assert result[0] == "iri-job-1"
+    assert result[-1] is None
+    assert iri.cancelled == []
+
+
+async def test_olcf_only_checks_what_was_requested(monkeypatch, user_cfg):
+    # No constraint requested: an empty `constraints` is fine.
+    iri = FakeIriClient(
+        s3m={"constraints": "", "reservation": {"id": 7, "name": "train1"}}
+    )
+    result = await _olcf_submit(monkeypatch, user_cfg, "odo", iri, reservation="train1")
+    assert result[-1] is None
+    assert iri.cancelled == []
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_status_error_keeps_the_job_unverified(
+    monkeypatch, user_cfg, cluster
+):
+    iri = FakeIriClient(status_error=RuntimeError("IRI timed out"))
+    result = await _olcf_submit(
+        monkeypatch, user_cfg, cluster, iri, reservation="train1"
+    )
+    assert result[0] == "iri-job-1"
+    assert "IRI timed out" in result[-1]
+    assert iri.cancelled == []
+
+
+@pytest.mark.parametrize(
+    "s3m",
+    [
+        None,  # no record at all
+        {},
+        {"reservation": {"id": 0, "name": ""}},  # constraints key absent
+        {"constraints": None},
+    ],
+)
+async def test_olcf_missing_constraint_record_keeps_the_job_unverified(
+    monkeypatch, user_cfg, s3m
+):
+    iri = FakeIriClient(s3m=s3m)
+    result = await _olcf_submit(monkeypatch, user_cfg, "odo", iri, constraint="nvme")
+    assert result[-1]
+    assert iri.cancelled == []
+
+
+async def test_olcf_missing_reservation_record_keeps_the_job_unverified(
+    monkeypatch, user_cfg
+):
+    iri = FakeIriClient(s3m={"constraints": "nvme", "reservation": "none"})
+    result = await _olcf_submit(
+        monkeypatch, user_cfg, "frontier", iri, reservation="train1"
+    )
+    assert result[-1]
+    assert iri.cancelled == []
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_no_constraint_and_no_reservation_reads_no_status(
+    monkeypatch, user_cfg, cluster
+):
+    iri = FakeIriClient(s3m=DROPPED)
+    result = await _olcf_submit(monkeypatch, user_cfg, cluster, iri)
+    assert result[-1] is None
+    assert iri.status_calls == []
+    assert iri.cancelled == []
+
+
+async def test_olcf_failed_cancel_is_reported_in_the_error(monkeypatch, user_cfg):
+    iri = FakeIriClient(s3m=DROPPED)
+
+    async def _boom(job_id):
+        raise RuntimeError("IRI down")
+
+    monkeypatch.setattr(iri, "cancel_job", _boom)
+    with pytest.raises(ToolError, match="Cancelling it failed") as exc:
+        await _olcf_submit(monkeypatch, user_cfg, "odo", iri, constraint="nvme")
+    assert "OLCF did not pass" in str(exc.value)
+
+
+async def test_a_default_odo_constraint_is_checked_without_an_argument(
+    monkeypatch, user_cfg
+):
+    job_info = submit_job_mcp.resolve_job("example")
+    job_info.cluster_defaults.odo = IriDefaults(iri={"constraint": "nvme"})
+    monkeypatch.setattr(submit_job_mcp, "resolve_job", lambda *a, **k: job_info)
+    monkeypatch.setattr(settings, "hpc_dry_run", False)
+    iri = FakeIriClient(s3m=DROPPED)
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(ODO)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+
+    with pytest.raises(ToolError, match="constraint 'nvme'") as exc:
+        await submit_job_mcp.submit_hpc_job(
+            _tool_ctx(user_cfg), job="example", cluster="odo"
+        )
+    assert "Perlmutter" in str(exc.value)
+    assert iri.cancelled == ["iri-job-1"]
+
+
+async def test_submit_hpc_job_kept_when_olcf_forwards_the_constraint(
+    monkeypatch, user_cfg
+):
+    monkeypatch.setattr(settings, "hpc_dry_run", False)
+    iri = FakeIriClient(s3m=APPLIED)
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(FRONTIER)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    summary = await submit_job_mcp.submit_hpc_job(
+        _tool_ctx(user_cfg), job="example", cluster="frontier", constraint="nvme"
+    )
+    assert "job_id: iri-job-1" in summary
+    assert iri.cancelled == []

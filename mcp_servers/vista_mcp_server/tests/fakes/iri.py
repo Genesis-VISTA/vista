@@ -16,6 +16,9 @@ class FakeIriClient:
         storage_resource_id: str = "fake-storage-resource",
         job_id: str = "iri-job-1",
         status: dict[str, Any] | None = None,
+        s3m: dict[str, Any] | None = None,
+        job_s3m: dict[str, dict[str, Any]] | None = None,
+        status_error: Exception | None = None,
     ):
         self._compute_resource_id = compute_resource_id
         self._storage_resource_id = storage_resource_id
@@ -25,6 +28,12 @@ class FakeIriClient:
             "exit_code": 0,
             "message": "ok",
         }
+        # Slurm's own record of a job, at provider_status.meta_data.s3m: `s3m` for every
+        # job, `job_s3m` per job id. Neither set: the status carries no such record.
+        self._s3m = s3m
+        self._job_s3m = job_s3m or {}
+        self._status_error = status_error
+        self.status_calls: list[str] = []
         self.submitted: list[tuple[dict[str, Any], str]] = []
         self.cancelled: list[str] = []
         self.mkdirs: list[str] = []
@@ -52,7 +61,14 @@ class FakeIriClient:
         return f"{self._next_job_id}-{self._job_counter}"
 
     async def get_job_status(self, job_id: str) -> dict:
-        return dict(self._status)
+        self.status_calls.append(job_id)
+        if self._status_error is not None:
+            raise self._status_error
+        status = dict(self._status)
+        s3m = self._job_s3m.get(job_id, self._s3m)
+        if s3m is not None:
+            status["provider_status"] = {"meta_data": {"s3m": dict(s3m)}}
+        return status
 
     async def cancel_job(self, job_id: str) -> None:
         self.cancelled.append(job_id)

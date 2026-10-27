@@ -555,6 +555,9 @@ async def submit_hpc_job(
     faults.check_token_expiry()
     faults.maybe_fail_submit()
 
+    # Why the post-submit check could not confirm the constraint/reservation (Odo and
+    # Frontier only); None when verified or not run.
+    unverified: str | None = None
     # M3 stage timing: the full submission round-trip (source upload + IRI
     # submit) — the platform-attributable part of E3. Facility queue wait
     # is observed separately via status polls (stage.hpc.status).
@@ -566,7 +569,7 @@ async def submit_hpc_job(
             eff_duration = duration_int or 3600
             job_id = dry_run.record_submit(cluster, job, eff_nodes, eff_duration)
         elif cluster == "odo":
-            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_odo_job(
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration, unverified = await _submit_odo_job(
                 cfg, job, node_count, duration_int, script_args, job_info=job_info,
                 constraint=effective_constraint, reservation=reservation,
             )
@@ -581,7 +584,7 @@ async def submit_hpc_job(
                 constraint=effective_constraint, reservation=reservation,
             )
         else:  # "frontier"
-            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration = await _submit_frontier_job(
+            job_id, log_path, err_path, output_dir, eff_nodes, eff_duration, unverified = await _submit_frontier_job(
                 cfg, job, node_count, duration_int, script_args, job_info=job_info,
                 constraint=effective_constraint, reservation=reservation,
             )
@@ -607,10 +610,63 @@ async def submit_hpc_job(
     return "\n".join(summary)
 
 
+async def _check_olcf_slurm_args(
+    iri_client: IriClient, job_id: str, *, constraint: str | None, reservation: str | None,
+) -> str | None:
+    """
+    Odo and Frontier: confirm Slurm recorded the constraint and reservation, which
+    OLCF's IRI layer accepts and may silently drop. Runs only when one was requested.
+
+    Reads Slurm's own record from the job status (`provider_status.meta_data.s3m`).
+    A requested value that is empty there was dropped: the job is cancelled and a
+    ToolError says so. Returns None when verified or nothing was requested, else a
+    short reason the check was indeterminate (the job is kept).
+    """
+    if not constraint and not reservation:
+        return None
+    try:
+        status = await iri_client.get_job_status(job_id)
+    except Exception as e:
+        return f"status unavailable: {e}"
+    try:
+        record = status["provider_status"]["meta_data"]["s3m"]
+    except (KeyError, TypeError):
+        return "Slurm record not in the job status"
+    if not isinstance(record, dict):
+        return "Slurm record not in the job status"
+
+    dropped: list[str] = []
+    if constraint:
+        constraints = record.get("constraints")
+        if not isinstance(constraints, str):
+            return "Slurm record lacks constraints"
+        if constraints == "":
+            dropped.append(f"constraint {constraint!r}")
+    if reservation:
+        res = record.get("reservation")
+        name = res.get("name") if isinstance(res, dict) else None
+        if not isinstance(name, str):
+            return "Slurm record lacks the reservation"
+        if name == "":
+            dropped.append(f"reservation {reservation!r}")
+    if not dropped:
+        return None
+
+    try:
+        await iri_client.cancel_job(job_id)
+        outcome = "The job was cancelled."
+    except Exception as e:
+        outcome = f"Cancelling it failed ({e}): it may still be queued, so cancel it yourself."
+    raise ToolError(
+        f"OLCF did not pass the {' or '.join(dropped)} to Slurm for job {job_id}. {outcome} "
+        "Submit without it, or use Perlmutter or Lux, which take a constraint."
+    )
+
+
 async def _submit_odo_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
     *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
-) -> tuple[str, str, str, int, int]:
+) -> tuple[str, str, str, str, int, int, str | None]:
     """
     Odo dispatch (OLCF open enclave): IRI compute + Globus file ops, the same
     architecture as Frontier (`_submit_frontier_job`). Differences:
@@ -738,6 +794,9 @@ async def _submit_odo_job(
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to odo")
+    unverified = await _check_olcf_slurm_args(
+        iri_client, job_id, constraint=constraint, reservation=reservation,
+    )
     return (
         job_id,
         layout.log_path(job_id),
@@ -745,6 +804,7 @@ async def _submit_odo_job(
         layout.output_dir(job_id),
         nodes,
         duration,
+        unverified,
     )
 
 
@@ -963,7 +1023,7 @@ async def _sync_perlmutter_sources(iri_client, local_job_dir: Path, src_dir: str
 async def _submit_frontier_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
     *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
-) -> tuple[str, str, str, int, int]:
+) -> tuple[str, str, str, str, int, int, str | None]:
     """
     Frontier dispatch (OLCF moderate enclave).
 
@@ -1112,6 +1172,9 @@ async def _submit_frontier_job(
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
     logging.info(f"Submitted job {job_id} via IRI to {settings.frontier_machine}")
+    unverified = await _check_olcf_slurm_args(
+        iri_client, job_id, constraint=constraint, reservation=reservation,
+    )
     return (
         job_id,
         layout.log_path(job_id),
@@ -1119,6 +1182,7 @@ async def _submit_frontier_job(
         layout.output_dir(job_id),
         nodes,
         duration,
+        unverified,
     )
 
 
