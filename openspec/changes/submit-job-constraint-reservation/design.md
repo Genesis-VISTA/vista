@@ -129,9 +129,8 @@ a role.
 
 - **[A just-queued job's Slurm record may lack `constraints`]** If so, every
   constrained Odo or Frontier submit is kept as "unverified" rather than
-  cancelled. → The manual acceptance task checks this on Odo before merge. If
-  the record is missing, the check moves to the first status poll, a follow-up
-  not specified here.
+  cancelled. → Checked on Odo (task 8.2): a just-queued job's record already
+  carries `constraints`, so the check cancels as intended.
 - **[A short job finishes before the cancel lands]** The job runs unconstrained
   for its whole duration. → The `ToolError` is still raised. The cases that
   matter, such as NVMe or long jobs, queue long enough to cancel.

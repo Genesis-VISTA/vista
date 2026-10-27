@@ -55,8 +55,12 @@
 ## 8. Acceptance
 
 - [x] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
-- [ ] 8.2 Manual, before merge, through VISTA's own `submit_hpc_job` on Odo with Sam's tokens:
+- [x] 8.2 Manual, before merge, through VISTA's own `submit_hpc_job` on Odo with Sam's tokens:
   - `example` with `constraint="nvme"`: expect a `ToolError` naming OLCF and a cancelled job, which also confirms a just-queued job's Slurm record has `constraints`. If the result is "unverified" instead, record it and raise the follow-up in design.md's Risks.
   - `example` with a fake reservation: expect Slurm's "Requested reservation is invalid".
 
   Record both results in this file.
+
+  Results, 2026-10-27, this branch's `submit_hpc_job` on Odo (account `gen150-vista`):
+  - `constraint="nvme"`: job 45222 was submitted, and its Slurm record, read straight after, already had `constraints: ""` (state `PENDING`). VISTA cancelled it and raised: "OLCF did not pass the constraint 'nvme' to Slurm for job 45222. The job was cancelled. Submit without it, or use Perlmutter or Lux, which take a constraint." Slurm later showed it `CANCELLED`; the status feed lagged the cancel by about a minute.
+  - Fake reservation `vista-accept86-no-such-reservation`: refused at submit with Slurm's "Requested reservation is invalid" (error 2053), inside amscrot's raw `CreateError` (a 502 from IRI, HTTP headers included), as every IRI submit error already reaches the agent.
