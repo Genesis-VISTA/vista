@@ -33,16 +33,17 @@
   comment goes in the site PR). Verify the generated config builds.
 - [x] 3.2 Add `docs:site` to the `docs` test action in `scripts/ci-local.sh` and to
   `.gitlab-ci.yml` (test stage): run the script's tests, sync this tree into a temporary site
-  built from the minimal config, and `mkdocs build --strict` with `mkdocs-material==9.8.0`
-  through `uvx`, without credentials. Verify `./scripts/ci-local.sh docs test` passes, and
+  built from the minimal config, and `mkdocs build --strict` with `mkdocs-material==9.8.0`,
+  in one `uv run --with` environment, through one script (`scripts/docs_site/check_site.sh`)
+  that both run, without credentials. Verify `./scripts/ci-local.sh docs test` passes, and
   fails after breaking an anchor in a published page.
 
 ## 4. Docs
 
-- [ ] 4.1 `AGENTS.md`: a new doc must be listed or excluded in `docs/site.toml`; the site
+- [x] 4.1 `AGENTS.md`: a new doc must be listed or excluded in `docs/site.toml`; the site
   shows the latest release; add `docs` to the `ci-local.sh` target list. Verify
   `./scripts/ci-local.sh docs` passes.
-- [ ] 4.2 Note in `docs/development.md` (or wherever the docs are introduced) that the
+- [x] 4.2 Note in `docs/development.md` (or wherever the docs are introduced) that the
   published pages are on genesis-vista.github.io and how to preview them locally. Verify the
   preview command works from a clean checkout.
 

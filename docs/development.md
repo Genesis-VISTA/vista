@@ -191,3 +191,21 @@ own copy. Use `build_local_package.sh` only for a complete, relocatable release 
 `lint --fast`. Live, HPC and Playwright checks run on a schedule or by hand; see
 [validation-lane.md](validation-lane.md). The testing roadmap's requirements are in
 [`openspec/specs/`](../openspec/specs/).
+
+## The docs site
+
+The pages of `docs/` listed in `docs/site.toml` are published at
+<https://genesis-vista.github.io/docs/>, built from VISTA's latest release. A docs change
+shows up there with the next release. `./scripts/ci-local.sh docs` checks the links, the
+manifest and a strict build of the published pages.
+
+To preview the site locally, from the repo root:
+
+```bash
+git clone --depth 1 https://github.com/Genesis-VISTA/genesis-vista.github.io ../vista-site
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I scripts/docs_site/sync_docs.py . ../vista-site --ref local
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I -m mkdocs serve -f ../vista-site/mkdocs.generated.yml
+```
+
+The Material version matches `MKDOCS_MATERIAL_VERSION` in `.gitlab-ci.yml`. Links between
+published pages must be relative links that `docs:links` accepts.

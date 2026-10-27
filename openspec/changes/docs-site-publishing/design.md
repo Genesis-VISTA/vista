@@ -76,7 +76,12 @@ section, so URLs don't change when a page moves between sections.
 with the site's theme and Markdown extensions, its anchor validation, and an empty nav, built
 into a temporary directory. It doesn't fetch the site repo, so the job stays hermetic and is
 unaffected by the site's tutorials. `mkdocs-material` is pinned at the version the site
-resolves, run through `uvx` as ruff is.
+resolves, as `MKDOCS_MATERIAL_VERSION` beside the other tool pins in `.gitlab-ci.yml`. The
+sync's tests, the sync and the build all run in one `uv run --no-project --with
+mkdocs-material==<pin>` environment rather than `uvx`, because the sync needs PyYAML and
+MkDocs installed together and a `uvx` tool environment holds only the tool. One script,
+`scripts/docs_site/check_site.sh`, holds those steps, and both `ci-local.sh docs test` and the
+GitLab job run it, so the local mirror can't drift from CI.
 
 **What each check owns.** `docs:links` keeps checking that source-tree links exist (it sees
 the whole repo; the site's sparse checkout can't). `docs:manifest` owns coverage. `docs:site`
