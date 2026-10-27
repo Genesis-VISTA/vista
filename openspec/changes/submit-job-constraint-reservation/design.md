@@ -117,6 +117,14 @@ forum's `simulation.py` is untouched; its submit call keeps relying on the
 defaults, so its keyword arguments must stay compatible. The fake in
 `tests/harness/fake_mcp.py` gains the two parameters.
 
+A campaign supplies them the way it supplies `cluster`: the campaign agent's
+`dispatch_cycle` tool takes optional `constraint` and `reservation`, and
+`planner.dispatch_candidate` puts them on each `SubAgentOrder`, which
+`SubAgent.dispatch` passes to `hpc.submit`. So they apply to one dispatched
+cycle, every role's job in it, as the user asked for. A per-role setting in
+the campaign manifest was rejected: a reservation belongs to an event, not to
+a role.
+
 ## Risks / Trade-offs
 
 - **[A just-queued job's Slurm record may lack `constraints`]** If so, every

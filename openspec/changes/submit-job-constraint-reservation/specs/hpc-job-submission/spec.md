@@ -77,6 +77,10 @@ reservation, the system SHALL read Slurm's record of that job:
 - **WHEN** a job is submitted to Odo with a reservation and reading its record fails
 - **THEN** the job is kept and the submission result says the reservation is unverified
 
+#### Scenario: Campaign cycle with a reservation
+- **WHEN** a campaign cycle is dispatched with reservation `train1`
+- **THEN** every job submitted for that cycle carries reservation `train1`
+
 #### Scenario: Nothing to check
 - **WHEN** a job with no constraint and no reservation is submitted to Odo
 - **THEN** Slurm's record is not read and the submission result is as before

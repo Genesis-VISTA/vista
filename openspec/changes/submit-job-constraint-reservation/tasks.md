@@ -45,6 +45,7 @@
 ## 6. Backend pass-through
 
 - [x] 6.1 Add `constraint` and `reservation` to the `HpcTools.submit` protocol and `McpHpcTools.submit`, forwarding each only when not `None`. Update `tests/harness/fake_mcp.py`. Leave `agents/forum/simulation.py` unchanged. Verify with a backend test that `McpHpcTools.submit(..., reservation="r")` passes `reservation` and omits it when `None`. Run `./scripts/ci-local.sh backend test`.
+- [ ] 6.2 Let a campaign supply both, as it supplies `cluster`: add optional `constraint` and `reservation` to the campaign agent's `dispatch_cycle` tool (`agents/campaign/agent_tools.py`), to `CampaignPlanner.dispatch_candidate` and to `SubAgentOrder`, and have `SubAgent.dispatch` pass them to `hpc.submit`. Mention them in `dispatch_cycle`'s docstring. Verify with a backend test that dispatching a cycle with `reservation="train1"` submits every role's job with it, and that a cycle without one sends neither.
 
 ## 7. Docs and prompts
 
