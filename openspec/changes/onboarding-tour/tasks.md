@@ -12,7 +12,7 @@
 
 ## 3. Step logic
 
-- [ ] 3.1 Add `ui/lib/onboarding.ts` with the `TourStep` ids (`welcome`, `project`, `model`, `knowledge-bases`, `skills`, `files`, `hpc`, `first-question`), each step's sub-steps, the event names, and the pure function `nextTourStep(state)` (design.md §1). "Model chosen" is `model !== null && !modelIsDefault`; `providerDefault` gives the suggestion. Verify with `ui/tests/onboarding.test.ts` covering:
+- [x] 3.1 Add `ui/lib/onboarding.ts` with the `TourStep` ids (`welcome`, `project`, `model`, `knowledge-bases`, `skills`, `files`, `hpc`, `first-question`), each step's sub-steps, the event names, and the pure function `nextTourStep(state)` (design.md §1). "Model chosen" is `model !== null && !modelIsDefault`; `providerDefault` gives the suggestion. Verify with `ui/tests/onboarding.test.ts` covering:
   - a null state returns `welcome`;
   - with an active project, `project` completes at once;
   - i2 with a credential but the default model stays on the model picker sub-step;

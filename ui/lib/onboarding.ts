@@ -74,10 +74,54 @@ export type TourInput = {
 
 export type TourPosition = { step: TourStepId; subStep: string };
 
+/** Whether one coachmark is done: by app state, by an event, or by Next. */
+function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean {
+  const key = `${step}:${sub}`;
+  switch (key) {
+    case "project:open":
+      return input.activeProject !== null;
+    case "model:credential":
+      return input.inference.hasCredential;
+    case "model:pick":
+      return input.inference.model !== null && !input.inference.modelIsDefault;
+    case "knowledge-bases:open-kb":
+      return input.events.has("kb-opened");
+    case "skills:open-skill":
+      return input.events.has("skill-opened");
+    case "files:open-examples":
+      return input.events.has("example-image-opened") && input.events.has("example-md-opened");
+    case "hpc:open-card":
+      return input.events.has("hpc-card-opened");
+    case "first-question:send":
+      return input.events.has("turn-succeeded");
+    default:
+      // Everything else is passed with Next.
+      return input.acknowledged.has(key as Acknowledgement);
+  }
+}
+
 /**
  * The coachmark to show, or null when the tour is closed (finished or exited).
  */
 export function nextTourStep(input: TourInput): TourPosition | null {
-  void input;
-  throw new Error("nextTourStep: not implemented yet");
+  let stepIndex = 0;
+  if (input.stored !== null) {
+    if (input.stored.status === "exited" || input.stored.status === "finished") {
+      return null;
+    }
+    // A step id this version doesn't know starts the tour over.
+    stepIndex = Math.max(TOUR_STEPS.indexOf(input.stored.step as TourStepId), 0);
+  }
+
+  const restSteps = TOUR_STEPS.slice(stepIndex);
+  for (let i = 0; i < restSteps.length; i++) {
+    let j = 0;
+    const curStep = restSteps[i];
+    if (input.skipped.has(curStep)) continue;
+    const curSubSteps = TOUR_SUB_STEPS[curStep];
+    while (j < curSubSteps.length && isSubStepDone(curStep, curSubSteps[j], input)) j++;
+    if (j !== curSubSteps.length) return { step: curStep, subStep: curSubSteps[j] };
+  }
+
+  return null;
 }

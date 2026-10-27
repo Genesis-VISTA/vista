@@ -94,4 +94,14 @@ describe("nextTourStep", () => {
   it("resumes an in-progress tour at the step it reached", () => {
     expect(nextTourStep(input({ ...at("skills") }))).toEqual({ step: "skills", subStep: "open-skill" });
   });
+
+  it("starts over when the stored step is one this version doesn't know", () => {
+    const out = nextTourStep(input({ stored: { status: "in_progress", step: "retired-step" } }));
+    expect(out).toEqual({ step: "welcome", subStep: "intro" });
+  });
+
+  it("moves past welcome on Next even before any state is stored", () => {
+    const out = nextTourStep(input({ acknowledged: new Set<Acknowledgement>(["welcome:intro"]) }));
+    expect(out).toEqual({ step: "project", subStep: "open" });
+  });
 });
