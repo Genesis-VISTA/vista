@@ -152,9 +152,19 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
 
     @agent.tool_plain
     async def dispatch_cycle(
-        run_id: str, candidates: list[dict], cycle: int, cluster: str | None = None
+        run_id: str,
+        candidates: list[dict],
+        cycle: int,
+        cluster: str | None = None,
+        constraint: str | None = None,
+        reservation: str | None = None,
     ) -> str:
-        """Dispatch the subagents (per the manifest) for each candidate in a cycle. Returns job ids."""
+        """Dispatch the subagents (per the manifest) for each candidate in a cycle. Returns job ids.
+
+        `constraint` replaces each job's default Slurm constraint and `reservation` names a
+        Slurm reservation; both apply to every job in the cycle. Odo and Frontier may refuse a
+        constraint (the submit fails, naming Perlmutter and Lux).
+        """
         session = _session()
         run = await _require_run(session, run_id)
         planner = await deps.get_planner(session, run)
@@ -166,6 +176,8 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
                 candidate=candidate,
                 cycle=cycle,
                 cluster=cluster,
+                constraint=constraint,
+                reservation=reservation,
             )
             all_jobs.extend(job_ids)
             deps.emit_progress(

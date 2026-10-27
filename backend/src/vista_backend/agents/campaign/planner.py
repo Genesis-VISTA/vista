@@ -90,6 +90,8 @@ class CampaignPlanner:
         candidate: dict,
         cycle: int,
         cluster: str | None = None,
+        constraint: str | None = None,
+        reservation: str | None = None,
     ) -> list[str]:
         """Create + dispatch a step for every subagent role on this candidate. Returns job ids."""
         job_ids: list[str] = []
@@ -102,6 +104,8 @@ class CampaignPlanner:
                 job=spec.job,
                 candidate=candidate,
                 cluster=cluster,
+                constraint=constraint,
+                reservation=reservation,
                 # How the candidate becomes job arguments is declared per role in the
                 # manifest; roles that declare nothing keep the old JSON encoding.
                 script_args=render_script_args(self.manifest, spec, candidate),

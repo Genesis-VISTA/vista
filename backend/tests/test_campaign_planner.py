@@ -277,6 +277,35 @@ async def test_dispatch_candidate_creates_a_step_and_job_per_role(session):
 
 
 @pytest.mark.anyio
+async def test_dispatch_candidate_forwards_reservation_to_every_roles_submit(session):
+    """Through the real McpHpcTools, a cycle's reservation reaches each role's MCP call."""
+    calls = []
+
+    async def invoke(tool, args):
+        calls.append(args)
+        return f"job_id: {len(calls)}\ncluster: odo\nnodes: 1"
+
+    run = await _make_run(session)
+    planner = _planner(McpHpcTools(invoke))
+
+    await planner.dispatch_candidate(
+        session,
+        run_id=run.id,
+        candidate={"x": 0.5},
+        cycle=0,
+        cluster="odo",
+        reservation="train1",
+    )
+    await planner.dispatch_candidate(
+        session, run_id=run.id, candidate={"x": 0.6}, cycle=1, cluster="odo"
+    )
+
+    assert [c["job"] for c in calls] == ["alpha_job", "beta_job"] * 2
+    assert all(c["reservation"] == "train1" for c in calls[:2])
+    assert all("reservation" not in c and "constraint" not in c for c in calls[2:])
+
+
+@pytest.mark.anyio
 async def test_collect_job_routes_to_role_subagent_and_completes_step(session):
     run = await _make_run(session)
     hpc = FakeHpcTools()

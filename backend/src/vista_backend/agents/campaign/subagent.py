@@ -45,6 +45,10 @@ class SubAgentOrder(BaseModel):
     candidate: dict[str, Any] | None = None
     """ The candidate composition/parameters this order evaluates. """
     cluster: str | None = None
+    constraint: str | None = None
+    """ Replaces the job's default Slurm constraint; sent to `hpc.submit` only when set. """
+    reservation: str | None = None
+    """ A Slurm reservation to run in; sent to `hpc.submit` only when set. """
     node_count: int | None = None
     duration: str | None = None
     script_args: str | None = None
@@ -228,12 +232,19 @@ class SubAgent:
         order: SubAgentOrder,
     ) -> DispatchResult:
         """Submit the job for `order`, record it against `step`, and mark the step dispatched."""
+        # Sent only when set, so an HpcTools without them keeps working.
+        extra: dict[str, Any] = {}
+        if order.constraint is not None:
+            extra["constraint"] = order.constraint
+        if order.reservation is not None:
+            extra["reservation"] = order.reservation
         info = await self.hpc.submit(
             job=order.job,
             cluster=order.cluster,
             node_count=order.node_count,
             duration=order.duration,
             script_args=order.script_args,
+            **extra,
         )
         await campaign_service.record_job(
             session,
