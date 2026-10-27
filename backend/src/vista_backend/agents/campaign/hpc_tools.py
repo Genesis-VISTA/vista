@@ -55,6 +55,8 @@ class McpHpcTools:
         node_count: int | None,
         duration: str | None,
         script_args: str | None,
+        constraint: str | None = None,
+        reservation: str | None = None,
     ) -> SubmittedJobInfo:
         args: dict = {"job": job}
         if cluster is not None:
@@ -65,6 +67,10 @@ class McpHpcTools:
             args["duration"] = duration
         if script_args is not None:
             args["script_args"] = script_args
+        if constraint is not None:
+            args["constraint"] = constraint
+        if reservation is not None:
+            args["reservation"] = reservation
         text = await self._invoke("submit_hpc_job", args)
         summary = parse_submit_summary(text)
         # The MCP server keeps no record of the job: its later status calls work

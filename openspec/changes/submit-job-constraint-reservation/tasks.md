@@ -44,7 +44,7 @@
 
 ## 6. Backend pass-through
 
-- [ ] 6.1 Add `constraint` and `reservation` to the `HpcTools.submit` protocol and `McpHpcTools.submit`, forwarding each only when not `None`. Update `tests/harness/fake_mcp.py`. Leave `agents/forum/simulation.py` unchanged. Verify with a backend test that `McpHpcTools.submit(..., reservation="r")` passes `reservation` and omits it when `None`. Run `./scripts/ci-local.sh backend test`.
+- [x] 6.1 Add `constraint` and `reservation` to the `HpcTools.submit` protocol and `McpHpcTools.submit`, forwarding each only when not `None`. Update `tests/harness/fake_mcp.py`. Leave `agents/forum/simulation.py` unchanged. Verify with a backend test that `McpHpcTools.submit(..., reservation="r")` passes `reservation` and omits it when `None`. Run `./scripts/ci-local.sh backend test`.
 
 ## 7. Docs and prompts
 

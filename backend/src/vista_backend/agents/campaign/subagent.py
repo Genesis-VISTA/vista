@@ -88,6 +88,8 @@ class HpcTools(Protocol):
         node_count: int | None,
         duration: str | None,
         script_args: str | None,
+        constraint: str | None = None,
+        reservation: str | None = None,
     ) -> SubmittedJobInfo: ...
 
     async def status(self, *, job_id: str, cluster: str) -> str: ...

@@ -177,6 +177,33 @@ async def test_mcp_hpc_tools_submit_parses_and_status_passes_through():
     assert "raw output for get_hpc_job_status" in status
 
 
+@pytest.mark.anyio
+async def test_mcp_hpc_tools_submit_forwards_constraint_and_reservation_only_when_set():
+    calls = []
+
+    async def invoke(tool, args):
+        calls.append(args)
+        return "job_id: 777\ncluster: odo\nnodes: 1"
+
+    hpc = McpHpcTools(invoke)
+    await hpc.submit(
+        job="j",
+        cluster="odo",
+        node_count=None,
+        duration=None,
+        script_args=None,
+        constraint="nvme",
+        reservation="r",
+    )
+    await hpc.submit(
+        job="j", cluster="odo", node_count=None, duration=None, script_args=None
+    )
+    assert calls[0]["constraint"] == "nvme"
+    assert calls[0]["reservation"] == "r"
+    assert "constraint" not in calls[1]
+    assert "reservation" not in calls[1]
+
+
 # --- build_subagents -------------------------------------------------------
 
 

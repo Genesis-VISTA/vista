@@ -70,6 +70,8 @@ def fake_mcp() -> FakeMcp:
         node_count: int | None = None,
         duration: str | None = None,
         script_args: str | None = None,
+        constraint: str | None = None,
+        reservation: str | None = None,
     ) -> str:
         """Submit a curated HPC job to a cluster."""
         record(
@@ -79,6 +81,8 @@ def fake_mcp() -> FakeMcp:
             node_count=node_count,
             duration=duration,
             script_args=script_args,
+            constraint=constraint,
+            reservation=reservation,
         )
         return (
             f"JOB_ID=dry-{len(calls):012d}\n"
