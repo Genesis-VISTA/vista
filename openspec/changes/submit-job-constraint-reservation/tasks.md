@@ -20,11 +20,11 @@
 
 ## 3. IRI clusters
 
-- [ ] 3.1 On Perlmutter, Odo and Frontier, send `reservation_id` and `custom_attributes.constraint` only when set. Perlmutter's `SLURM_GPUS_PER_NODE` decision uses the effective constraint. Verify with `test_submit_job_spec.py` tests that read `iri.submitted[0][0]["attributes"]`:
+- [x] 3.1 On Perlmutter, Odo and Frontier, send `reservation_id` and `custom_attributes.constraint` only when set. Perlmutter's `SLURM_GPUS_PER_NODE` decision uses the effective constraint. Verify with `test_submit_job_spec.py` tests that read `iri.submitted[0][0]["attributes"]`:
   - each cluster carries `reservation_id` and `custom_attributes`
   - Perlmutter with no constraint has no `custom_attributes`
   - a `gpu` job given `cpu` has no `SLURM_GPUS_PER_NODE`
-- [ ] 3.2 Add a hermetic SDK conversion test. It builds an amscrot `JobSpec` from a VISTA Odo spec carrying both values, runs `IriServiceClient._convert_to_iri_job_spec(...).to_dict()`, and asserts `attributes.reservation_id` and `attributes.custom_attributes.constraint`. Verify that it passes, and that it fails if the spec puts `reservation` at the top level.
+- [x] 3.2 Add a hermetic SDK conversion test. It builds an amscrot `JobSpec` from a VISTA Odo spec carrying both values, runs `IriServiceClient._convert_to_iri_job_spec(...).to_dict()`, and asserts `attributes.reservation_id` and `attributes.custom_attributes.constraint`. Verify that it passes, and that it fails if the spec puts `reservation` at the top level.
 
 ## 4. Odo and Frontier post-submit check
 

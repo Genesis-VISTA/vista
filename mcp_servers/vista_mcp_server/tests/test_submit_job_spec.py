@@ -8,6 +8,7 @@ setup/pre_launch, source sync, and the one folder layout every cluster shares
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -448,3 +449,121 @@ def test_effective_constraint_replaces_the_job_default():
     assert _effective_constraint("nvme", defaults) == "nvme"
     assert _effective_constraint("nvme", None) == "nvme"
     assert _effective_constraint(None, None) is None
+
+
+async def _submitted_attributes(
+    monkeypatch, user_cfg, cluster, job="example", **kwargs
+):
+    iri = FakeIriClient()
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir({"odo": ODO, "frontier": FRONTIER}.get(cluster, NERSC))
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    submit = {
+        "odo": _submit_odo_job,
+        "frontier": _submit_frontier_job,
+        "perlmutter": _submit_perlmutter_job,
+    }[cluster]
+    await submit(
+        user_cfg, job, node_count=None, duration_int=None, script_args=None, **kwargs
+    )
+    [(spec, _)] = iri.submitted
+    return spec["attributes"]
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier", "perlmutter"])
+async def test_iri_job_carries_the_reservation_and_constraint(
+    monkeypatch, user_cfg, cluster
+):
+    job = "forge-tune" if cluster == "perlmutter" else "example"
+    attrs = await _submitted_attributes(
+        monkeypatch,
+        user_cfg,
+        cluster,
+        job=job,
+        constraint="gpu&hbm80g",
+        reservation="train1",
+    )
+    assert attrs["reservation_id"] == "train1"
+    assert attrs["custom_attributes"] == {"constraint": "gpu&hbm80g"}
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier", "perlmutter"])
+async def test_iri_job_omits_an_unset_reservation_and_constraint(
+    monkeypatch, user_cfg, cluster
+):
+    job = "forge-tune" if cluster == "perlmutter" else "example"
+    attrs = await _submitted_attributes(monkeypatch, user_cfg, cluster, job=job)
+    # The SDK's custom_attributes is Dict[str, StrictStr]: {"constraint": None} is refused.
+    assert "custom_attributes" not in attrs
+    assert "reservation_id" not in attrs
+
+
+async def test_perlmutter_gpu_job_given_cpu_has_no_gpus_per_node(monkeypatch, user_cfg):
+    attrs = await _submitted_attributes(
+        monkeypatch, user_cfg, "perlmutter", job="forge-tune", constraint="cpu"
+    )
+    assert attrs["custom_attributes"] == {"constraint": "cpu"}
+    assert "SLURM_GPUS_PER_NODE" not in attrs["environment"]
+
+    attrs = await _submitted_attributes(
+        monkeypatch, user_cfg, "perlmutter", job="forge-tune", constraint="gpu"
+    )
+    assert "SLURM_GPUS_PER_NODE" in attrs["environment"]
+
+
+async def test_the_sdk_keeps_the_reservation_and_constraint_vista_sends(
+    monkeypatch, user_cfg
+):
+    """
+    amscrot drops any attribute key it does not know, so a misplaced `reservation`
+    would vanish without an error. Take the spec VISTA's real `_submit_odo_job`
+    builds, run it through VISTA's real `IriClient._submit_job`, and let the SDK's
+    own conversion turn it into the IRI job. The conversion is a private method: if
+    an SDK upgrade renames it, this fails.
+    Needs the private `hpc` extra, so it is skipped where amscrot is not installed.
+    """
+    from vista_mcp_server.lib.iri import IriClient, _default_amscrot_log_location
+
+    _default_amscrot_log_location()
+    pytest.importorskip("amscrot")
+    from amscrot.serviceclient.amsc_iri.iri_service_client import IriServiceClient
+
+    iri = FakeIriClient()
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(ODO)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    await _submit_odo_job(
+        user_cfg,
+        "example",
+        node_count=None,
+        duration_int=None,
+        script_args=None,
+        constraint="gpu&hbm80g",
+        reservation="train1",
+    )
+    [(spec, name)] = iri.submitted
+
+    # The conversion needs no network or credentials, only the client's logger and
+    # name, so an uninitialised instance is enough.
+    sdk = IriServiceClient.__new__(IriServiceClient)
+    sdk.logger = logging.getLogger("amscrot-test")
+    sdk.name = "amscrot-test"
+    converted = {}
+
+    class _ServiceClient:
+        def plan(self, job, skip_checks=False):
+            pass
+
+        def create(self, job):
+            converted.update(
+                sdk._convert_to_iri_job_spec(job.job_spec, name=job.name).to_dict()
+            )
+            job.id = "odo-1"
+
+    client = IriClient.__new__(IriClient)
+    client._service_client = _ServiceClient()
+    assert client._submit_job(spec, name) == "odo-1"
+
+    attributes = converted["attributes"]
+    assert attributes["reservation_id"] == "train1"
+    assert attributes["custom_attributes"]["constraint"] == "gpu&hbm80g"
