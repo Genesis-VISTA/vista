@@ -60,5 +60,5 @@
 
 ## 6. Go live (after merge)
 
-- [ ] 6.1 After the next release, mark the site PR ready, and confirm with its maintainers
+- [x] 6.1 After the next release, mark the site PR ready, and confirm with its maintainers
   before merging. Verify the deployed site shows that release in each page's note.
