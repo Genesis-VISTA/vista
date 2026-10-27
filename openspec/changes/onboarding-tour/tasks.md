@@ -8,7 +8,7 @@
 
 - [x] 2.1 Add `ui/lib/settings-modal.ts` (`openSettings(section?)`, `closeSettings()`, `useSettingsModal()`), following the snapshot-store pattern of `requestModelChoice` in `ui/lib/agent-settings.ts`. Move `NavRail`'s `settingsOpen` and `settingsCluster` state onto it, and turn the cluster deep link into `openSettings(cluster)`. Verify with a vitest unit test of the store, and confirm `ui/e2e-hermetic/shell.spec.ts` still passes (the rail button and the cluster cards open Settings as before)
 - [x] 2.2 Add `initialSection?: Section` to `UserSettingsModal`, which generalises `initialCluster` and sets `pane="section"` in narrow windows. Verify with a vitest render test: `initialSection="agent"` shows "Model provider", and does so at a narrow width
-- [x] 2.3 In the Research profile section, add **Replay the tour** (writes `onboarding_tour: {status: "in_progress", step: "welcome"}`, closes Settings, and starts the tour) and a **Documentation** link to `https://genesis-vista.github.io/`. Check that `electron/src/routing.js` sends that origin to the system browser. Verify with a vitest test that Replay issues that `PUT` and closes the modal, and with `cd electron && npm test` that the routing test covers the docs origin
+- [x] 2.3 In the Research profile section, add **Replay tutorial** (writes `onboarding_tour: {status: "in_progress", step: "welcome"}`, closes Settings, and starts the tour) and a **Documentation** link to `https://genesis-vista.github.io/`. Check that `electron/src/routing.js` sends that origin to the system browser. Verify with a vitest test that Replay issues that `PUT` and closes the modal, and with `cd electron && npm test` that the routing test covers the docs origin
 
 ## 3. Step logic
 

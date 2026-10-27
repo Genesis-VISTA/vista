@@ -29,7 +29,7 @@ their own.
 - Tour progress is kept in VISTA's local settings. Quitting mid-tour resumes at the same step;
   **Exit tutorial** and finishing are final. Every installation sees the tour once, existing
   ones included.
-- Settings gains **Replay the tour** and a **Documentation** link to
+- Settings gains **Replay tutorial** and a **Documentation** link to
   <https://genesis-vista.github.io/>. The last tour step links to the same documentation.
 - Settings can be opened from outside the rail at a named section.
 - `VISTA_BACKEND_ONBOARDING_TOUR=false` turns the tour off, for automated tests and screencasts.

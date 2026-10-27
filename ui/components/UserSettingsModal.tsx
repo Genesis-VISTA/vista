@@ -1050,7 +1050,7 @@ function ResearchProfileSection({
           </div>
           <div className="settings-interest-add">
             <button type="button" className="button ghost button-xs" onClick={() => void replay()}>
-              Replay the tour
+              Replay tutorial
             </button>
           </div>
           {replayError && <div className="error" style={{ fontSize: 13 }}>{replayError}</div>}

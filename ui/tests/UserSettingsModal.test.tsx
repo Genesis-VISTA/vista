@@ -580,14 +580,14 @@ describe("UserSettingsModal research profile", () => {
     expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
   });
 
-  it("Replay the tour restarts it at the welcome step and closes Settings", async () => {
+  it("Replay tutorial restarts it at the welcome step and closes Settings", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     updateSettingsMock.mockResolvedValue(settingsRow());
     const onClose = vi.fn();
     render(<UserSettingsModal onClose={onClose} />);
     const profile = await region("Research profile");
 
-    await userEvent.click(within(profile).getByRole("button", { name: "Replay the tour" }));
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
 
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
     expect(updateSettingsMock).toHaveBeenCalledWith({
@@ -602,7 +602,7 @@ describe("UserSettingsModal research profile", () => {
     render(<UserSettingsModal onClose={onClose} />);
     const profile = await region("Research profile");
 
-    await userEvent.click(within(profile).getByRole("button", { name: "Replay the tour" }));
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
 
     expect(await within(profile).findByText("backend down")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();

@@ -19,13 +19,13 @@ Opening Settings this way SHALL NOT change how it opens from the rail's settings
 
 ### Requirement: Tour replay and documentation
 
-The Research profile section SHALL offer **Replay the tour**, which closes Settings and starts
+The Research profile section SHALL offer **Replay tutorial**, which closes Settings and starts
 the guided tour from its welcome step, and a **Documentation** link to
 <https://genesis-vista.github.io/>, which opens in the system browser.
 
 #### Scenario: Replaying the tour
 
-- **WHEN** a researcher chooses **Replay the tour** in Settings
+- **WHEN** a researcher chooses **Replay tutorial** in Settings
 - **THEN** Settings closes and the tour opens at the welcome step
 
 #### Scenario: Opening the documentation

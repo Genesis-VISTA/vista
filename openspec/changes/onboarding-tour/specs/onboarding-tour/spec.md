@@ -216,7 +216,7 @@ step, whatever its recorded state.
 
 #### Scenario: Replaying
 
-- **WHEN** a researcher who finished the tour chooses **Replay the tour** in Settings
+- **WHEN** a researcher who finished the tour chooses **Replay tutorial** in Settings
 - **THEN** Settings closes and the tour opens at the welcome step
 
 ### Requirement: The navigation rail is expanded during the tour
