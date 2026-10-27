@@ -130,6 +130,21 @@ def test_parse_submit_summary_keeps_the_rendered_paths():
     assert parsed["output_dir"] == "/gpfs/out/44039"
 
 
+def test_parse_submit_summary_reads_past_constraint_reservation_and_verified_lines():
+    text = (
+        "job_id: 44039\ncluster: odo\nnodes: 1\nduration: 1:00:00 (3600s)\n"
+        "constraint: nvme\nreservation: train1\n"
+        "verified: no (status unavailable: IRI timed out)\n"
+        "log_path: /gpfs/out/44039/log-44039.out\n"
+        "err_path: /gpfs/out/44039/log-44039.err\n"
+        "output_dir: /gpfs/out/44039"
+    )
+    parsed = parse_submit_summary(text)
+    assert parsed["job_id"] == "44039"
+    assert parsed["cluster"] == "odo"
+    assert parsed["output_dir"] == "/gpfs/out/44039"
+
+
 def test_parse_submit_summary_raises_without_job_id():
     with pytest.raises(ValueError):
         parse_submit_summary("cluster: frontier\nnodes: 2")

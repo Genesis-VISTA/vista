@@ -598,6 +598,14 @@ async def submit_hpc_job(
         f"nodes: {eff_nodes}",
         f"duration: {h}:{m:02d}:{s:02d} ({eff_duration}s)",
     ]
+    # The effective values, a job's default constraint included. `verified` appears
+    # only when the OLCF check could not confirm Slurm recorded them; the job was kept.
+    if effective_constraint:
+        summary.append(f"constraint: {effective_constraint}")
+    if reservation:
+        summary.append(f"reservation: {reservation}")
+    if unverified is not None:
+        summary.append(f"verified: no ({unverified})")
     # The rendered paths, so a caller can record where this job's files are:
     # without them, the report attached to a debate's FINDING post named no
     # file a human could go and read.

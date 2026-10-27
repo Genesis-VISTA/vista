@@ -720,7 +720,10 @@ async def test_a_default_odo_constraint_is_checked_without_an_argument(
     monkeypatch, user_cfg
 ):
     job_info = submit_job_mcp.resolve_job("example")
-    job_info.cluster_defaults.odo = IriDefaults(iri={"constraint": "nvme"})
+    # The job object is cached: restore it, or the default leaks into later tests.
+    monkeypatch.setattr(
+        job_info.cluster_defaults, "odo", IriDefaults(iri={"constraint": "nvme"})
+    )
     monkeypatch.setattr(submit_job_mcp, "resolve_job", lambda *a, **k: job_info)
     monkeypatch.setattr(settings, "hpc_dry_run", False)
     iri = FakeIriClient(s3m=DROPPED)
@@ -749,3 +752,70 @@ async def test_submit_hpc_job_kept_when_olcf_forwards_the_constraint(
     )
     assert "job_id: iri-job-1" in summary
     assert iri.cancelled == []
+
+
+def _summary_lines(summary: str) -> dict[str, str]:
+    return dict(line.split(": ", 1) for line in summary.splitlines())
+
+
+async def _submit_summary(monkeypatch, user_cfg, iri, *, dry_run=False, **kwargs):
+    monkeypatch.setattr(settings, "hpc_dry_run", dry_run)
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(ODO)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+    return _summary_lines(
+        await submit_job_mcp.submit_hpc_job(
+            _tool_ctx(user_cfg), job="example", cluster="odo", **kwargs
+        )
+    )
+
+
+async def test_summary_reports_constraint_and_reservation_when_verified(
+    monkeypatch, user_cfg
+):
+    lines = await _submit_summary(
+        monkeypatch,
+        user_cfg,
+        FakeIriClient(s3m=APPLIED),
+        constraint="nvme",
+        reservation="train1",
+    )
+    assert lines["constraint"] == "nvme"
+    assert lines["reservation"] == "train1"
+    assert "verified" not in lines
+    assert lines["job_id"] == "iri-job-1"
+
+
+async def test_summary_says_unverified_when_the_record_cannot_be_read(
+    monkeypatch, user_cfg
+):
+    iri = FakeIriClient(status_error=RuntimeError("IRI timed out"))
+    lines = await _submit_summary(monkeypatch, user_cfg, iri, reservation="train1")
+    assert lines["reservation"] == "train1"
+    assert lines["verified"].startswith("no (status unavailable: ")
+    assert "IRI timed out" in lines["verified"]
+    assert "constraint" not in lines
+    assert iri.cancelled == []
+
+
+async def test_summary_has_no_new_lines_when_nothing_was_asked_for(
+    monkeypatch, user_cfg
+):
+    lines = await _submit_summary(monkeypatch, user_cfg, FakeIriClient(s3m=DROPPED))
+    assert not {"constraint", "reservation", "verified"} & set(lines)
+
+
+async def test_dry_run_summary_reports_constraint_and_reservation(
+    monkeypatch, user_cfg
+):
+    lines = await _submit_summary(
+        monkeypatch,
+        user_cfg,
+        FakeIriClient(),
+        dry_run=True,
+        constraint="nvme",
+        reservation="train1",
+    )
+    assert lines["constraint"] == "nvme"
+    assert lines["reservation"] == "train1"
+    assert "verified" not in lines

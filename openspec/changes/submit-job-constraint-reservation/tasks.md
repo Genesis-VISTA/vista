@@ -40,7 +40,7 @@
 
 ## 5. Summary
 
-- [ ] 5.1 Add `constraint:`, `reservation:` and `verified:` lines to the submit summary when they apply. Verify with a spec test, and that `backend` `parse_submit_summary` still reads `job_id` and `cluster` from the new summary (an existing campaign test, or a new one).
+- [x] 5.1 Add `constraint:`, `reservation:` and `verified:` lines to the submit summary when they apply. Verify with a spec test, and that `backend` `parse_submit_summary` still reads `job_id` and `cluster` from the new summary (an existing campaign test, or a new one).
 
 ## 6. Backend pass-through
 
