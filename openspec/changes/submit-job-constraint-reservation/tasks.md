@@ -2,14 +2,16 @@
 
 ## 1. Arguments and validation
 
-- [x] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Validate them against the design's two patterns before `resolve_job` side effects and before the dry-run branch, raising `ToolError` with the argument name and the allowed characters. Verify with new tests in `tests/test_submit_job_spec.py`:
-  - `nvme\n#SBATCH -A x` and `res 1` are refused, and no client is called.
+- [ ] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Before `resolve_job` side effects and the dry-run branch, refuse a value that is empty or contains whitespace or a control character (the design's pattern), raising `ToolError` naming the argument. No character allow-list. Verify with tests in `tests/test_submit_job_spec.py`:
+  - `nvme\n#SBATCH -A x`, `res 1`, `""` and a value with a tab are refused, and no client is called.
+  - `[(knl&snc4)*4&haswell*1]` and `r1,r2` reach the IRI job unchanged.
   - In dry-run mode, a bad value records no job (`tests/test_dry_run.py`).
 - [x] 1.2 Add the effective-constraint helper (the argument if given, else `defaults.iri.constraint`) and pass the effective constraint and the reservation into all four `_submit_*_job` functions. Verify the existing spec, Lux, skill-job, forge-pretrain and job-account tests still pass.
-- [x] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
+- [ ] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
   - the constraint replaces the job's default, and the agent restates the default to keep it, e.g. `gpu&hbm80g`
-  - which clusters take each argument
-  - that Odo and Frontier verify both after submitting
+  - that all four clusters take both
+  - that Odo and Frontier report what Slurm recorded (`dropped:` / `verified:` lines)
+  - nothing about OLCF's current behaviour, and no character list
 
   Verify with an assertion in `tests/test_skill_jobs.py::test_the_tool_description_mentions_skill_jobs`, or a sibling test.
 
@@ -29,33 +31,33 @@
 ## 4. Odo and Frontier post-submit check
 
 - [x] 4.1 Let `tests/fakes/iri.py` return a configurable `provider_status.meta_data.s3m` record per job, and let it raise from `get_job_status`. Verify the existing fake-IRI tests are unchanged.
-- [x] 4.2 Add the shared check helper and call it from `_submit_odo_job` and `_submit_frontier_job`, only when a constraint or a reservation is set. It cancels and raises `ToolError` when the constraint was dropped, and returns an "unverified" note when the check is indeterminate or the record shows no reservation. Verify with tests covering:
-  - an empty constraint record: cancelled, with an error naming OLCF, Perlmutter and Lux
-  - an empty reservation name: kept and unverified
-  - an empty constraint beside an empty reservation name: cancelled
-  - a non-empty constraint: kept
-  - a status error: kept and unverified
-  - missing `s3m` fields: kept and unverified
+- [ ] 4.2 Add the shared check helper and call it from `_submit_odo_job` and `_submit_frontier_job`, only when a constraint or a reservation is set. It never cancels and never raises: it returns what to report, a dropped constraint and/or the reasons a value is unverified (an exception cut to its first line). Verify with tests covering, each with no `cancel_job` call:
+  - an empty constraint record: kept, reported dropped
+  - a non-empty constraint: kept, nothing reported
+  - an empty reservation name: kept, unverified
+  - an empty constraint and an empty reservation name: both reported
+  - a status error: kept, unverified, reason on one line
+  - missing `s3m` fields: kept, unverified
   - no constraint and no reservation: no status call
   - an Odo default constraint with no argument: still checked
 
 ## 5. Summary
 
-- [x] 5.1 Add `constraint:`, `reservation:` and `verified:` lines to the submit summary when they apply. Verify with a spec test, and that `backend` `parse_submit_summary` still reads `job_id` and `cluster` from the new summary (an existing campaign test, or a new one).
+- [ ] 5.1 Add `constraint:`, `reservation:`, `dropped:` and `verified:` lines to the submit summary when they apply. Verify with a spec test, and that `backend` `parse_submit_summary` still reads `job_id` and `cluster` from the new summary (an existing campaign test, or a new one).
 
 ## 6. Backend pass-through
 
 - [x] 6.1 Add `constraint` and `reservation` to the `HpcTools.submit` protocol and `McpHpcTools.submit`, forwarding each only when not `None`. Update `tests/harness/fake_mcp.py`. Leave `agents/forum/simulation.py` unchanged. Verify with a backend test that `McpHpcTools.submit(..., reservation="r")` passes `reservation` and omits it when `None`. Run `./scripts/ci-local.sh backend test`.
-- [x] 6.2 Let a campaign supply both, as it supplies `cluster`: add optional `constraint` and `reservation` to the campaign agent's `dispatch_cycle` tool (`agents/campaign/agent_tools.py`), to `CampaignPlanner.dispatch_candidate` and to `SubAgentOrder`, and have `SubAgent.dispatch` pass them to `hpc.submit`. Mention them in `dispatch_cycle`'s docstring. Verify with a backend test that dispatching a cycle with `reservation="train1"` submits every role's job with it, and that a cycle without one sends neither.
+- [ ] 6.2 Let a campaign supply both, as it supplies `cluster`: add optional `constraint` and `reservation` to the campaign agent's `dispatch_cycle` tool (`agents/campaign/agent_tools.py`), to `CampaignPlanner.dispatch_candidate` and to `SubAgentOrder`, and have `SubAgent.dispatch` pass them to `hpc.submit`. Mention them in `dispatch_cycle`'s docstring, without claiming Odo or Frontier refuse a constraint or naming other clusters. Verify with a backend test that dispatching a cycle with `reservation="train1"` submits every role's job with it, and that a cycle without one sends neither.
 
 ## 7. Docs and prompts
 
-- [x] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, and the per-cluster mapping and checking. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping. Verify with the docs link checker.
+- [ ] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, the per-cluster mapping, and that Odo and Frontier report what Slurm recorded and never cancel. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping, with no per-cluster caveat. Verify with the docs link checker.
 - [x] 7.2 Correct `backend/src/vista_backend/db/system_prompts/molten-salt.md:8` to the real signature: `submit_hpc_job(job, cluster?, node_count?, duration?, script_args?, constraint?, reservation?)`. Verify by reading the prompt, and with any bundled-prompt test.
 
 ## 8. Acceptance
 
-- [x] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
+- [ ] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
 - [x] 8.2 Manual, before merge, through VISTA's own `submit_hpc_job` on Odo with Sam's tokens:
   - `example` with `constraint="nvme"`: expect a `ToolError` naming OLCF and a cancelled job, which also confirms a just-queued job's Slurm record has `constraints`. If the result is "unverified" instead, record it and raise the follow-up in design.md's Risks.
   - `example` with a fake reservation: expect Slurm's "Requested reservation is invalid".
@@ -65,3 +67,5 @@
   Results, 2026-10-27, this branch's `submit_hpc_job` on Odo (account `gen150-vista`):
   - `constraint="nvme"`: job 45222 was submitted, and its Slurm record, read straight after, already had `constraints: ""` (state `PENDING`). VISTA cancelled it and raised: "OLCF did not pass the constraint 'nvme' to Slurm for job 45222. The job was cancelled. Submit without it, or use Perlmutter or Lux, which take a constraint." Slurm later showed it `CANCELLED`; the status feed lagged the cancel by about a minute.
   - Fake reservation `vista-accept86-no-such-reservation`: refused at submit with Slurm's "Requested reservation is invalid" (error 2053), inside amscrot's raw `CreateError` (a 502 from IRI, HTTP headers included), as every IRI submit error already reaches the agent.
+
+  Later revision: the leaner design replaced the cancel recorded above with a `dropped:` report, and the job is kept. The finding the run was for still holds: a just-queued job's Slurm record already has `constraints: ""`.

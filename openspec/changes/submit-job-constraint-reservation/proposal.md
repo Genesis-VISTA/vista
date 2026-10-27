@@ -24,14 +24,16 @@ it is silently dropped.
   `reservation`, on every cluster. A constraint replaces the job's default
   constraint and is not combined with it. A reservation is per call only and is
   never read from `cluster_defaults.json`.
-- Both values are checked against Slurm's syntax before anything is submitted,
-  dry runs included. Anything else is refused, so on Lux no value can add
-  `#SBATCH` lines or shell.
+- Both values are refused before anything is submitted, dry runs included, if
+  they are empty or contain whitespace or control characters, so on Lux no
+  value can start a new `#SBATCH` line. Slurm judges the syntax itself.
 - On Odo and Frontier, the system reads Slurm's record of the job right after
-  submitting it. If a requested constraint is missing, it cancels the job and
-  refuses, naming the cause. If the record cannot be read, or shows no
-  reservation, the job is kept and the summary says the request is unverified. Once OLCF
-  forwards constraints the check passes, and nothing in VISTA needs to change.
+  submitting it and reports what it shows. A requested constraint that Slurm
+  did not record is reported as dropped; the job is kept, and the agent or
+  researcher decides whether to cancel it. A record that cannot be read, or
+  shows no reservation, is reported as unverified. Once OLCF forwards
+  constraints the report shows them applied, and nothing in VISTA needs to
+  change.
 - The submit summary reports the effective constraint and reservation.
 - Perlmutter stops sending a `custom_attributes` constraint of `null` for jobs
   without one.
@@ -44,8 +46,8 @@ it is silently dropped.
 
 No breaking change. A job that sets no constraint and passes no reservation is
 submitted exactly as before. An Odo or Frontier job whose defaults set a
-constraint is now cancelled instead of running unconstrained, but no bundled
-job sets one.
+constraint runs as before, and its summary now reports the constraint dropped.
+No bundled job sets one.
 
 ## Capabilities
 

@@ -8,10 +8,9 @@ reservation SHALL come only from the submission and never from a job's
 defaults.
 
 Before anything is submitted, and in dry-run mode too, the system SHALL refuse
-values that are not Slurm syntax. A constraint is letters, digits and
-`_ - . : , * & | [ ] ( )`. A reservation is one or more comma-separated names
-of letters, digits and `_ - . :`. Refused values include whitespace and
-newlines.
+a constraint or reservation that is empty or contains whitespace or control
+characters. The system SHALL NOT otherwise check Slurm syntax; Slurm reports
+its own syntax errors.
 
 The system SHALL pass the effective constraint and the reservation to Slurm as
 follows:
@@ -23,20 +22,17 @@ follows:
 The submission result SHALL report the effective constraint and reservation.
 
 On Odo and Frontier, after submitting a job with a constraint or a
-reservation, the system SHALL read Slurm's record of that job:
-- If the record shows no constraint where one was requested, the system SHALL
-  cancel the job and fail. The failure SHALL say that OLCF did not pass the
-  constraint to Slurm, and SHALL name Perlmutter and Lux as the clusters that
-  take a constraint.
+reservation, the system SHALL read Slurm's record of that job and report what
+it shows:
+- If the record shows no constraint where one was requested, the submission
+  result SHALL report the constraint as dropped.
 - Any non-empty recorded constraint SHALL count as passed.
-- A reservation SHALL never cancel the job. OLCF passes reservations to Slurm,
-  so a record that shows no reservation where one was requested SHALL make the
-  reservation unverified.
-- The constraint and the reservation SHALL be judged separately: a dropped
-  constraint SHALL cancel the job even when the reservation is unverified.
-- If the record cannot be read, or lacks those fields, and no constraint was
-  dropped, the system SHALL keep the job, and the submission result SHALL say
-  the constraint or reservation is unverified.
+- If the record shows no reservation where one was requested, the submission
+  result SHALL say the reservation is unverified.
+- If the record cannot be read, or lacks those fields, the submission result
+  SHALL say which value is unverified.
+- The system SHALL NOT cancel a job or fail the submission because of this
+  check; the job is kept, and whoever submitted it decides what to do.
 
 #### Scenario: Constraint replaces the default on Perlmutter
 - **WHEN** a job whose Perlmutter default constraint is `gpu` is submitted to Perlmutter with constraint `gpu&hbm80g`
@@ -60,7 +56,11 @@ reservation, the system SHALL read Slurm's record of that job:
 
 #### Scenario: Injected value refused
 - **WHEN** a submission's constraint is `nvme\n#SBATCH -A other`, or its reservation contains a space
-- **THEN** submission fails before any file is moved or any cluster is contacted, naming the argument and the characters allowed
+- **THEN** submission fails before any file is moved or any cluster is contacted, naming the argument
+
+#### Scenario: Valid Slurm syntax passes through
+- **WHEN** a job is submitted to Odo with constraint `[(knl&snc4)*4&haswell*1]` and reservation `r1,r2`
+- **THEN** the IRI job carries both values unchanged
 
 #### Scenario: Dry run refuses bad values
 - **WHEN** HPC dry-run is on and a submission's constraint contains a newline
@@ -68,11 +68,11 @@ reservation, the system SHALL read Slurm's record of that job:
 
 #### Scenario: OLCF drops the constraint
 - **WHEN** a job is submitted to Frontier with constraint `nvme` and Slurm's record of the job shows an empty constraint
-- **THEN** the job is cancelled and submission fails, saying OLCF did not pass the constraint to Slurm and naming Perlmutter and Lux
+- **THEN** the job is kept, nothing is cancelled, and the submission result reports constraint `nvme` as dropped
 
 #### Scenario: Default constraint on an OLCF cluster
 - **WHEN** a job whose Odo defaults set a constraint is submitted to Odo without one, and Slurm's record shows an empty constraint
-- **THEN** the job is cancelled and submission fails as if the constraint had been given at submission
+- **THEN** the submission result reports that constraint as dropped, as if it had been given at submission
 
 #### Scenario: OLCF forwards the constraint
 - **WHEN** a job is submitted to Odo with constraint `nvme` and Slurm's record shows a non-empty constraint
@@ -86,9 +86,9 @@ reservation, the system SHALL read Slurm's record of that job:
 - **WHEN** a job is submitted to Frontier with reservation `train1` and Slurm's record shows an empty reservation name
 - **THEN** the job is kept and the submission result says the reservation is unverified
 
-#### Scenario: Dropped constraint beside an unverified reservation
+#### Scenario: Dropped constraint and unverified reservation together
 - **WHEN** a job is submitted to Odo with constraint `nvme` and a reservation, and Slurm's record shows an empty constraint and an empty reservation name
-- **THEN** the job is cancelled and submission fails, saying OLCF did not pass the constraint to Slurm
+- **THEN** the job is kept and the submission result reports the constraint as dropped and the reservation as unverified
 
 #### Scenario: Campaign cycle with a reservation
 - **WHEN** a campaign cycle is dispatched with reservation `train1`
