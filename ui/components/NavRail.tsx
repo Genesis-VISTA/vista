@@ -13,6 +13,7 @@ import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
+import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
 import { UserSettingsModal } from "./UserSettingsModal";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -163,9 +164,7 @@ export function NavRail() {
   const activeProject = useActiveProject();
   const { settings, loading: settingsLoading } = useSettings();
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Set when settings were opened from a cluster's card, to expand only that section. */
-  const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
+  const settingsModal = useSettingsModal();
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const collapsed = useSyncExternalStore(
     railSubscribe,
@@ -297,8 +296,7 @@ export function NavRail() {
 
   function openSettingsFor(cluster: HpcCluster) {
     setTip(null);
-    setSettingsCluster(cluster);
-    setSettingsOpen(true);
+    openSettings(cluster);
   }
 
   return (
@@ -407,10 +405,7 @@ export function NavRail() {
       <button
         type="button"
         className="nav-rail-settings"
-        onClick={() => {
-          setSettingsCluster(undefined);
-          setSettingsOpen(true);
-        }}
+        onClick={() => openSettings()}
         disabled={!settings}
         aria-label="Open settings"
         {...tipProps(settingsHint)}
@@ -432,11 +427,8 @@ export function NavRail() {
         </div>
       )}
 
-      {settingsOpen && (
-        <UserSettingsModal
-          initialCluster={settingsCluster}
-          onClose={() => setSettingsOpen(false)}
-        />
+      {settingsModal.open && (
+        <UserSettingsModal initialSection={settingsModal.section} onClose={closeSettings} />
       )}
     </aside>
   );
