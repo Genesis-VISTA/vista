@@ -758,11 +758,14 @@ async def test_a_default_odo_constraint_is_checked_without_an_argument(
     globus.seed_remote_dir(ODO)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    summary = await submit_job_mcp.submit_hpc_job(
-        _tool_ctx(user_cfg), job="example", cluster="odo"
+    lines = _summary_lines(
+        await submit_job_mcp.submit_hpc_job(
+            _tool_ctx(user_cfg), job="example", cluster="odo"
+        )
     )
-    assert "job_id: iri-job-1" in summary
-    assert iri.status_calls == ["iri-job-1"]
+    assert lines["job_id"] == "iri-job-1"
+    assert lines["constraint"] == "nvme"
+    assert lines["dropped"].startswith("constraint 'nvme' (Slurm recorded none")
     assert iri.cancelled == []
 
 
@@ -809,8 +812,24 @@ async def test_summary_reports_constraint_and_reservation_when_verified(
     )
     assert lines["constraint"] == "nvme"
     assert lines["reservation"] == "train1"
-    assert "verified" not in lines
+    assert not {"dropped", "verified"} & set(lines)
     assert lines["job_id"] == "iri-job-1"
+
+
+async def test_summary_reports_a_dropped_constraint_and_an_unverified_reservation(
+    monkeypatch, user_cfg
+):
+    iri = FakeIriClient(s3m=DROPPED)
+    lines = await _submit_summary(
+        monkeypatch, user_cfg, iri, constraint="nvme", reservation="train1"
+    )
+    assert lines["job_id"] == "iri-job-1"
+    assert lines["constraint"] == "nvme"
+    assert lines["dropped"] == (
+        "constraint 'nvme' (Slurm recorded none; the job runs without it)"
+    )
+    assert lines["verified"] == "no (Slurm record shows no reservation yet)"
+    assert iri.cancelled == []
 
 
 async def test_summary_says_unverified_when_the_record_cannot_be_read(
@@ -829,7 +848,7 @@ async def test_summary_has_no_new_lines_when_nothing_was_asked_for(
     monkeypatch, user_cfg
 ):
     lines = await _submit_summary(monkeypatch, user_cfg, FakeIriClient(s3m=DROPPED))
-    assert not {"constraint", "reservation", "verified"} & set(lines)
+    assert not {"constraint", "reservation", "dropped", "verified"} & set(lines)
 
 
 async def test_dry_run_summary_reports_constraint_and_reservation(
