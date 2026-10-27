@@ -31,7 +31,7 @@
 ## 4. Odo and Frontier post-submit check
 
 - [x] 4.1 Let `tests/fakes/iri.py` return a configurable `provider_status.meta_data.s3m` record per job, and let it raise from `get_job_status`. Verify the existing fake-IRI tests are unchanged.
-- [ ] 4.2 Add the shared check helper and call it from `_submit_odo_job` and `_submit_frontier_job`, only when a constraint or a reservation is set. It never cancels and never raises: it returns what to report, a dropped constraint and/or the reasons a value is unverified (an exception cut to its first line). Verify with tests covering, each with no `cancel_job` call:
+- [x] 4.2 Add the shared check helper and call it from `_submit_odo_job` and `_submit_frontier_job`, only when a constraint or a reservation is set. It never cancels and never raises: it returns what to report, a dropped constraint and/or the reasons a value is unverified (an exception cut to its first line). Verify with tests covering, each with no `cancel_job` call:
   - an empty constraint record: kept, reported dropped
   - a non-empty constraint: kept, nothing reported
   - an empty reservation name: kept, unverified
