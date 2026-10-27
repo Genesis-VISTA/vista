@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type HTMLAttributes } from "react";
+import { useTourEvent } from "@/components/TourProvider";
 import {
   HPC_CLUSTER_TITLES,
   RESOURCE_TREE,
@@ -220,6 +221,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
   const view = useHpcStatus();
   const [open, setOpen] = useState<Open | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const reportTour = useTourEvent();
 
   // Close on Escape or a click anywhere else, like the rail's other overlays.
   useEffect(() => {
@@ -279,6 +281,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
       left: (rail?.right ?? box.right) + 8,
       top: Math.max(8, Math.min(box.top, window.innerHeight - 400)),
     });
+    reportTour("hpc-card-opened");
   }
 
   const openCard = open ? cards.find((c) => c.cluster === open.cluster) : undefined;
@@ -311,8 +314,14 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
         <div className="hpc-collapsed-divider" aria-hidden="true" />
       )}
 
-      {groups.map(({ facility, institution, clusters }) => (
-        <div key={facility.id} role="group" aria-label={facility.name} className="hpc-facility">
+      {groups.map(({ facility, institution, clusters }, index) => (
+        <div
+          key={facility.id}
+          role="group"
+          aria-label={facility.name}
+          className="hpc-facility"
+          data-tour={index === 0 ? "hpc:open-card" : undefined}
+        >
           <div className={collapsed ? "hpc-facility-short" : "hpc-facility-head"} aria-hidden="true">
             {facility.name}
             {!collapsed && <span className="hpc-facility-institution">{institution.name}</span>}
@@ -454,7 +463,7 @@ function HpcDetails({
           ))}
         </ul>
       )}
-      <div className="hpc-popover-foot">
+      <div className="hpc-popover-foot" data-tour="hpc:settings">
         <span className="hpc-popover-checked">{checked}</span>
         <button type="button" className="hpc-link" onClick={onSettings}>
           Settings

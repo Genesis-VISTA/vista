@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   completesOnNext,
   nextTourStep,
+  tourAnchor,
+  tourFailureForRefusal,
   type Acknowledgement,
   type TourEvent,
   type TourInput,
@@ -67,7 +69,15 @@ describe("nextTourStep", () => {
     const both = nextTourStep(
       input({ ...at("files"), events: new Set<TourEvent>(["example-image-opened", "example-md-opened"]) }),
     );
-    expect(both).toEqual({ step: "hpc", subStep: "open-card" });
+    expect(both).toEqual({ step: "files", subStep: "review" });
+    const reviewed = nextTourStep(
+      input({
+        ...at("files"),
+        events: new Set<TourEvent>(["example-image-opened", "example-md-opened"]),
+        acknowledged: new Set<Acknowledgement>(["files:review"]),
+      }),
+    );
+    expect(reviewed).toEqual({ step: "hpc", subStep: "open-card" });
   });
 
   it("finishes the first question only on a successful turn", () => {
@@ -129,5 +139,39 @@ describe("completesOnNext", () => {
     expect(completesOnNext("skills", "import")).toBe(true);
     expect(completesOnNext("hpc", "settings")).toBe(true);
     expect(completesOnNext("first-question", "finish")).toBe(true);
+  });
+});
+
+describe("tourFailureForRefusal", () => {
+  it("takes inference_not_configured for a missing credential", () => {
+    expect(tourFailureForRefusal({ detail: "No inference API key.", code: "inference_not_configured" })).toBe(
+      "credential",
+    );
+  });
+
+  it.each([null, "text", {}, { code: "run_busy" }, { detail: "boom" }])(
+    "takes anything else (%j) for a failure to retry",
+    (body) => {
+      expect(tourFailureForRefusal(body)).toBe("other");
+    },
+  );
+});
+
+describe("tourAnchor", () => {
+  const send = { step: "first-question", subStep: "send" } as const;
+
+  it("is the coachmark's own key", () => {
+    expect(tourAnchor(send, null)).toBe("first-question:send");
+    expect(tourAnchor({ step: "skills", subStep: "load" }, null)).toBe("skills:load");
+  });
+
+  it("points a first-question failure at what fixes it", () => {
+    expect(tourAnchor(send, "credential")).toBe("first-question:settings");
+    expect(tourAnchor(send, "model")).toBe("model:pick");
+    expect(tourAnchor(send, "other")).toBe("first-question:send");
+  });
+
+  it("ignores a failure on any other coachmark", () => {
+    expect(tourAnchor({ step: "first-question", subStep: "finish" }, "credential")).toBe("first-question:finish");
   });
 });

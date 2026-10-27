@@ -30,7 +30,7 @@ export const TOUR_SUB_STEPS = {
   model: ["credential", "pick"],
   "knowledge-bases": ["open-kb", "add-files"],
   skills: ["open-skill", "load", "import"],
-  files: ["open-examples"],
+  files: ["open-examples", "review"],
   hpc: ["open-card", "settings"],
   "first-question": ["send", "finish"],
 } as const satisfies Record<TourStepId, readonly string[]>;
@@ -45,6 +45,13 @@ export type TourEvent =
   | "example-md-opened"
   | "hpc-card-opened"
   | "turn-succeeded";
+
+/**
+ * Why the first question did not get an answer, as the chat page tells the
+ * tour: no working credential (the backend refused the turn for want of one),
+ * no model chosen, or anything else that went wrong.
+ */
+export type TourFailure = "credential" | "model" | "other";
 
 /** A sub-step passed with Next, as `"<step>:<sub-step>"`, e.g. `"skills:load"`. */
 export type Acknowledgement = `${TourStepId}:${string}`;
@@ -144,4 +151,29 @@ const ACTION_SUB_STEPS: ReadonlySet<string> = new Set([
  */
 export function completesOnNext(step: TourStepId, subStep: string): boolean {
   return !ACTION_SUB_STEPS.has(`${step}:${subStep}`);
+}
+
+/**
+ * The failure a refused send stands for, from the backend's own refusal body:
+ * `inference_not_configured` is a missing credential, and any other refusal
+ * is something the researcher can only retry. Pure, so the mapping is tested
+ * without the chat page.
+ */
+export function tourFailureForRefusal(body: unknown): TourFailure {
+  const code = typeof body === "object" && body !== null ? (body as { code?: unknown }).code : null;
+  return code === "inference_not_configured" ? "credential" : "other";
+}
+
+/**
+ * The `data-tour` value a coachmark points at. Always `"<step>:<sub-step>"`,
+ * except on the first question after a failure, where it points at what fixes
+ * it: the settings button for a credential, the model picker for a model.
+ */
+export function tourAnchor(position: TourPosition, failure: TourFailure | null): string {
+  const key = `${position.step}:${position.subStep}`;
+  if (key === "first-question:send") {
+    if (failure === "credential") return "first-question:settings";
+    if (failure === "model") return "model:pick";
+  }
+  return key;
 }

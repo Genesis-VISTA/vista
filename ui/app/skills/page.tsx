@@ -20,6 +20,7 @@ import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
+import { useTour } from "@/components/TourProvider";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
@@ -30,6 +31,7 @@ export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const tour = useTour();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [pendingPublish, setPendingPublish] = useState<SkillSummary | null>(null);
@@ -149,9 +151,19 @@ export default function SkillsPage() {
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
+      tour.report("skill-opened");
     } catch {
       // ignore
     }
+  }
+
+  // The tour moves from reading a skill to the Load button behind its detail,
+  // so the detail closes as it leaves reading.
+  const tourPastReading = tour.position?.step === "skills" && tour.position.subStep !== "open-skill";
+  const [pastReading, setPastReading] = useState(false);
+  if (tourPastReading !== pastReading) {
+    setPastReading(tourPastReading);
+    if (tourPastReading) setSelected(null);
   }
 
   const term = filter.trim().toLowerCase();
@@ -172,6 +184,10 @@ export default function SkillsPage() {
     [skills, loadedSlugs, matches]
   );
 
+  // The cards the tour points at: the first skill, and the first Load button.
+  const tourOpenSlug = (loadedSkills[0] ?? otherSkills[0])?.slug;
+  const tourLoadSlug = otherSkills[0]?.slug;
+
   function card(skill: SkillSummary, loaded: boolean) {
     const busy = busySlug === skill.slug;
     const onServer = isOnServer(skill, serverUrl);
@@ -182,6 +198,7 @@ export default function SkillsPage() {
       <div
         key={skill.slug}
         className="skill-item"
+        data-tour={skill.slug === tourOpenSlug ? "skills:open-skill" : undefined}
         onClick={() => openDetail(skill.slug)}
         role="button"
         tabIndex={0}
@@ -267,6 +284,7 @@ export default function SkillsPage() {
                 type="button"
                 className="button secondary button-sm"
                 disabled={busy}
+                data-tour={skill.slug === tourLoadSlug ? "skills:load" : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   void setLoaded(skill.slug, true);
@@ -306,6 +324,7 @@ export default function SkillsPage() {
               type="button"
               className="button button-sm"
               onClick={() => setShowImport(true)}
+              data-tour="skills:import"
               title="Import skills from a GitHub or GitLab repository, or a local folder, into this project"
               disabled={!projectName}
             >

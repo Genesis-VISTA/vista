@@ -63,6 +63,9 @@ function ProjectsPageContent() {
   const { projects, loading, error, refresh } = useProjects();
   const activeProject = useActiveProject();
   const activeName = activeProject?.name ?? null;
+  // The tour's project: the seeded AI Safety one, else whichever comes first.
+  const tourProjectName =
+    (projects.find((p) => p.name === "ai-safety-autonomous-labs") ?? projects[0])?.name ?? null;
   const [skillCatalog, setSkillCatalog] = useState<SkillSummary[]>([]);
   const [kbCatalog, setKbCatalog] = useState<KnowledgeBaseSummary[]>([]);
   // The NavRail's "+ New project" link routes here with `?new=1` to auto-open
@@ -293,6 +296,7 @@ function ProjectsPageContent() {
             <ProjectCard
               key={project.id}
               project={project}
+              tourTarget={project.name === tourProjectName}
               active={activeName === project.name}
               sharing={projectSharingLabel(
                 project,
@@ -385,6 +389,7 @@ function ProjectsPageContent() {
 
 function ProjectCard({
   project,
+  tourTarget,
   active,
   sharing,
   onServer,
@@ -396,6 +401,8 @@ function ProjectCard({
   onPublish,
 }: {
   project: Project;
+  /** The card the first-boot tour points at. */
+  tourTarget: boolean;
   active: boolean;
   /** Where it stands with the collaboration server. */
   sharing: string;
@@ -443,7 +450,12 @@ function ProjectCard({
       <ChipRow label="Tools" items={project.tools} />
 
       <div className="project-card-actions">
-        <button type="button" className="button" onClick={onOpen}>
+        <button
+          type="button"
+          className="button"
+          data-tour={tourTarget ? "project:open" : undefined}
+          onClick={onOpen}
+        >
           {active ? "Reopen" : "Open"}
         </button>
         <button type="button" className="button ghost button-sm" onClick={onEdit}>

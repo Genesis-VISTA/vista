@@ -194,7 +194,8 @@ export function ModelMenu({
       : [];
 
   return (
-    <div className="model-picker" ref={rootRef}>
+    // The tour's anchor is the whole picker, so the menu it opens is inside it.
+    <div className="model-picker" ref={rootRef} data-tour="model:pick">
       <button
         ref={buttonRef}
         type="button"

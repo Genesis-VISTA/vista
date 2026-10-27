@@ -37,19 +37,19 @@
 
 ## 5. Steps
 
-- [ ] 5.1 Project step: add `data-tour` to the AI Safety project card's **Open** button in `ui/app/projects/page.tsx`. The provider navigates to `/projects` when the step starts. Verify in the e2e spec in 6.1
-- [ ] 5.2 Model step: call `openSettings("agent")`; add `data-tour` to the provider radiogroup and the key field in `UserSettingsModal` and to `.model-picker-button` in `ModelMenu`. Name the suggestion from the provider's `default_model` (none for Custom). Verify with vitest: i2 and MAG suggest `claude-sonnet`, OLCF suggests `gpt-oss-120b`, Custom names none
-- [ ] 5.3 Knowledge bases step: add `data-tour` to the rail entry for `/knowledge-bases`, the AI Safety Papers list item and **+ Add files**, and report `kb-opened` from `KbDetailView` in `ui/app/knowledge-bases/explorer.tsx`. Verify in the e2e spec in 6.1
-- [ ] 5.4 Skills step: add `data-tour` to the rail Skills entry, the skill cards, **Load** and **Import…**, and report `skill-opened` from `openDetail` in `ui/app/skills/page.tsx`. Verify in the e2e spec that the project's skills are unchanged after the step
-- [ ] 5.5 Files step:
+- [x] 5.1 Project step: add `data-tour` to the AI Safety project card's **Open** button in `ui/app/projects/page.tsx`. The provider navigates to `/projects` when the step starts. Verify in the e2e spec in 6.1
+- [x] 5.2 Model step: call `openSettings("agent")`; add `data-tour` to the provider radiogroup and the key field in `UserSettingsModal` and to `.model-picker-button` in `ModelMenu`. Name the suggestion from the provider's `default_model` (none for Custom). Verify with vitest: i2 and MAG suggest `claude-sonnet`, OLCF suggests `gpt-oss-120b`, Custom names none
+- [x] 5.3 Knowledge bases step: add `data-tour` to the rail entry for `/knowledge-bases`, the AI Safety Papers list item and **+ Add files**, and report `kb-opened` from `KbDetailView` in `ui/app/knowledge-bases/explorer.tsx`. Verify in the e2e spec in 6.1
+- [x] 5.4 Skills step: add `data-tour` to the rail Skills entry, the skill cards, **Load** and **Import…**, and report `skill-opened` from `openDetail` in `ui/app/skills/page.tsx`. Verify in the e2e spec that the project's skills are unchanged after the step
+- [x] 5.5 Files step:
   - add `src?: string` to `ui/components/FilePreview.tsx`, used for preview and download in place of `fileUrl()`;
   - add `ui/lib/onboarding-examples.ts`: `outputs/summary.md` with headings and a GFM table, `outputs/risk-scores.svg` as a data URL, and `uploads/risks.csv`;
   - merge the examples into the listing in `ui/app/files/page.tsx` only during the `files` step, with an "Example" badge and no Download, Delete or Show in chat;
   - report `example-image-opened` and `example-md-opened` when those examples are opened.
 
   Verify with new cases in `ui/tests/FilePreview.test.tsx` (a `src` data URL renders an image, and markdown text) and with vitest on the Files page: examples appear only during the step, carry no action buttons, and trigger no network request to `/api/files`
-- [ ] 5.6 HPC step: add `data-tour` to the HPC cards and to the open card's settings row in `ui/components/HpcStatusSection.tsx`, and report `hpc-card-opened` from `toggle`. Verify in the e2e spec in 6.1
-- [ ] 5.7 First question:
+- [x] 5.6 HPC step: add `data-tour` to the HPC cards and to the open card's settings row in `ui/components/HpcStatusSection.tsx`, and report `hpc-card-opened` from `toggle`. Verify in the e2e spec in 6.1
+- [x] 5.7 First question:
   - prefill the starter question from the spec through the chat page's existing composer prefill (`setInput`, `ui/app/page.tsx`), and add `data-tour` to Send;
   - report `turn-succeeded` when a run finishes without error;
   - on `inference_not_configured`, `holdSendWithoutModel` or a stream error, switch the coachmark to the fix and point at the settings button or the model picker;

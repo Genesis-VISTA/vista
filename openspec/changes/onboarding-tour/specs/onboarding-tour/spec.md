@@ -145,19 +145,29 @@ that loads a skill into the project, and at **Import…**, each explained and mo
 
 ### Requirement: Files step with example files
 
-The files step SHALL show, in the Files page and only while that step is shown, three example
-files marked "Example": a markdown report and a chart image among the outputs, and a CSV
-among the uploads. Opening an example file SHALL preview it with the same previewer real files
-use. The step SHALL wait for the researcher to open the example image and the example markdown
-report. Example files SHALL NOT be written to the project, SHALL NOT be visible to the agent,
-and SHALL NOT offer download, delete or show-in-chat. They SHALL be gone once the step ends.
+The files step SHALL point at the navigation entry for files, and SHALL show, in the Files
+page and only while that step is shown, three example files marked "Example": a markdown
+report and a chart image among the outputs, and a CSV among the uploads. Opening an example
+file SHALL preview it with the same previewer real files use. The step SHALL wait for the
+researcher to open the example image and the example markdown report, then SHALL say to
+continue with **Next** while the examples and the open preview stay shown. Example files
+SHALL NOT be written to the project and SHALL NOT be visible to the agent. Their rows SHALL NOT
+offer download, delete or show-in-chat; the preview's Download SHALL save the built-in example
+under its own name and leave the tour where it was. They SHALL be gone once the step ends.
 
 #### Scenario: Previewing examples
 
 - **WHEN** a researcher on the files step opens the example chart and then the example report
 - **THEN** each is previewed in the Files page, the chart as an image and the report as
   rendered markdown
-- **AND** the step completes
+- **AND** a coachmark says to choose **Next** when ready, with the last preview still shown
+- **AND** the step completes on **Next**
+
+#### Scenario: Downloading an example
+
+- **WHEN** a researcher chooses Download in an example's preview
+- **THEN** the example is saved under its own file name, and the tour stays on the same
+  coachmark
 
 #### Scenario: Examples never reach the project
 

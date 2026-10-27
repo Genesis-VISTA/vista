@@ -1293,7 +1293,7 @@ function AgentSection({
   }
 
   return (
-    <section className="settings-section" aria-label="Models & providers">
+    <section className="settings-section" aria-label="Models & providers" data-tour="model:credential">
       <SectionHeader title="Model provider">
         <span className="user-settings-hint">
           Choose where VISTA runs its assistant. Changes apply from your next message.

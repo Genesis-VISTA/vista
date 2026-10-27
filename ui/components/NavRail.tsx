@@ -109,6 +109,18 @@ const GLOBAL_ENTRIES: NavEntry[] = [
   },
 ];
 
+/**
+ * The tour's anchors on the entries it first points at, by href. An entry
+ * carries its anchor only while the researcher is not on its page: there the
+ * page's own item has it, and the rail comes first in the document, so it
+ * would win the lookup.
+ */
+const TOUR_ENTRY_ANCHORS: Record<string, string> = {
+  "/knowledge-bases": "knowledge-bases:open-kb",
+  "/skills": "skills:open-skill",
+  "/files": "files:open-examples",
+};
+
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
   {
     label: "Chat",
@@ -259,6 +271,7 @@ export function NavRail() {
         href={entry.href!}
         className={`nav-rail-entry${isActive ? " active" : ""} ${className}`.trim()}
         aria-label={entry.label}
+        data-tour={pathname === entry.href ? undefined : TOUR_ENTRY_ANCHORS[entry.href]}
         {...tipProps(entry.label)}
       >
         {inner}
@@ -414,6 +427,7 @@ export function NavRail() {
         onClick={() => openSettings()}
         disabled={!settings}
         aria-label="Open settings"
+        data-tour="first-question:settings"
         {...tipProps(settingsHint)}
       >
         <span className="nav-rail-icon" aria-hidden="true">

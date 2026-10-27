@@ -52,6 +52,25 @@ describe("FilePreview", () => {
     );
   });
 
+  it("shows an image from `src`, a data URL, in place of the project file's URL", () => {
+    const src = "data:image/svg+xml;charset=utf-8,%3Csvg%2F%3E";
+    render(<FilePreview {...base} path="risk-scores.svg" name="risk-scores.svg" src={src} />);
+    expect(screen.getByRole("img").getAttribute("src")).toBe(src);
+    const download = screen.getByRole("link", { name: "Download" });
+    expect(download.getAttribute("href")).toBe(src);
+    // A data URL has no name of its own; the download is saved under the file's.
+    expect(download.getAttribute("download")).toBe("risk-scores.svg");
+  });
+
+  it("reads markdown from `src` and asks the backend for nothing", async () => {
+    const fetchMock = stubFetch("# Risk summary\n\n| a | b |\n|---|---|\n| 1 | 2 |\n");
+    const src = "data:text/markdown;charset=utf-8,%23%20Risk%20summary";
+    render(<FilePreview {...base} path="summary.md" name="summary.md" src={src} />);
+    await screen.findByRole("heading", { name: "Risk summary" });
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(src);
+  });
+
   it("opens a PDF with a button, not inline", () => {
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     render(<FilePreview {...base} path="r.pdf" name="r.pdf" size={10} />);

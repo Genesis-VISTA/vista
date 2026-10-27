@@ -4,7 +4,7 @@
  * reword it in one file.
  */
 
-import type { TourStepId } from "./onboarding";
+import type { TourFailure, TourStepId } from "./onboarding";
 
 export type Coachmark = {
   title: string;
@@ -17,7 +17,13 @@ export type Coachmark = {
 export type CopyContext = {
   /** The provider in effect's suggested model (bare name); null when it has none. */
   providerDefault: string | null;
+  /** Why the first question failed, when it did. */
+  failure?: TourFailure | null;
 };
+
+/** What the last step puts in the message box. */
+export const STARTER_QUESTION =
+  "What security risks do autonomous labs and LLM agents share, and what mitigations do the papers propose? Cite the papers.";
 
 export const DOCUMENTATION_URL = "https://genesis-vista.github.io/";
 
@@ -37,8 +43,27 @@ export function coachmarkFor(
           : "Open the model picker and pick any model your endpoint serves.",
     };
   }
+  if (key === "first-question:send" && context.failure) {
+    return FAILURE_COACHMARKS[context.failure];
+  }
   return COACHMARKS[key] ?? null;
 }
+
+/** The first question's coachmark after a failure: what went wrong, and what fixes it. */
+const FAILURE_COACHMARKS: Record<TourFailure, Coachmark> = {
+  credential: {
+    title: "VISTA needs a model connected",
+    body: "The question couldn't be sent because there is no working credential. Open Settings and add one under Model provider, then send the question again.",
+  },
+  model: {
+    title: "Choose a model first",
+    body: "The question is held until a model is chosen. Open the model picker and pick one, then send the question again.",
+  },
+  other: {
+    title: "That didn't work",
+    body: "The question failed. Check the message in the chat, fix it if you can, and send the question again.",
+  },
+};
 
 const COACHMARKS: Record<string, Coachmark> = {
   "welcome:intro": {
@@ -76,6 +101,10 @@ const COACHMARKS: Record<string, Coachmark> = {
   "files:open-examples": {
     title: "Files",
     body: "Reports and data the agent makes appear here. These are examples: open the chart and the report to preview them.",
+  },
+  "files:review": {
+    title: "Files",
+    body: "Take a look at the previews. Choose Next when you're ready to continue.",
   },
   "hpc:open-card": {
     title: "Computing resources",

@@ -65,9 +65,14 @@ whenever it changes, and renders the coachmark. Pages report events through
 `useTourEvent()`, a no-op when no tour is running. For example, the knowledge-base explorer
 calls `report("kb-opened")` when a knowledge base's detail view opens.
 
-Navigation the step needs, such as `/projects` for the project step and `/files` for the
-files step, is done by the provider through `router.push` when the step starts. The
-researcher's clicks then do the rest.
+The provider navigates only where the step needs a place the researcher can't click to:
+`/projects` when the project step starts, `openSettings("agent")` for the credential, and
+`closeSettings()` and `/` (chat) for the picker and the first question. Each happens once,
+when its coachmark starts. The knowledge bases, skills and files steps go rail first: the
+step's anchor is on the rail entry while the researcher is on another page, and on the item
+when they are on that page. The rail entry drops the attribute on its own page, because
+`querySelector` would otherwise find it first. The provider re-targets when the pathname
+changes. This teaches where each area lives, at the cost of one extra click per step.
 
 A replay is `/settings` changing, while the provider is mounted, to
 `{status: "in_progress", step: "welcome"}` from anything else, whoever wrote it. It clears
@@ -103,6 +108,15 @@ render asynchronously, and a missing anchor must not stall the tour.
 While a coachmark is up, driver.js makes everything except the highlighted element
 unclickable. A step that needs the researcher to use more than one control, such as the
 provider choice and key field in Settings, highlights the element that contains them all.
+Some steps open UI elsewhere, such as the skill detail modal, the model menu, the HPC
+card's popover or a file preview. So on a coachmark that waits for an action, a click inside
+the highlighted element pauses the tour: the highlight is torn down, keeping the position,
+and the page is fully usable. It is drawn again when the position changes, when an event or a
+failure is reported, or when the pathname changes. A coachmark completed by Next never pauses.
+
+driver.js measures the popover before VISTA's buttons are in it, so the provider turns its
+animation off and calls `refresh()` after rendering. Otherwise an anchored popover sits too
+high and covers its own target.
 
 *Alternatives:*
 - Hand-rolled coachmarks: placement, scroll and resize handling, and focus handling are code

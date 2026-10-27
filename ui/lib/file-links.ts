@@ -11,6 +11,7 @@
  * and the client render agree.
  */
 export function fileLinkProps(url: string): { download: string } | { target: "_blank"; rel: "noreferrer" } {
-  const isAppPath = url.startsWith("/") && !url.startsWith("//");
-  return isAppPath ? { download: "" } : { target: "_blank", rel: "noreferrer" };
+  // A `data:` URL (the tour's example files) is content here already: saved, never navigated to.
+  const isOwn = (url.startsWith("/") && !url.startsWith("//")) || url.startsWith("data:");
+  return isOwn ? { download: "" } : { target: "_blank", rel: "noreferrer" };
 }

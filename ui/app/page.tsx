@@ -11,6 +11,9 @@ import CampaignPanel from "@/components/CampaignPanel";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ModelPicker } from "@/components/ModelPicker";
 import { holdSendWithoutModel } from "@/lib/agent-settings";
+import { useTour } from "@/components/TourProvider";
+import { tourFailureForRefusal } from "@/lib/onboarding";
+import { STARTER_QUESTION } from "@/lib/onboarding-copy";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
@@ -230,6 +233,13 @@ function ChatPage() {
    */
   const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
+  // The tour's last step puts its starter question in the composer, once.
+  const tour = useTour();
+  const tourAtSend = tour.position?.step === "first-question" && tour.position.subStep === "send";
+  const { claimStarter } = tour;
+  useEffect(() => {
+    if (tourAtSend && claimStarter()) setInput((prev) => (prev === "" ? STARTER_QUESTION : prev));
+  }, [tourAtSend, claimStarter]);
   /**
    * Id of the most recently streamed intermediate agent turn.
    * Rendered expanded while it is the latest; demoted (collapsed) when a
@@ -1056,6 +1066,12 @@ function ChatPage() {
       return;
     }
     const finished = renderer.finishedState !== null || renderer.sawResult;
+    // For the tour: only a run that ended "done" (or an older stream's result) answered.
+    if (renderer.finishedState === "done" || (renderer.finishedState === null && renderer.sawResult)) {
+      tour.report("turn-succeeded");
+    } else if (renderer.finishedState !== "stopped") {
+      tour.reportFailure("other");
+    }
     if (!finished) {
       setMessages((prev) => [
         ...prev,
@@ -1159,7 +1175,10 @@ function ChatPage() {
     const text = input.trim();
     if (!text || isRunActive) return;
     // No model and no default (MAG, Custom): keep the text and open the picker.
-    if (holdSendWithoutModel(activeChatModel)) return;
+    if (holdSendWithoutModel(activeChatModel)) {
+      tour.reportFailure("model");
+      return;
+    }
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -1240,10 +1259,8 @@ function ChatPage() {
         // The turn never started: give the researcher their unsent text back.
         // A busy conversation shows the turn another view is running; any other
         // refusal (no key, no model) says why, so they can fix it and resend.
-        const refused = readRefusedSend(
-          response.status,
-          await response.json().catch(() => null)
-        );
+        const refusedBody: unknown = await response.json().catch(() => null);
+        const refused = readRefusedSend(response.status, refusedBody);
         setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
         setInput(text);
         if (refused.kind === "attach") {
@@ -1258,6 +1275,7 @@ function ChatPage() {
           ...prev,
           { id: crypto.randomUUID(), role: "system", content: refused.message }
         ]);
+        tour.reportFailure(tourFailureForRefusal(refusedBody));
         endRun(controller);
         return;
       }
@@ -1273,6 +1291,7 @@ function ChatPage() {
           content: "Agent unavailable: failed to call /api/chat."
         }
       ]);
+      tour.reportFailure("other");
       endRun(controller);
     }
   }
@@ -1695,7 +1714,9 @@ function ChatPage() {
           )}
         </div>
         {(isConversationOpen || isConversationListView) && (
-          <div className="chat-input-row">
+          // The tour's anchor is the box and Send together, so the starter
+          // question can be edited before it is sent.
+          <div className="chat-input-row" data-tour="first-question:send">
             <textarea
               className="input"
               rows={2}

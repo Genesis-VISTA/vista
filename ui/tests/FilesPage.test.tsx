@@ -29,7 +29,18 @@ vi.mock("@/lib/projects", () => ({
 }));
 vi.mock("@/components/AppTopBar", () => ({ AppTopBar: () => null }));
 vi.mock("@/components/FilePreview", () => ({
-  default: ({ path }: { path: string }) => <div data-testid="preview">{path}</div>,
+  default: ({ path, src }: { path: string; src?: string }) => (
+    <div data-testid="preview" data-src={src}>
+      {path}
+    </div>
+  ),
+}));
+const { tourPosition, tourReport } = vi.hoisted(() => ({
+  tourPosition: { current: null as { step: string; subStep: string } | null },
+  tourReport: vi.fn(),
+}));
+vi.mock("@/components/TourProvider", () => ({
+  useTour: () => ({ position: tourPosition.current, report: tourReport }),
 }));
 
 function entry(id: string, status: ChatRunStatusKind): ChatRunStatusEntry {
@@ -56,6 +67,8 @@ beforeEach(() => {
   status = [];
   outputs = [];
   search.current = "";
+  tourPosition.current = null;
+  tourReport.mockReset();
   window.sessionStorage.clear();
   replace.mockReset();
   fetchMock.mockReset();
@@ -196,5 +209,96 @@ describe("Files page", () => {
     expect(folder("folder-a")).toHaveAttribute("aria-expanded", "true");
     expect(folder("nestd")).toHaveAttribute("aria-expanded", "true");
     expect(folder("folder-b")).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("Files page during the tour's files step", () => {
+  const exampleNames = ["summary.md", "risk-scores.svg", "risks.csv"];
+
+  it("lists no example files when no tour is running", async () => {
+    render(<FilesPage />);
+    await advance(0);
+    for (const name of exampleNames) expect(screen.queryByText(name)).not.toBeInTheDocument();
+    expect(document.querySelector("[data-tour]")).toBeNull();
+  });
+
+  it("lists no example files on another step", async () => {
+    tourPosition.current = { step: "skills", subStep: "open-skill" };
+    render(<FilesPage />);
+    await advance(0);
+    for (const name of exampleNames) expect(screen.queryByText(name)).not.toBeInTheDocument();
+  });
+
+  it("lists the examples with an Example badge and no actions, and they are gone after the step", async () => {
+    tourPosition.current = { step: "files", subStep: "open-examples" };
+    const view = render(<FilesPage />);
+    await advance(0);
+    for (const name of exampleNames) expect(screen.getByText(name)).toBeInTheDocument();
+    expect(screen.getAllByText("Example")).toHaveLength(3);
+    expect(screen.queryByRole("link", { name: /Download/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Show in chat" })).not.toBeInTheDocument();
+    expect(document.querySelector('[data-tour="files:open-examples"]')).not.toBeNull();
+
+    // Both opened: the examples stay while the review coachmark waits for Next.
+    tourPosition.current = { step: "files", subStep: "review" };
+    view.rerender(<FilesPage />);
+    for (const name of exampleNames) expect(screen.getByText(name)).toBeInTheDocument();
+    expect(document.querySelector('[data-tour="files:review"]')).not.toBeNull();
+
+    tourPosition.current = { step: "hpc", subStep: "open-card" };
+    view.rerender(<FilesPage />);
+    for (const name of exampleNames) expect(screen.queryByText(name)).not.toBeInTheDocument();
+  });
+
+  it("keeps real files' actions, and asks the backend for nothing about an example", async () => {
+    tourPosition.current = { step: "files", subStep: "open-examples" };
+    search.current = "kind=outputs&path=summary.md";
+    outputs = [{ name: "real.txt", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
+    render(<FilesPage />);
+    await advance(0);
+    expect(screen.getByRole("link", { name: "Download real.txt" })).toBeInTheDocument();
+    // The preview gets the example's own content, a data URL.
+    expect(screen.getByTestId("preview")).toHaveAttribute("data-src", expect.stringMatching(/^data:text\/markdown/));
+    const requested = fetchMock.mock.calls.map((c) => decodeURIComponent(String(c[0])));
+    expect(requested.filter((url) => url.includes("summary.md") || url.includes("risk"))).toEqual([]);
+  });
+
+  it("reports the example image and the example report when they are opened", async () => {
+    tourPosition.current = { step: "files", subStep: "open-examples" };
+    search.current = "kind=outputs&path=risk-scores.svg";
+    const view = render(<FilesPage />);
+    await advance(0);
+    expect(tourReport).toHaveBeenCalledExactlyOnceWith("example-image-opened");
+    expect(screen.getByTestId("preview")).toHaveAttribute("data-src", expect.stringMatching(/^data:image\/svg\+xml/));
+
+    search.current = "kind=outputs&path=summary.md";
+    view.rerender(<FilesPage />);
+    await advance(0);
+    expect(tourReport).toHaveBeenLastCalledWith("example-md-opened");
+  });
+
+  it("clears an example's selection when the step ends", async () => {
+    tourPosition.current = { step: "files", subStep: "open-examples" };
+    search.current = "kind=outputs&path=summary.md";
+    const view = render(<FilesPage />);
+    await advance(0);
+    expect(replace).not.toHaveBeenCalled();
+
+    tourPosition.current = { step: "hpc", subStep: "open-card" };
+    view.rerender(<FilesPage />);
+    await advance(0);
+    expect(replace).toHaveBeenCalledExactlyOnceWith("/files");
+  });
+
+  it("does not take a real file of the same name for an example", async () => {
+    tourPosition.current = { step: "files", subStep: "open-examples" };
+    search.current = "kind=outputs&path=summary.md";
+    outputs = [{ name: "summary.md", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
+    render(<FilesPage />);
+    await advance(0);
+    expect(screen.getAllByText("Example")).toHaveLength(2);
+    expect(screen.getByTestId("preview")).not.toHaveAttribute("data-src");
+    expect(tourReport).not.toHaveBeenCalled();
   });
 });

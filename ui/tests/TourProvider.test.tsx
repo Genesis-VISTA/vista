@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -5,10 +6,11 @@ import { TARGET_TIMEOUT_MS, TourProvider, useTour, useTourEvent } from "@/compon
 import type { AgentSettings } from "@/lib/agent-settings";
 import type { LocalSettings, OnboardingTourState } from "@/lib/settings";
 
-const { highlightMock, destroyMock, driverMock } = vi.hoisted(() => {
+const { highlightMock, destroyMock, refreshMock, driverMock } = vi.hoisted(() => {
   const highlightMock = vi.fn();
   const destroyMock = vi.fn();
-  return { highlightMock, destroyMock, driverMock: vi.fn() };
+  const refreshMock = vi.fn();
+  return { highlightMock, destroyMock, refreshMock, driverMock: vi.fn() };
 });
 vi.mock("driver.js", () => ({ driver: driverMock }));
 vi.mock("driver.js/dist/driver.css", () => ({}));
@@ -27,6 +29,22 @@ vi.mock("@/lib/agent-settings", () => ({ useAgentSettings: useAgentSettingsMock 
 
 const { useActiveProjectNameMock } = vi.hoisted(() => ({ useActiveProjectNameMock: vi.fn() }));
 vi.mock("@/lib/projects", () => ({ useActiveProjectName: useActiveProjectNameMock }));
+
+const { push, nav } = vi.hoisted(() => ({ push: vi.fn(), nav: { pathname: "/", router: { push: vi.fn() } } }));
+nav.router.push = push;
+vi.mock("next/navigation", () => ({
+  useRouter: () => nav.router,
+  usePathname: () => nav.pathname,
+}));
+
+const { openSettingsMock, closeSettingsMock } = vi.hoisted(() => ({
+  openSettingsMock: vi.fn(),
+  closeSettingsMock: vi.fn(),
+}));
+vi.mock("@/lib/settings-modal", () => ({
+  openSettings: openSettingsMock,
+  closeSettings: closeSettingsMock,
+}));
 
 function localSettings(over: Partial<LocalSettings> = {}): LocalSettings {
   return {
@@ -94,7 +112,16 @@ beforeEach(() => {
   highlightMock.mockReset();
   destroyMock.mockReset();
   driverMock.mockReset();
-  driverMock.mockImplementation(() => ({ highlight: highlightMock, destroy: destroyMock }));
+  refreshMock.mockReset();
+  driverMock.mockImplementation(() => ({
+    highlight: highlightMock,
+    destroy: destroyMock,
+    refresh: refreshMock,
+  }));
+  push.mockReset();
+  openSettingsMock.mockReset();
+  closeSettingsMock.mockReset();
+  nav.pathname = "/";
   updateSettingsMock.mockReset();
   updateSettingsMock.mockResolvedValue(localSettings());
   useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null });
@@ -347,3 +374,228 @@ describe("useTour and useTourEvent", () => {
 function lastStepKey(): string | undefined {
   return (highlightMock.mock.calls.at(-1)?.[0] as Step | undefined)?.popover.title;
 }
+
+function anchor(key: string): HTMLElement {
+  const el = document.body.appendChild(document.createElement("button"));
+  el.setAttribute("data-tour", key);
+  el.textContent = key;
+  return el;
+}
+
+function Controls() {
+  const { report, reportFailure, claimStarter } = useTour();
+  const [claimed, setClaimed] = useState("");
+  return (
+    <div>
+      <button onClick={() => report("skill-opened")}>report skill</button>
+      <button onClick={() => report("kb-opened")}>report kb</button>
+      <button onClick={() => report("turn-succeeded")}>report success</button>
+      <button onClick={() => reportFailure("credential")}>fail credential</button>
+      <button onClick={() => reportFailure("model")}>fail model</button>
+      <button onClick={() => reportFailure("other")}>fail other</button>
+      <button onClick={() => setClaimed((c) => `${c}${claimStarter()},`)}>claim</button>
+      <output>{claimed}</output>
+    </div>
+  );
+}
+
+const tree = (
+  <TourProvider>
+    <Controls />
+  </TourProvider>
+);
+
+describe("a coachmark that waits for an action", () => {
+  it("stands aside when its control is used, and is drawn again by the next report", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    const target = anchor("project:open");
+    render(tree);
+    expect(highlightMock).toHaveBeenCalledTimes(1);
+
+    // Using something else leaves it up (and a report draws it again).
+    await userEvent.click(screen.getByRole("button", { name: "report kb" }));
+    expect(destroyMock).not.toHaveBeenCalled();
+    expect(highlightMock).toHaveBeenCalledTimes(2);
+
+    await userEvent.click(target);
+    expect(destroyMock).toHaveBeenCalledTimes(1);
+    expect(highlightMock).toHaveBeenCalledTimes(2);
+
+    await userEvent.click(screen.getByRole("button", { name: "report kb" }));
+    expect(driverMock).toHaveBeenCalledTimes(2);
+    expect(highlightMock).toHaveBeenCalledTimes(3);
+    expect(lastStep().element).toBe(target);
+  });
+
+  it("stands aside when the highlighted control leaves the page", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    const target = anchor("project:open");
+    render(tree);
+    expect(destroyMock).not.toHaveBeenCalled();
+    target.remove();
+    await vi.waitFor(() => expect(destroyMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("stays up when the control is used on a coachmark that Next completes", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    anchor("skills:open-skill");
+    const load = anchor("skills:load");
+    render(tree);
+    await userEvent.click(screen.getByRole("button", { name: "report skill" }));
+    expect(lastStep().element).toBe(load);
+    await userEvent.click(load);
+    expect(destroyMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a coachmark follows the page", () => {
+  it("places the coachmark again once its buttons are in it", async () => {
+    render(<TourProvider>app</TourProvider>);
+    expect(refreshMock).not.toHaveBeenCalled();
+    openPopover();
+    await vi.waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("places the coachmark again when its anchor moves", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    const target = anchor("project:open");
+    let top = 100;
+    target.getBoundingClientRect = () => ({ left: 0, top, width: 50, height: 20 }) as DOMRect;
+    render(tree);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(refreshMock).not.toHaveBeenCalled();
+    top = 130;
+    await vi.waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("re-targets when the route changes, from the rail's entry to the page's item", () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
+    const rail = anchor("knowledge-bases:open-kb");
+    const { rerender } = render(tree);
+    expect(lastStep().element).toBe(rail);
+
+    // The rail drops its anchor on the page, where the item has it.
+    rail.removeAttribute("data-tour");
+    const item = anchor("knowledge-bases:open-kb");
+    nav.pathname = "/knowledge-bases";
+    // A fresh element, since React skips an element it has already rendered.
+    rerender(<TourProvider><Controls /></TourProvider>);
+    expect(lastStep().element).toBe(item);
+  });
+});
+
+describe("where the tour takes the researcher", () => {
+  it("opens the projects page once when the project step starts", () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    const { rerender } = render(tree);
+    expect(push).toHaveBeenCalledExactlyOnceWith("/projects");
+    rerender(<TourProvider><Controls /></TourProvider>);
+    expect(push).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays put when it is already there", () => {
+    nav.pathname = "/projects";
+    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    render(tree);
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("opens Settings at the model provider, and closes it for the model picker", () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    const { rerender } = render(tree);
+    expect(openSettingsMock).toHaveBeenCalledExactlyOnceWith("agent");
+    expect(closeSettingsMock).not.toHaveBeenCalled();
+
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({ hasCredential: true }),
+      error: null,
+    });
+    rerender(<TourProvider><Controls /></TourProvider>);
+    expect(closeSettingsMock).toHaveBeenCalledTimes(1);
+    expect(openSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the chat for the first question", () => {
+    nav.pathname = "/files";
+    setSettings({ onboarding_tour: { status: "in_progress", step: "first-question" } });
+    render(tree);
+    expect(push).toHaveBeenCalledExactlyOnceWith("/");
+  });
+
+  it("does nothing on a step the rail leads to", () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    render(tree);
+    expect(push).not.toHaveBeenCalled();
+    expect(openSettingsMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the first question", () => {
+  beforeEach(() => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "first-question" } });
+  });
+
+  it("hands out the starter question once", async () => {
+    render(tree);
+    await userEvent.click(screen.getByRole("button", { name: "claim" }));
+    await userEvent.click(screen.getByRole("button", { name: "claim" }));
+    expect(screen.getByRole("status")).toHaveTextContent("true,false,");
+  });
+
+  it("points at what fixes each failure", async () => {
+    const send = anchor("first-question:send");
+    const settingsButton = anchor("first-question:settings");
+    const picker = anchor("model:pick");
+    render(tree);
+    expect(lastStep().element).toBe(send);
+    expect(lastStepKey()).toBe("Ask your first question");
+
+    await userEvent.click(screen.getByRole("button", { name: "fail credential" }));
+    expect(lastStep().element).toBe(settingsButton);
+    expect(lastStepKey()).toBe("VISTA needs a model connected");
+
+    await userEvent.click(screen.getByRole("button", { name: "fail model" }));
+    expect(lastStep().element).toBe(picker);
+    expect(lastStepKey()).toBe("Choose a model first");
+
+    await userEvent.click(screen.getByRole("button", { name: "fail other" }));
+    expect(lastStep().element).toBe(send);
+    expect(lastStepKey()).toBe("That didn't work");
+
+    // The same failure again is drawn again, not swallowed.
+    const calls = highlightMock.mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "fail other" }));
+    expect(highlightMock.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it("finishes on the next success after a failure", async () => {
+    anchor("first-question:send");
+    const finish = anchor("first-question:finish");
+    render(tree);
+    await userEvent.click(screen.getByRole("button", { name: "fail credential" }));
+    await userEvent.click(screen.getByRole("button", { name: "report success" }));
+    expect(lastStepKey()).toBe("You're ready");
+    expect(lastStep().element).toBe(finish);
+  });
+});
+
+describe("the model suggestion", () => {
+  it.each([
+    ["AmSC MAG", "claude-sonnet"],
+    ["OLCF Inference", "gpt-oss-120b"],
+  ])("names %s's default, %s", (name, defaultModel) => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({
+        hasCredential: true,
+        providers: [{ id: "i2", name, takesUrl: false, defaultModel }],
+      }),
+      error: null,
+    });
+    anchor("model:pick");
+    render(tree);
+    expect((lastStep().popover as unknown as { description: string }).description).toContain(
+      defaultModel,
+    );
+  });
+});

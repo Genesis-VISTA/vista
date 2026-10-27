@@ -12,17 +12,21 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useAgentSettings } from "@/lib/agent-settings";
 import {
   completesOnNext,
   nextTourStep,
+  tourAnchor,
   type Acknowledgement,
   type TourEvent,
+  type TourFailure,
   type TourPosition,
   type TourStepId,
 } from "@/lib/onboarding";
 import { coachmarkFor, type Coachmark } from "@/lib/onboarding-copy";
 import { useActiveProjectName } from "@/lib/projects";
+import { closeSettings, openSettings } from "@/lib/settings-modal";
 import { updateSettings, useSettings, type OnboardingTourState } from "@/lib/settings";
 
 /** How long a step waits for its `data-tour` target before it centres instead. */
@@ -41,6 +45,18 @@ export type TourApi = {
   exit: () => void;
   /** Tell the tour the researcher did something it waits for. */
   report: (event: TourEvent) => void;
+  /**
+   * Why the first question failed, until the step ends; null before any
+   * failure. The coachmark then points at what fixes it.
+   */
+  failure: TourFailure | null;
+  /** Tell the tour the first question failed. A later failure replaces this one. */
+  reportFailure: (kind: TourFailure) => void;
+  /**
+   * True once per start of the first question, for the chat page to put the
+   * starter question in the composer. False when no tour is running.
+   */
+  claimStarter: () => boolean;
 };
 
 const NOT_RUNNING: TourApi = {
@@ -50,6 +66,9 @@ const NOT_RUNNING: TourApi = {
   skip: () => {},
   exit: () => {},
   report: () => {},
+  failure: null,
+  reportFailure: () => {},
+  claimStarter: () => false,
 };
 
 const TourContext = createContext<TourApi>(NOT_RUNNING);
@@ -76,6 +95,13 @@ type Session = {
   replayed: boolean;
   /** Exit was pressed; closes at once, before the write has come back. */
   dismissed: boolean;
+  /** Why the first question failed; the next failure replaces it. */
+  failure: TourFailure | null;
+  /**
+   * Counts every report, new or not. A coachmark that stood aside for the
+   * researcher's click is drawn again when it changes.
+   */
+  pulse: number;
 };
 
 const FRESH_SESSION: Session = {
@@ -84,6 +110,8 @@ const FRESH_SESSION: Session = {
   acknowledged: new Set(),
   replayed: false,
   dismissed: false,
+  failure: null,
+  pulse: 0,
 };
 
 function sameTour(a: OnboardingTourState | null, b: OnboardingTourState | null): boolean {
@@ -204,15 +232,68 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const report = useCallback(
     (event: TourEvent) => {
       if (!running) return;
-      setSession((s) => (s.events.has(event) ? s : { ...s, events: new Set(s.events).add(event) }));
+      setSession((s) => ({
+        ...s,
+        events: s.events.has(event) ? s.events : new Set(s.events).add(event),
+        pulse: s.pulse + 1,
+      }));
     },
     [running],
   );
 
-  const api = useMemo<TourApi>(
-    () => ({ position, running, next, skip, exit, report }),
-    [position, running, next, skip, exit, report],
+  // A failure belongs to the first question's Send coachmark and ends with it.
+  const atSend = step === "first-question" && subStep === "send";
+  const failure = atSend ? session.failure : null;
+  const reportFailure = useCallback(
+    (kind: TourFailure) => {
+      if (!running) return;
+      setSession((s) => ({ ...s, failure: kind, pulse: s.pulse + 1 }));
+    },
+    [running],
   );
+
+  // The starter question goes into the composer once per visit to the last step.
+  const starterClaimed = useRef(false);
+  useEffect(() => {
+    if (step !== "first-question") starterClaimed.current = false;
+  }, [step]);
+  const claimStarter = useCallback(() => {
+    if (!running || starterClaimed.current) return false;
+    starterClaimed.current = true;
+    return true;
+  }, [running]);
+
+  const api = useMemo<TourApi>(
+    () => ({ position, running, next, skip, exit, report, failure, reportFailure, claimStarter }),
+    [position, running, next, skip, exit, report, failure, reportFailure, claimStarter],
+  );
+
+  // Where a sub-step needs the app somewhere, the provider takes it there once
+  // as the sub-step starts; the researcher's clicks do the rest.
+  const router = useRouter();
+  const pathname = usePathname();
+  const nav = useRef({ router, pathname });
+  useEffect(() => {
+    nav.current = { router, pathname };
+  });
+  const stepKey = step !== null && subStep !== null ? `${step}:${subStep}` : null;
+  useEffect(() => {
+    switch (stepKey) {
+      case "project:open":
+        if (nav.current.pathname !== "/projects") nav.current.router.push("/projects");
+        break;
+      case "model:credential":
+        openSettings("agent");
+        break;
+      case "model:pick":
+        // The researcher is in chat by now; the picker is behind the modal.
+        closeSettings();
+        break;
+      case "first-question:send":
+        if (nav.current.pathname !== "/") nav.current.router.push("/");
+        break;
+    }
+  }, [stepKey]);
 
   // The coachmark. One driver instance; VISTA's buttons call the latest actions.
   const actions = useRef({ next, skip, exit });
@@ -220,17 +301,30 @@ export function TourProvider({ children }: { children: ReactNode }) {
     actions.current = { next, skip, exit };
   });
   const driverRef = useRef<Driver | null>(null);
+  const destroyDriver = useCallback(() => {
+    driverRef.current?.destroy();
+    driverRef.current = null;
+  }, []);
 
+  const anchorKey = position !== null ? tourAnchor(position, failure) : null;
+  const pulse = session.pulse;
   useEffect(() => {
-    if (step === null || subStep === null) return;
-    const mark = coachmarkFor(step, subStep, { providerDefault });
+    if (step === null || subStep === null || anchorKey === null) return;
+    const mark = coachmarkFor(step, subStep, { providerDefault, failure });
     if (mark === null) return;
-    const key = `${step}:${subStep}`;
+    const key = anchorKey;
     const withNext = completesOnNext(step, subStep);
+    // Stands aside for the researcher: the page is theirs while they use the
+    // highlighted control, and the coachmark is drawn again by the next report,
+    // step or page change (this effect running again).
+    let standAside = () => {};
 
     const show = (element: Element | undefined) => {
       if (driverRef.current === null) {
         driverRef.current = driver({
+          // Its glide to the next anchor fixes the coachmark's place from the
+          // size it had before our buttons were in it, and ignores a refresh.
+          animate: false,
           allowClose: false,
           allowKeyboardControl: false,
           overlayClickBehavior: "none",
@@ -247,14 +341,56 @@ export function TourProvider({ children }: { children: ReactNode }) {
         popover: {
           title: mark.title,
           description: mark.body,
-          onPopoverRender: (popover) =>
+          onPopoverRender: (popover) => {
             renderCoachmark(popover, mark, withNext, {
               next: () => actions.current.next(),
               skip: () => actions.current.skip(),
               exit: () => actions.current.exit(),
-            }),
+            });
+            // driver.js measured the popover before our buttons were in it, and
+            // it is placed from that height: place it again with the real one.
+            requestAnimationFrame(() => driverRef.current?.refresh());
+          },
         },
       });
+      if (element === undefined) return;
+
+      // driver.js places the coachmark once, and again only on scroll and
+      // resize. Pages keep laying out after their anchor appears (a stats line
+      // arriving above a button), so follow the anchor and place it again.
+      const box = (el: Element) => {
+        const r = el.getBoundingClientRect();
+        return `${r.left},${r.top},${r.width},${r.height}`;
+      };
+      let placedAt = box(element);
+      let frame = requestAnimationFrame(function follow() {
+        const now = box(element);
+        if (now !== placedAt) {
+          placedAt = now;
+          driverRef.current?.refresh();
+        }
+        frame = requestAnimationFrame(follow);
+      });
+      standAside = () => cancelAnimationFrame(frame);
+
+      // A coachmark that waits for an action stands aside once the researcher
+      // uses its control, or the control goes away (a menu closing, a run
+      // starting): driver.js would otherwise keep the rest of the page dead.
+      if (!withNext) {
+        const onDown = (event: Event) => {
+          if (event.target instanceof Node && element.contains(event.target)) destroyDriver();
+        };
+        const gone = new MutationObserver(() => {
+          if (!element.isConnected) destroyDriver();
+        });
+        document.addEventListener("pointerdown", onDown, true);
+        gone.observe(document.body, { childList: true, subtree: true });
+        standAside = () => {
+          cancelAnimationFrame(frame);
+          document.removeEventListener("pointerdown", onDown, true);
+          gone.disconnect();
+        };
+      }
     };
 
     // The welcome has nothing to point at; the other steps wait for their anchor.
@@ -266,7 +402,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
     const found = document.querySelector(selector);
     if (found !== null) {
       show(found);
-      return;
+      return () => standAside();
     }
     const observer = new MutationObserver(() => {
       const el = document.querySelector(selector);
@@ -288,8 +424,12 @@ export function TourProvider({ children }: { children: ReactNode }) {
       attributes: true,
       attributeFilter: ["data-tour"],
     });
-    return stop;
-  }, [step, subStep, providerDefault]);
+    return () => {
+      stop();
+      standAside();
+    };
+    // `pulse` and `pathname` only redraw: a report or a new page re-targets.
+  }, [step, subStep, anchorKey, failure, providerDefault, pathname, pulse, destroyDriver]);
 
   // Escape closes the tour. driver.js's own handler also answers the arrow
   // keys, which here would step through nothing, so it is turned off above.
@@ -302,10 +442,6 @@ export function TourProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [running]);
 
-  const destroyDriver = useCallback(() => {
-    driverRef.current?.destroy();
-    driverRef.current = null;
-  }, []);
   useEffect(() => {
     if (!running) destroyDriver();
   }, [running, destroyDriver]);

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toCreate, updateProject, useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
+import { useTourEvent } from "@/components/TourProvider";
 import { KnowledgeBaseImportModal } from "@/components/KnowledgeBaseImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import { PublishConflictModal } from "@/components/PublishConflictModal";
@@ -142,6 +143,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
   const collab = useCollaboration();
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
+  const reportTour = useTourEvent();
 
   const refreshHeads = useCallback(() => {
     listRemoteKnowledgeBases({ manifests: false })
@@ -240,6 +242,9 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
         kb.slug.toLowerCase().includes(term)
     );
   }, [projectScopedList, filter]);
+
+  // The tour points at AI Safety Papers, or at the first one when there is none.
+  const tourKbSlug = (filteredList.find((kb) => kb.slug === "ai-safety") ?? filteredList[0])?.slug;
 
   // Auto-select the first KB so the right pane isn't blank, and re-select
   // when the current selection falls outside the active scope (e.g. user
@@ -570,8 +575,14 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
                   <KbListItem
                     key={kb.slug}
                     kb={kb}
+                    tourTarget={kb.slug === tourKbSlug}
                     selected={kb.slug === selectedSlug}
-                    onSelect={() => setSelectedSlug(kb.slug)}
+                    onSelect={() => {
+                      setSelectedSlug(kb.slug);
+                      // The list opens the first one by itself, so only a click
+                      // is the researcher opening one.
+                      reportTour("kb-opened");
+                    }}
                   />
                 ))}
               </div>
@@ -626,10 +637,13 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
 
 function KbListItem({
   kb,
+  tourTarget,
   selected,
   onSelect,
 }: {
   kb: KnowledgeBaseSummary;
+  /** The knowledge base the first-boot tour points at. */
+  tourTarget: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -638,6 +652,7 @@ function KbListItem({
     <button
       type="button"
       className="kb-list-item"
+      data-tour={tourTarget ? "knowledge-bases:open-kb" : undefined}
       onClick={onSelect}
       data-selected={selected ? "true" : "false"}
     >
@@ -1139,6 +1154,7 @@ function KbDetailView({
             <button
               type="button"
               className="button button-sm"
+              data-tour="knowledge-bases:add-files"
               onClick={() => uploadInputRef.current?.click()}
               disabled={isUploading}
             >
