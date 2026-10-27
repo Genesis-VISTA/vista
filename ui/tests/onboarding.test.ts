@@ -13,6 +13,7 @@ import {
 /** A fresh install on AmSC i2: no credential, no project, nothing done yet. */
 function input(over: Partial<TourInput> = {}): TourInput {
   return {
+    pathname: "/",
     stored: null,
     inference: { hasCredential: false, model: "openai:claude-sonnet", modelIsDefault: true, providerDefault: "claude-sonnet" },
     activeProject: null,
@@ -31,8 +32,10 @@ describe("nextTourStep", () => {
     expect(nextTourStep(input())).toEqual({ step: "welcome", subStep: "intro" });
   });
 
-  it("completes the project step at once when a project is already active", () => {
-    const out = nextTourStep(input({ ...at("project"), activeProject: "ai-safety-autonomous-labs" }));
+  it("still shows the projects overview when a project is already active, then completes the step", () => {
+    const active = { ...at("project"), activeProject: "ai-safety-autonomous-labs" };
+    expect(nextTourStep(input(active))).toEqual({ step: "project", subStep: "overview" });
+    const out = nextTourStep(input({ ...active, acknowledged: new Set<Acknowledgement>(["project:overview"]) }));
     expect(out).toEqual({ step: "model", subStep: "credential" });
   });
 
@@ -55,34 +58,59 @@ describe("nextTourStep", () => {
         inference: { hasCredential: true, model: "openai:llama-4", modelIsDefault: false, providerDefault: "gpt-oss-120b" },
       }),
     );
-    expect(out).toEqual({ step: "knowledge-bases", subStep: "open-kb" });
+    expect(out).toEqual({ step: "knowledge-bases", subStep: "visit" });
+  });
+
+  it.each([
+    ["knowledge-bases", "/knowledge-bases"],
+    ["skills", "/skills"],
+    ["files", "/files"],
+  ] as const)("takes a visit to %s as done on its page only, then shows the overview before its controls", (step, page) => {
+    expect(nextTourStep(input({ ...at(step), pathname: "/" }))).toEqual({ step, subStep: "visit" });
+    expect(nextTourStep(input({ ...at(step), pathname: `${page}/x` }))).toEqual({ step, subStep: "visit" });
+    expect(nextTourStep(input({ ...at(step), pathname: page }))).toEqual({ step, subStep: "overview" });
+    const out = nextTourStep(
+      input({ ...at(step), pathname: page, acknowledged: new Set<Acknowledgement>([`${step}:overview`]) }),
+    );
+    expect(out?.step).toBe(step);
+    expect(out?.subStep).toMatch(/^open-/);
+  });
+
+  it("resumes at the page's overview when the researcher is already on it", () => {
+    expect(nextTourStep(input({ ...at("skills"), pathname: "/skills" }))).toEqual({
+      step: "skills",
+      subStep: "overview",
+    });
   });
 
   it("moves past a skipped step", () => {
     const out = nextTourStep(input({ ...at("knowledge-bases"), skipped: new Set<TourStepId>(["knowledge-bases"]) }));
-    expect(out).toEqual({ step: "skills", subStep: "open-skill" });
+    expect(out).toEqual({ step: "skills", subStep: "visit" });
   });
 
   it("needs both example files opened to finish the files step", () => {
-    const one = nextTourStep(input({ ...at("files"), events: new Set<TourEvent>(["example-image-opened"]) }));
+    const onFiles = { ...at("files"), pathname: "/files", acknowledged: new Set<Acknowledgement>(["files:overview"]) };
+    const one = nextTourStep(input({ ...onFiles, events: new Set<TourEvent>(["example-image-opened"]) }));
     expect(one).toEqual({ step: "files", subStep: "open-examples" });
     const both = nextTourStep(
-      input({ ...at("files"), events: new Set<TourEvent>(["example-image-opened", "example-md-opened"]) }),
+      input({ ...onFiles, events: new Set<TourEvent>(["example-image-opened", "example-md-opened"]) }),
     );
     expect(both).toEqual({ step: "files", subStep: "review" });
     const reviewed = nextTourStep(
       input({
-        ...at("files"),
+        ...onFiles,
         events: new Set<TourEvent>(["example-image-opened", "example-md-opened"]),
-        acknowledged: new Set<Acknowledgement>(["files:review"]),
+        acknowledged: new Set<Acknowledgement>(["files:overview", "files:review"]),
       }),
     );
     expect(reviewed).toEqual({ step: "hpc", subStep: "open-card" });
   });
 
   it("finishes the first question only on a successful turn", () => {
-    expect(nextTourStep(input({ ...at("first-question") }))).toEqual({ step: "first-question", subStep: "send" });
-    const answered = nextTourStep(input({ ...at("first-question"), events: new Set<TourEvent>(["turn-succeeded"]) }));
+    expect(nextTourStep(input({ ...at("first-question") }))).toEqual({ step: "first-question", subStep: "overview" });
+    const overviewed = { ...at("first-question"), acknowledged: new Set<Acknowledgement>(["first-question:overview"]) };
+    expect(nextTourStep(input(overviewed))).toEqual({ step: "first-question", subStep: "send" });
+    const answered = nextTourStep(input({ ...overviewed, events: new Set<TourEvent>(["turn-succeeded"]) }));
     expect(answered).toEqual({ step: "first-question", subStep: "finish" });
   });
 
@@ -91,7 +119,7 @@ describe("nextTourStep", () => {
       input({
         ...at("first-question"),
         events: new Set<TourEvent>(["turn-succeeded"]),
-        acknowledged: new Set<Acknowledgement>(["first-question:finish"]),
+        acknowledged: new Set<Acknowledgement>(["first-question:overview", "first-question:finish"]),
       }),
     );
     expect(out).toBeNull();
@@ -103,7 +131,7 @@ describe("nextTourStep", () => {
   });
 
   it("resumes an in-progress tour at the step it reached", () => {
-    expect(nextTourStep(input({ ...at("skills") }))).toEqual({ step: "skills", subStep: "open-skill" });
+    expect(nextTourStep(input({ ...at("skills") }))).toEqual({ step: "skills", subStep: "visit" });
   });
 
   it("starts over when the stored step is one this version doesn't know", () => {
@@ -113,18 +141,21 @@ describe("nextTourStep", () => {
 
   it("moves past welcome on Next even before any state is stored", () => {
     const out = nextTourStep(input({ acknowledged: new Set<Acknowledgement>(["welcome:intro"]) }));
-    expect(out).toEqual({ step: "project", subStep: "open" });
+    expect(out).toEqual({ step: "project", subStep: "overview" });
   });
 });
 
 describe("completesOnNext", () => {
-  it("is false for the eight action sub-steps", () => {
+  it("is false for the action sub-steps, visits included", () => {
     const actions: [TourStepId, string][] = [
       ["project", "open"],
       ["model", "credential"],
       ["model", "pick"],
+      ["knowledge-bases", "visit"],
       ["knowledge-bases", "open-kb"],
+      ["skills", "visit"],
       ["skills", "open-skill"],
+      ["files", "visit"],
       ["files", "open-examples"],
       ["hpc", "open-card"],
       ["first-question", "send"],
@@ -134,6 +165,9 @@ describe("completesOnNext", () => {
 
   it("is true for the rest", () => {
     expect(completesOnNext("welcome", "intro")).toBe(true);
+    for (const step of ["project", "knowledge-bases", "skills", "files", "first-question"] as const) {
+      expect(completesOnNext(step, "overview")).toBe(true);
+    }
     expect(completesOnNext("knowledge-bases", "add-files")).toBe(true);
     expect(completesOnNext("skills", "load")).toBe(true);
     expect(completesOnNext("skills", "import")).toBe(true);

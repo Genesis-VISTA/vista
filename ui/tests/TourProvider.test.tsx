@@ -104,6 +104,12 @@ function openPopover(): void {
   lastStep().popover.onPopoverRender(parts);
 }
 
+/** Passes the coachmark showing with its Next, as the researcher does. */
+function pressNext(): void {
+  openPopover();
+  act(() => screen.getByRole("button", { name: "Next" }).click());
+}
+
 function tourWrittenAs(state: OnboardingTourState) {
   return { onboarding_tour: state };
 }
@@ -113,10 +119,11 @@ beforeEach(() => {
   destroyMock.mockReset();
   driverMock.mockReset();
   refreshMock.mockReset();
-  driverMock.mockImplementation(() => ({
+  driverMock.mockImplementation((config: Record<string, unknown>) => ({
     highlight: highlightMock,
     destroy: destroyMock,
     refresh: refreshMock,
+    getConfig: () => config,
   }));
   push.mockReset();
   openSettingsMock.mockReset();
@@ -210,7 +217,7 @@ describe("TourProvider", () => {
   });
 
   it("offers no Next on a step that waits for the researcher's action", () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     vi.useFakeTimers();
     render(<TourProvider>app</TourProvider>);
     act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
@@ -220,7 +227,7 @@ describe("TourProvider", () => {
   });
 
   it("skips a step to the next one", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     vi.useFakeTimers();
     render(<TourProvider>app</TourProvider>);
     act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
@@ -228,7 +235,7 @@ describe("TourProvider", () => {
     // userEvent waits on timers; click directly under fake timers.
     act(() => screen.getByRole("button", { name: "Skip this step" }).click());
     expect(updateSettingsMock).toHaveBeenLastCalledWith(
-      tourWrittenAs({ status: "in_progress", step: "model" }),
+      tourWrittenAs({ status: "in_progress", step: "knowledge-bases" }),
     );
   });
 
@@ -262,15 +269,15 @@ describe("TourProvider", () => {
   });
 
   it("points at the step's data-tour target when it is on the page", () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     const target = document.body.appendChild(document.createElement("button"));
-    target.setAttribute("data-tour", "project:open");
+    target.setAttribute("data-tour", "model:credential");
     render(<TourProvider>app</TourProvider>);
     expect(lastStep().element).toBe(target);
   });
 
   it("waits for a target that mounts late, then centres if it never does", () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     vi.useFakeTimers();
     render(<TourProvider>app</TourProvider>);
     expect(highlightMock).not.toHaveBeenCalled();
@@ -282,11 +289,11 @@ describe("TourProvider", () => {
   });
 
   it("points at a target that mounts while it waits", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     render(<TourProvider>app</TourProvider>);
     expect(highlightMock).not.toHaveBeenCalled();
     const target = document.createElement("button");
-    target.setAttribute("data-tour", "project:open");
+    target.setAttribute("data-tour", "model:credential");
     document.body.appendChild(target);
     await vi.waitFor(() => expect(highlightMock).toHaveBeenCalledTimes(1));
     expect(lastStep().element).toBe(target);
@@ -356,6 +363,8 @@ describe("useTour and useTourEvent", () => {
 
   it("report a tour event while the tour is running", async () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
+    nav.pathname = "/knowledge-bases";
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
     for (const key of ["knowledge-bases:open-kb", "knowledge-bases:add-files"]) {
       document.body.appendChild(document.createElement("i")).setAttribute("data-tour", key);
     }
@@ -364,8 +373,9 @@ describe("useTour and useTourEvent", () => {
         <Probe />
       </TourProvider>,
     );
-    expect(screen.getByRole("button")).toHaveTextContent("running");
-    await userEvent.click(screen.getByRole("button"));
+    expect(screen.getByText("running")).toBeInTheDocument();
+    pressNext();
+    await userEvent.click(screen.getByText("running"));
     // kb-opened completes open-kb, leaving add-files, which has a Next.
     await vi.waitFor(() => expect(lastStepKey()).toBe("Add your own papers"));
   });
@@ -407,8 +417,8 @@ const tree = (
 
 describe("a coachmark that waits for an action", () => {
   it("stands aside when its control is used, and is drawn again by the next report", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
-    const target = anchor("project:open");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    const target = anchor("model:credential");
     render(tree);
     expect(highlightMock).toHaveBeenCalledTimes(1);
 
@@ -428,8 +438,8 @@ describe("a coachmark that waits for an action", () => {
   });
 
   it("stands aside when the highlighted control leaves the page", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
-    const target = anchor("project:open");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    const target = anchor("model:credential");
     render(tree);
     expect(destroyMock).not.toHaveBeenCalled();
     target.remove();
@@ -438,13 +448,18 @@ describe("a coachmark that waits for an action", () => {
 
   it("stays up when the control is used on a coachmark that Next completes", async () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    nav.pathname = "/skills";
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
     anchor("skills:open-skill");
     const load = anchor("skills:load");
     render(tree);
+    pressNext();
     await userEvent.click(screen.getByRole("button", { name: "report skill" }));
     expect(lastStep().element).toBe(load);
+    // Moving on from the undimmed overview started a new driver; using the control does not.
+    const destroyed = destroyMock.mock.calls.length;
     await userEvent.click(load);
-    expect(destroyMock).not.toHaveBeenCalled();
+    expect(destroyMock).toHaveBeenCalledTimes(destroyed);
   });
 });
 
@@ -457,8 +472,8 @@ describe("a coachmark follows the page", () => {
   });
 
   it("places the coachmark again when its anchor moves", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "project" } });
-    const target = anchor("project:open");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    const target = anchor("model:credential");
     let top = 100;
     target.getBoundingClientRect = () => ({ left: 0, top, width: 50, height: 20 }) as DOMRect;
     render(tree);
@@ -470,17 +485,37 @@ describe("a coachmark follows the page", () => {
 
   it("re-targets when the route changes, from the rail's entry to the page's item", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
-    const rail = anchor("knowledge-bases:open-kb");
+    const rail = anchor("knowledge-bases:visit");
     const { rerender } = render(tree);
     expect(lastStep().element).toBe(rail);
 
-    // The rail drops its anchor on the page, where the item has it.
+    // The rail drops its anchor on the page, which shows its overview first.
     rail.removeAttribute("data-tour");
-    const item = anchor("knowledge-bases:open-kb");
+    const topbar = document.body.appendChild(document.createElement("header"));
+    topbar.className = "page-topbar";
     nav.pathname = "/knowledge-bases";
     // A fresh element, since React skips an element it has already rendered.
     rerender(<TourProvider><Controls /></TourProvider>);
-    expect(lastStep().element).toBe(item);
+    expect(lastStep().element).toBe(topbar);
+    expect(lastStepKey()).toBe("The Knowledge bases screen");
+  });
+
+  it("draws an overview on the top bar with no overlay, and the next coachmark with one", () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    nav.pathname = "/skills";
+    const topbar = document.body.appendChild(document.createElement("header"));
+    topbar.className = "page-topbar";
+    const open = anchor("skills:open-skill");
+    render(tree);
+    expect(lastStep().element).toBe(topbar);
+    expect(driverMock).toHaveBeenCalledTimes(1);
+    expect(driverMock.mock.calls[0][0]).toMatchObject({ overlayOpacity: 0 });
+
+    pressNext();
+    expect(destroyMock).toHaveBeenCalledTimes(1);
+    expect(driverMock).toHaveBeenCalledTimes(2);
+    expect(driverMock.mock.calls[1][0]).toMatchObject({ overlayOpacity: 1 });
+    expect(lastStep().element).toBe(open);
   });
 });
 
@@ -546,7 +581,10 @@ describe("the first question", () => {
     const send = anchor("first-question:send");
     const settingsButton = anchor("first-question:settings");
     const picker = anchor("model:pick");
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
     render(tree);
+    expect(lastStepKey()).toBe("The chat screen");
+    pressNext();
     expect(lastStep().element).toBe(send);
     expect(lastStepKey()).toBe("Ask your first question");
 
@@ -571,7 +609,9 @@ describe("the first question", () => {
   it("finishes on the next success after a failure", async () => {
     anchor("first-question:send");
     const finish = anchor("first-question:finish");
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
     render(tree);
+    pressNext();
     await userEvent.click(screen.getByRole("button", { name: "fail credential" }));
     await userEvent.click(screen.getByRole("button", { name: "report success" }));
     expect(lastStepKey()).toBe("You're ready");

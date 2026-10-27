@@ -26,13 +26,13 @@ export type TourStepId = (typeof TOUR_STEPS)[number];
  */
 export const TOUR_SUB_STEPS = {
   welcome: ["intro"],
-  project: ["open"],
+  project: ["overview", "open"],
   model: ["credential", "pick"],
-  "knowledge-bases": ["open-kb", "add-files"],
-  skills: ["open-skill", "load", "import"],
-  files: ["open-examples", "review"],
+  "knowledge-bases": ["visit", "overview", "open-kb", "add-files"],
+  skills: ["visit", "overview", "open-skill", "load", "import"],
+  files: ["visit", "overview", "open-examples", "review"],
   hpc: ["open-card", "settings"],
-  "first-question": ["send", "finish"],
+  "first-question": ["overview", "send", "finish"],
 } as const satisfies Record<TourStepId, readonly string[]>;
 
 export type TourSubStep<S extends TourStepId = TourStepId> = (typeof TOUR_SUB_STEPS)[S][number];
@@ -57,6 +57,8 @@ export type TourFailure = "credential" | "model" | "other";
 export type Acknowledgement = `${TourStepId}:${string}`;
 
 export type TourInput = {
+  /** The current page's path, from `usePathname()`. */
+  pathname: string;
   /** What `/settings` holds; null when the tour never started. */
   stored: OnboardingTourState | null;
   /** From `useAgentSettings()`, once it has loaded. */
@@ -81,6 +83,13 @@ export type TourInput = {
 
 export type TourPosition = { step: TourStepId; subStep: string };
 
+/** The page each step's `visit` coachmark sends the researcher to. */
+const STEP_PAGES: Partial<Record<TourStepId, string>> = {
+  "knowledge-bases": "/knowledge-bases",
+  skills: "/skills",
+  files: "/files",
+};
+
 /** Whether one coachmark is done: by app state, by an event, or by Next. */
 function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean {
   const key = `${step}:${sub}`;
@@ -91,6 +100,10 @@ function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean
       return input.inference.hasCredential;
     case "model:pick":
       return input.inference.model !== null && !input.inference.modelIsDefault;
+    case "knowledge-bases:visit":
+    case "skills:visit":
+    case "files:visit":
+      return input.pathname === STEP_PAGES[step];
     case "knowledge-bases:open-kb":
       return input.events.has("kb-opened");
     case "skills:open-skill":
@@ -133,13 +146,16 @@ export function nextTourStep(input: TourInput): TourPosition | null {
   return null;
 }
 
-/** The sub-steps the researcher completes by doing something, so they have no Next. */
+/** The sub-steps the researcher completes by doing something (`visit` is going to a page), so they have no Next. */
 const ACTION_SUB_STEPS: ReadonlySet<string> = new Set([
   "project:open",
   "model:credential",
   "model:pick",
+  "knowledge-bases:visit",
   "knowledge-bases:open-kb",
+  "skills:visit",
   "skills:open-skill",
+  "files:visit",
   "files:open-examples",
   "hpc:open-card",
   "first-question:send",

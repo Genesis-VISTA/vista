@@ -57,7 +57,7 @@
 
   Verify with vitest of the failure mapping, and in the e2e spec in 6.1
 - [x] 5.8 Skills: count a skill as read when its detail is closed, not when it opens, and keep the detail open while it is read (found trying the tour: it jumped to Load at once). Verify with `ui/tests/SkillsPage.test.tsx`: opening reports nothing; Close reports `skill-opened`; the detail stays open during `open-skill`
-- [ ] 5.9 Screen overviews (spec "Each screen opens with an overview"):
+- [x] 5.9 Screen overviews (spec "Each screen opens with an overview"):
   - sub-steps become project `overview, open`; knowledge-bases `visit, overview, open-kb, add-files`; skills `visit, overview, open-skill, load, import`; files `visit, overview, open-examples, review`; first-question `overview, send, finish`;
   - `TourInput` gains `pathname`, and `visit` is done on `/knowledge-bases`, `/skills` and `/files`;
   - `completesOnNext` treats `visit` as an action;

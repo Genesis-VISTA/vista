@@ -65,10 +65,15 @@ const FAILURE_COACHMARKS: Record<TourFailure, Coachmark> = {
   },
 };
 
+/** Overviews are anchored to the page's top bar and drawn without dimming (TourProvider). */
 const COACHMARKS: Record<string, Coachmark> = {
   "welcome:intro": {
     title: "Welcome to VISTA",
     body: "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for modeling and simulation (ModSim) that carries scientists from a research question to running campaigns on OLCF and AmSC resources.",
+  },
+  "project:overview": {
+    title: "The Projects screen",
+    body: "Each project has a card. Open starts working in it, Edit changes its settings, and New project makes another.",
   },
   "project:open": {
     title: "Open a project",
@@ -78,6 +83,14 @@ const COACHMARKS: Record<string, Coachmark> = {
     title: "Connect a model",
     body: "Choose your model provider and enter its API key. VISTA saves it for you.",
   },
+  "knowledge-bases:visit": {
+    title: "Knowledge bases",
+    body: "Knowledge bases are collections of papers the agent can search and cite. Open Knowledge bases in the sidebar.",
+  },
+  "knowledge-bases:overview": {
+    title: "The Knowledge bases screen",
+    body: "Your knowledge bases are listed on the left. The details and publications of the one you choose are on the right.",
+  },
   "knowledge-bases:open-kb": {
     title: "Knowledge bases",
     body: "Knowledge bases are collections of papers the agent can search and cite. Open AI Safety Papers.",
@@ -85,6 +98,14 @@ const COACHMARKS: Record<string, Coachmark> = {
   "knowledge-bases:add-files": {
     title: "Add your own papers",
     body: "Use Add files to put your PDFs into a knowledge base. You don't need to add anything now.",
+  },
+  "skills:visit": {
+    title: "Skills",
+    body: "Skills teach the agent how to do a kind of work. Open Skills in the sidebar.",
+  },
+  "skills:overview": {
+    title: "The Skills screen",
+    body: "Skills loaded in this project are shown apart from the others on this computer. Import brings in more.",
   },
   "skills:open-skill": {
     title: "Skills",
@@ -97,6 +118,14 @@ const COACHMARKS: Record<string, Coachmark> = {
   "skills:import": {
     title: "Import a skill",
     body: "Import brings in a skill from a folder or from the Skill Hub. You don't need to import one now.",
+  },
+  "files:visit": {
+    title: "Files",
+    body: "Reports and data the agent makes are kept in Files. Open Files in the sidebar.",
+  },
+  "files:overview": {
+    title: "The Files screen",
+    body: "Outputs and Uploads are trees of files on the left, and the preview pane shows the one you choose.",
   },
   "files:open-examples": {
     title: "Files",
@@ -113,6 +142,10 @@ const COACHMARKS: Record<string, Coachmark> = {
   "hpc:settings": {
     title: "Connect a cluster",
     body: "Clusters are connected in Settings, from this entry. You don't need to connect one now.",
+  },
+  "first-question:overview": {
+    title: "The chat screen",
+    body: "The conversation is in the middle, with the message box and model picker beneath it. Activity and artifacts appear in the panel beside it.",
   },
   "first-question:send": {
     title: "Ask your first question",

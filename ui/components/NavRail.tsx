@@ -116,9 +116,9 @@ const GLOBAL_ENTRIES: NavEntry[] = [
  * would win the lookup.
  */
 const TOUR_ENTRY_ANCHORS: Record<string, string> = {
-  "/knowledge-bases": "knowledge-bases:open-kb",
-  "/skills": "skills:open-skill",
-  "/files": "files:open-examples",
+  "/knowledge-bases": "knowledge-bases:visit",
+  "/skills": "skills:visit",
+  "/files": "files:visit",
 };
 
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [

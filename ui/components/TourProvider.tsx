@@ -138,6 +138,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const { settings, loading: settingsLoading } = useSettings();
   const { settings: agent } = useAgentSettings();
   const activeProject = useActiveProjectName();
+  const pathname = usePathname();
   const [session, setSession] = useState<Session>(FRESH_SESSION);
 
   const loaded = !settingsLoading && settings !== null && agent !== null;
@@ -164,6 +165,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
     if (!enabled && !session.replayed) return null;
     if (session.dismissed) return null;
     return nextTourStep({
+      pathname,
       stored,
       inference: {
         hasCredential: agent.hasCredential,
@@ -176,7 +178,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       skipped: session.skipped,
       acknowledged: session.acknowledged,
     });
-  }, [loaded, agent, enabled, session, stored, providerDefault, activeProject]);
+  }, [loaded, agent, enabled, session, stored, providerDefault, activeProject, pathname]);
   const running = position !== null;
   const step = position?.step ?? null;
   const subStep = position?.subStep ?? null;
@@ -271,7 +273,6 @@ export function TourProvider({ children }: { children: ReactNode }) {
   // Where a sub-step needs the app somewhere, the provider takes it there once
   // as the sub-step starts; the researcher's clicks do the rest.
   const router = useRouter();
-  const pathname = usePathname();
   const nav = useRef({ router, pathname });
   useEffect(() => {
     nav.current = { router, pathname };
@@ -279,7 +280,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const stepKey = step !== null && subStep !== null ? `${step}:${subStep}` : null;
   useEffect(() => {
     switch (stepKey) {
-      case "project:open":
+      case "project:overview":
         if (nav.current.pathname !== "/projects") nav.current.router.push("/projects");
         break;
       case "model:credential":
@@ -289,7 +290,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
         // The researcher is in chat by now; the picker is behind the modal.
         closeSettings();
         break;
-      case "first-question:send":
+      case "first-question:overview":
         if (nav.current.pathname !== "/") nav.current.router.push("/");
         break;
     }
@@ -319,7 +320,14 @@ export function TourProvider({ children }: { children: ReactNode }) {
     // step or page change (this effect running again).
     let standAside = () => {};
 
+    // An overview points at the page's top bar and leaves the page undimmed.
+    const overview = subStep === "overview";
     const show = (element: Element | undefined) => {
+      // The overlay's opacity is fixed when driver.js draws it, so a change
+      // of kind starts a new driver.
+      if (driverRef.current !== null && (driverRef.current.getConfig().overlayOpacity === 0) !== overview) {
+        destroyDriver();
+      }
       if (driverRef.current === null) {
         driverRef.current = driver({
           // Its glide to the next anchor fixes the coachmark's place from the
@@ -329,7 +337,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
           allowKeyboardControl: false,
           overlayClickBehavior: "none",
           overlayColor: "var(--scrim-strong)",
-          overlayOpacity: 1,
+          overlayOpacity: overview ? 0 : 1,
           popoverClass: "vista-tour",
           showButtons: [],
           // Anything that asks driver.js to close is the tour being exited.
@@ -398,7 +406,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       show(undefined);
       return;
     }
-    const selector = `[data-tour="${key}"]`;
+    const selector = overview ? ".page-topbar" : `[data-tour="${key}"]`;
     const found = document.querySelector(selector);
     if (found !== null) {
       show(found);
