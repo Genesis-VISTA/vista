@@ -134,6 +134,9 @@ defaults, so its keyword arguments must stay compatible. The fake in
   dropping the constraint restores the old behaviour.
 - **[The SDK conversion test is coupled to a private method]** → It fails
   loudly on rename. Swapping it for a local HTTP fake is the fallback.
+- **[The SDK conversion test skips in CI]** amscrot is only in the private `hpc`
+  extra, which CI and the dev venv don't install. → It runs wherever `hpc` is
+  installed; accepted as is.
 
 ## Migration Plan
 
