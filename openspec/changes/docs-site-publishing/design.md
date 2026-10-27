@@ -33,6 +33,10 @@ the tracked Markdown, using GitHub's slug rules, offline and stdlib-only.
 **TOML manifest, read with `tomllib`.** `docs:manifest` runs in lint and in the pre-commit
 hook, next to the stdlib-only `docs:links`. TOML needs nothing installed; YAML would need
 PyYAML in every lint environment. The site's workflow runs Python 3.x, which has `tomllib`.
+`tomllib` needs Python 3.11, and a Mac's system `python3` can be older (3.9 here), so
+`ci-local.sh` runs the check as `uv run --no-project --python 3.14 python -I`, which it
+already requires `uv` for; CI's image runs it with its own `python3` (3.14). Either way it
+installs nothing.
 
 ```toml
 # Which docs/ pages genesis-vista.github.io publishes, in nav order.
@@ -59,8 +63,11 @@ change would need coordinated PRs); a published package (more machinery than one
 
 **The script writes the site's nav, into a generated config.** MkDocs can't include part of
 a nav from another file, and `INHERIT` replaces lists rather than merging them. The script
-reads the site's `mkdocs.yml`, appends the manifest's sections after the site's own nav, and
-writes `mkdocs.generated.yml` next to it (so relative paths resolve the same). The site builds
+reads the site's nav from its `mkdocs.yml`, appends the manifest's sections after it, and
+writes `mkdocs.generated.yml` next to it (so relative paths resolve the same) holding only
+`INHERIT: mkdocs.yml` and that nav. MkDocs merges every other key from the site's config, so
+the script never re-writes it, and YAML tags in it (`!!python/name`, common in Material
+configs) survive. The site builds
 with `-f mkdocs.generated.yml`; both the generated config and the copied pages are
 gitignored there. All copied pages go under `documentation/reference/`, whatever their
 section, so URLs don't change when a page moves between sections.

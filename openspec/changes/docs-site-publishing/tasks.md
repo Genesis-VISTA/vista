@@ -16,11 +16,11 @@
 
 ## 2. Sync script
 
-- [ ] 2.1 Move `sync_docs.py` and its tests from the site draft into `scripts/docs_site/`:
+- [x] 2.1 Move `sync_docs.py` and its tests from the site draft into `scripts/docs_site/`:
   read the manifest instead of the site's nav, keep link rewriting, list re-indenting and the
   source note, and state the command line (`<vista> <site> --ref <tag>`) as the contract with
   the site. Verify the moved tests pass.
-- [ ] 2.2 Write the site's nav: read the site's `mkdocs.yml`, append the manifest's sections
+- [x] 2.2 Write the site's nav: read the site's `mkdocs.yml`, append the manifest's sections
   after its own nav, and write `mkdocs.generated.yml` beside it; copied pages go under
   `documentation/reference/`. Verify with a test that a site nav of two entries plus a
   two-section manifest gives four top-level entries in order, and that the site's other
