@@ -1,0 +1,83 @@
+/**
+ * The first-boot tour's step logic: which step, and which coachmark within it,
+ * is showing, worked out from what the app already knows. Pure, so every rule
+ * about the tour's order is tested here without a DOM (design.md §1).
+ */
+
+import type { OnboardingTourState } from "./settings";
+
+/** The tour's steps, in the order the spec gives them. */
+export const TOUR_STEPS = [
+  "welcome",
+  "project",
+  "model",
+  "knowledge-bases",
+  "skills",
+  "files",
+  "hpc",
+  "first-question",
+] as const;
+
+export type TourStepId = (typeof TOUR_STEPS)[number];
+
+/**
+ * Each step's coachmarks, in order. A step is done when every one of them is:
+ * by app state, by an event, or by the researcher's Next.
+ */
+export const TOUR_SUB_STEPS = {
+  welcome: ["intro"],
+  project: ["open"],
+  model: ["credential", "pick"],
+  "knowledge-bases": ["open-kb", "add-files"],
+  skills: ["open-skill", "load", "import"],
+  files: ["open-examples"],
+  hpc: ["open-card", "settings"],
+  "first-question": ["send", "finish"],
+} as const satisfies Record<TourStepId, readonly string[]>;
+
+export type TourSubStep<S extends TourStepId = TourStepId> = (typeof TOUR_SUB_STEPS)[S][number];
+
+/** What pages report through `useTourEvent()` when the researcher does a step's action. */
+export type TourEvent =
+  | "kb-opened"
+  | "skill-opened"
+  | "example-image-opened"
+  | "example-md-opened"
+  | "hpc-card-opened"
+  | "turn-succeeded";
+
+/** A sub-step passed with Next, as `"<step>:<sub-step>"`, e.g. `"skills:load"`. */
+export type Acknowledgement = `${TourStepId}:${string}`;
+
+export type TourInput = {
+  /** What `/settings` holds; null when the tour never started. */
+  stored: OnboardingTourState | null;
+  /** From `useAgentSettings()`, once it has loaded. */
+  inference: {
+    hasCredential: boolean;
+    /** The model in effect, `provider:name`; null when there is none. */
+    model: string | null;
+    /** True when `model` is only the provider's default, not the researcher's choice. */
+    modelIsDefault: boolean;
+    /** Not used to decide completion; carried so the coachmark can name the suggestion. */
+    providerDefault: string | null;
+  };
+  /** The active project's name, or null. */
+  activeProject: string | null;
+  /** Actions seen this session. */
+  events: ReadonlySet<TourEvent>;
+  /** Steps passed with Skip this step. */
+  skipped: ReadonlySet<TourStepId>;
+  /** Sub-steps passed with Next. */
+  acknowledged: ReadonlySet<Acknowledgement>;
+};
+
+export type TourPosition = { step: TourStepId; subStep: string };
+
+/**
+ * The coachmark to show, or null when the tour is closed (finished or exited).
+ */
+export function nextTourStep(input: TourInput): TourPosition | null {
+  void input;
+  throw new Error("nextTourStep: not implemented yet");
+}
