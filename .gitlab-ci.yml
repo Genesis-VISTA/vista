@@ -31,6 +31,8 @@ variables:
   RUFF_VERSION: "0.15.7"
   PYRIGHT_VERSION: "1.1.411"
   BANDIT_VERSION: "1.9.4"
+  # What genesis-vista.github.io's `mkdocs-material>=9,<10` resolves to.
+  MKDOCS_MATERIAL_VERSION: "9.8.0"
   # The PALISADE sidecar is a git dependency of the backend, living in a private
   # GitHub repository until its license clears review. Jobs that install the
   # backend read it with PALISADE_GITHUB_TOKEN, a read-only fine-grained PAT
@@ -403,6 +405,18 @@ docs:manifest:
   script:
     - python3 -I scripts/docs_site/check_manifest.py
     - python3 -I -m unittest discover -s scripts/docs_site -p 'test_check_manifest.py'
+
+# The published pages, synced into a temporary site and built the way the site
+# renders them (mkdocs --strict): fails on a link or #anchor into another
+# published page that does not resolve. No credentials.
+docs:site:
+  stage: test
+  <<: *python-image
+  before_script:
+    # git: the sync runs `git rev-parse` and check_site.sh `git describe`.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+  script:
+    - bash scripts/docs_site/check_site.sh
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 

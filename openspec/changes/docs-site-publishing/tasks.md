@@ -28,10 +28,10 @@
 
 ## 3. Strict build in CI
 
-- [ ] 3.1 Add `scripts/docs_site/mkdocs.yml`: the site's theme and Markdown extensions, anchor
+- [x] 3.1 Add `scripts/docs_site/mkdocs.yml`: the site's theme and Markdown extensions, anchor
   validation, empty nav, and a comment naming the site's `mkdocs.yml` (and the reverse
   comment goes in the site PR). Verify the generated config builds.
-- [ ] 3.2 Add `docs:site` to the `docs` test action in `scripts/ci-local.sh` and to
+- [x] 3.2 Add `docs:site` to the `docs` test action in `scripts/ci-local.sh` and to
   `.gitlab-ci.yml` (test stage): run the script's tests, sync this tree into a temporary site
   built from the minimal config, and `mkdocs build --strict` with `mkdocs-material==9.8.0`
   through `uvx`, without credentials. Verify `./scripts/ci-local.sh docs test` passes, and

@@ -1,0 +1,19 @@
+# The minimal site config docs:site builds the published pages with.
+#
+# It mirrors the theme and markdown_extensions of genesis-vista.github.io's
+# mkdocs.yml (https://github.com/Genesis-VISTA/genesis-vista.github.io/blob/main/mkdocs.yml),
+# so that docs:site is at least as strict as the site. Keep the two in step.
+# check_site.sh copies it into a temporary site; it is never deployed.
+site_name: VISTA docs check
+docs_dir: documentation
+theme:
+  name: material
+nav: []
+validation:
+  anchors: warn
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
