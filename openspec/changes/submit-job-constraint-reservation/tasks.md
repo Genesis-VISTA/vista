@@ -49,8 +49,8 @@
 
 ## 7. Docs and prompts
 
-- [ ] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, and the per-cluster mapping and checking. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping. Verify with the docs link checker.
-- [ ] 7.2 Correct `backend/src/vista_backend/db/system_prompts/molten-salt.md:8` to the real signature: `submit_hpc_job(job, cluster?, node_count?, duration?, script_args?, constraint?, reservation?)`. Verify by reading the prompt, and with any bundled-prompt test.
+- [x] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, and the per-cluster mapping and checking. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping. Verify with the docs link checker.
+- [x] 7.2 Correct `backend/src/vista_backend/db/system_prompts/molten-salt.md:8` to the real signature: `submit_hpc_job(job, cluster?, node_count?, duration?, script_args?, constraint?, reservation?)`. Verify by reading the prompt, and with any bundled-prompt test.
 
 ## 8. Acceptance
 

@@ -95,6 +95,33 @@ Per-cluster submission defaults: one section per cluster the job runs on (`odo`,
   (`-q`), and `resources.gpus_per_node` becomes `--gpus-per-node`. The IRI clusters choose the
   partition and bind GPUs themselves.
 
+## Constraint and reservation
+
+`submit_hpc_job` takes two optional arguments per submission:
+
+- `constraint` is a Slurm node constraint, such as `gpu&hbm80g`. It **replaces** the job's
+  default `iri.constraint`, never combines with it: to keep the default, restate it.
+- `reservation` names a Slurm reservation. It comes only from the submission; it is not a
+  job default, so `cluster_defaults.json` has no field for it.
+
+Both are refused before anything is submitted, a dry run included, if they hold anything
+but letters, digits and `_ . : -` (a constraint may also use `, * & | [ ]`).
+
+| Cluster | How they are sent |
+|---|---|
+| Lux | `#SBATCH -C <constraint>` and `#SBATCH --reservation=<name>` |
+| Perlmutter, Odo, Frontier | over IRI, as `custom_attributes.constraint` and `reservation_id`, only when set |
+
+On Odo and Frontier VISTA then reads Slurm's record of the job once. If Slurm did not record
+a value that was requested, the job is cancelled and the tool fails, saying OLCF did not pass
+it to Slurm and naming Perlmutter and Lux. If the record cannot be read, the job is kept and
+the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
+constraints, so a constrained submit to Odo or Frontier fails today; use Perlmutter or Lux.
+The summary adds `constraint:`, `reservation:` and `verified:` lines where they apply.
+
+A campaign's `dispatch_cycle` takes the same two arguments and applies them to every job in
+that cycle.
+
 ## Self-contained HPC skills
 
 A skill can ship its own jobs, so a new cluster workflow needs no change to VISTA. Put each job

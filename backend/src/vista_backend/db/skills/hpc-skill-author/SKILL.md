@@ -264,8 +264,12 @@ Confirm with the user; keep everything else at the code's defaults.
 Translate an existing batch script rather than calling it: VISTA writes the
 `#SBATCH` header itself, so move its resources into `cluster_defaults.json`
 (`-N` → `node_count`, `-t` → `duration` in seconds, `--gpus-per-node` →
-`gpus_per_node`, `-p` → `iri.partition`, `-q` → `iri.queue_name`), and drop
-its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
+`gpus_per_node`, `-p` → `iri.partition`, `-q` → `iri.queue_name`, `-C` →
+`iri.constraint`), and drop its `-A`, `-o`, `-e` and `-J` lines. A `--reservation`
+line is not a job default: a reservation is per submission, so it becomes the
+`reservation` argument of `submit_hpc_job`, and `cluster_defaults.json` never
+carries one. A `-C` is likewise only the default; the `constraint` argument
+replaces it for one submission. Replace its hard-coded output paths with
 `$VISTA_OUT`.
 
 ### c. Ship it or clone it
