@@ -1,8 +1,8 @@
 ## 1. Tour state in the backend
 
-- [ ] 1.1 Add `onboarding_tour: dict | None` (nullable JSON) to `LocalSettingsTable` in `backend/src/vista_backend/db/schemas.py`, and to `LocalSettingsPublic` and `LocalSettingsUpdate`. Validate writes to `{"status": "in_progress" | "finished" | "exited", "step": <str>}` and reject anything else with 422. Verify in `backend/tests/test_local_settings.py`: a fresh row reads `null`; a valid `PUT /settings` round-trips; a bad status returns 422. Verify in `backend/tests/test_schema_check.py` that a database made before the column passes `schema_problems(..., assume_additive=True)`
-- [ ] 1.2 Add `onboarding_tour: bool = True` to `Settings` in `backend/src/vista_backend/config.py`, set by `VISTA_BACKEND_ONBOARDING_TOUR`, and report it read-only as `onboarding_tour_enabled` in `LocalSettingsPublic`. Verify in `backend/tests/test_settings_defaults.py`: it defaults to true, `VISTA_BACKEND_ONBOARDING_TOUR=false` makes it false, and a `PUT` cannot change it
-- [ ] 1.3 Add both fields to the TypeScript types in `ui/lib/settings.ts`. Verify with `cd ui && npm run lint`
+- [x] 1.1 Add `onboarding_tour: dict | None` (nullable JSON) to `LocalSettingsTable` in `backend/src/vista_backend/db/schemas.py`, and to `LocalSettingsPublic` and `LocalSettingsUpdate`. Validate writes to `{"status": "in_progress" | "finished" | "exited", "step": <str>}` and reject anything else with 422. Verify in `backend/tests/test_local_settings.py`: a fresh row reads `null`; a valid `PUT /settings` round-trips; a bad status returns 422. Verify in `backend/tests/test_schema_check.py` that a database made before the column passes `schema_problems(..., assume_additive=True)`
+- [x] 1.2 Add `onboarding_tour: bool = True` to `Settings` in `backend/src/vista_backend/config.py`, set by `VISTA_BACKEND_ONBOARDING_TOUR`, and report it read-only as `onboarding_tour_enabled` in `LocalSettingsPublic`. Verify in `backend/tests/test_settings_defaults.py`: it defaults to true, `VISTA_BACKEND_ONBOARDING_TOUR=false` makes it false, and a `PUT` cannot change it
+- [x] 1.3 Add both fields to the TypeScript types in `ui/lib/settings.ts`. Verify with `cd ui && npm run lint`
 
 ## 2. Opening Settings from anywhere
 

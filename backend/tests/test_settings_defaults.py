@@ -208,3 +208,16 @@ print(json.dumps({
     assert result["odo"] == "https://odo.example"
     assert result["machine"] == "frontier-test"
     assert result["frontier"] == "https://amsc-moderate.s3m.olcf.ornl.gov"
+
+
+def test_onboarding_tour_defaults_on_and_the_variable_turns_it_off(
+    tmp_path: Path,
+) -> None:
+    script = """
+import json
+from vista_backend.config import settings
+print(json.dumps({"on": settings.onboarding_tour}))
+"""
+    assert _probe(tmp_path / "on", script)["on"] is True
+    off = _probe(tmp_path / "off", script, {"VISTA_BACKEND_ONBOARDING_TOUR": "false"})
+    assert off["on"] is False

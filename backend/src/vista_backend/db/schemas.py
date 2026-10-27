@@ -7,7 +7,7 @@ import uuid
 from typing import Annotated as A, Any, Literal, Optional
 from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
 from pydantic_ai import UsageLimits
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
 from ..utils.types import OptionalHttpUrl
@@ -522,6 +522,18 @@ _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 """ One `@`, no spaces, and a dot in the domain: a shape check, not a delivery check. """
 
 
+class OnboardingTourState(BaseModel):
+    """
+    Where the researcher is in the first-boot tour. Checked on writes only, like
+    `HpcCluster`: the stored JSON is read back as it is, so a step id that a
+    later version drops cannot make reading the settings fail.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["in_progress", "finished", "exited"]
+    step: str
+
+
 class LocalSettingsUpdate(SQLModel):
     """
     The settings a researcher can change. `install_id` is not among them: it is
@@ -565,6 +577,8 @@ class LocalSettingsUpdate(SQLModel):
     frontier_globus_https_token: str | None = None
     hpc_hidden_clusters: list[HpcCluster] | None = None
     """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
+    onboarding_tour: OnboardingTourState | None = None
+    """ The tour's progress; `null` forgets it, so the tour starts again. """
     github_token: str | None = None
     """
     The researcher's GitHub token, or what to do with it. Write-only: absent or
@@ -660,6 +674,18 @@ class LocalSettingsPublic(SQLModel):
     Plain strings on the way out: only writes are checked against
     `HpcCluster`, so a stored name that later leaves the list cannot make
     reading the settings fail.
+    """
+
+    onboarding_tour: dict[str, Any] | None = None
+    """
+    `{"status", "step"}` as last written; `null` means the tour never started,
+    which is what an upgraded installation has. Plain on the way out.
+    """
+    onboarding_tour_enabled: bool = True
+    """
+    Whether the installation's configuration allows the tour
+    (`Settings.onboarding_tour`). Read-only: not on `LocalSettingsUpdate`, and
+    not on the row; `services/local_settings.to_public` fills it.
     """
 
     @field_validator("hpc_hidden_clusters", mode="before")
@@ -878,6 +904,14 @@ class LocalSettingsTable(SQLModel, table=True):
     Clusters turned off in the NavRail, whose availability is then never
     checked. Stored as what is *hidden* so that a cluster added later shows by
     default, with nothing to migrate.
+    """
+    onboarding_tour: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    """
+    First-boot tour progress, `{"status": "in_progress" | "finished" | "exited",
+    "step": "<id>"}`; `None` means never started. JSON so a new step id never
+    needs a schema change.
     """
 
 

@@ -204,6 +204,7 @@ def test_existing_settings_table_gains_new_columns(tmp_path):
         "research_role",
         "personalize_responses",
         "hpc_hidden_clusters",
+        "onboarding_tour",
         "odo_remote_dir",
         "inference_provider",
         "inference_olcf_api_key",
@@ -283,6 +284,74 @@ def test_unknown_cluster_is_rejected():
 async def test_lux_can_be_hidden(session):
     saved = await _put(session, LocalSettingsUpdate(hpc_hidden_clusters=["lux"]))
     assert saved.hpc_hidden_clusters == ["lux"]
+
+
+# ---------------------------------------------------------------------------
+# The first-boot tour's progress
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_onboarding_tour_is_null_on_a_fresh_row(session):
+    assert (await _local(session)).onboarding_tour is None
+
+
+@pytest.mark.anyio
+async def test_onboarding_tour_round_trips_and_can_be_forgotten(session):
+    state = {"status": "in_progress", "step": "welcome"}
+    saved = await _put(
+        session, LocalSettingsUpdate.model_validate({"onboarding_tour": state})
+    )
+    assert saved.onboarding_tour == state
+    assert (await _local(session)).onboarding_tour == state
+
+    cleared = await _put(
+        session, LocalSettingsUpdate.model_validate({"onboarding_tour": None})
+    )
+    assert cleared.onboarding_tour is None
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"status": "done", "step": "welcome"},
+        {"status": "finished"},
+        {"status": "finished", "step": "welcome", "extra": 1},
+    ],
+)
+def test_onboarding_tour_rejects_a_bad_write(bad):
+    with pytest.raises(ValueError, match="onboarding_tour"):
+        LocalSettingsUpdate.model_validate({"onboarding_tour": bad})
+
+
+@pytest.mark.anyio
+async def test_a_bad_tour_status_is_a_422_over_http(session):
+    from harness import api_client
+
+    with api_client(session) as (client, _):
+        resp = await client.put(
+            "/settings", json={"onboarding_tour": {"status": "done", "step": "x"}}
+        )
+    assert resp.status_code == 422
+    assert (await _local(session)).onboarding_tour is None
+
+
+@pytest.mark.anyio
+async def test_tour_enabled_comes_from_configuration_and_a_put_cannot_set_it(
+    session, monkeypatch
+):
+    from harness import api_client
+
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "onboarding_tour", False)
+    assert (await _local(session)).onboarding_tour_enabled is False
+    monkeypatch.setattr(settings, "onboarding_tour", True)
+    with api_client(session) as (client, _):
+        resp = await client.put("/settings", json={"onboarding_tour_enabled": False})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["onboarding_tour_enabled"] is True
+        assert (await client.get("/settings")).json()["onboarding_tour_enabled"] is True
 
 
 # ---------------------------------------------------------------------------
