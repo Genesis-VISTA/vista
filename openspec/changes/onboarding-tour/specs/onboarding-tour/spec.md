@@ -80,6 +80,25 @@ once.
 - **WHEN** the open-a-project step is reached while a project is already active
 - **THEN** the step completes at once
 
+### Requirement: Each screen opens with an overview
+
+When the tour first brings the researcher to a screen (projects, knowledge bases, skills,
+files and chat), it SHALL first show a coachmark that describes the screen as a whole, with
+nothing dimmed, so the whole screen can be seen. It SHALL move on to that screen's specific
+controls only on **Next**. For a step that starts at the navigation entry, the overview SHALL
+come once the researcher has reached the screen.
+
+#### Scenario: Arriving at knowledge bases
+
+- **WHEN** a researcher on the knowledge bases step clicks the knowledge bases navigation entry
+- **THEN** a coachmark describes the knowledge bases screen, and nothing on it is dimmed
+- **AND** on **Next**, the coachmark points at AI Safety Papers
+
+#### Scenario: Chat before the first question
+
+- **WHEN** the first-question step starts
+- **THEN** a coachmark describes the chat screen before pointing at the composer
+
 ### Requirement: Connecting a model
 
 The connect-a-model step SHALL first open Settings at the model provider section and point

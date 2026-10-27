@@ -114,6 +114,12 @@ the highlighted element pauses the tour: the highlight is torn down, keeping the
 and the page is fully usable. It is drawn again when the position changes, when an event or a
 failure is reported, or when the pathname changes. A coachmark completed by Next never pauses.
 
+Each screen's step opens with an `overview` coachmark: anchored to the page's top bar with
+the overlay's opacity at 0, so the whole screen is visible, though not clickable, until Next.
+The rail-first steps put a `visit` coachmark before it, on the rail entry. `visit` is done when
+`TourInput.pathname` is that step's page. That's one input field added to the pure function's
+input, so the arrival rule is tested with the rest.
+
 driver.js measures the popover before VISTA's buttons are in it, so the provider turns its
 animation off and calls `refresh()` after rendering. Otherwise an anchored popover sits too
 high and covers its own target.
