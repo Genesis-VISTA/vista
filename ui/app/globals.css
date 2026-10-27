@@ -6892,6 +6892,25 @@ textarea.input:focus {
   border: 2px solid var(--brand-fill);
 }
 
+/* A click outside the target: the coachmark pulses to show where the tour is. */
+@keyframes vista-tour-nudge {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.05); }
+  65% { transform: scale(0.98); }
+}
+
+.driver-popover.vista-tour.vista-tour-nudge {
+  outline: 3px solid var(--brand-fill);
+  outline-offset: 3px;
+  animation: vista-tour-nudge 420ms ease-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-popover.vista-tour.vista-tour-nudge {
+    animation: none;
+  }
+}
+
 .vista-tour .driver-popover-title {
   font-family: var(--font-display);
   font-size: 16px;

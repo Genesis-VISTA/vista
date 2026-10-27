@@ -500,6 +500,23 @@ describe("a coachmark follows the page", () => {
     expect(lastStepKey()).toBe("The Knowledge bases screen");
   });
 
+  it("pulses the coachmark when the researcher clicks outside its target", () => {
+    vi.useFakeTimers();
+    try {
+      render(tree);
+      const popover = document.body.appendChild(document.createElement("div"));
+      popover.className = "driver-popover vista-tour";
+      const onOverlayClick = driverMock.mock.calls[0][0].overlayClickBehavior as () => void;
+      onOverlayClick();
+      expect(popover.classList.contains("vista-tour-nudge")).toBe(true);
+      vi.advanceTimersByTime(900);
+      expect(popover.classList.contains("vista-tour-nudge")).toBe(false);
+      popover.remove();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("draws an overview on the top bar with no overlay, and the next coachmark with one", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
     nav.pathname = "/skills";

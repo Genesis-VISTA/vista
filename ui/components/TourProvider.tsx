@@ -335,7 +335,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
           animate: false,
           allowClose: false,
           allowKeyboardControl: false,
-          overlayClickBehavior: "none",
+          // A click outside the coachmark's target nudges the coachmark.
+          overlayClickBehavior: () => nudgeCoachmark(),
           overlayColor: "var(--scrim-strong)",
           overlayOpacity: overview ? 0 : 1,
           // Undimmed, an overview's card needs its own border to stand out.
@@ -460,6 +461,16 @@ export function TourProvider({ children }: { children: ReactNode }) {
 }
 
 type Popover = Parameters<NonNullable<NonNullable<Parameters<Driver["highlight"]>[0]["popover"]>["onPopoverRender"]>>[0];
+
+/** Pulses the coachmark, so a click in the wrong place shows where the tour is. */
+export function nudgeCoachmark(): void {
+  const popover = document.querySelector<HTMLElement>(".driver-popover.vista-tour");
+  if (popover === null) return;
+  popover.classList.remove("vista-tour-nudge");
+  void popover.offsetWidth; // restart the animation when clicked again mid-pulse
+  popover.classList.add("vista-tour-nudge");
+  window.setTimeout(() => popover.classList.remove("vista-tour-nudge"), 900);
+}
 
 function button(label: string, className: string, onClick: () => void): HTMLButtonElement {
   const b = document.createElement("button");
