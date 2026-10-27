@@ -269,7 +269,10 @@ Translate an existing batch script rather than calling it: VISTA writes the
 line is not a job default: a reservation is per submission, so it becomes the
 `reservation` argument of `submit_hpc_job`, and `cluster_defaults.json` never
 carries one. A `-C` is likewise only the default; the `constraint` argument
-replaces it for one submission. Replace its hard-coded output paths with
+replaces it for one submission. Put a `-C` only in the `lux` and `perlmutter`
+sections, never in `odo` or `frontier`: OLCF currently drops constraints, so
+VISTA cancels every constrained job there, and a default constraint would make
+the job unable to run on that cluster. Replace its hard-coded output paths with
 `$VISTA_OUT`.
 
 ### c. Ship it or clone it

@@ -9,8 +9,9 @@ defaults.
 
 Before anything is submitted, and in dry-run mode too, the system SHALL refuse
 values that are not Slurm syntax. A constraint is letters, digits and
-`_ - . : , * & | [ ]`. A reservation is a name of letters, digits and
-`_ - . :`. Refused values include whitespace and newlines.
+`_ - . : , * & | [ ] ( )`. A reservation is one or more comma-separated names
+of letters, digits and `_ - . :`. Refused values include whitespace and
+newlines.
 
 The system SHALL pass the effective constraint and the reservation to Slurm as
 follows:
@@ -29,9 +30,11 @@ reservation, the system SHALL read Slurm's record of that job:
   Slurm, and SHALL name Perlmutter and Lux as the clusters that take a
   constraint.
 - Any non-empty recorded constraint SHALL count as passed.
-- If the record cannot be read, or lacks those fields, the system SHALL keep
-  the job, and the submission result SHALL say the constraint or reservation
-  is unverified.
+- The constraint and the reservation SHALL be judged separately: one shown
+  as dropped SHALL cancel the job even when the other cannot be read.
+- If the record cannot be read, or lacks those fields, and nothing was shown
+  as dropped, the system SHALL keep the job, and the submission result SHALL
+  say the constraint or reservation is unverified.
 
 #### Scenario: Constraint replaces the default on Perlmutter
 - **WHEN** a job whose Perlmutter default constraint is `gpu` is submitted to Perlmutter with constraint `gpu&hbm80g`
@@ -76,6 +79,10 @@ reservation, the system SHALL read Slurm's record of that job:
 #### Scenario: Record cannot be read
 - **WHEN** a job is submitted to Odo with a reservation and reading its record fails
 - **THEN** the job is kept and the submission result says the reservation is unverified
+
+#### Scenario: Dropped reservation beside an unreadable constraint
+- **WHEN** a job is submitted to Odo with a constraint and a reservation, and Slurm's record has no constraints field but an empty reservation name
+- **THEN** the job is cancelled and submission fails, saying OLCF did not pass the reservation to Slurm
 
 #### Scenario: Campaign cycle with a reservation
 - **WHEN** a campaign cycle is dispatched with reservation `train1`

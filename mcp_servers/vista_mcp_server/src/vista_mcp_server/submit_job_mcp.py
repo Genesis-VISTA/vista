@@ -454,20 +454,20 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
 # or an IRI payload, so anything else (a newline starting a new #SBATCH line, a
 # space) is refused before any side effect. `fullmatch`, because `$` lets a
 # trailing newline through.
-_CONSTRAINT_RE = re.compile(r"[A-Za-z0-9_.:,*&|\[\]-]+")
-_RESERVATION_RE = re.compile(r"[A-Za-z0-9_.:-]+")
+_CONSTRAINT_RE = re.compile(r"[A-Za-z0-9_.:,*&|\[\]()-]+")
+_RESERVATION_RE = re.compile(r"[A-Za-z0-9_.:,-]+")
 
 
 def _validate_slurm_args(constraint: str | None, reservation: str | None) -> None:
     if constraint is not None and not _CONSTRAINT_RE.fullmatch(constraint):
         raise ToolError(
             f"constraint {constraint!r} is not allowed: use only letters, digits and "
-            "the characters _ . : , * & | [ ] -"
+            "the characters _ . : , * & | [ ] ( ) -"
         )
     if reservation is not None and not _RESERVATION_RE.fullmatch(reservation):
         raise ToolError(
             f"reservation {reservation!r} is not allowed: use only letters, digits and "
-            "the characters _ . : -"
+            "the characters _ . : , -"
         )
 
 
@@ -498,11 +498,15 @@ def _effective_constraint(constraint: str | None, defaults: IriDefaults | None) 
             constraint: Slurm node constraint for this submission, e.g. "gpu&hbm80g". It
                 replaces the job's default constraint rather than adding to it, so restate
                 the default (e.g. "gpu&hbm80g") to keep it. Omit it to use the job's default.
-                Letters, digits and _ . : , * & | [ ] - only. Taken by all four clusters.
-            reservation: Name of a Slurm reservation to run in. Omit it to run outside one.
-                Letters, digits and _ . : - only. Taken by all four clusters. Odo and
-                Frontier check after submitting that Slurm recorded the constraint and
-                reservation, and cancel the job if either was dropped.
+                Letters, digits and _ . : , * & | [ ] ( ) - only. Perlmutter and Lux
+                take it. OLCF currently drops constraints, so Odo and Frontier refuse a
+                constrained job (it is submitted, found unconstrained and cancelled):
+                send constraints to Perlmutter or Lux.
+            reservation: Name of a Slurm reservation to run in (several, comma-separated).
+                Omit it to run outside one. Letters, digits and _ . : , - only. Taken by
+                all four clusters. Odo and Frontier check after submitting that Slurm
+                recorded the constraint and reservation, and cancel the job if either
+                was dropped.
 
         Returns:
             A multi-line ground-truth summary of the submitted job (job_id, cluster,
@@ -643,22 +647,25 @@ async def _check_olcf_slurm_args(
     if not isinstance(record, dict):
         return "Slurm record not in the job status"
 
+    # Each value is judged on its own, so one that is unreadable never hides one
+    # that was dropped.
     dropped: list[str] = []
+    unreadable: list[str] = []
     if constraint:
         constraints = record.get("constraints")
         if not isinstance(constraints, str):
-            return "Slurm record lacks constraints"
-        if constraints == "":
+            unreadable.append("Slurm record lacks constraints")
+        elif constraints == "":
             dropped.append(f"constraint {constraint!r}")
     if reservation:
         res = record.get("reservation")
         name = res.get("name") if isinstance(res, dict) else None
         if not isinstance(name, str):
-            return "Slurm record lacks the reservation"
-        if name == "":
+            unreadable.append("Slurm record lacks the reservation")
+        elif name == "":
             dropped.append(f"reservation {reservation!r}")
     if not dropped:
-        return None
+        return "; ".join(unreadable) or None
 
     try:
         await iri_client.cancel_job(job_id)
@@ -887,7 +894,7 @@ async def _require_writable_out(
 async def _submit_perlmutter_job(
     cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
     *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
-) -> tuple[str, str, str, int, int]:
+) -> tuple[str, str, str, str, int, int]:
     """ Returns (job_id, rendered_stdout_path, rendered_stderr_path, rendered_output_dir, effective_node_count, effective_duration_seconds). """
     if not cfg.nersc_account:
         raise ToolError(
@@ -1224,7 +1231,7 @@ def _lux_proxy_env() -> dict[str, str]:
 async def _submit_lux_job(
     ctx: Context, cfg: UserConfig, job: str, node_count: int | None, duration_int: int | None, script_args: str | None,
     *, job_info: JobInfo | None = None, constraint: str | None = None, reservation: str | None = None,
-) -> tuple[str, str, str, int, int]:
+) -> tuple[str, str, str, str, int, int]:
     """
     Lux dispatch: plain Slurm over SSH, since Lux has no IRI service.
 

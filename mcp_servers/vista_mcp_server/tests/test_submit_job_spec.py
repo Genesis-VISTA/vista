@@ -402,6 +402,7 @@ def _tool_ctx(user_cfg: UserConfig):
         {"reservation": "res 1"},
         {"reservation": "res\n"},
         {"reservation": "a&b"},
+        {"reservation": "a(b)"},
     ],
 )
 async def test_submit_refuses_an_injected_constraint_or_reservation(
@@ -441,14 +442,16 @@ async def test_submit_accepts_a_constraint_and_reservation_in_the_allowed_set(
         _tool_ctx(user_cfg),
         job="example",
         cluster="odo",
-        constraint="gpu&hbm80g|[a-b]*,x:y.z_w-1",
-        reservation="my_res.1:a-b",
+        # Parentheses group features inside brackets; reservations may be a list.
+        constraint="[(knl&snc4)*4&haswell*1]|gpu&hbm80g,x:y.z_w-1",
+        reservation="my_res.1:a-b,train2",
     )
     assert "job_id: odo-9" in summary
     [(spec, _)] = iri.submitted
     assert spec["attributes"]["custom_attributes"] == {
-        "constraint": "gpu&hbm80g|[a-b]*,x:y.z_w-1"
+        "constraint": "[(knl&snc4)*4&haswell*1]|gpu&hbm80g,x:y.z_w-1"
     }
+    assert spec["attributes"]["reservation_id"] == "my_res.1:a-b,train2"
 
 
 def test_effective_constraint_replaces_the_job_default():
@@ -690,6 +693,39 @@ async def test_olcf_missing_reservation_record_keeps_the_job_unverified(
         monkeypatch, user_cfg, "frontier", iri, reservation="train1"
     )
     assert result[-1]
+    assert iri.cancelled == []
+
+
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_olcf_dropped_reservation_cancels_beside_an_unreadable_constraint(
+    monkeypatch, user_cfg, cluster
+):
+    # The constraint can't be judged, but the reservation was clearly dropped.
+    iri = FakeIriClient(s3m={"reservation": {"id": 0, "name": ""}})
+    with pytest.raises(ToolError, match="reservation 'train1'"):
+        await _olcf_submit(
+            monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
+        )
+    assert iri.cancelled == ["iri-job-1"]
+
+
+async def test_olcf_dropped_constraint_cancels_beside_an_unreadable_reservation(
+    monkeypatch, user_cfg
+):
+    iri = FakeIriClient(s3m={"constraints": "", "reservation": "none"})
+    with pytest.raises(ToolError, match="constraint 'nvme'"):
+        await _olcf_submit(
+            monkeypatch, user_cfg, "odo", iri, constraint="nvme", reservation="train1"
+        )
+    assert iri.cancelled == ["iri-job-1"]
+
+
+async def test_olcf_reports_every_value_it_could_not_read(monkeypatch, user_cfg):
+    iri = FakeIriClient(s3m={"reservation": "none"})
+    result = await _olcf_submit(
+        monkeypatch, user_cfg, "odo", iri, constraint="nvme", reservation="train1"
+    )
+    assert "constraints" in result[-1] and "reservation" in result[-1]
     assert iri.cancelled == []
 
 

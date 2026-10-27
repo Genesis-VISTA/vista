@@ -101,11 +101,11 @@ Per-cluster submission defaults: one section per cluster the job runs on (`odo`,
 
 - `constraint` is a Slurm node constraint, such as `gpu&hbm80g`. It **replaces** the job's
   default `iri.constraint`, never combines with it: to keep the default, restate it.
-- `reservation` names a Slurm reservation. It comes only from the submission; it is not a
-  job default, so `cluster_defaults.json` has no field for it.
+- `reservation` names a Slurm reservation, or several comma-separated. It comes only from
+  the submission; it is not a job default, so `cluster_defaults.json` has no field for it.
 
 Both are refused before anything is submitted, a dry run included, if they hold anything
-but letters, digits and `_ . : -` (a constraint may also use `, * & | [ ]`).
+but letters, digits and `_ . : , -` (a constraint may also use `* & | [ ] ( )`).
 
 | Cluster | How they are sent |
 |---|---|
@@ -114,8 +114,9 @@ but letters, digits and `_ . : -` (a constraint may also use `, * & | [ ]`).
 
 On Odo and Frontier VISTA then reads Slurm's record of the job once. If Slurm did not record
 a value that was requested, the job is cancelled and the tool fails, saying OLCF did not pass
-it to Slurm and naming Perlmutter and Lux. If the record cannot be read, the job is kept and
-the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
+it to Slurm and naming Perlmutter and Lux. Each value is judged on its own, so a dropped
+one cancels the job even when the other cannot be read. If nothing was dropped but a value
+cannot be read, the job is kept and the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
 constraints, so a constrained submit to Odo or Frontier fails today; use Perlmutter or Lux.
 The summary adds `constraint:`, `reservation:` and `verified:` lines where they apply.
 

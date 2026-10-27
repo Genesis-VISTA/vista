@@ -50,7 +50,8 @@ response:
 ## Decisions
 
 **Validate once, at the top of `submit_hpc_job`.** The constraint must match
-`^[A-Za-z0-9_.:,*&|\[\]-]+$` and the reservation `^[A-Za-z0-9_.:-]+$`.
+`^[A-Za-z0-9_.:,*&|\[\]()-]+$` (parentheses group features inside brackets)
+and the reservation `^[A-Za-z0-9_.:,-]+$` (Slurm takes a comma-separated list).
 Anything else raises a `ToolError` naming the argument and the allowed
 characters. The check runs before `dry_run.record_submit`, so dry runs refuse
 bad values too.
