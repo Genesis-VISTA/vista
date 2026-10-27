@@ -113,6 +113,8 @@ async def test_a_real_server_is_reachable(collab_server, session):
     assert status.reason is None
     assert (status.url, status.source) == (URL, "settings")
     assert status.server_version
+    # A dev-headers server signs this installation in by its install id.
+    assert status.signed_in
 
 
 async def test_the_status_route(collab_server, session):
@@ -121,6 +123,15 @@ async def test_the_status_route(collab_server, session):
         res = await client.get("/collaboration/status")
     assert res.status_code == 200
     assert res.json()["reachable"] is True
+
+
+async def test_a_server_that_needs_no_token_offers_no_sign_in(collab_server, session):
+    """Signed in by install id alone (dev-headers), on this machine: no token to ask for."""
+    status = await collaboration.status(
+        await _set_url(session, "http://127.0.0.1:8002")
+    )
+    assert status.signed_in
+    assert status.sign_in_url is None
 
 
 async def test_the_status_route_without_a_server(session):
@@ -134,6 +145,9 @@ async def test_the_status_route_without_a_server(session):
         "url": None,
         "source": None,
         "server_version": None,
+        "signed_in": False,
+        "sign_in_required": False,
+        "sign_in_url": None,
     }
 
 
@@ -176,12 +190,12 @@ async def test_a_server_speaking_another_api_is_refused(monkeypatch, session):
     _fake(
         monkeypatch,
         lambda request: httpx.Response(
-            200, json={"server_version": "9.0", "api_version": 2}
+            200, json={"server_version": "9.0", "api_version": 99}
         ),
     )
     status = await collaboration.status(await _set_url(session, URL))
     assert not status.reachable
-    assert "API version 2" in status.reason
+    assert "API version 99" in status.reason
 
 
 def test_the_backend_speaks_the_servers_api():
@@ -289,7 +303,7 @@ async def test_publish_and_import_round_trip(collab_server, session, tmp_path):
         item = await client.create_item(
             "skill", "salt-analysis", manifest={"name": "salt-analysis"}, blob_ref=ref
         )
-        assert item.created_by == local.install_id
+        assert item.created_by == str(local.install_id)
         assert item.created_by_name == "Ångström 安"
         assert item.head_version == 1
         v1 = await client.get_version(item.id, 1)

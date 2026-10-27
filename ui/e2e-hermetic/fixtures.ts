@@ -226,6 +226,9 @@ export const COLLABORATION_STATUS = {
   url: null,
   source: null,
   server_version: null,
+  signed_in: false,
+  sign_in_required: false,
+  sign_in_url: null,
 };
 
 export const ROUTES: Record<string, unknown> = {

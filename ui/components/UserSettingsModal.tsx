@@ -50,12 +50,12 @@ type Section =
   | HpcCluster;
 
 /**
- * The repository tokens, which unlike every field in `TEXT_FIELDS` are
- * write-only: the backend never sends them back, so each starts empty, an empty
- * field saves nothing, and only Remove sends `""`.
+ * The repository tokens and the collaboration server's, which unlike every
+ * field in `TEXT_FIELDS` are write-only: the backend never sends them back, so
+ * each starts empty, an empty field saves nothing, and only Remove sends `""`.
  */
-const REPO_TOKEN_FIELDS = ["github_token", "gitlab_token"] as const;
-type RepoTokenField = (typeof REPO_TOKEN_FIELDS)[number];
+const TOKEN_FIELDS = ["github_token", "gitlab_token", "collaboration_token"] as const;
+type TokenField = (typeof TOKEN_FIELDS)[number];
 
 /** Every free-text field the modal edits, as named in `LocalSettingsUpdate`. */
 const TEXT_FIELDS = [
@@ -89,7 +89,7 @@ type TextField = (typeof TEXT_FIELDS)[number];
 type Draft = {
   text: Record<TextField, string>;
   /** A repository token being typed; cleared once it saves. */
-  tokens: Record<RepoTokenField, string>;
+  tokens: Record<TokenField, string>;
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
   interests: string[];
@@ -105,7 +105,7 @@ function draftFrom(user: LocalSettings): Draft {
   for (const field of TEXT_FIELDS) text[field] = user[field] ?? "";
   return {
     text,
-    tokens: { github_token: "", gitlab_token: "" },
+    tokens: { github_token: "", gitlab_token: "", collaboration_token: "" },
     provider: user.inference_provider ?? null,
     interests: user.research_interests ?? [],
     preferredUnits: user.preferred_units ?? "si",
@@ -152,8 +152,8 @@ const SETTING_FIELDS = new Set([
 /** The section each field lives in, for going to a field whose save failed. */
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
-  if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (field.startsWith("collaboration_")) return "collaboration";
+  if ((TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (
     field === "display_name" ||
     field === "email" ||
@@ -283,15 +283,20 @@ export function UserSettingsModal({
     if (field === HIDDEN_FIELD || SETTING_FIELDS.has(field)) void refreshHpcStatus();
     // The picker's label and list follow the provider, endpoint and key.
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
-    // Publish and Import follow the server address wherever they are shown.
+    // Publish and Import follow the server and its token wherever they are shown.
+    // Only a new address drops the last answer: one about the same server
+    // still stands while its new token is checked, and keeps the Token field
+    // (which it decides) in place.
     if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
-    // A repository token never comes back, so what to show is "saved" or not:
-    // read that from the server, and empty the field it was typed into.
-    if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) {
-      const token = field as RepoTokenField;
-      setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [token]: "" } } : d));
-      setUser(await fetchSettings());
+    if (field === "collaboration_token") void refreshCollaborationStatus();
+    // A token never comes back, so empty the field it was typed into.
+    const isToken = (TOKEN_FIELDS as readonly string[]).includes(field);
+    if (isToken) {
+      setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field as TokenField]: "" } } : d));
     }
+    // Whether it is saved is read from the server; a new address forgets the
+    // old server's token, so it is read again then too.
+    if (isToken || field === "collaboration_server_url") setUser(await fetchSettings());
   }
 
   const [announcement, setAnnouncement] = useState("");
@@ -315,7 +320,7 @@ export function UserSettingsModal({
       const seeded: Record<string, unknown> = { inference_provider: next.provider };
       for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
       // Null is "keep" for a write-only token, so an untouched field never saves.
-      for (const field of REPO_TOKEN_FIELDS) seeded[field] = null;
+      for (const field of TOKEN_FIELDS) seeded[field] = null;
       seeded.research_interests = next.interests;
       seeded.preferred_units = next.preferredUnits;
       seeded.technical_depth = next.technicalDepth;
@@ -406,7 +411,7 @@ export function UserSettingsModal({
   };
 
   /** Like `bind`, for a write-only token: a blank field saves null, which keeps it. */
-  const bindToken = (field: RepoTokenField): FieldBinding => {
+  const bindToken = (field: TokenField): FieldBinding => {
     const error = autosave.errors[field];
     return {
       error,
@@ -427,7 +432,7 @@ export function UserSettingsModal({
     };
   };
 
-  function removeToken(field: RepoTokenField) {
+  function removeToken(field: TokenField) {
     setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field]: "" } } : d));
     autosave.edit(field, "", "now");
   }
@@ -512,7 +517,14 @@ export function UserSettingsModal({
   } else if (section === "repositories") {
     content = <RepositoriesSection user={user} bindToken={bindToken} onRemove={removeToken} />;
   } else if (section === "collaboration") {
-    content = <CollaborationSection bind={bind} />;
+    content = (
+      <CollaborationSection
+        bind={bind}
+        user={user}
+        bindToken={bindToken}
+        onRemove={() => removeToken("collaboration_token")}
+      />
+    );
   } else if (section === "compute") {
     content = (
       <ComputeSection
@@ -1387,8 +1399,8 @@ function RepositoriesSection({
   onRemove,
 }: {
   user: LocalSettings;
-  bindToken: (field: RepoTokenField) => FieldBinding;
-  onRemove: (field: RepoTokenField) => void;
+  bindToken: (field: TokenField) => FieldBinding;
+  onRemove: (field: TokenField) => void;
 }) {
   return (
     <section className="settings-section" aria-label="Repositories">
@@ -1401,7 +1413,7 @@ function RepositoriesSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body">
-        <RepoTokenField
+        <TokenField
           label="GitHub token"
           field="github_token"
           saved={Boolean(user.has_github_token)}
@@ -1422,7 +1434,7 @@ function RepositoriesSection({
             </>
           }
         />
-        <RepoTokenField
+        <TokenField
           label="gitlab.com token"
           field="gitlab_token"
           saved={Boolean(user.has_gitlab_token)}
@@ -1444,7 +1456,7 @@ function RepositoriesSection({
   );
 }
 
-function RepoTokenField({
+function TokenField({
   label,
   field,
   saved,
@@ -1453,7 +1465,7 @@ function RepoTokenField({
   hint,
 }: {
   label: string;
-  field: RepoTokenField;
+  field: TokenField;
   saved: boolean;
   binding: FieldBinding;
   onRemove: () => void;
@@ -1491,7 +1503,8 @@ function RepoTokenField({
 function collaborationLabel(view: CollaborationView): string {
   if (!view.status) return view.checking ? "Checking" : "Unknown";
   if (!view.status.configured) return "Not set";
-  return view.available ? "Connected" : "Unreachable";
+  if (view.available) return "Connected";
+  return view.status.sign_in_required ? "Sign in" : "Unreachable";
 }
 
 /**
@@ -1499,7 +1512,17 @@ function collaborationLabel(view: CollaborationView): string {
  * answers. The status line is the same answer every Publish and Import control
  * reads (`useCollaboration`), so the reason a control is off is visible here.
  */
-function CollaborationSection({ bind }: { bind: Bind }) {
+function CollaborationSection({
+  bind,
+  user,
+  bindToken,
+  onRemove,
+}: {
+  bind: Bind;
+  user: LocalSettings;
+  bindToken: (field: TokenField) => FieldBinding;
+  onRemove: () => void;
+}) {
   const view = useCollaboration();
   const { status, checking, available, reason, error, refresh } = view;
   const binding = bind("collaboration_server_url", "on-blur");
@@ -1526,10 +1549,7 @@ function CollaborationSection({ bind }: { bind: Bind }) {
                 here takes its place.
               </>
             ) : (
-              <>
-                The server&apos;s address. It has no sign-in yet: anyone who can reach it can read
-                and change everything on it.
-              </>
+              <>The server&apos;s address.</>
             )
           }
         />
@@ -1550,6 +1570,30 @@ function CollaborationSection({ bind }: { bind: Bind }) {
             Check again
           </button>
         </div>
+        {/* The backend offers the sign-in page only where a token would be sent and is
+            wanted, whatever the server answered: a gateway's redirect to its login or
+            an error can be the token's absence too. */}
+        {(status?.sign_in_url || user.has_collaboration_token) && (
+          <TokenField
+            label="Token"
+            field="collaboration_token"
+            saved={Boolean(user.has_collaboration_token)}
+            binding={bindToken("collaboration_token")}
+            onRemove={onRemove}
+            hint={
+              status?.sign_in_url ? (
+                <>
+                  <a href={status.sign_in_url} target="_blank" rel="noreferrer">
+                    Open the server&apos;s sign-in page
+                  </a>
+                  , log in, and paste the token it shows. When it expires, get a new one there.
+                </>
+              ) : (
+                <>The token from the server&apos;s sign-in page.</>
+              )
+            }
+          />
+        )}
       </div>
     </section>
   );

@@ -85,6 +85,8 @@ export type LocalSettings = {
   has_github_token?: boolean;
   /** Whether a gitlab.com token is saved. The token itself is never sent back. */
   has_gitlab_token?: boolean;
+  /** Whether a collaboration server token is saved. Never sent back either. */
+  has_collaboration_token?: boolean;
 };
 
 /**
@@ -127,6 +129,8 @@ export type LocalSettingsUpdate = {
   github_token?: string | null;
   /** Write-only, like `github_token`. */
   gitlab_token?: string | null;
+  /** The token from the collaboration server's sign-in page. Write-only, like `github_token`. */
+  collaboration_token?: string | null;
 };
 
 let settingsCache: LocalSettings | null = null;

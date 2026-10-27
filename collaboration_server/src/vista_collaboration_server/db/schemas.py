@@ -48,10 +48,14 @@ class ItemTable(CollabTable, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     kind: str = Field(index=True)
     name: str
-    created_by: uuid.UUID
-    """ The install id of the VISTA that created the item. """
+    created_by: str
+    """ Who created the item: their Keycloak `sub` (in dev-headers mode, an install id). """
     created_by_name: str | None = None
-    """ Its display name at the time, for showing; never used to decide anything. """
+    """ Their name at the time, for showing; never used to decide anything. """
+    created_by_email: str | None = None
+    """ Kept here, not in any answer: who may see it is for access control to decide. """
+    created_by_install: uuid.UUID | None = None
+    """ The VISTA installation they created it from, as its request claimed. """
     head_version: int = 1
     """ The newest version's number. """
     created_at: str = Field(default_factory=now_iso)
@@ -69,8 +73,10 @@ class ItemVersionTable(CollabTable, table=True):
     """ The head this version was published on top of; `None` only for version 1. """
     manifest: dict[str, Any] = Field(sa_column=Column(JSON, nullable=False))
     blob_ref: str | None = None
-    created_by: uuid.UUID
+    created_by: str
     created_by_name: str | None = None
+    created_by_email: str | None = None
+    created_by_install: uuid.UUID | None = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -99,8 +105,9 @@ class ItemPublic(SQLModel):
     id: uuid.UUID
     kind: str
     name: str
-    created_by: uuid.UUID
+    created_by: str
     created_by_name: str | None
+    created_by_install: uuid.UUID | None
     head_version: int
     created_at: str
 
@@ -122,14 +129,23 @@ class VersionPublic(SQLModel):
     parent_version: int | None
     manifest: dict[str, Any]
     blob_ref: str | None
-    created_by: uuid.UUID
+    created_by: str
     created_by_name: str | None
+    created_by_install: uuid.UUID | None
     created_at: str
 
 
 class BlobPublic(SQLModel):
     blob_ref: str
     size: int
+
+
+class UserPublic(SQLModel):
+    """Who the server takes the caller to be: `GET /me`."""
+
+    sub: str
+    email: str | None
+    name: str | None
 
 
 class ServerVersion(SQLModel):

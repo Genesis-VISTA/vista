@@ -7,7 +7,7 @@ with a list of immutable, numbered *versions*; what a version means is in its
 manifest and blob, which VISTA backends write and read.
 """
 
-API_VERSION = 1
+API_VERSION = 2
 """
 The version of the HTTP API this server speaks, served by `GET /version`.
 

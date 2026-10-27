@@ -574,6 +574,20 @@ class LocalSettingsUpdate(SQLModel):
     """
     gitlab_token: str | None = None
     """ The researcher's gitlab.com token. Write-only, like `github_token`. """
+    collaboration_token: str | None = None
+    """
+    The token from the collaboration server's sign-in page. Write-only, like
+    `github_token`; a `Bearer ` copied with it is dropped.
+    """
+
+    @field_validator("collaboration_token", mode="before")
+    @classmethod
+    def _bare_token(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:7].lower() == "bearer ":
+                v = v[7:].strip()
+        return v
 
     @field_validator(*_SETTINGS_NULLABLE_FIELDS, mode="before")
     @classmethod
@@ -653,6 +667,13 @@ class LocalSettingsPublic(SQLModel):
     Whether each repository token is saved. The tokens themselves are left out:
     this is the model an agent is built from, and they are read from the settings
     row when used (`services/repo_tokens`), never from here.
+    """
+    has_collaboration_token: bool = False
+    collaboration_token: str | None = Field(default=None, exclude=True, repr=False)
+    """
+    Read by `services/collaboration` to sign its requests, and nothing else:
+    left out of every dump and repr, so it is neither in `GET /settings` nor in
+    the settings MCP tools are handed (`_build_vista_metadata`).
     """
     hpc_hidden_clusters: list[str] = []
     """
@@ -870,6 +891,20 @@ class LocalSettingsTable(SQLModel, table=True):
     @property
     def has_gitlab_token(self) -> bool:
         return bool(self.gitlab_token)
+
+    collaboration_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    The researcher's token for the collaboration server, pasted from its
+    sign-in page and sent as `Authorization: Bearer`. Encrypted at rest.
+    Cleared when the server's address changes, so it only ever goes to the
+    server that issued it (`services/local_settings.update`).
+    """
+
+    @property
+    def has_collaboration_token(self) -> bool:
+        return bool(self.collaboration_token)
 
     hpc_hidden_clusters: list[str] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)

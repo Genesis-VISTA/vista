@@ -136,18 +136,27 @@ Keep `db/schemas.py` changes additive: a nullable column, or a NOT NULL one with
 
 ### Collaboration server
 Where researchers explicitly publish and import projects, skills and knowledge bases.
-A generic item/version API on :8002, bound to 127.0.0.1: authentication is a
-stub that trusts the `X-Vista-Install-Id` / `X-Vista-Display-Name` headers
-(`services/identity.py`, the one place auth plugs in later).
+A generic item/version API, deployed on the Holly testbed behind Obsidian's gateway at
+`https://obsidian.ccs.ornl.gov/vista/api` (`collaboration_server/deploy/holly/`, and the
+README's Deployment section). Authentication is `services/identity.py`, the one place it
+lives: `auth_mode=oidc` (the default) verifies a Keycloak token itself, as well as the gateway;
+`dev-headers` trusts `X-Vista-Install-Id` / `X-Vista-Display-Name` and only listens on loopback.
+Every signed-in user can read and write everything for now; routes get a `User` (`sub`, `email`,
+`name`) for access control to be decided from later.
 ```bash
-./launch.sh logs --collab      # also start it, and point the backend at it
+./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
 cd collaboration_server && uv run vista-collaboration-server
 ```
-Development and tests only: no package, package launcher or Electron startup starts it. The
-backend reads its address from Settings, falling back to
-`VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets); with neither, publishing and
-importing are off and `GET /collaboration/status` says why. An unreachable server is never
-fatal. The UI's Publish and Import controls read `useCollaboration()` (`ui/lib/collaboration.ts`).
+No package, package launcher or Electron startup starts one. The backend reads its address
+from Settings, falling back to `VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets);
+with neither, publishing and importing are off and `GET /collaboration/status` says why. An
+unreachable server is never fatal. To sign in, the researcher opens the server's `/sign-in`
+page (a login gateway in front of the server logs them in; Obsidian's APISIX on the deployment)
+and pastes the token it shows into Settings: `collaboration_token`, write-only like
+`github_token`. The backend sends it only over https (or loopback), forgets it when the server
+address changes, and keeps it out of every settings dump. Nothing in VISTA knows which login is
+behind the gateway, so a self-hosted server can use any. The UI's Publish and Import controls read `useCollaboration()`
+(`ui/lib/collaboration.ts`), which needs `reachable` and `signed_in`.
 Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
 a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
 The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local

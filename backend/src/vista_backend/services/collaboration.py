@@ -9,8 +9,11 @@ reason, from `status`, for the interface to show. Nothing in this module raises
 out of `status`; the client's methods raise `CollaborationError` and nothing
 else, for the code that publishes or imports to report.
 
-The server trusts the identity headers sent here (`install_id` and the display
-name from the settings row). That is a stub, like the server's side of it.
+Requests carry the researcher's token, pasted into Settings from the server's
+`/sign-in` page, as `Authorization: Bearer` (only over https, or to this
+machine), and the installation's id and display name as headers. A deployed
+server believes only the token; one run for development (`auth_mode =
+"dev-headers"`) believes the headers and needs none.
 """
 
 import asyncio
@@ -18,11 +21,12 @@ import functools
 import hashlib
 import os
 import tempfile
+import ipaddress
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -30,7 +34,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from ..config import settings
 from ..db.schemas import LocalSettingsPublic
 
-API_VERSION = 1
+API_VERSION = 2
 """
 The collaboration server API this backend speaks. A server reporting another is
 refused by name, rather than half-understood.
@@ -75,6 +79,10 @@ class CollaborationRefused(CollaborationError):
         self.status_code = status_code
 
 
+class CollaborationUnauthorized(CollaborationRefused):
+    """The server, or a gateway in front of it, refused the token (or its absence)."""
+
+
 class VersionConflict(CollaborationRefused):
     """A publish named a parent that is no longer the item's head."""
 
@@ -109,6 +117,17 @@ class CollaborationStatus(BaseModel):
     source: Literal["settings", "config"] | None
     """ Whether the address is the researcher's, from Settings, or the installation's. """
     server_version: str | None = None
+    signed_in: bool = False
+    """ The server accepts this installation: `/me` answered. """
+    sign_in_required: bool = False
+    """ The server, or a gateway in front of it, refused the token or its absence. """
+    sign_in_url: str | None = None
+    """
+    The server's sign-in page, where the researcher gets a token to paste;
+    `None` when a token would not help: over plain http to another machine,
+    where it is never sent, or a server that signed this installation in
+    without one.
+    """
 
 
 class ServerInfo(BaseModel):
@@ -116,11 +135,17 @@ class ServerInfo(BaseModel):
     api_version: int
 
 
+class RemoteUser(BaseModel):
+    sub: str
+    email: str | None
+    name: str | None
+
+
 class RemoteItem(BaseModel):
     id: uuid.UUID
     kind: str
     name: str
-    created_by: uuid.UUID
+    created_by: str
     created_by_name: str | None
     head_version: int
     created_at: str
@@ -132,7 +157,7 @@ class RemoteVersion(BaseModel):
     parent_version: int | None
     manifest: dict[str, Any]
     blob_ref: str | None
-    created_by: uuid.UUID
+    created_by: str
     created_by_name: str | None
     created_at: str
 
@@ -209,6 +234,7 @@ class CollaborationClient:
         *,
         install_id: uuid.UUID,
         display_name: str | None,
+        token: str | None = None,
         timeout: httpx.Timeout = TRANSFER_TIMEOUT,
     ):
         self.base_url = base_url
@@ -216,6 +242,8 @@ class CollaborationClient:
         if display_name:
             # A header value is Latin-1 at best; the server percent-decodes it.
             headers[DISPLAY_NAME_HEADER] = quote(display_name, safe="")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         # Redirects are not followed: on a 301 or 302 httpx would turn a publish
         # into a GET and drop its body, and would send the identity headers to
         # wherever the redirect points. `_check` names the new address instead.
@@ -245,6 +273,11 @@ class CollaborationClient:
             raise CollaborationUnavailable(
                 f"The collaboration server at {self.base_url} redirects to "
                 f"{location}; use that address in Settings → Collaboration."
+            )
+        if response.status_code in (401, 403):
+            raise CollaborationUnauthorized(
+                f"{_detail(response)} {sign_in_message(self.base_url)}",
+                response.status_code,
             )
         if response.status_code == 409:
             try:
@@ -288,7 +321,7 @@ class CollaborationClient:
         """What the server is; refuses one that is not a server this backend speaks to."""
         try:
             info = await self._call(ServerInfo, "GET", "/version")
-        except CollaborationUnavailable:
+        except CollaborationUnavailable, CollaborationUnauthorized:
             raise
         except CollaborationRefused as error:
             raise CollaborationUnavailable(
@@ -305,6 +338,10 @@ class CollaborationClient:
                 f"{info.api_version}; this VISTA speaks version {API_VERSION}."
             )
         return info
+
+    async def me(self) -> RemoteUser:
+        """Who the server takes this installation to be."""
+        return await self._call(RemoteUser, "GET", "/me")
 
     async def list_items(self, kind: str | None = None) -> list[RemoteItem]:
         params = {"kind": kind} if kind else None
@@ -487,7 +524,38 @@ def client_for(
         url,
         install_id=local.install_id,
         display_name=local.display_name,
+        # Never over plain http to another machine, where anyone could read it.
+        token=local.collaboration_token if _private_channel(url) else None,
         timeout=timeout,
+    )
+
+
+def _private_channel(url: str) -> bool:
+    """`https`, or this machine: where a token may be sent."""
+    parts = urlsplit(url)
+    if parts.scheme == "https" or parts.hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(parts.hostname or "").is_loopback
+    except ValueError:
+        return False
+
+
+def sign_in_page(url: str) -> str:
+    """The server's `/sign-in` page, where the researcher gets a token."""
+    return f"{url.rstrip('/')}/sign-in"
+
+
+def sign_in_message(url: str) -> str:
+    """What to do about a refused token: get one, from the server's own page."""
+    if not _private_channel(url):
+        return (
+            f"VISTA sends its token only over https; use the server's https:// "
+            f"address instead of {url}."
+        )
+    return (
+        f"Get a token from {sign_in_page(url)} and paste it under Settings → "
+        "Collaboration."
     )
 
 
@@ -539,18 +607,30 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
             url=None,
             source=None,
         )
-    try:
-        async with client_for(local, timeout=STATUS_TIMEOUT) as client:
-            info = await client.version()
-    except CollaborationError as error:
-        return CollaborationStatus(
-            configured=True, reachable=False, reason=str(error), url=url, source=source
-        )
-    return CollaborationStatus(
+    status = CollaborationStatus(
         configured=True,
-        reachable=True,
+        reachable=False,
         reason=None,
         url=url,
         source=source,
-        server_version=info.server_version,
+        sign_in_url=sign_in_page(url) if _private_channel(url) else None,
     )
+    try:
+        async with client_for(local, timeout=STATUS_TIMEOUT) as client:
+            # Behind a login gateway even `/version` needs the token.
+            info = await client.version()
+            status.reachable = True
+            status.server_version = info.server_version
+            await client.me()
+    except CollaborationUnauthorized as error:
+        status.sign_in_required = True
+        status.reason = str(error)
+        return status
+    except CollaborationError as error:
+        status.reason = str(error)
+        return status
+    status.signed_in = True
+    if not local.collaboration_token:
+        # A dev-headers server, which takes no token and has no page.
+        status.sign_in_url = None
+    return status

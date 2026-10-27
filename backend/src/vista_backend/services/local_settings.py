@@ -19,7 +19,7 @@ from ..db.schemas import (
     LocalSettingsUpdate,
 )
 
-WRITE_ONLY_TOKENS = ("github_token", "gitlab_token")
+WRITE_ONLY_TOKENS = ("github_token", "gitlab_token", "collaboration_token")
 """Fields that are never read back, so a save that sends null keeps them."""
 
 
@@ -49,6 +49,12 @@ async def update(
 ) -> LocalSettingsTable:
     row = await get(session)
     changes = updates.model_dump(exclude_unset=True)
+    if (
+        "collaboration_server_url" in changes
+        and changes["collaboration_server_url"] != row.collaboration_server_url
+    ):
+        # The token is the old server's: never send it to the new one.
+        row.collaboration_token = None
     for key in WRITE_ONLY_TOKENS:
         # Write-only: null keeps the stored token (the client never has it to
         # send back), "" removes it.
