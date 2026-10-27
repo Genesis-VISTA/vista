@@ -54,7 +54,7 @@
 
 ## 8. Acceptance
 
-- [ ] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
+- [x] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
 - [ ] 8.2 Manual, before merge, through VISTA's own `submit_hpc_job` on Odo with Sam's tokens:
   - `example` with `constraint="nvme"`: expect a `ToolError` naming OLCF and a cancelled job, which also confirms a just-queued job's Slurm record has `constraints`. If the result is "unverified" instead, record it and raise the follow-up in design.md's Risks.
   - `example` with a fake reservation: expect Slurm's "Requested reservation is invalid".
