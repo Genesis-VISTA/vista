@@ -69,6 +69,13 @@ Navigation the step needs, such as `/projects` for the project step and `/files`
 files step, is done by the provider through `router.push` when the step starts. The
 researcher's clicks then do the rest.
 
+A replay is `/settings` changing, while the provider is mounted, to
+`{status: "in_progress", step: "welcome"}` from anything else, whoever wrote it. It clears
+the session's events, skips and acknowledgements, so the tour really starts over. The off
+switch (§4) only stops the tour opening by itself: with it set, a never-started tour or one
+left in progress by an earlier session stays closed and nothing is written, but a replay in
+this session still opens the tour.
+
 ### 3. driver.js for drawing, not for flow
 
 The dimmed backdrop, the cut-out, placement, and re-placement on scroll and resize use
@@ -76,12 +83,26 @@ The dimmed backdrop, the cut-out, placement, and re-placement on scroll and resi
 writing; check again at implementation. The provider calls `driver.highlight()` for the current
 step only, and does not use driver.js's own step list or its Next and Back buttons. Flow belongs
 to `nextTourStep`, and the popover's buttons (Next, Skip this step, Exit tutorial) are VISTA's,
-rendered into driver.js's popover via `onPopoverRender`.
+rendered into driver.js's popover via `onPopoverRender`. Next appears only on a coachmark that
+Next completes, which `completesOnNext(step, subStep)` in `ui/lib/onboarding.ts` says. A
+coachmark that waits for an action offers only Skip and Exit. driver.js hides its footer when
+it has no buttons of its own (`showButtons: []`), so `onPopoverRender` shows it again for
+VISTA's.
+
+Each coachmark's title, text and optional link come from `coachmarkFor(step, subStep, ...)` in
+`ui/lib/onboarding-copy.ts`, kept apart from the step logic so wording can change without
+touching it.
 
 Its CSS is overridden in `globals.css` with theme tokens, so light and dark mode both work and
-`check-colors.mjs` passes. `allowClose` maps Escape to Exit. Targets are found by `data-tour`
-attributes, and a missing target waits for it to mount, through a `MutationObserver` with a
-short timeout. Pages render asynchronously, and a missing anchor must not stall the tour.
+`check-colors.mjs` passes. Escape maps to Exit through the provider's own `keydown` listener on
+the document. driver.js's keyboard control is off, because in `highlight()` mode its arrow keys
+would end the highlight and exit the tour. Targets are found by `data-tour` attributes, and a
+missing target waits for it to mount, through a `MutationObserver` with a short timeout. Pages
+render asynchronously, and a missing anchor must not stall the tour.
+
+While a coachmark is up, driver.js makes everything except the highlighted element
+unclickable. A step that needs the researcher to use more than one control, such as the
+provider choice and key field in Settings, highlights the element that contains them all.
 
 *Alternatives:*
 - Hand-rolled coachmarks: placement, scroll and resize handling, and focus handling are code
