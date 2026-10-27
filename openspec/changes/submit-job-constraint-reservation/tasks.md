@@ -2,12 +2,12 @@
 
 ## 1. Arguments and validation
 
-- [ ] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Before `resolve_job` side effects and the dry-run branch, refuse a value that is empty or contains whitespace or a control character (the design's pattern), raising `ToolError` naming the argument. No character allow-list. Verify with tests in `tests/test_submit_job_spec.py`:
+- [x] 1.1 Add optional `constraint: str | None` and `reservation: str | None` to `submit_hpc_job`. Before `resolve_job` side effects and the dry-run branch, refuse a value that is empty or contains whitespace or a control character (the design's pattern), raising `ToolError` naming the argument. No character allow-list. Verify with tests in `tests/test_submit_job_spec.py`:
   - `nvme\n#SBATCH -A x`, `res 1`, `""` and a value with a tab are refused, and no client is called.
   - `[(knl&snc4)*4&haswell*1]` and `r1,r2` reach the IRI job unchanged.
   - In dry-run mode, a bad value records no job (`tests/test_dry_run.py`).
 - [x] 1.2 Add the effective-constraint helper (the argument if given, else `defaults.iri.constraint`) and pass the effective constraint and the reservation into all four `_submit_*_job` functions. Verify the existing spec, Lux, skill-job, forge-pretrain and job-account tests still pass.
-- [ ] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
+- [x] 1.3 Add `constraint` and `reservation` to the tool description's Args block:
   - the constraint replaces the job's default, and the agent restates the default to keep it, e.g. `gpu&hbm80g`
   - that all four clusters take both
   - that Odo and Frontier report what Slurm recorded (`dropped:` / `verified:` lines)

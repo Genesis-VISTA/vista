@@ -177,7 +177,11 @@ async def test_the_tool_description_mentions_skill_jobs():
     assert "restate" in tool.description and "gpu&hbm80g" in tool.description
     assert "reservation: Name of a Slurm reservation" in tool.description
     assert "all four clusters" in tool.description
-    assert "after submitting" in tool.description
+    assert "`dropped:`" in tool.description and "`verified: no`" in tool.description
+    # Facts the agent learns from the report, not from a description that goes stale.
+    args = tool.description.split("constraint: Slurm node constraint")[1]
+    args = args.split("Returns:")[0]
+    assert "OLCF" not in args and "cancel" not in args
 
 
 # --- the upload set ---------------------------------------------------------

@@ -399,10 +399,10 @@ def _tool_ctx(user_cfg: UserConfig):
         {"constraint": "nvme\n#SBATCH -A x"},
         {"constraint": "gpu\n"},
         {"constraint": ""},
+        {"constraint": "nvme\tgpu"},
         {"reservation": "res 1"},
         {"reservation": "res\n"},
-        {"reservation": "a&b"},
-        {"reservation": "a(b)"},
+        {"reservation": ""},
     ],
 )
 async def test_submit_refuses_an_injected_constraint_or_reservation(
@@ -426,10 +426,10 @@ async def test_submit_refuses_an_injected_constraint_or_reservation(
             await submit_job_mcp.submit_hpc_job(
                 _tool_ctx(user_cfg), job="example", cluster=cluster, **bad
             )
-        assert "letters, digits" in str(exc.value)
+        assert "whitespace or control characters" in str(exc.value)
 
 
-async def test_submit_accepts_a_constraint_and_reservation_in_the_allowed_set(
+async def test_submit_passes_valid_slurm_syntax_through_unchanged(
     monkeypatch, user_cfg
 ):
     iri = FakeIriClient(job_id="odo-9")
@@ -442,16 +442,16 @@ async def test_submit_accepts_a_constraint_and_reservation_in_the_allowed_set(
         _tool_ctx(user_cfg),
         job="example",
         cluster="odo",
-        # Parentheses group features inside brackets; reservations may be a list.
-        constraint="[(knl&snc4)*4&haswell*1]|gpu&hbm80g,x:y.z_w-1",
-        reservation="my_res.1:a-b,train2",
+        # Slurm judges the syntax: grouped features and a reservation list pass as is.
+        constraint="[(knl&snc4)*4&haswell*1]",
+        reservation="r1,r2",
     )
     assert "job_id: odo-9" in summary
     [(spec, _)] = iri.submitted
     assert spec["attributes"]["custom_attributes"] == {
-        "constraint": "[(knl&snc4)*4&haswell*1]|gpu&hbm80g,x:y.z_w-1"
+        "constraint": "[(knl&snc4)*4&haswell*1]"
     }
-    assert spec["attributes"]["reservation_id"] == "my_res.1:a-b,train2"
+    assert spec["attributes"]["reservation_id"] == "r1,r2"
 
 
 def test_effective_constraint_replaces_the_job_default():

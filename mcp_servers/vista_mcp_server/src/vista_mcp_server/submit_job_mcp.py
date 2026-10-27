@@ -450,25 +450,20 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     return _default_cluster(cfg)
 
 
-# What a Slurm constraint / reservation may contain. Both end up in a batch script
-# or an IRI payload, so anything else (a newline starting a new #SBATCH line, a
-# space) is refused before any side effect. `fullmatch`, because `$` lets a
-# trailing newline through.
-_CONSTRAINT_RE = re.compile(r"[A-Za-z0-9_.:,*&|\[\]()-]+")
-_RESERVATION_RE = re.compile(r"[A-Za-z0-9_.:,-]+")
+# A Slurm constraint / reservation is one non-empty word. On Lux it lands in an
+# #SBATCH line, where a newline would start a new directive, so whitespace and
+# control characters are refused before any side effect; Slurm judges the rest.
+# `fullmatch`, because `$` lets a trailing newline through.
+_SLURM_WORD_RE = re.compile(r"[^\s\x00-\x1f\x7f]+")
 
 
 def _validate_slurm_args(constraint: str | None, reservation: str | None) -> None:
-    if constraint is not None and not _CONSTRAINT_RE.fullmatch(constraint):
-        raise ToolError(
-            f"constraint {constraint!r} is not allowed: use only letters, digits and "
-            "the characters _ . : , * & | [ ] ( ) -"
-        )
-    if reservation is not None and not _RESERVATION_RE.fullmatch(reservation):
-        raise ToolError(
-            f"reservation {reservation!r} is not allowed: use only letters, digits and "
-            "the characters _ . : , -"
-        )
+    for name, value in (("constraint", constraint), ("reservation", reservation)):
+        if value is not None and not _SLURM_WORD_RE.fullmatch(value):
+            raise ToolError(
+                f"{name} {value!r} is not allowed: it must be non-empty, with no "
+                "whitespace or control characters"
+            )
 
 
 def _effective_constraint(constraint: str | None, defaults: IriDefaults | None) -> str | None:
@@ -498,15 +493,13 @@ def _effective_constraint(constraint: str | None, defaults: IriDefaults | None) 
             constraint: Slurm node constraint for this submission, e.g. "gpu&hbm80g". It
                 replaces the job's default constraint rather than adding to it, so restate
                 the default (e.g. "gpu&hbm80g") to keep it. Omit it to use the job's default.
-                Letters, digits and _ . : , * & | [ ] ( ) - only. Perlmutter and Lux
-                take it. OLCF currently drops constraints, so Odo and Frontier refuse a
-                constrained job (it is submitted, found unconstrained and cancelled):
-                send constraints to Perlmutter or Lux.
+                Taken by all four clusters.
             reservation: Name of a Slurm reservation to run in (several, comma-separated).
-                Omit it to run outside one. Letters, digits and _ . : , - only. Taken by
-                all four clusters. Odo and Frontier check after submitting that Slurm
-                recorded the reservation; if it did not show it, the job is kept and
-                the summary says so in a `verified: no` line.
+                Omit it to run outside one. Taken by all four clusters.
+                Neither may contain whitespace. On Odo and Frontier, the summary reports
+                what Slurm recorded: a `dropped:` line if it did not apply the constraint,
+                and a `verified: no` line if it could not confirm a value. The job is kept
+                either way.
 
         Returns:
             A multi-line ground-truth summary of the submitted job (job_id, cluster,
