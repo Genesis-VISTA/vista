@@ -618,17 +618,20 @@ async def test_olcf_dropped_constraint_cancels_and_names_the_alternatives(
 
 
 @pytest.mark.parametrize("cluster", ["odo", "frontier"])
-async def test_olcf_dropped_reservation_cancels(monkeypatch, user_cfg, cluster):
-    # The constraint was applied; only the reservation is empty.
+async def test_olcf_empty_reservation_keeps_the_job_unverified(
+    monkeypatch, user_cfg, cluster
+):
+    # OLCF passes reservations through, so an empty name is a record that lags or
+    # differs, not a drop: the job is kept and the summary says it is unverified.
     iri = FakeIriClient(
         s3m={"constraints": "nvme", "reservation": {"id": 0, "name": ""}}
     )
-    with pytest.raises(ToolError, match="reservation 'train1'") as exc:
-        await _olcf_submit(
-            monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
-        )
-    assert "constraint" not in str(exc.value).split("Slurm")[0]
-    assert iri.cancelled == ["iri-job-1"]
+    result = await _olcf_submit(
+        monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
+    )
+    assert result[0] == "iri-job-1"
+    assert result[-1] == "Slurm record shows no reservation yet"
+    assert iri.cancelled == []
 
 
 @pytest.mark.parametrize("cluster", ["odo", "frontier"])
@@ -697,25 +700,14 @@ async def test_olcf_missing_reservation_record_keeps_the_job_unverified(
 
 
 @pytest.mark.parametrize("cluster", ["odo", "frontier"])
-async def test_olcf_dropped_reservation_cancels_beside_an_unreadable_constraint(
+async def test_olcf_dropped_constraint_cancels_beside_an_unreadable_reservation(
     monkeypatch, user_cfg, cluster
 ):
-    # The constraint can't be judged, but the reservation was clearly dropped.
-    iri = FakeIriClient(s3m={"reservation": {"id": 0, "name": ""}})
-    with pytest.raises(ToolError, match="reservation 'train1'"):
-        await _olcf_submit(
-            monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
-        )
-    assert iri.cancelled == ["iri-job-1"]
-
-
-async def test_olcf_dropped_constraint_cancels_beside_an_unreadable_reservation(
-    monkeypatch, user_cfg
-):
-    iri = FakeIriClient(s3m={"constraints": "", "reservation": "none"})
+    # A reservation is never cancelled on, but it must not hide a dropped constraint.
+    iri = FakeIriClient(s3m={"constraints": "", "reservation": {"id": 0, "name": ""}})
     with pytest.raises(ToolError, match="constraint 'nvme'"):
         await _olcf_submit(
-            monkeypatch, user_cfg, "odo", iri, constraint="nvme", reservation="train1"
+            monkeypatch, user_cfg, cluster, iri, constraint="nvme", reservation="train1"
         )
     assert iri.cancelled == ["iri-job-1"]
 

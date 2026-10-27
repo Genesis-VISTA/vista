@@ -87,15 +87,25 @@ constraint or the reservation is set:
 
 1. After `iri_client.submit_job`, call `get_job_status(job_id)` once.
 2. Read `provider_status.meta_data.s3m` from the result.
-3. A requested constraint counts as dropped when `constraints == ""`. A
-   requested reservation counts as dropped when `reservation.name` is empty.
-   Any non-empty constraint counts as passed: Slurm may normalise the
-   expression, and nothing suggests a partial rewrite.
-4. If either was dropped, call `cancel_job(job_id)`. Then raise a `ToolError`
-   saying OLCF did not pass the value to Slurm (job id included), and that
-   Perlmutter and Lux take a constraint.
-5. If the status call raises, or the `s3m` record or its fields are missing,
-   keep the job and add `verified: no (<reason>)` to the summary.
+3. A requested constraint counts as dropped when `constraints == ""`. Any
+   non-empty constraint counts as passed: Slurm may normalise the expression,
+   and nothing suggests a partial rewrite.
+4. If the constraint was dropped, call `cancel_job(job_id)`. Then raise a
+   `ToolError` saying OLCF did not pass the constraint to Slurm (job id
+   included), and that Perlmutter and Lux take a constraint.
+5. A reservation never cancels. OLCF is known to pass it: Slurm refuses an
+   unknown one at submit, so a submit that succeeded reached Slurm with it. An
+   empty `reservation.name` is therefore more likely a lagging or differently
+   shaped record, and it only marks the reservation unverified.
+6. If the status call raises, or the `s3m` record or its fields are missing,
+   or the reservation is unverified, keep the job and add
+   `verified: no (<reason>)` to the summary. Each value is judged on its own,
+   so an unverified reservation never hides a dropped constraint.
+- *Rejected: cancelling on an empty reservation name.* No live run has used a
+  real reservation, so whether a just-queued record carries it is unknown, and
+  a wrong cancel would break every reservation submit on OLCF.
+- *Rejected: re-reading the status before cancelling.* It slows every
+  reservation submit and still guesses at the lag.
 
 The check lives in a helper that both `_submit_odo_job` and
 `_submit_frontier_job` call, so the two stay identical.

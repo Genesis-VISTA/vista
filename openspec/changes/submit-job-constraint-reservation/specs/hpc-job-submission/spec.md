@@ -24,17 +24,19 @@ The submission result SHALL report the effective constraint and reservation.
 
 On Odo and Frontier, after submitting a job with a constraint or a
 reservation, the system SHALL read Slurm's record of that job:
-- If the record shows no constraint where one was requested, or no reservation
-  where one was requested, the system SHALL cancel the job and fail. The
-  failure SHALL say that OLCF did not pass the constraint or reservation to
-  Slurm, and SHALL name Perlmutter and Lux as the clusters that take a
-  constraint.
+- If the record shows no constraint where one was requested, the system SHALL
+  cancel the job and fail. The failure SHALL say that OLCF did not pass the
+  constraint to Slurm, and SHALL name Perlmutter and Lux as the clusters that
+  take a constraint.
 - Any non-empty recorded constraint SHALL count as passed.
-- The constraint and the reservation SHALL be judged separately: one shown
-  as dropped SHALL cancel the job even when the other cannot be read.
-- If the record cannot be read, or lacks those fields, and nothing was shown
-  as dropped, the system SHALL keep the job, and the submission result SHALL
-  say the constraint or reservation is unverified.
+- A reservation SHALL never cancel the job. OLCF passes reservations to Slurm,
+  so a record that shows no reservation where one was requested SHALL make the
+  reservation unverified.
+- The constraint and the reservation SHALL be judged separately: a dropped
+  constraint SHALL cancel the job even when the reservation is unverified.
+- If the record cannot be read, or lacks those fields, and no constraint was
+  dropped, the system SHALL keep the job, and the submission result SHALL say
+  the constraint or reservation is unverified.
 
 #### Scenario: Constraint replaces the default on Perlmutter
 - **WHEN** a job whose Perlmutter default constraint is `gpu` is submitted to Perlmutter with constraint `gpu&hbm80g`
@@ -80,9 +82,13 @@ reservation, the system SHALL read Slurm's record of that job:
 - **WHEN** a job is submitted to Odo with a reservation and reading its record fails
 - **THEN** the job is kept and the submission result says the reservation is unverified
 
-#### Scenario: Dropped reservation beside an unreadable constraint
-- **WHEN** a job is submitted to Odo with a constraint and a reservation, and Slurm's record has no constraints field but an empty reservation name
-- **THEN** the job is cancelled and submission fails, saying OLCF did not pass the reservation to Slurm
+#### Scenario: Record shows no reservation
+- **WHEN** a job is submitted to Frontier with reservation `train1` and Slurm's record shows an empty reservation name
+- **THEN** the job is kept and the submission result says the reservation is unverified
+
+#### Scenario: Dropped constraint beside an unverified reservation
+- **WHEN** a job is submitted to Odo with constraint `nvme` and a reservation, and Slurm's record shows an empty constraint and an empty reservation name
+- **THEN** the job is cancelled and submission fails, saying OLCF did not pass the constraint to Slurm
 
 #### Scenario: Campaign cycle with a reservation
 - **WHEN** a campaign cycle is dispatched with reservation `train1`

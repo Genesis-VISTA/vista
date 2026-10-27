@@ -505,8 +505,8 @@ def _effective_constraint(constraint: str | None, defaults: IriDefaults | None) 
             reservation: Name of a Slurm reservation to run in (several, comma-separated).
                 Omit it to run outside one. Letters, digits and _ . : , - only. Taken by
                 all four clusters. Odo and Frontier check after submitting that Slurm
-                recorded the constraint and reservation, and cancel the job if either
-                was dropped.
+                recorded the reservation; if it did not show it, the job is kept and
+                the summary says so in a `verified: no` line.
 
         Returns:
             A multi-line ground-truth summary of the submitted job (job_id, cluster,
@@ -630,9 +630,11 @@ async def _check_olcf_slurm_args(
     OLCF's IRI layer accepts and may silently drop. Runs only when one was requested.
 
     Reads Slurm's own record from the job status (`provider_status.meta_data.s3m`).
-    A requested value that is empty there was dropped: the job is cancelled and a
-    ToolError says so. Returns None when verified or nothing was requested, else a
-    short reason the check was indeterminate (the job is kept).
+    A requested constraint that is empty there was dropped: the job is cancelled and
+    a ToolError says so. A reservation is never cancelled on: OLCF is known to pass
+    it (Slurm refuses an unknown one at submit), so an empty one more likely means a
+    lagging or differently shaped record. Returns None when verified or nothing was
+    requested, else a short reason the check was indeterminate (the job is kept).
     """
     if not constraint and not reservation:
         return None
@@ -647,23 +649,23 @@ async def _check_olcf_slurm_args(
     if not isinstance(record, dict):
         return "Slurm record not in the job status"
 
-    # Each value is judged on its own, so one that is unreadable never hides one
-    # that was dropped.
-    dropped: list[str] = []
+    # Each value is judged on its own, so an unreadable reservation never hides a
+    # dropped constraint.
+    dropped = False
     unreadable: list[str] = []
     if constraint:
         constraints = record.get("constraints")
         if not isinstance(constraints, str):
             unreadable.append("Slurm record lacks constraints")
         elif constraints == "":
-            dropped.append(f"constraint {constraint!r}")
+            dropped = True
     if reservation:
         res = record.get("reservation")
         name = res.get("name") if isinstance(res, dict) else None
         if not isinstance(name, str):
             unreadable.append("Slurm record lacks the reservation")
         elif name == "":
-            dropped.append(f"reservation {reservation!r}")
+            unreadable.append("Slurm record shows no reservation yet")
     if not dropped:
         return "; ".join(unreadable) or None
 
@@ -673,7 +675,7 @@ async def _check_olcf_slurm_args(
     except Exception as e:
         outcome = f"Cancelling it failed ({e}): it may still be queued, so cancel it yourself."
     raise ToolError(
-        f"OLCF did not pass the {' or '.join(dropped)} to Slurm for job {job_id}. {outcome} "
+        f"OLCF did not pass the constraint {constraint!r} to Slurm for job {job_id}. {outcome} "
         "Submit without it, or use Perlmutter or Lux, which take a constraint."
     )
 

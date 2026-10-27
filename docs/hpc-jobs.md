@@ -113,10 +113,12 @@ but letters, digits and `_ . : , -` (a constraint may also use `* & | [ ] ( )`).
 | Perlmutter, Odo, Frontier | over IRI, as `custom_attributes.constraint` and `reservation_id`, only when set |
 
 On Odo and Frontier VISTA then reads Slurm's record of the job once. If Slurm did not record
-a value that was requested, the job is cancelled and the tool fails, saying OLCF did not pass
-it to Slurm and naming Perlmutter and Lux. Each value is judged on its own, so a dropped
-one cancels the job even when the other cannot be read. If nothing was dropped but a value
-cannot be read, the job is kept and the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
+a requested constraint, the job is cancelled and the tool fails, saying OLCF did not pass it
+to Slurm and naming Perlmutter and Lux. A reservation never cancels the job: OLCF passes
+reservations (Slurm refuses an unknown one at submit), so a record showing none only marks
+it unverified. Each value is judged on its own, so an unverified reservation never hides a
+dropped constraint. Whenever a value cannot be confirmed and no constraint was dropped, the
+job is kept and the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
 constraints, so a constrained submit to Odo or Frontier fails today; use Perlmutter or Lux.
 The summary adds `constraint:`, `reservation:` and `verified:` lines where they apply.
 

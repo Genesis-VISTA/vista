@@ -28,9 +28,9 @@ it is silently dropped.
   dry runs included. Anything else is refused, so on Lux no value can add
   `#SBATCH` lines or shell.
 - On Odo and Frontier, the system reads Slurm's record of the job right after
-  submitting it. If a requested constraint or reservation is missing, it
-  cancels the job and refuses, naming the cause. If the record cannot be read,
-  the job is kept and the summary says the request is unverified. Once OLCF
+  submitting it. If a requested constraint is missing, it cancels the job and
+  refuses, naming the cause. If the record cannot be read, or shows no
+  reservation, the job is kept and the summary says the request is unverified. Once OLCF
   forwards constraints the check passes, and nothing in VISTA needs to change.
 - The submit summary reports the effective constraint and reservation.
 - Perlmutter stops sending a `custom_attributes` constraint of `null` for jobs
