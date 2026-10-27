@@ -58,8 +58,10 @@ case "${1:-}" in
 esac
 EOF
 
+# A backend that exits at once never answers, so its health check fails.
 cat > "$PACKAGE/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+[[ -n "${TEST_BACKEND_EXIT:-}" && "$*" == *openapi.json* ]] && exit 7
 exit 0
 EOF
 
@@ -71,6 +73,11 @@ for service in \
 #!/usr/bin/env bash
 PID_FILE="$TEST_SERVICE_PIDS/${0##*/}.pid"
 printf '%s\n' "$$" > "$PID_FILE"
+# TEST_BACKEND_EXIT: the backend stops at once, saying why only for "refuse".
+if [[ "${0##*/}" == vista-backend && -n "${TEST_BACKEND_EXIT:-}" ]]; then
+  [[ "$TEST_BACKEND_EXIT" != refuse ]] || printf 'database-incompatible\n' > "$VISTA_STARTUP_FAILURE_FILE"
+  exit 1
+fi
 exec perl -e '
   my $marker = shift;
   my $stop = sub {
@@ -232,6 +239,46 @@ supervised_suite() {
   [[ "$image_status" != 0 ]]
   grep -qx '{"protocol":1,"phase":"sandbox","state":"failed","code":"sandbox-image-import-failed","log":"setup.log"}' \
     "$TMP/image-stdout"
+
+  # A service that exits before it is healthy fails its phase at once, not
+  # after its health timeout (600s for the backend), with the code the backend
+  # left in VISTA_STARTUP_FAILURE_FILE, or startup-error when it left none.
+  for backend_exit in refuse silent; do
+    expected_code=database-incompatible
+    [[ "$backend_exit" == refuse ]] || expected_code=startup-error
+    exit_status=0
+    exit_started=$SECONDS
+    # Held open, as the application does: EOF on stdin would be a stop request.
+    mkfifo "$TMP/exit-$os-$backend_exit.pipe"
+    exec 9<> "$TMP/exit-$os-$backend_exit.pipe"
+    PARENT_PIPE_OPEN=true
+    env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+      TEST_SERVICE_PIDS="$TMP/service-pids" TEST_BACKEND_EXIT="$backend_exit" \
+      VISTA_UI_PORT="$PORT_BASE" \
+      VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+      VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+      "$PACKAGE/vista" --supervised --progress=jsonl \
+      < "$TMP/exit-$os-$backend_exit.pipe" 9>&- \
+      > "$TMP/exit-stdout" 2> "$TMP/exit-stderr" || exit_status=$?
+    exec 9>&-
+    PARENT_PIPE_OPEN=false
+    [[ "$exit_status" != 0 ]]
+    if (( SECONDS - exit_started > 60 )); then
+      printf 'a backend that exited was not reported for %ss\n' \
+        "$(( SECONDS - exit_started ))" >&2
+      exit 1
+    fi
+    grep -qx "{\"protocol\":1,\"phase\":\"backend\",\"state\":\"failed\",\"code\":\"$expected_code\",\"log\":\"backend.log\"}" \
+      "$TMP/exit-stdout" || {
+      printf 'expected backend failure %s, got:\n' "$expected_code" >&2
+      cat "$TMP/exit-stdout" "$TMP/exit-stderr" >&2
+      exit 1
+    }
+    grep -q 'stopped before it was ready' "$TMP/exit-stderr"
+    stop_fake_services
+    rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
+      "$TMP"/service-pids/*.alive "$TMP"/service-pids/*.ready
+  done
 
   mkfifo "$TMP/parent-$os.pipe"
   exec 9<> "$TMP/parent-$os.pipe"

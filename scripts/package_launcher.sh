@@ -619,9 +619,23 @@ interruptible() {
   wait $!
 }
 
+# Waits for `url` to answer, for up to `seconds`. A service that has exited
+# stops the wait at once: the backend writes why to VISTA_STARTUP_FAILURE_FILE
+# (`database-incompatible`, say), and that code is reported if it is a token the
+# protocol accepts; anything else, or no file, is startup-error.
 wait_for() {
-  local url="$1" seconds="$2" logfile="$3" what="$4" i
+  local url="$1" seconds="$2" logfile="$3" what="$4" pid="$5" i code=''
   for (( i = 0; i < seconds; i++ )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      [[ ! -r "$STARTUP_FAILURE_FILE" ]] \
+        || code="$(head -n 1 "$STARTUP_FAILURE_FILE" 2>/dev/null | tr -d '[:space:]')" || code=''
+      [[ "$code" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || code=startup-error
+      echo >&2
+      echo "error: $what stopped before it was ready. Last lines of $logfile:" >&2
+      tail -15 "$logfile" >&2
+      progress_event "$CURRENT_PHASE" failed '' '' '' "$code" "${logfile##*/}"
+      exit 1
+    fi
     interruptible curl -s -o /dev/null -m 5 "$url" && return 0
     interruptible sleep 1
   done
@@ -638,13 +652,18 @@ wait_for() {
 log "VISTA $VERSION"
 log "Starting services (logs in $LOGS)..."
 
+# The backend writes the code of a database it refuses here (see wait_for).
+STARTUP_FAILURE_FILE="$LOGS/startup-failure"
+rm -f "$STARTUP_FAILURE_FILE"
+export VISTA_STARTUP_FAILURE_FILE="$STARTUP_FAILURE_FILE"
+
 CURRENT_PHASE=mcp
 CURRENT_LOG=mcp.log
 progress_event mcp running "Starting scientific tools"
 "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
   --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
 PIDS+=($!)
-wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server"
+wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server" "${PIDS[${#PIDS[@]}-1]}"
 progress_event mcp ready
 
 if [[ "$FIRST_RUN" == true ]]; then
@@ -655,7 +674,7 @@ CURRENT_LOG=backend.log
 progress_event backend running "Preparing VISTA"
 "$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
 PIDS+=($!)
-wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend"
+wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend" "${PIDS[${#PIDS[@]}-1]}"
 progress_event backend ready
 
 CURRENT_PHASE=ui
@@ -664,7 +683,7 @@ progress_event ui running "Starting the interface"
 PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
   "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
 PIDS+=($!)
-wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
+wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface" "${PIDS[${#PIDS[@]}-1]}"
 
 # ─── window ─────────────────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld(
       return () => ipcRenderer.removeListener(STATE_CHANNEL, listener);
     },
     retry: () => ipcRenderer.invoke('startup:retry'),
+    resetData: () => ipcRenderer.invoke('startup:reset-data'),
     openLogs: () => ipcRenderer.invoke('startup:open-logs'),
     copyDiagnostics: () => ipcRenderer.invoke('startup:copy-diagnostics'),
     quit: () => ipcRenderer.invoke('startup:quit'),

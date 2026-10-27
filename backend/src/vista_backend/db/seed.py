@@ -446,7 +446,7 @@ async def seed_db(engine: AsyncEngine) -> None:
 
         projects = [
             ProjectTable(
-                id=uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661"),
+                id=ALLOY_DESIGN_PROJECT_ID,
                 name="alloy-design",
                 description=(
                     "High Entropy Alloy Design — runs the alloy Tc campaign "
@@ -477,7 +477,7 @@ async def seed_db(engine: AsyncEngine) -> None:
                 usage_limits=dict(request_limit=600),
             ),
             ProjectTable(
-                id=uuid.UUID("282531e7-1e05-4369-a339-9d1b4f20aa89"),
+                id=MOLTEN_SALT_PROJECT_ID,
                 name="molten-salt",
                 description=(
                     "Molten salt thermophysical properties assistant — querying the MSTDB-TP "
@@ -531,6 +531,8 @@ async def seed_db(engine: AsyncEngine) -> None:
         await session.commit()
 
 
+ALLOY_DESIGN_PROJECT_ID = uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661")
+MOLTEN_SALT_PROJECT_ID = uuid.UUID("282531e7-1e05-4369-a339-9d1b4f20aa89")
 AI_SAFETY_PROJECT_ID = uuid.UUID("5c0a4f3e-7b1d-4e8a-9a52-3d6f0c1b7e24")
 AI_SAFETY_KB_ID = uuid.UUID("a3e7c915-42d8-4b6f-8f0e-9d1b5c7a2e46")
 AI_SAFETY_SLUG = "ai-safety"

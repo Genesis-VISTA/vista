@@ -132,6 +132,8 @@ cd backend
 uv run vista-backend
 ```
 
+Keep `db/schemas.py` changes additive: a nullable column, or a NOT NULL one with a server default. A dropped, renamed or retyped column, or a NOT NULL column without a default, fails `db/schema_check.py` (run from `init_db`) on every existing install, and each researcher is prompted to back up and reset their data.
+
 ### Collaboration server
 Where researchers explicitly publish and import projects, skills and knowledge bases.
 A generic item/version API on :8002, bound to 127.0.0.1: authentication is a

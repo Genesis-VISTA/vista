@@ -27,11 +27,41 @@ const FAILURE_MESSAGES = Object.freeze({
   'virtualisation-unavailable': 'This computer cannot run the code-execution sandbox: hardware virtualisation is unavailable. Open Logs says how to enable it.',
   'health-timeout': 'A VISTA service did not become ready in time.',
   'startup-error': 'VISTA could not complete startup.',
+  'database-incompatible': 'Your local data is incompatible with this version of VISTA, please reset.',
   'protocol-error': 'This VISTA application and launcher are not compatible.',
   'execution-policy-all-signed': 'Group Policy on this computer lets PowerShell run only signed scripts (AllSigned), and VISTA\'s launcher is not signed. Ask your IT administrator to allow it.',
 });
 /** Every failure code with a message of its own; anything else reads as startup-error. */
 export const FAILURE_CODES = Object.freeze(Object.keys(FAILURE_MESSAGES));
+
+/** The failure that only Back up and reset remedies; the backend's DATABASE_INCOMPATIBLE. */
+export const DATABASE_INCOMPATIBLE = 'database-incompatible';
+
+/**
+ * The remedies the startup window offers for a failure, decided here and not in
+ * the renderer. Open Logs, Copy Diagnostics and Quit always show; these are the
+ * rest. A later action (an 'upgrade-data' beside 'backup-and-reset') is one more
+ * entry here and one more button.
+ *
+ * @param {string} code
+ * @returns {Array<'retry' | 'backup-and-reset'>}
+ */
+export function failureActionsFor(code) {
+  return code === DATABASE_INCOMPATIBLE ? ['backup-and-reset'] : ['retry'];
+}
+
+/**
+ * Whether a reset may run now: the window is showing the incompatible-data
+ * failure and the launcher has finished stopping.
+ *
+ * @param {{ status?: string, failure?: { code?: string } | null } | null | undefined} snapshot
+ * @param {unknown} child the launcher controller's running child process, or null
+ */
+export function resetAllowed(snapshot, child) {
+  return snapshot?.status === 'failed'
+    && snapshot.failure?.code === DATABASE_INCOMPATIBLE
+    && !child;
+}
 
 const ALLOWED_KEYS = new Set(['protocol', 'phase', 'state', 'label', 'skipped', 'url', 'code', 'log']);
 const SAFE_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
@@ -284,6 +314,8 @@ export class StartupStateMachine {
       canRetry: this.canRetry,
       url: this.url,
       failure: this.failure ? { ...this.failure } : null,
+      failureCode: this.failure?.code ?? '',
+      failureActions: this.status === 'failed' ? failureActionsFor(this.failure?.code ?? '') : [],
       activities: this.activities.map((activity) => ({ ...activity })),
     };
   }

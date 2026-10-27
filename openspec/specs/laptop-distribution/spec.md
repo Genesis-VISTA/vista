@@ -65,9 +65,18 @@ artifact. The artifact's own contents SHALL be treated as read-only at run time.
 
 #### Scenario: Replacing the artifact preserves state
 
-- **WHEN** the unpacked artifact is replaced with a newer version and started
+- **WHEN** the unpacked artifact is replaced with a newer version whose database is compatible
+  with the existing one, and started
 - **THEN** existing conversations, uploaded files, and configured credentials remain
   available
+
+#### Scenario: Replacing the artifact with an incompatible version
+
+- **WHEN** the unpacked artifact is replaced with a newer version that cannot use the existing
+  database, and started
+- **THEN** startup stops before changing the database, and the startup window offers to move
+  the local data into a backup folder and start fresh, without the researcher moving or
+  deleting files by hand
 
 ### Requirement: Single command to install and run
 

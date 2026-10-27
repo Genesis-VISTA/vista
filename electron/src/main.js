@@ -23,7 +23,8 @@ import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
 import { resolvePackage } from './package-root.js';
-import { formatDiagnostics, StartupStateMachine } from './startup-protocol.js';
+import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
+import { formatDiagnostics, resetAllowed, StartupStateMachine } from './startup-protocol.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
 const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -107,6 +108,7 @@ let startupWindow = null;
 let launcherController = null;
 let quitAllowed = false;
 let mainStartupFailed = false;
+let resetInProgress = false;
 /** @type {Promise<void> | null} */
 let quitInProgress = null;
 const allowedWindowCloses = new WeakSet();
@@ -523,6 +525,62 @@ app.whenReady().then(() => {
     ipcMain.handle('startup:retry', (event) => {
       if (!fromStartupWindow(event)) return false;
       return launcherController?.retry() ?? false;
+    });
+    ipcMain.handle('startup:reset-data', async (event) => {
+      const window = startupWindow;
+      if (!fromStartupWindow(event) || !launcherController || !window) return false;
+      if (!resetAllowed(launcherController.current, launcherController.child)) return false;
+      if (resetInProgress) return false;
+      resetInProgress = true;
+      try {
+        const confirm = await dialog.showMessageBox(window, {
+          type: 'warning',
+          buttons: ['Back up and reset', 'Cancel'],
+          defaultId: 1,
+          cancelId: 1,
+          message: 'Back up your VISTA data and start fresh?',
+          detail: 'Your conversations, projects and settings will not carry over, and connections in Settings '
+            + 'will need setting up again. Everything, including your skills, knowledge bases and project '
+            + 'files, is moved into a backup folder inside the VISTA data folder; nothing is deleted.',
+        });
+        if (confirm.response !== 0) return false;
+        // The launcher could have been restarted while the dialog was open.
+        if (!resetAllowed(launcherController.current, launcherController.child)) return false;
+        let result;
+        try {
+          result = resetData(stateDirectory, {
+            port: Number(process.env.VISTA_BACKEND_PORT) || DEFAULT_BACKEND_PORT,
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          console.error(`vista-window: reset failed: ${reason}`);
+          await dialog.showMessageBox(window, {
+            type: 'error',
+            buttons: ['OK'],
+            message: 'VISTA could not back up your data.',
+            detail: `${reason}\n\nNothing was reset.`,
+          });
+          return false;
+        }
+        if (result.readmeError) console.error(`vista-window: could not write README.txt: ${result.readmeError}`);
+        console.log(`vista-window: moved ${result.moved.length} entries into ${result.backupDir}`);
+        const done = await dialog.showMessageBox(window, {
+          type: 'info',
+          buttons: ['Show Folder', 'Continue'],
+          defaultId: 1,
+          message: `Your previous VISTA data is in ${result.backupDir}`,
+          detail: result.readme
+            ? 'Your skills, knowledge bases and project files are there; see README.txt.'
+            : 'Your skills, knowledge bases and project files are there.',
+        });
+        if (done.response === 0) {
+          const error = await shell.openPath(result.backupDir);
+          if (error) console.error(`vista-window: could not open backup folder: ${error}`);
+        }
+        return launcherController.retry();
+      } finally {
+        resetInProgress = false;
+      }
     });
     ipcMain.handle('startup:open-logs', async (event) => {
       if (!fromStartupWindow(event)) return false;

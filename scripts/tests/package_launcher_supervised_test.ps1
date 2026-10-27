@@ -70,7 +70,10 @@ static class Fake {
     static int Main(string[] args) {
         string self = Process.GetCurrentProcess().MainModule.FileName;
         string name = Path.GetFileName(self).ToLowerInvariant();
-        if (name == "curl.exe") return 0;
+        // A backend that exits at once never answers its health check.
+        string backendExit = Environment.GetEnvironmentVariable("TEST_BACKEND_EXIT");
+        if (name == "curl.exe")
+            return !string.IsNullOrEmpty(backendExit) && string.Join(" ", args).Contains("openapi.json") ? 7 : 0;
         if (name == "msb.exe") {
             if (args.Length > 0 && args[0] == "doctor") { Console.WriteLine("Host setup is ready"); return 0; }
             if (args.Length > 1 && args[0] == "image" && args[1] == "inspect")
@@ -81,6 +84,11 @@ static class Fake {
         }
         string pids = Environment.GetEnvironmentVariable("TEST_SERVICE_PIDS");
         File.WriteAllText(Path.Combine(pids, name + ".pid"), Process.GetCurrentProcess().Id.ToString());
+        if (name == "vista-backend.exe" && !string.IsNullOrEmpty(backendExit)) {
+            if (backendExit == "refuse")
+                File.WriteAllText(Environment.GetEnvironmentVariable("VISTA_STARTUP_FAILURE_FILE"), "database-incompatible\n");
+            return 1;
+        }
         Thread.Sleep(Timeout.Infinite);
         return 0;
     }
@@ -106,7 +114,11 @@ static class Fake {
     Write-Text $Path ("#!/usr/bin/env bash`n" + ($Body -replace "`r", ''))
     & chmod +x $Path
   }
-  $service = 'printf ''%s\n'' "$$" > "$TEST_SERVICE_PIDS/${0##*/}.pid"' + "`nexec sleep 600`n"
+  # TEST_BACKEND_EXIT: the backend stops at once, saying why only for "refuse".
+  $service = 'printf ''%s\n'' "$$" > "$TEST_SERVICE_PIDS/${0##*/}.pid"' + "`n" +
+    'if [[ "${0##*/}" == vista-backend.exe && -n "${TEST_BACKEND_EXIT:-}" ]]; then' + "`n" +
+    '  [[ "$TEST_BACKEND_EXIT" != refuse ]] || printf ''database-incompatible\n'' > "${VISTA_STARTUP_FAILURE_FILE//\\//}"' + "`n" +
+    '  exit 1' + "`nfi`nexec sleep 600`n"
   foreach ($target in $McpExe, $BackendExe, $NodeExe) { Write-Script $target $service }
   Write-Script $MsbExe @'
 case "$1 $2" in
@@ -115,8 +127,9 @@ case "$1 $2" in
   load*) [[ "${TEST_MSB_IMPORT_FAIL:-0}" != 1 ]] ;;
 esac
 '@
-  Write-Script $CurlExe "exit 0`n"
-  Write-Script (Join-Path $Tools 'curl.exe') "exit 0`n"
+  $curl = '[[ -n "${TEST_BACKEND_EXIT:-}" && "$*" == *openapi.json* ]] && exit 7' + "`nexit 0`n"
+  Write-Script $CurlExe $curl
+  Write-Script (Join-Path $Tools 'curl.exe') $curl
   # cmd /d /s /c "<command>": the quotes stripped, backslashes made slashes. The
   # test's paths have no spaces, so that is enough to run what the launcher wrote.
   Write-Script (Join-Path $Tools 'cmd.exe') @'
@@ -253,6 +266,33 @@ try {
     '{"protocol":1,"phase":"sandbox","state":"running","label":"Preparing the code-execution sandbox"}',
     '{"protocol":1,"phase":"sandbox","state":"failed","code":"sandbox-image-import-failed","log":"setup.log"}') `
     'a failed image import fails sandbox, naming setup.log' $r.Stderr
+
+  # --- a service that exits before it is healthy ------------------------------
+  # It fails its phase at once, not after its health timeout (600s for the
+  # backend): with the code the backend left in VISTA_STARTUP_FAILURE_FILE, or
+  # startup-error when it left none.
+
+  foreach ($case in @(@('refuse', 'database-incompatible'), @('silent', 'startup-error'))) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $r = Invoke-Launcher $Supervised @{ TEST_BACKEND_EXIT = $case[0] }
+    $watch.Stop()
+    Assert-Lines $r.Stdout @($Running,
+      '{"protocol":1,"phase":"preflight","state":"complete"}',
+      '{"protocol":1,"phase":"resources","state":"running","label":"Installing bundled resources"}',
+      '{"protocol":1,"phase":"resources","state":"complete","skipped":true}',
+      '{"protocol":1,"phase":"sandbox","state":"running","label":"Preparing the code-execution sandbox"}',
+      '{"protocol":1,"phase":"sandbox","state":"complete","skipped":true}',
+      '{"protocol":1,"phase":"mcp","state":"running","label":"Starting scientific tools"}',
+      '{"protocol":1,"phase":"mcp","state":"ready"}',
+      '{"protocol":1,"phase":"backend","state":"running","label":"Preparing VISTA"}',
+      "{`"protocol`":1,`"phase`":`"backend`",`"state`":`"failed`",`"code`":`"$($case[1])`",`"log`":`"backend.log`"}",
+      '{"protocol":1,"phase":"stopping","state":"running","label":"Stopping VISTA"}') `
+      "a backend that exits ($($case[0])) fails backend with $($case[1])" $r.Stderr
+    if ($r.Status -eq 0) { Fail "the $($case[0]) backend exit left the launcher exiting 0" }
+    if ($watch.Elapsed.TotalSeconds -gt 60) { Fail "the $($case[0]) backend exit took $([int]$watch.Elapsed.TotalSeconds)s to report" }
+    if ($r.Stderr -notmatch 'stopped before it was ready') { Fail "no stderr tail for the $($case[0]) backend exit: $($r.Stderr)" }
+    Stop-FakeServices
+  }
 
   # --- a full start, then the application closing stdin ------------------------
 

@@ -2,8 +2,12 @@
 Database engine, session factory, and FastAPI session dependency.
 """
 
+import asyncio
 import functools
+import json
 import logging
+import sqlite3
+import uuid
 from pathlib import Path
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
@@ -12,7 +16,19 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from .seed import seed_db, sync_bundled_skills, sync_default_projects
+from .schema_check import schema_problems
+from .seed import (
+    AI_SAFETY_KB_ID,
+    AI_SAFETY_PROJECT_ID,
+    ALLOY_DESIGN_PROJECT_ID,
+    MOLTEN_SALT_KB_ID,
+    MOLTEN_SALT_PROJECT_ID,
+    _bundled_skill_dirs,
+    seed_db,
+    sync_bundled_skills,
+    sync_default_projects,
+)
+from ..agents.skills import read_skill
 
 
 @functools.cache
@@ -134,11 +150,187 @@ def _add_missing_columns(conn: Connection) -> None:
             )
 
 
+DATABASE_INCOMPATIBLE = "database-incompatible"
+INDEX_FILE_NAME = "incompatible-data-index.json"
+
+
+class DatabaseIncompatible(Exception):
+    """
+    The database cannot serve the models and startup cannot repair it.
+
+    Raised by `init_db` before anything is written to the file. `code` is what
+    the launcher reads back, `message` is for the log and the researcher, and
+    `problems` lists each `table.column` that does not match.
+    """
+
+    def __init__(self, message: str, problems: list[str]) -> None:
+        super().__init__(message)
+        self.code = DATABASE_INCOMPATIBLE
+        self.message = message
+        self.problems = problems
+
+
+def _sqlite_file(database_url: str) -> Path | None:
+    """The database file behind `database_url`, or None if it is not a file."""
+    if not database_url.startswith("sqlite"):
+        return None
+    name = database_url.split("///", 1)[-1] if "///" in database_url else ""
+    if not name or ":memory:" in name:
+        return None
+    return Path(name)
+
+
+def _dashed(raw: object) -> str:
+    """A UUID as the database stores it (32 hex) in its dashed form."""
+    try:
+        return str(uuid.UUID(str(raw)))
+    except ValueError:
+        return str(raw)
+
+
+def _relative_to_data(stored: str, data_dir: Path) -> str:
+    """`stored` relative to `data_dir` when inside it, else as stored."""
+    candidate = Path(stored)
+    if not candidate.is_absolute():
+        return stored
+    for base, target in ((data_dir, candidate), (data_dir.resolve(), candidate)):
+        try:
+            return target.relative_to(base).as_posix()
+        except ValueError:
+            continue
+    try:
+        return candidate.resolve().relative_to(data_dir.resolve()).as_posix()
+    except ValueError, OSError:
+        return stored
+
+
+def _vista_ships() -> tuple[set[str], set[str], set[str]]:
+    """
+    What this version of VISTA brings with it, as (bundled skill names, seeded
+    project ids, seeded knowledge base ids), ids in dashed form.
+    """
+    skills: set[str] = set()
+    for src in _bundled_skill_dirs():
+        skills.add(src.name)
+        try:
+            skills.add(read_skill(src).name)
+        except Exception:  # noqa: BLE001 - best effort; the folder name still counts
+            logging.getLogger(__name__).debug("Unreadable bundled skill %s", src)
+    projects = {
+        str(ALLOY_DESIGN_PROJECT_ID),
+        str(MOLTEN_SALT_PROJECT_ID),
+        str(AI_SAFETY_PROJECT_ID),
+    }
+    kbs = {str(MOLTEN_SALT_KB_ID), str(AI_SAFETY_KB_ID)}
+    return skills, projects, kbs
+
+
+def _write_incompatible_index(conn: sqlite3.Connection, path: Path) -> None:
+    """
+    Write `incompatible-data-index.json` beside a refused database: what it
+    holds, so a researcher can find their work after a reset moves it aside.
+
+    Only SELECTs, each query on its own: a table or column the old database
+    lacks leaves that list empty and never fails the refusal. Paths are
+    relative to the data folder where they are inside it, since a reset moves
+    the whole folder.
+    """
+    log = logging.getLogger(__name__)
+    data_dir = path.parent
+
+    def rows(sql: str, what: str) -> list[tuple]:
+        try:
+            return conn.execute(sql).fetchall()
+        except sqlite3.Error:
+            log.debug("Incompatible-data index: no %s to list", what, exc_info=True)
+            return []
+
+    bundled_skills, seeded_projects, seeded_kbs = _vista_ships()
+    index = {
+        "database": path.name,
+        "projects": [
+            {
+                "id": _dashed(i),
+                "name": n,
+                "files": f"volumes/{_dashed(i)}",
+                "comes_with_vista": _dashed(i) in seeded_projects,
+            }
+            for i, n in rows("SELECT id, name FROM project", "projects")
+        ],
+        "skills": [
+            {
+                "name": n,
+                "path": _relative_to_data(str(p), data_dir),
+                "comes_with_vista": n in bundled_skills,
+            }
+            for n, p in rows("SELECT name, path FROM skill", "skills")
+        ],
+        "knowledge_bases": [
+            {
+                "slug": s,
+                "name": n,
+                "pdfs": _relative_to_data(str(d), data_dir),
+                "comes_with_vista": _dashed(i) in seeded_kbs,
+            }
+            for s, n, d, i in rows(
+                "SELECT slug, name, pdfs_dir, id FROM knowledge_base",
+                "knowledge bases",
+            )
+        ],
+    }
+    target = data_dir / INDEX_FILE_NAME
+    try:
+        target.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
+    except OSError:
+        log.warning("Could not write the incompatible-data index %s", target)
+
+
+def _check_compatible(path: Path) -> None:
+    """
+    Refuse, before any write, a database that cannot serve the models.
+
+    Opens the file with plain `sqlite3` and only reads. A missing file or one
+    with no tables passes. Reading may leave `-wal`/`-shm` companions; the
+    database file itself is not touched.
+    """
+    if not path.exists():
+        return
+    conn = sqlite3.connect(path)
+    try:
+        if not conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' LIMIT 1"
+        ).fetchone():
+            return
+        problems = schema_problems(conn, assume_additive=True)
+        if not problems:
+            return
+        _write_incompatible_index(conn, path)
+    finally:
+        conn.close()
+    listed = "; ".join(problems)
+    raise DatabaseIncompatible(
+        f"The database {path} does not match this version of VISTA and was "
+        f"left unchanged: {listed}. In the VISTA window, Back up and reset "
+        "moves this data aside and starts fresh; without the window, move the "
+        "data folder's contents aside or delete vista.db.",
+        problems,
+    )
+
+
 async def init_db() -> None:
-    """Create tables and seed defaults. Call once at app startup."""
-    if settings.database_url.startswith("sqlite"):
-        Path(settings.database_url.split("///", 1)[-1]).parent.mkdir(
-            parents=True, exist_ok=True
+    """
+    Create tables and seed defaults. Call once at app startup.
+
+    A SQLite file is checked first, over a plain connection before the engine
+    exists; see `_check_compatible`. Other databases are not checked.
+    """
+    path = _sqlite_file(settings.database_url)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(_check_compatible, path)
+    else:
+        logging.getLogger(__name__).info(
+            "Database is not a SQLite file; the compatibility check is skipped."
         )
     engine = get_engine()
     async with engine.begin() as conn:
