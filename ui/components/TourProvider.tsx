@@ -338,7 +338,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
           overlayClickBehavior: "none",
           overlayColor: "var(--scrim-strong)",
           overlayOpacity: overview ? 0 : 1,
-          popoverClass: "vista-tour",
+          // Undimmed, an overview's card needs its own border to stand out.
+          popoverClass: overview ? "vista-tour vista-tour-overview" : "vista-tour",
           showButtons: [],
           // Anything that asks driver.js to close is the tour being exited.
           onDestroyStarted: () => actions.current.exit(),
