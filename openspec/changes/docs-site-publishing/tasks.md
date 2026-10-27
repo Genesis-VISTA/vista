@@ -1,16 +1,16 @@
 ## 1. Manifest and coverage check
 
-- [ ] 1.1 Add `docs/site.toml`: Reference (installing, hpc, hpc-jobs, skill-onboarding,
+- [x] 1.1 Add `docs/site.toml`: Reference (installing, hpc, hpc-jobs, skill-onboarding,
   project-onboarding, api-example-alloy-tc, multi-agent-framework, splash-planner-playbook,
   hypothesis-forum-hosting, forum-git-format) and Developers (development, building-packages),
   with the titles from the site draft; exclude releasing, validation-lane,
   evaluation-runbook, palisade, new_backend_plan. Verify every `docs/*.md` appears once.
-- [ ] 1.2 Add `scripts/docs_site/check_manifest.py` (stdlib only): fails, naming the files,
+- [x] 1.2 Add `scripts/docs_site/check_manifest.py` (stdlib only): fails, naming the files,
   on a doc neither listed nor excluded, a listed file that is missing, or a file both listed
   and excluded. Verify with tests in `scripts/docs_site/test_check_manifest.py` covering the
   three `docs:manifest` scenarios in the spec, and `python3 -I scripts/docs_site/check_manifest.py`
   passing on this tree.
-- [ ] 1.3 Add `docs:manifest` to the `docs` lint in `scripts/ci-local.sh` and to
+- [x] 1.3 Add `docs:manifest` to the `docs` lint in `scripts/ci-local.sh` and to
   `.gitlab-ci.yml` (lint stage, beside `docs:links`). Verify `./scripts/ci-local.sh docs lint`
   passes, and fails after adding an unlisted `docs/scratch.md`.
 

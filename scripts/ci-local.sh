@@ -13,7 +13,7 @@
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
 #   ./scripts/ci-local.sh launcher         # the package launchers' supervised mode
-#   ./scripts/ci-local.sh docs             # relative links in the Markdown docs
+#   ./scripts/ci-local.sh docs             # relative links in the Markdown docs + the site manifest
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -325,9 +325,16 @@ launcher_test() {
   fi
 }
 
-# Relative links and anchors in the tracked Markdown files. Mirrors docs:links.
+# Relative links and anchors in the tracked Markdown files (docs:links), and
+# docs/site.toml accounting for every docs/*.md (docs:manifest). The manifest
+# check needs Python >= 3.11 for tomllib, so it runs under uv here; CI's image has it.
 docs_lint() {
   run_job "docs:links" 0 python3 -I "$REPO_ROOT/scripts/check_md_links.py"
+  ensure_uv
+  run_job "docs:manifest" 0 uv run --no-project --quiet --python 3.14 python -I \
+    "$REPO_ROOT/scripts/docs_site/check_manifest.py"
+  run_job "docs:manifest (tests)" 0 uv run --no-project --quiet --python 3.14 python -I \
+    -m unittest discover -s "$REPO_ROOT/scripts/docs_site" -p 'test_check_manifest.py'
 }
 
 install_hooks() {

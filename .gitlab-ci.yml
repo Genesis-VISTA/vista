@@ -395,6 +395,15 @@ docs:links:
   script:
     - python3 -I scripts/check_md_links.py
 
+# docs/site.toml, which decides what genesis-vista.github.io publishes, must list
+# or exclude every docs/*.md and name only files that exist. Offline, stdlib only.
+docs:manifest:
+  stage: lint
+  <<: *python-image
+  script:
+    - python3 -I scripts/docs_site/check_manifest.py
+    - python3 -I -m unittest discover -s scripts/docs_site -p 'test_check_manifest.py'
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:
