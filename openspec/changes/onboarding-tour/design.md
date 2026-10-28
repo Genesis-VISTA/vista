@@ -185,6 +185,39 @@ While the tour is open, `NavRail` renders expanded and ignores its stored prefer
 writing to it. The stored `vista.navRail.collapsed.v1` is untouched, so closing the tour
 restores the researcher's choice, and ui-shell's "remember the collapse choice" is unchanged.
 
+### 9. The refined script: explain, then act, then explain what happened
+
+Trying the tour showed it zoomed in too soon (opening a cluster card went straight to one
+row). The script was reworked as a storyboard of 46 coachmarks over real screens and
+approved; the storyboard is the source of the wording and of where each one points. The
+step ids, and so the stored state, are unchanged. Only sub-steps, events and anchors change:
+
+| Step | Sub-steps (action ones in **bold**) |
+|---|---|
+| welcome | intro, sidebar |
+| project | overview, card, new, **open** |
+| model | overview, composer, panel, picker, provider, providers, **credential**, **pick**, set |
+| knowledge-bases | **visit**, overview, list, **open-kb**, about, papers, add-files |
+| skills | **visit**, overview, loaded, available, **open-skill**, **detail**, load, import |
+| files | **visit**, overview, outputs, uploads, **open-chart**, chart-preview, **open-report**, review |
+| hpc | resources, **open-card**, card, check, settings |
+| first-question | **send**, **activity**, answer, finish |
+
+- The chat's overview moves from first-question to the model step, where opening a project
+  lands. Settings opens at `model:provider` and closes at `model:pick`, as before.
+- `project:overview|card|new` count as done once a project is active, so a project already
+  open still skips the step. `model:provider|providers` count as done with a credential.
+- Events: `skill-opened` now fires when a skill's detail opens and `skill-closed` when it
+  closes; `example-image-opened` and `example-md-opened` complete their own sub-steps;
+  `turn-started` completes `send` and `turn-succeeded` completes `activity`. A failure
+  reported during the turn drops `turn-started`, so the coachmark returns to `send` and
+  points at the fix as before.
+- One element may serve two coachmarks: `tourAnchor` maps `model:set` to the picker,
+  `model:composer` to the composer, and `first-question:activity` to the panel.
+- `welcome:intro` and `first-question:finish` are centred. A coachmark may name its primary
+  button ("Start the tour", "Done"). `skills:detail` points into the open skill and does not
+  stand aside on a click inside it, since Close is the action it waits for.
+
 ## Risks / Trade-offs
 
 - **[Anchors rot as pages change]** → `data-tour` attributes are named for the tour, so a
