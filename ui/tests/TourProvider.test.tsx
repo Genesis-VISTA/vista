@@ -657,6 +657,7 @@ describe("where the tour takes the researcher", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
     mountChatAnchors();
     anchor("model:provider");
+    anchor("model:credential");
     const { rerender } = render(tree);
     // The chat is explained first, with the picker in view and Settings shut.
     expect(openSettingsMock).not.toHaveBeenCalled();
@@ -670,8 +671,24 @@ describe("where the tour takes the researcher", () => {
       error: null,
     });
     rerender(<TourProvider><Controls /></TourProvider>);
+    // The key entered during the tour is confirmed in Settings; Next closes it.
+    expect(lastStepKey()).toBe("Key saved");
+    expect(closeSettingsMock).not.toHaveBeenCalled();
+    pressNext();
     expect(closeSettingsMock).toHaveBeenCalledTimes(1);
     expect(openSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips Key saved when the credential was there before the tour", () => {
+    useAgentSettingsMock.mockReturnValue({ settings: agentSettings({ hasCredential: true }), error: null });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    mountChatAnchors();
+    render(tree);
+    pressNext();
+    pressNext();
+    pressNext();
+    pressNext();
+    expect(lastStepKey()).toBe("Choose a model");
   });
 
   it("opens the chat for the model step from another page, once", () => {

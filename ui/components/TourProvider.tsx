@@ -31,11 +31,13 @@ import { updateSettings, useSettings, type OnboardingTourState } from "@/lib/set
 
 /**
  * Next coachmarks whose target stays usable: the provider choice, which is made
- * there (the key field after it lights only the key), and the file previews,
- * whose Download the files step promises works while the tour waits.
+ * there (the key field after it lights only the key), the saved key, which can
+ * still be corrected, and the file previews, whose Download the files step
+ * promises works while the tour waits.
  */
 const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set([
   "model:providers",
+  "model:saved",
   "files:chart-preview",
   "files:review",
 ]);
@@ -177,6 +179,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
   const hasCredential = agent?.hasCredential ?? false;
   const providerDefault = agent?.providers.find((p) => p.id === agent.provider)?.defaultModel ?? null;
+  const providerName = agent?.providers.find((p) => p.id === agent.provider)?.name ?? null;
 
   const position = useMemo<TourPosition | null>(() => {
     if (!loaded || agent === null) return null;
@@ -261,6 +264,16 @@ export function TourProvider({ children }: { children: ReactNode }) {
     [running],
   );
 
+  // Reaching the model step without a credential is remembered for the session,
+  // so the key entered next is confirmed with "Key saved".
+  const credentialMissing = step === "model" && !hasCredential;
+  useEffect(() => {
+    if (!credentialMissing) return;
+    setSession((s) =>
+      s.events.has("credential-missing") ? s : { ...s, events: new Set(s.events).add("credential-missing") },
+    );
+  }, [credentialMissing]);
+
   // A failure belongs to the first question's Send coachmark and ends with it.
   const atSend = step === "first-question" && subStep === "send";
   const failure = atSend ? session.failure : null;
@@ -342,7 +355,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const pulse = session.pulse;
   useEffect(() => {
     if (step === null || subStep === null || anchorKey === null) return;
-    const mark = coachmarkFor(step, subStep, { providerDefault, hasCredential, failure });
+    const mark = coachmarkFor(step, subStep, { providerDefault, providerName, hasCredential, failure });
     if (mark === null) return;
     const key = anchorKey;
     const withNext = completesOnNext(step, subStep);
@@ -507,7 +520,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       standAside();
     };
     // `pulse` and `pathname` only redraw: a report or a new page re-targets.
-  }, [step, subStep, anchorKey, failure, providerDefault, hasCredential, pathname, pulse, destroyDriver]);
+  }, [step, subStep, anchorKey, failure, providerDefault, providerName, hasCredential, pathname, pulse, destroyDriver]);
 
   // Escape closes the tour, unless a dialog or menu is open: then Escape is
   // for that (each closes itself on it), and the tour stays. driver.js's own

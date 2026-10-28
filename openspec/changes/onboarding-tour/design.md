@@ -196,7 +196,7 @@ step ids, and so the stored state, are unchanged. Only sub-steps, events and anc
 |---|---|
 | welcome | intro, sidebar |
 | project | overview, card, new, **open** |
-| model | overview, composer, panel, picker, provider, providers, **credential**, **pick**, set |
+| model | overview, composer, panel, picker, provider, providers, **credential**, saved, **pick**, set |
 | knowledge-bases | **visit**, overview, list, **open-kb**, about, papers, add-files |
 | skills | **visit**, overview, loaded, available, **open-skill**, **detail**, load, import |
 | files | **visit**, overview, outputs, uploads, **open-chart**, chart-preview, **open-report**, review |
@@ -207,6 +207,9 @@ step ids, and so the stored state, are unchanged. Only sub-steps, events and anc
   lands. Settings opens at `model:provider` and closes at `model:pick`, as before.
 - `project:overview|card|new` count as done once a project is active, so a project already
   open still skips the step. `model:provider|providers` count as done with a credential.
+  `model:saved` ("Key saved", on the key field, which stays editable) shows only when the
+  model step was reached without one: the tour records `credential-missing` itself, and
+  Settings closes on its **Next**, not the moment a pasted key saves.
 - Events: `skill-opened` now fires when a skill's detail opens and `skill-closed` when it
   closes; `example-image-opened` and `example-md-opened` complete their own sub-steps;
   `turn-started` completes `send` and `turn-succeeded` completes `activity`. A failure
@@ -217,6 +220,10 @@ step ids, and so the stored state, are unchanged. Only sub-steps, events and anc
 - `welcome:intro` and `first-question:finish` are centred. A coachmark may name its primary
   button ("Start the tour", "Done"). `skills:detail` points into the open skill and does not
   stand aside on a click inside it, since Close is the action it waits for.
+- Found trying the tour: a Next coachmark's control is look-only, and a click on it pulses
+  the coachmark (it opened Import's dialog under the overlay), except the provider cards,
+  the saved key and the file previews. `model:credential` stays up for Get a token, and
+  `model:pick` follows the picker's anchor onto its open menu.
 
 ## Risks / Trade-offs
 

@@ -147,7 +147,12 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await stub.setRoute("GET /api/settings/inference", { ...INFERENCE, has_credential: true, keys_set: { i2: true } });
   await key.blur(); // a key saves when the field is left
   await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_api_key === "sk-test")).toBe(true);
-  // The tour closes Settings itself and points at the picker.
+  // The key is confirmed in Settings, which stays open until Next.
+  await card(page, "model:credential");
+  await expect(page.locator(".driver-popover")).toContainText("Key saved");
+  await expect(page.locator(".modal-backdrop")).toHaveCount(1);
+  await press(page);
+  // Then the tour closes Settings itself and points at the picker.
   await card(page, "model:pick");
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
   await expect(page.locator(".driver-popover")).not.toContainText("First, VISTA needs a model provider");

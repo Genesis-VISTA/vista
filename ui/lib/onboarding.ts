@@ -27,7 +27,7 @@ export type TourStepId = (typeof TOUR_STEPS)[number];
 export const TOUR_SUB_STEPS = {
   welcome: ["intro", "sidebar"],
   project: ["overview", "card", "new", "open"],
-  model: ["overview", "composer", "panel", "picker", "provider", "providers", "credential", "pick", "set"],
+  model: ["overview", "composer", "panel", "picker", "provider", "providers", "credential", "saved", "pick", "set"],
   "knowledge-bases": ["visit", "overview", "list", "open-kb", "about", "papers", "add-files"],
   skills: ["visit", "overview", "loaded", "available", "open-skill", "detail", "load", "import"],
   files: ["visit", "overview", "outputs", "uploads", "open-chart", "chart-preview", "open-report", "review"],
@@ -46,7 +46,10 @@ export type TourEvent =
   | "example-md-opened"
   | "hpc-card-opened"
   | "turn-started"
-  | "turn-succeeded";
+  | "turn-succeeded"
+  // Reported by the tour itself: the model step was reached with no credential,
+  // so one entered now earns a "Key saved" coachmark.
+  | "credential-missing";
 
 /**
  * Why the first question did not get an answer, as the chat page tells the
@@ -109,6 +112,9 @@ function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean
       return input.inference.hasCredential || input.acknowledged.has(key as Acknowledgement);
     case "model:credential":
       return input.inference.hasCredential;
+    case "model:saved":
+      // Only a key entered during this tour is confirmed.
+      return !input.events.has("credential-missing") || input.acknowledged.has(key as Acknowledgement);
     case "model:pick":
       return input.inference.model !== null && !input.inference.modelIsDefault;
     case "knowledge-bases:visit":
@@ -205,6 +211,7 @@ const ANCHOR_ALIASES: Record<string, string> = {
   "model:composer": "first-question:send",
   "model:picker": "model:pick",
   "model:set": "model:pick",
+  "model:saved": "model:credential",
   "first-question:activity": "model:panel",
   "files:chart-preview": "files:preview",
   "files:review": "files:preview",

@@ -122,7 +122,9 @@ The connect-a-model step SHALL start in the chat: its overview, then the compose
 artifacts and activity panel, and the model picker, each on **Next**. It SHALL then open
 Settings at the model provider section and describe the section, then the provider choice,
 then point at the credential field, and move on when the provider in effect has a
-credential; these Settings coachmarks SHALL NOT be shown when the provider already has one.
+credential. A credential entered during the tour SHALL be confirmed in Settings by name
+("Key saved"), with Settings left open until **Next**. These Settings coachmarks SHALL NOT be
+shown when the provider already had a credential.
 It SHALL then point at the chat's model picker and wait for the researcher to choose a model,
 then say the model now answers in every chat, on **Next**. Picking any model SHALL complete the step. The coachmark SHALL
 suggest the chosen provider's default model by name, as reported by the backend
@@ -134,8 +136,9 @@ no default (Custom) SHALL be told to pick any model that its endpoint serves.
 - **WHEN** a researcher on AmSC i2 with no credential reaches the connect-a-model step
 - **THEN** after the chat's coachmarks, Settings opens at the model provider section, and
   the coachmarks describe it and then ask for a credential
-- **AND** once the credential is saved, the coachmark points at the model picker and suggests
-  `claude-sonnet`
+- **AND** once the credential is saved, a coachmark in Settings says the AmSC i2 key is saved
+- **AND** on **Next**, Settings closes and the coachmark points at the model picker and
+  suggests `claude-sonnet`
 - **AND** once the researcher picks a model, a coachmark says it is set, and the step
   completes on **Next**
 

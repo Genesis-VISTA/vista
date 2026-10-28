@@ -21,6 +21,8 @@ export type CopyContext = {
   providerDefault: string | null;
   /** Whether the provider in effect has a credential. */
   hasCredential: boolean;
+  /** The provider in effect's display name, e.g. "AmSC MAG". */
+  providerName?: string | null;
   /** Why the first question failed, when it did. */
   failure?: TourFailure | null;
 };
@@ -44,6 +46,13 @@ export function coachmarkFor(
       body: context.hasCredential
         ? "This picks the model that answers."
         : "This picks the model that answers. First, VISTA needs a model provider.",
+    };
+  }
+  if (key === "model:saved") {
+    const whose = context.providerName ? `Your ${context.providerName} key` : "Your key";
+    return {
+      title: "Key saved",
+      body: `${whose} is saved. Next takes you back to chat to choose a model.`,
     };
   }
   if (key === "model:pick") {
