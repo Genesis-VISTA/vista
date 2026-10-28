@@ -194,8 +194,9 @@ export function ModelMenu({
       : [];
 
   return (
-    // The tour's anchor is the whole picker, so the menu it opens is inside it.
-    <div className="model-picker" ref={rootRef} data-tour="model:pick">
+    // The tour's anchor is the picker, and its menu while that is open, so the
+    // coachmark points at the list being chosen from.
+    <div className="model-picker" ref={rootRef} data-tour={open ? undefined : "model:pick"}>
       <button
         ref={buttonRef}
         type="button"
@@ -228,7 +229,7 @@ export function ModelMenu({
       </button>
 
       {open && (
-        <div className="model-picker-menu">
+        <div className="model-picker-menu" data-tour="model:pick">
           {asking && (
             <div className="model-picker-hint" data-tone="ask" role="status">
               Choose a model first.

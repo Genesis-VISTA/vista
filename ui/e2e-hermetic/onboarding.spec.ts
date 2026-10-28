@@ -153,7 +153,10 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await expect(page.locator(".driver-popover")).not.toContainText("First, VISTA needs a model provider");
   // Choosing a model (so the default stops being the default) ends the step.
   await stub.setRoute("GET /api/settings/inference", { ...INFERENCE, model_is_default: false });
-  await page.locator('[data-tour="model:pick"]').click();
+  await page.locator(".model-picker-button").click();
+  // The coachmark stays, and points at the open menu.
+  await expect(page.locator('.model-picker-menu[data-tour="model:pick"].driver-active-element')).toBeVisible();
+  await expect(page.locator(".driver-popover.vista-tour")).toBeVisible();
   await page.getByRole("option").first().click();
   await expect(page.locator(".driver-popover")).toContainText("Model set");
   expect((await stub.bodies("PUT /api/settings")).some((b) => "inference_model" in b)).toBe(true);

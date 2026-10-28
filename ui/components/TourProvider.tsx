@@ -443,15 +443,26 @@ export function TourProvider({ children }: { children: ReactNode }) {
         // the key is typed (or fetched with Get a token) inside its field, so
         // their coachmarks stay up while the researcher uses them.
         const staysUp = key === "skills:detail" || key === "model:credential";
+        // The model picker hands its anchor to its menu while it is open, and
+        // back when it closes: the coachmark follows it instead of standing aside.
+        const follows = key === "model:pick";
         const onDown = (event: Event) => {
-          if (staysUp) return;
+          if (staysUp || follows) return;
           if (event.target instanceof Node && element.contains(event.target)) destroyDriver();
         };
         const gone = new MutationObserver(() => {
+          if (follows) {
+            const now = document.querySelector(selector);
+            if (now !== null && now !== element) {
+              standAside();
+              show(now);
+            }
+            return;
+          }
           if (!element.isConnected) destroyDriver();
         });
         document.addEventListener("pointerdown", onDown, true);
-        gone.observe(document.body, { childList: true, subtree: true });
+        gone.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-tour"] });
         standAside = () => {
           cancelAnimationFrame(frame);
           document.removeEventListener("pointerdown", onDown, true);
