@@ -129,6 +129,10 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await card(page, "model:provider");
   await press(page);
   await card(page, "model:providers");
+  // The provider is chosen on this coachmark, so its cards stay usable.
+  await page.getByRole("radio", { name: /OLCF Inference/ }).click();
+  await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_provider === "olcf")).toBe(true);
+  await page.getByRole("radio", { name: /AmSC i2/ }).click();
   await press(page);
   await card(page, "model:credential");
   const key = page.getByPlaceholder("API key");

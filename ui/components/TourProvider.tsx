@@ -30,10 +30,15 @@ import { closeSettings, openSettings } from "@/lib/settings-modal";
 import { updateSettings, useSettings, type OnboardingTourState } from "@/lib/settings";
 
 /**
- * Next coachmarks whose target stays usable: the file previews, whose Download
- * the files step promises works while the tour waits.
+ * Next coachmarks whose target stays usable: the provider choice, which is made
+ * there (the key field after it lights only the key), and the file previews,
+ * whose Download the files step promises works while the tour waits.
  */
-const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set(["files:chart-preview", "files:review"]);
+const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set([
+  "model:providers",
+  "files:chart-preview",
+  "files:review",
+]);
 
 /** What answers Escape before the tour: every app dialog (`.modal-backdrop`) and the model menu. */
 const OWNS_ESCAPE = '.modal-backdrop, [role="listbox"], [role="menu"]';
