@@ -29,6 +29,12 @@ import { useActiveProjectName } from "@/lib/projects";
 import { closeSettings, openSettings } from "@/lib/settings-modal";
 import { updateSettings, useSettings, type OnboardingTourState } from "@/lib/settings";
 
+/**
+ * Next coachmarks whose target stays usable: the file previews, whose Download
+ * the files step promises works while the tour waits.
+ */
+const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set(["files:chart-preview", "files:review"]);
+
 /** How long a step waits for its `data-tour` target before it centres instead. */
 export const TARGET_TIMEOUT_MS = 3000;
 
@@ -339,6 +345,9 @@ export function TourProvider({ children }: { children: ReactNode }) {
 
     // An overview points at the page's top bar and leaves the page undimmed.
     const overview = subStep === "overview";
+    // A coachmark passed with Next only explains its control: using it would
+    // open something (Import's dialog, Settings) under the tour's overlay.
+    const lookOnly = withNext && !USABLE_WHILE_EXPLAINED.has(`${step}:${subStep}`);
     const show = (element: Element | undefined) => {
       // The overlay's opacity is fixed when driver.js draws it, so a change
       // of kind starts a new driver.
@@ -365,6 +374,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       }
       driverRef.current.highlight({
         element,
+        disableActiveInteraction: lookOnly,
         popover: {
           title: mark.title,
           description: mark.body,
@@ -399,6 +409,23 @@ export function TourProvider({ children }: { children: ReactNode }) {
         frame = requestAnimationFrame(follow);
       });
       standAside = () => cancelAnimationFrame(frame);
+
+      // The control under a look-only coachmark ignores the click, so the
+      // coachmark answers it, as it does a click outside it.
+      if (lookOnly) {
+        const onDown = (event: PointerEvent) => {
+          const r = element.getBoundingClientRect();
+          const inside =
+            event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom;
+          const onCoachmark = event.target instanceof Element && event.target.closest(".driver-popover") !== null;
+          if (inside && !onCoachmark) nudgeCoachmark();
+        };
+        document.addEventListener("pointerdown", onDown, true);
+        standAside = () => {
+          cancelAnimationFrame(frame);
+          document.removeEventListener("pointerdown", onDown, true);
+        };
+      }
 
       // A coachmark that waits for an action stands aside once the researcher
       // uses its control, or the control goes away (a menu closing, a run

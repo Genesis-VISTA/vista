@@ -424,6 +424,7 @@ function Controls() {
       <button onClick={() => report("skill-closed")}>report skill closed</button>
       <button onClick={() => report("turn-started")}>report turn started</button>
       <button onClick={() => report("kb-opened")}>report kb</button>
+      <button onClick={() => report("example-image-opened")}>report image</button>
       <button onClick={() => report("turn-succeeded")}>report success</button>
       <button onClick={() => reportFailure("credential")}>fail credential</button>
       <button onClick={() => reportFailure("model")}>fail model</button>
@@ -493,6 +494,36 @@ describe("a coachmark that waits for an action", () => {
     const destroyed = destroyMock.mock.calls.length;
     await userEvent.click(load);
     expect(destroyMock).toHaveBeenCalledTimes(destroyed);
+  });
+
+  it("makes a Next coachmark's control look-only, and a click on it pulses the coachmark", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    nav.pathname = "/skills";
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    const loaded = anchor("skills:loaded");
+    loaded.getBoundingClientRect = () => ({ left: 0, top: 0, right: 100, bottom: 50, width: 100, height: 50 }) as DOMRect;
+    render(tree);
+    pressNext();
+    expect(lastStep().element).toBe(loaded);
+    expect((lastStep() as Step & { disableActiveInteraction?: boolean }).disableActiveInteraction).toBe(true);
+    const popover = document.body.appendChild(document.createElement("div"));
+    popover.className = "driver-popover vista-tour";
+    loaded.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
+    expect(popover.classList.contains("vista-tour-nudge")).toBe(true);
+  });
+
+  it("leaves the file previews usable, for their Download", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "files" } });
+    nav.pathname = "/files";
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    for (const a of ["files:outputs", "files:uploads", "files:open-chart", "files:preview"]) anchor(a);
+    render(tree);
+    pressNext();
+    pressNext();
+    pressNext();
+    await userEvent.click(screen.getByRole("button", { name: "report image" }));
+    expect(lastStepKey()).toBe("Image preview");
+    expect((lastStep() as Step & { disableActiveInteraction?: boolean }).disableActiveInteraction).toBe(false);
   });
 
   it("keeps a skill's detail coachmark up while the skill is used, since Close is inside it", async () => {
