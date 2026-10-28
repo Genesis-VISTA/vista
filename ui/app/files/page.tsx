@@ -9,6 +9,7 @@ import { ProjectRequired } from "@/components/ProjectRequired";
 import FilePreview from "@/components/FilePreview";
 import { useTour } from "@/components/TourProvider";
 import { EXAMPLE_FILES, exampleAt } from "@/lib/onboarding-examples";
+import type { TourEvent } from "@/lib/onboarding";
 import {
   ancestorFolders,
   buildTree,
@@ -47,6 +48,13 @@ const SECTIONS: { kind: FileKind; title: string; sandboxPath: string; empty: str
     empty: "No uploaded files yet.",
   },
 ];
+
+/** The tour's anchor on an example's row: the one its opening completes. */
+function exampleAnchor(opened: TourEvent | undefined): string | undefined {
+  if (opened === "example-image-opened") return "files:open-chart";
+  if (opened === "example-md-opened") return "files:open-report";
+  return undefined;
+}
 
 /** Encode a (possibly nested) relative path per segment, keeping `/` literal. */
 function encodePath(path: string): string {
@@ -329,7 +337,10 @@ function FilesPageInner() {
       // An example is not in the project: nothing to download, delete or show.
       return (
         <li key={`f:${node.path}`}>
-          <div className={`files-row ${isSelected ? "selected" : ""}`}>
+          <div
+            className={`files-row ${isSelected ? "selected" : ""}`}
+            data-tour={exampleAnchor(exampleFor(kind, file)?.opened)}
+          >
             <button
               type="button"
               className="files-file"
@@ -479,12 +490,10 @@ function FilesPageInner() {
                 </div>
               )}
 
-              {/* The tour's anchor holds the tree and the preview beside it, so an
-                  example can be opened and read without leaving the highlight. */}
-              <div className="files-layout" data-tour={showExamples ? `files:${tour.position?.subStep}` : undefined}>
+              <div className="files-layout">
                 <div className="files-trees">
                   {SECTIONS.map(({ kind, title, sandboxPath, empty }) => (
-                    <div key={kind} className="files-section">
+                    <div key={kind} className="files-section" data-tour={`files:${kind}`}>
                       <div className="files-section-head">
                         <h2 className="files-section-title">{title}</h2>
                         <span className="tag">{sandboxPath}</span>
@@ -499,7 +508,7 @@ function FilesPageInner() {
                     </div>
                   ))}
                 </div>
-                <div className="files-preview-pane">
+                <div className="files-preview-pane" data-tour="files:preview">
                   {selected && selectedFile ? (
                     <FilePreview
                       key={`${selected.kind}:${selected.path}:${selectedFile.modifiedAt}`}

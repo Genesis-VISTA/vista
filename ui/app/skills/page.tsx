@@ -151,16 +151,17 @@ export default function SkillsPage() {
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
+      tour.report("skill-opened");
     } catch {
       // ignore
     }
   }
 
-  // Closing a skill's detail is what tells the tour it was read, so the tour
+  // The tour explains the open skill, then waits for it to be closed, so it
   // moves on to Load only once the researcher is done reading.
   function closeDetail() {
     setSelected(null);
-    tour.report("skill-opened");
+    tour.report("skill-closed");
   }
 
   const term = filter.trim().toLowerCase();
@@ -349,7 +350,7 @@ export default function SkillsPage() {
             </div>
           )}
           <h3 className="skill-section-title">Loaded in this project</h3>
-          <div className="skill-section">
+          <div className="skill-section" data-tour="skills:loaded">
             {loadedSlugs.size === 0 ? (
               <div className="skill-empty">
                 No skills loaded for this project. Load one from the skills on
@@ -369,7 +370,7 @@ export default function SkillsPage() {
             )}
           </div>
           <h3 className="skill-section-title">Other skills on this computer</h3>
-          <div className="skill-section">
+          <div className="skill-section" data-tour="skills:available">
             {otherSkills.length === 0 ? (
               <div className="skill-empty">No other skills.</div>
             ) : (
@@ -383,7 +384,7 @@ export default function SkillsPage() {
 
       {selected && (
         <div className="modal-backdrop" onClick={closeDetail}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="modal" data-tour="skills:detail" onClick={(e) => e.stopPropagation()}>
             <div className="panel-header">
               <div className="panel-title">
                 {typeof selected.frontmatter?.name === "string"

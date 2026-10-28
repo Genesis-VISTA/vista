@@ -219,7 +219,8 @@ describe("Files page during the tour's files step", () => {
     render(<FilesPage />);
     await advance(0);
     for (const name of exampleNames) expect(screen.queryByText(name)).not.toBeInTheDocument();
-    expect(document.querySelector("[data-tour]")).toBeNull();
+    expect(document.querySelector('[data-tour="files:open-chart"]')).toBeNull();
+    expect(document.querySelector('[data-tour="files:open-report"]')).toBeNull();
   });
 
   it("lists no example files on another step", async () => {
@@ -230,7 +231,7 @@ describe("Files page during the tour's files step", () => {
   });
 
   it("lists the examples with an Example badge and no actions, and they are gone after the step", async () => {
-    tourPosition.current = { step: "files", subStep: "open-examples" };
+    tourPosition.current = { step: "files", subStep: "open-chart" };
     const view = render(<FilesPage />);
     await advance(0);
     for (const name of exampleNames) expect(screen.getByText(name)).toBeInTheDocument();
@@ -238,21 +239,25 @@ describe("Files page during the tour's files step", () => {
     expect(screen.queryByRole("link", { name: /Download/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Show in chat" })).not.toBeInTheDocument();
-    expect(document.querySelector('[data-tour="files:open-examples"]')).not.toBeNull();
+    // The tour's anchors: both trees, the two rows it has opened, and the preview pane.
+    expect(document.querySelector('[data-tour="files:outputs"]')).toHaveTextContent("risk-scores.svg");
+    expect(document.querySelector('[data-tour="files:uploads"]')).not.toBeNull();
+    expect(document.querySelector('[data-tour="files:open-chart"]')).toHaveTextContent("risk-scores.svg");
+    expect(document.querySelector('[data-tour="files:open-report"]')).toHaveTextContent("summary.md");
+    expect(document.querySelector('[data-tour="files:preview"]')).not.toBeNull();
 
     // Both opened: the examples stay while the review coachmark waits for Next.
     tourPosition.current = { step: "files", subStep: "review" };
     view.rerender(<FilesPage />);
     for (const name of exampleNames) expect(screen.getByText(name)).toBeInTheDocument();
-    expect(document.querySelector('[data-tour="files:review"]')).not.toBeNull();
 
-    tourPosition.current = { step: "hpc", subStep: "open-card" };
+    tourPosition.current = { step: "hpc", subStep: "resources" };
     view.rerender(<FilesPage />);
     for (const name of exampleNames) expect(screen.queryByText(name)).not.toBeInTheDocument();
   });
 
   it("keeps real files' actions, and asks the backend for nothing about an example", async () => {
-    tourPosition.current = { step: "files", subStep: "open-examples" };
+    tourPosition.current = { step: "files", subStep: "open-chart" };
     search.current = "kind=outputs&path=summary.md";
     outputs = [{ name: "real.txt", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
     render(<FilesPage />);
@@ -265,7 +270,7 @@ describe("Files page during the tour's files step", () => {
   });
 
   it("reports the example image and the example report when they are opened", async () => {
-    tourPosition.current = { step: "files", subStep: "open-examples" };
+    tourPosition.current = { step: "files", subStep: "open-chart" };
     search.current = "kind=outputs&path=risk-scores.svg";
     const view = render(<FilesPage />);
     await advance(0);
@@ -279,20 +284,20 @@ describe("Files page during the tour's files step", () => {
   });
 
   it("clears an example's selection when the step ends", async () => {
-    tourPosition.current = { step: "files", subStep: "open-examples" };
+    tourPosition.current = { step: "files", subStep: "open-chart" };
     search.current = "kind=outputs&path=summary.md";
     const view = render(<FilesPage />);
     await advance(0);
     expect(replace).not.toHaveBeenCalled();
 
-    tourPosition.current = { step: "hpc", subStep: "open-card" };
+    tourPosition.current = { step: "hpc", subStep: "resources" };
     view.rerender(<FilesPage />);
     await advance(0);
     expect(replace).toHaveBeenCalledExactlyOnceWith("/files");
   });
 
   it("does not take a real file of the same name for an example", async () => {
-    tourPosition.current = { step: "files", subStep: "open-examples" };
+    tourPosition.current = { step: "files", subStep: "open-chart" };
     search.current = "kind=outputs&path=summary.md";
     outputs = [{ name: "summary.md", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
     render(<FilesPage />);

@@ -699,6 +699,11 @@ function ChatPage() {
     () => messages.filter((msg) => !msg.intermediate),
     [messages]
   );
+  /** The tour points at the last answer. */
+  const lastAnswerId = useMemo(
+    () => [...conversationMessages].reverse().find((msg) => msg.role === "assistant")?.id ?? null,
+    [conversationMessages]
+  );
   /** What the Activity tab shows: every step the run took. */
   const activitySteps = useMemo(
     () => messages.filter((msg) => msg.intermediate),
@@ -1280,6 +1285,8 @@ function ChatPage() {
         return;
       }
 
+      // The turn is under way: the tour moves from the question to the agent at work.
+      tour.report("turn-started");
       await finishWatching(projectName, conversationId, controller, response.body, renderer);
     } catch {
       if (controller.signal.aborted) return;
@@ -1664,6 +1671,7 @@ function ChatPage() {
                   <div
                     key={msg.id}
                     id={`msg-${msg.id}`}
+                    data-tour={msg.id === lastAnswerId ? "first-question:answer" : undefined}
                     className={`chat-bubble ${msg.role}${turnFocus?.ids.includes(`msg-${msg.id}`) ? " turn-highlight" : ""}`}
                   >
                     {msg.role === "assistant" ? (
@@ -1775,7 +1783,7 @@ function ChatPage() {
         onPointerDown={() => setActiveColumnResizer("right")}
       />
 
-      <section className="panel">
+      <section className="panel" data-tour="model:panel">
         {/* Tabs, not two stacked panes. The Jobs tab appears only when the
             conversation has a campaign — most never do, and a permanently
             empty tab reads worse than an absent one. */}

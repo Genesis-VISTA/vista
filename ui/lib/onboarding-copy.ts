@@ -1,7 +1,7 @@
 /**
- * What each coachmark says, keyed by `"<step>:<sub-step>"`. Plain text, one or
- * two sentences, so the tour reads the same everywhere and a later pass can
- * reword it in one file.
+ * What each coachmark says, keyed by `"<step>:<sub-step>"`. Plain text, so the
+ * tour reads the same everywhere and a later pass can reword it in one file.
+ * The wording is the approved storyboard's (design.md §9).
  */
 
 import type { TourFailure, TourStepId } from "./onboarding";
@@ -11,12 +11,16 @@ export type Coachmark = {
   body: string;
   /** A link shown under the body. */
   link?: { label: string; href: string };
+  /** The primary button's text, where "Next" would not say it ("Start the tour", "Done"). */
+  nextLabel?: string;
 };
 
 /** What the wording can depend on. */
 export type CopyContext = {
   /** The provider in effect's suggested model (bare name); null when it has none. */
   providerDefault: string | null;
+  /** Whether the provider in effect has a credential. */
+  hasCredential: boolean;
   /** Why the first question failed, when it did. */
   failure?: TourFailure | null;
 };
@@ -34,13 +38,21 @@ export function coachmarkFor(
   context: CopyContext,
 ): Coachmark | null {
   const key = `${step}:${subStep}`;
+  if (key === "model:picker") {
+    return {
+      title: "The model",
+      body: context.hasCredential
+        ? "This picks the model that answers."
+        : "This picks the model that answers. First, VISTA needs a model provider.",
+    };
+  }
   if (key === "model:pick") {
     return {
       title: "Choose a model",
       body:
         context.providerDefault !== null
-          ? `Open the model picker and choose a model. Your provider suggests ${context.providerDefault}.`
-          : "Open the model picker and pick any model your endpoint serves.",
+          ? `Suggested: ${context.providerDefault}. Any model on the list works.`
+          : "Any model on the list works.",
     };
   }
   if (key === "first-question:send" && context.failure) {
@@ -65,95 +77,200 @@ const FAILURE_COACHMARKS: Record<TourFailure, Coachmark> = {
   },
 };
 
-/** Overviews are anchored to the page's top bar and drawn without dimming (TourProvider). */
+/**
+ * Overviews are anchored to the page's top bar and drawn without dimming
+ * (TourProvider). `model:picker` and `model:pick` are worded in `coachmarkFor`,
+ * because they depend on the credential and the provider's suggestion.
+ */
 const COACHMARKS: Record<string, Coachmark> = {
   "welcome:intro": {
     title: "Welcome to VISTA",
-    body: "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for modeling and simulation (ModSim) that carries scientists from a research question to running campaigns on OLCF and AmSC resources.",
+    body: "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for modeling and simulation (ModSim) that carries scientists from a research question to running campaigns on OLCF and AmSC resources. This tour takes about eight minutes.",
+    nextLabel: "Start the tour",
   },
+  "welcome:sidebar": {
+    title: "The sidebar",
+    body: "This is how you move around. Global areas at the top work across projects. Under Opened project are the open project's areas. Resources shows your compute clusters, and Settings sits at the bottom.",
+  },
+
   "project:overview": {
     title: "The Projects screen",
-    body: "Each project has a card. Open starts working in it, Edit changes its settings, and New project makes another.",
+    body: "A project keeps its own chats, files, skills and knowledge bases. Pick one to work in.",
+  },
+  "project:card": {
+    title: "A project",
+    body: "AI Safety in Autonomous Labs comes with VISTA. Its card lists its conversations, files, skills, knowledge bases and tools.",
+  },
+  "project:new": {
+    title: "Your own projects",
+    body: "Later, make your own project here.",
   },
   "project:open": {
-    title: "Open a project",
-    body: "A project holds your chats, files, skills and knowledge bases. Open one to continue.",
+    title: "Open the project",
+    body: "Open AI Safety in Autonomous Labs.",
+  },
+
+  "model:overview": {
+    title: "The chat screen",
+    body: "Ask questions here. The agent answers using this project's knowledge bases, skills and tools.",
+  },
+  "model:composer": {
+    title: "Where you ask",
+    body: "Type a question and press Start chat.",
+  },
+  "model:panel": {
+    title: "What the agent shows you",
+    body: "Artifacts holds the figures and files the agent shows. Activity lists each step it takes.",
+  },
+  "model:provider": {
+    title: "Model provider",
+    body: "Settings opens here for you. This is where VISTA's assistant runs.",
+  },
+  "model:providers": {
+    title: "Pick a provider",
+    body: "AmSC i2 and AmSC MAG suggest claude-sonnet; OLCF Inference suggests gpt-oss-120b; Custom is your own endpoint.",
   },
   "model:credential": {
-    title: "Connect a model",
-    body: "Choose your model provider and enter its API key. VISTA saves it for you.",
+    title: "Add your key",
+    body: "Paste your token. Get a token opens the provider's page. It saves as you type.",
   },
+  "model:set": {
+    title: "Model set",
+    body: "This model now answers in every chat. Change it here any time, or for one chat only.",
+  },
+
   "knowledge-bases:visit": {
     title: "Knowledge bases",
-    body: "Knowledge bases are collections of papers the agent can search and cite. Open Knowledge bases in the sidebar.",
+    body: "Open Knowledge Bases in the sidebar.",
   },
   "knowledge-bases:overview": {
-    title: "The Knowledge bases screen",
-    body: "Your knowledge bases are listed on the left. The details and publications of the one you choose are on the right.",
+    title: "The Knowledge Bases screen",
+    body: "Collections of papers and data the agent can search and cite.",
+  },
+  "knowledge-bases:list": {
+    title: "All knowledge bases",
+    body: "Every knowledge base on this computer. Search them from the top.",
   },
   "knowledge-bases:open-kb": {
-    title: "Knowledge bases",
-    body: "Knowledge bases are collections of papers the agent can search and cite. Open AI Safety Papers.",
+    title: "Open one",
+    body: "Open AI Safety Papers.",
+  },
+  "knowledge-bases:about": {
+    title: "About this knowledge base",
+    body: "What it holds, when it was built, and that the agent's search uses it.",
+  },
+  "knowledge-bases:papers": {
+    title: "Its papers",
+    body: "The three papers inside. The agent's answers cite these.",
   },
   "knowledge-bases:add-files": {
-    title: "Add your own papers",
-    body: "Use Add files to put your PDFs into a knowledge base. You don't need to add anything now.",
+    title: "Adding your own",
+    body: "Add PDFs, CSV, TXT or Markdown. VISTA indexes them in the background. Nothing to add now.",
   },
+
   "skills:visit": {
     title: "Skills",
-    body: "Skills teach the agent how to do a kind of work. Open Skills in the sidebar.",
+    body: "Open Skills in the sidebar.",
   },
   "skills:overview": {
     title: "The Skills screen",
-    body: "Skills loaded in this project are shown apart from the others on this computer. Import brings in more.",
+    body: "A skill is a set of instructions and scripts the agent follows for one kind of task.",
+  },
+  "skills:loaded": {
+    title: "Loaded in this project",
+    body: "Skills this project's agent uses. AI Safety starts with none.",
+  },
+  "skills:available": {
+    title: "On this computer",
+    body: "Skills you can load into this project.",
   },
   "skills:open-skill": {
-    title: "Skills",
-    body: "Skills teach the agent how to do a kind of work. Open any skill to read what it does.",
+    title: "Read a skill",
+    body: "Open alloy-design to read it.",
+  },
+  "skills:detail": {
+    title: "A skill's instructions",
+    body: "This is what the agent reads. Close it when you've seen enough.",
   },
   "skills:load": {
-    title: "Load a skill",
-    body: "Load puts a skill into the project, so the agent can use it. You don't need to load one now.",
+    title: "Load",
+    body: "Load adds a skill to this project's agent. Not needed now.",
   },
   "skills:import": {
-    title: "Import a skill",
-    body: "Import brings in a skill from a folder or from the Skill Hub. You don't need to import one now.",
+    title: "Import",
+    body: "Import brings in skills from a Git repository or a folder.",
   },
+
   "files:visit": {
     title: "Files",
-    body: "Reports and data the agent makes are kept in Files. Open Files in the sidebar.",
+    body: "Open Files in the sidebar.",
   },
   "files:overview": {
     title: "The Files screen",
-    body: "Outputs and Uploads are trees of files on the left, and the preview pane shows the one you choose.",
+    body: "Everything the agent writes and everything you give it, with a preview on the right.",
   },
-  "files:open-examples": {
-    title: "Files",
-    body: "Reports and data the agent makes appear here. These are examples: open the chart and the report to preview them.",
+  "files:outputs": {
+    title: "Outputs",
+    body: "What the agent writes. These are examples for the tour.",
+  },
+  "files:uploads": {
+    title: "Uploads",
+    body: "What you give the agent, by Upload or drag and drop.",
+  },
+  "files:open-chart": {
+    title: "Preview a chart",
+    body: "Open risk-scores.svg.",
+  },
+  "files:chart-preview": {
+    title: "Image preview",
+    body: "Images preview here. Click one to zoom.",
+  },
+  "files:open-report": {
+    title: "Preview a report",
+    body: "Now open summary.md.",
   },
   "files:review": {
-    title: "Files",
-    body: "Take a look at the previews. Choose Next when you're ready to continue.",
+    title: "Report preview",
+    body: "Reports show formatted, tables included. Download saves a copy.",
+  },
+
+  "hpc:resources": {
+    title: "Compute resources",
+    body: "The clusters VISTA can run jobs on. The dot and word show whether each is ready.",
   },
   "hpc:open-card": {
-    title: "Computing resources",
-    body: "These cards show the clusters VISTA can run jobs on. Open any card.",
+    title: "Open a cluster",
+    body: "Open Odo.",
+  },
+  "hpc:card": {
+    title: "A cluster's checks",
+    body: "Odo is ready when the facility is up, your compute token is accepted, a remote directory is set and file transfer is connected.",
+  },
+  "hpc:check": {
+    title: "One check",
+    body: "Each row says what it checked. A red row says what's missing and how to fix it.",
   },
   "hpc:settings": {
-    title: "Connect a cluster",
-    body: "Clusters are connected in Settings, from this entry. You don't need to connect one now.",
+    title: "Connecting a cluster",
+    body: "Settings is where you connect a cluster; Recheck runs these checks again.",
   },
-  "first-question:overview": {
-    title: "The chat screen",
-    body: "The conversation is in the middle, with the message box and model picker beneath it. Activity and artifacts appear in the panel beside it.",
-  },
+
   "first-question:send": {
     title: "Ask your first question",
-    body: "We've put a starter question in the message box. Edit it if you like, then send it.",
+    body: `We've written one for you: “${STARTER_QUESTION}” Edit it if you like, then send it.`,
+  },
+  "first-question:activity": {
+    title: "The agent at work",
+    body: "Each step appears here as it happens: searching the papers, calling tools, writing files.",
+  },
+  "first-question:answer": {
+    title: "The answer",
+    body: "The answer cites the papers it used. Ask a follow-up in the box below.",
   },
   "first-question:finish": {
-    title: "You're ready",
-    body: "That's the tour. You can replay it any time from Settings.",
+    title: "You're set up",
+    body: "You opened a project, connected a model, and saw knowledge bases, skills, files and clusters. Replay this tour any time from Settings, Research profile.",
     link: { label: "Documentation", href: DOCUMENTATION_URL },
+    nextLabel: "Done",
   },
 };

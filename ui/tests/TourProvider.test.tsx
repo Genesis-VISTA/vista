@@ -107,7 +107,24 @@ function openPopover(): void {
 /** Passes the coachmark showing with its Next, as the researcher does. */
 function pressNext(): void {
   openPopover();
-  act(() => screen.getByRole("button", { name: "Next" }).click());
+  // Earlier popovers stay in the document, so press the newest one's.
+  act(() => screen.getAllByRole("button", { name: "Next" }).at(-1)!.click());
+}
+
+/**
+ * With a credential, the model step's Next coachmarks run overview, composer,
+ * panel, picker, and the researcher is at the picker's pick. Mounts the anchors.
+ */
+function walkToPick(): void {
+  for (let i = 0; i < 4; i++) pressNext();
+}
+
+/** The elements the model step's chat coachmarks point at. */
+function mountChatAnchors(): void {
+  document.body.appendChild(document.createElement("header")).className = "page-topbar";
+  anchor("first-question:send");
+  anchor("model:panel");
+  anchor("model:pick");
 }
 
 function tourWrittenAs(state: OnboardingTourState) {
@@ -148,8 +165,9 @@ describe("TourProvider", () => {
     expect(lastStep().element).toBeUndefined();
     expect(lastStep().popover.title).toBe("Welcome to VISTA");
     openPopover();
-    expect(screen.getByRole("button", { name: "Next" }).closest<HTMLElement>("div")!.parentElement!.style.display).toBe("flex");
-    expect(screen.getByRole("button", { name: "Next" })).toBeInTheDocument();
+    const start = screen.getByRole("button", { name: "Start the tour" });
+    expect(start.closest<HTMLElement>("div")!.parentElement!.style.display).toBe("flex");
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Skip this step" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Exit tutorial" })).toBeInTheDocument();
     // The first step is saved as soon as it shows.
@@ -207,17 +225,20 @@ describe("TourProvider", () => {
     );
   });
 
-  it("moves to the project step and saves it when Next is pressed on the welcome", async () => {
+  it("moves to the project step and saves it when the welcome and the sidebar are passed", async () => {
+    anchor("welcome:sidebar");
     render(<TourProvider>app</TourProvider>);
     openPopover();
-    await userEvent.click(screen.getByRole("button", { name: "Next" }));
+    await userEvent.click(screen.getByRole("button", { name: "Start the tour" }));
+    expect(lastStepKey()).toBe("The sidebar");
+    pressNext();
     expect(updateSettingsMock).toHaveBeenLastCalledWith(
       tourWrittenAs({ status: "in_progress", step: "project" }),
     );
   });
 
   it("offers no Next on a step that waits for the researcher's action", () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
     vi.useFakeTimers();
     render(<TourProvider>app</TourProvider>);
     act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
@@ -227,7 +248,7 @@ describe("TourProvider", () => {
   });
 
   it("skips a step to the next one", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
     vi.useFakeTimers();
     render(<TourProvider>app</TourProvider>);
     act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
@@ -235,7 +256,7 @@ describe("TourProvider", () => {
     // userEvent waits on timers; click directly under fake timers.
     act(() => screen.getByRole("button", { name: "Skip this step" }).click());
     expect(updateSettingsMock).toHaveBeenLastCalledWith(
-      tourWrittenAs({ status: "in_progress", step: "knowledge-bases" }),
+      tourWrittenAs({ status: "in_progress", step: "skills" }),
     );
   });
 
@@ -269,9 +290,9 @@ describe("TourProvider", () => {
   });
 
   it("points at the step's data-tour target when it is on the page", () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
     const target = document.body.appendChild(document.createElement("button"));
-    target.setAttribute("data-tour", "model:credential");
+    target.setAttribute("data-tour", "knowledge-bases:visit");
     render(<TourProvider>app</TourProvider>);
     expect(lastStep().element).toBe(target);
   });
@@ -289,11 +310,11 @@ describe("TourProvider", () => {
   });
 
   it("points at a target that mounts while it waits", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
     render(<TourProvider>app</TourProvider>);
     expect(highlightMock).not.toHaveBeenCalled();
     const target = document.createElement("button");
-    target.setAttribute("data-tour", "model:credential");
+    target.setAttribute("data-tour", "knowledge-bases:visit");
     document.body.appendChild(target);
     await vi.waitFor(() => expect(highlightMock).toHaveBeenCalledTimes(1));
     expect(lastStep().element).toBe(target);
@@ -305,11 +326,11 @@ describe("TourProvider", () => {
       settings: agentSettings({ hasCredential: true }),
       error: null,
     });
-    vi.useFakeTimers();
+    mountChatAnchors();
     const { unmount } = render(<TourProvider>app</TourProvider>);
-    act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
+    walkToPick();
     const withDefault = lastStep() as Step & { popover: { description: string } };
-    expect(withDefault.popover.description).toContain("claude-sonnet");
+    expect(withDefault.popover.description).toBe("Suggested: claude-sonnet. Any model on the list works.");
     unmount();
 
     useAgentSettingsMock.mockReturnValue({
@@ -320,9 +341,9 @@ describe("TourProvider", () => {
       error: null,
     });
     render(<TourProvider>app</TourProvider>);
-    act(() => void vi.advanceTimersByTime(TARGET_TIMEOUT_MS));
+    walkToPick();
     const without = lastStep() as Step & { popover: { description: string } };
-    expect(without.popover.description).toContain("any model your endpoint serves");
+    expect(without.popover.description).not.toContain("Suggested");
     expect(without.popover.description).not.toContain("claude-sonnet");
   });
 
@@ -365,7 +386,7 @@ describe("useTour and useTourEvent", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
     nav.pathname = "/knowledge-bases";
     document.body.appendChild(document.createElement("header")).className = "page-topbar";
-    for (const key of ["knowledge-bases:open-kb", "knowledge-bases:add-files"]) {
+    for (const key of ["knowledge-bases:list", "knowledge-bases:open-kb", "knowledge-bases:about"]) {
       document.body.appendChild(document.createElement("i")).setAttribute("data-tour", key);
     }
     render(
@@ -375,9 +396,11 @@ describe("useTour and useTourEvent", () => {
     );
     expect(screen.getByText("running")).toBeInTheDocument();
     pressNext();
+    pressNext();
+    expect(lastStepKey()).toBe("Open one");
     await userEvent.click(screen.getByText("running"));
-    // kb-opened completes open-kb, leaving add-files, which has a Next.
-    await vi.waitFor(() => expect(lastStepKey()).toBe("Add your own papers"));
+    // kb-opened completes open-kb, leaving the knowledge base's about, which has a Next.
+    await vi.waitFor(() => expect(lastStepKey()).toBe("About this knowledge base"));
   });
 });
 
@@ -398,6 +421,8 @@ function Controls() {
   return (
     <div>
       <button onClick={() => report("skill-opened")}>report skill</button>
+      <button onClick={() => report("skill-closed")}>report skill closed</button>
+      <button onClick={() => report("turn-started")}>report turn started</button>
       <button onClick={() => report("kb-opened")}>report kb</button>
       <button onClick={() => report("turn-succeeded")}>report success</button>
       <button onClick={() => reportFailure("credential")}>fail credential</button>
@@ -417,8 +442,8 @@ const tree = (
 
 describe("a coachmark that waits for an action", () => {
   it("stands aside when its control is used, and is drawn again by the next report", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
-    const target = anchor("model:credential");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
+    const target = anchor("knowledge-bases:visit");
     render(tree);
     expect(highlightMock).toHaveBeenCalledTimes(1);
 
@@ -438,8 +463,8 @@ describe("a coachmark that waits for an action", () => {
   });
 
   it("stands aside when the highlighted control leaves the page", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
-    const target = anchor("model:credential");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
+    const target = anchor("knowledge-bases:visit");
     render(tree);
     expect(destroyMock).not.toHaveBeenCalled();
     target.remove();
@@ -450,16 +475,50 @@ describe("a coachmark that waits for an action", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
     nav.pathname = "/skills";
     document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    anchor("skills:loaded");
+    anchor("skills:available");
     anchor("skills:open-skill");
+    anchor("skills:detail");
     const load = anchor("skills:load");
     render(tree);
     pressNext();
+    pressNext();
+    pressNext();
+    expect(lastStepKey()).toBe("Read a skill");
     await userEvent.click(screen.getByRole("button", { name: "report skill" }));
+    expect(lastStepKey()).toBe("A skill's instructions");
+    await userEvent.click(screen.getByRole("button", { name: "report skill closed" }));
     expect(lastStep().element).toBe(load);
-    // Moving on from the undimmed overview started a new driver; using the control does not.
+    // Moving on from an earlier coachmark started a new driver; using the control does not.
     const destroyed = destroyMock.mock.calls.length;
     await userEvent.click(load);
     expect(destroyMock).toHaveBeenCalledTimes(destroyed);
+  });
+
+  it("keeps a skill's detail coachmark up while the skill is used, since Close is inside it", async () => {
+    setSettings({ onboarding_tour: { status: "in_progress", step: "skills" } });
+    nav.pathname = "/skills";
+    document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    anchor("skills:loaded");
+    anchor("skills:available");
+    anchor("skills:open-skill");
+    const detail = anchor("skills:detail");
+    const close = document.createElement("button");
+    close.textContent = "Close";
+    detail.appendChild(close);
+    anchor("skills:load");
+    render(tree);
+    pressNext();
+    pressNext();
+    pressNext();
+    await userEvent.click(screen.getByRole("button", { name: "report skill" }));
+    expect(lastStep().element).toBe(detail);
+    const destroyed = destroyMock.mock.calls.length;
+    await userEvent.click(close);
+    expect(destroyMock).toHaveBeenCalledTimes(destroyed);
+    // It goes with the detail, which is what the researcher closing it does.
+    detail.remove();
+    await vi.waitFor(() => expect(destroyMock.mock.calls.length).toBeGreaterThan(destroyed));
   });
 });
 
@@ -472,8 +531,8 @@ describe("a coachmark follows the page", () => {
   });
 
   it("places the coachmark again when its anchor moves", async () => {
-    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
-    const target = anchor("model:credential");
+    setSettings({ onboarding_tour: { status: "in_progress", step: "knowledge-bases" } });
+    const target = anchor("knowledge-bases:visit");
     let top = 100;
     target.getBoundingClientRect = () => ({ left: 0, top, width: 50, height: 20 }) as DOMRect;
     render(tree);
@@ -497,7 +556,7 @@ describe("a coachmark follows the page", () => {
     // A fresh element, since React skips an element it has already rendered.
     rerender(<TourProvider><Controls /></TourProvider>);
     expect(lastStep().element).toBe(topbar);
-    expect(lastStepKey()).toBe("The Knowledge bases screen");
+    expect(lastStepKey()).toBe("The Knowledge Bases screen");
   });
 
   it("pulses the coachmark when the researcher clicks outside its target", () => {
@@ -522,7 +581,7 @@ describe("a coachmark follows the page", () => {
     nav.pathname = "/skills";
     const topbar = document.body.appendChild(document.createElement("header"));
     topbar.className = "page-topbar";
-    const open = anchor("skills:open-skill");
+    const loaded = anchor("skills:loaded");
     render(tree);
     expect(lastStep().element).toBe(topbar);
     expect(driverMock).toHaveBeenCalledTimes(1);
@@ -532,7 +591,7 @@ describe("a coachmark follows the page", () => {
     expect(destroyMock).toHaveBeenCalledTimes(1);
     expect(driverMock).toHaveBeenCalledTimes(2);
     expect(driverMock.mock.calls[1][0]).toMatchObject({ overlayOpacity: 1 });
-    expect(lastStep().element).toBe(open);
+    expect(lastStep().element).toBe(loaded);
   });
 });
 
@@ -554,7 +613,13 @@ describe("where the tour takes the researcher", () => {
 
   it("opens Settings at the model provider, and closes it for the model picker", () => {
     setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    mountChatAnchors();
+    anchor("model:provider");
     const { rerender } = render(tree);
+    // The chat is explained first, with the picker in view and Settings shut.
+    expect(openSettingsMock).not.toHaveBeenCalled();
+    walkToPick();
+    expect(lastStepKey()).toBe("Model provider");
     expect(openSettingsMock).toHaveBeenCalledExactlyOnceWith("agent");
     expect(closeSettingsMock).not.toHaveBeenCalled();
 
@@ -565,6 +630,13 @@ describe("where the tour takes the researcher", () => {
     rerender(<TourProvider><Controls /></TourProvider>);
     expect(closeSettingsMock).toHaveBeenCalledTimes(1);
     expect(openSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens the chat for the model step from another page, once", () => {
+    nav.pathname = "/projects";
+    setSettings({ onboarding_tour: { status: "in_progress", step: "model" } });
+    render(tree);
+    expect(push).toHaveBeenCalledExactlyOnceWith("/");
   });
 
   it("opens the chat for the first question", () => {
@@ -598,13 +670,17 @@ describe("the first question", () => {
     const send = anchor("first-question:send");
     const settingsButton = anchor("first-question:settings");
     const picker = anchor("model:pick");
-    document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    const panel = anchor("model:panel");
     render(tree);
-    expect(lastStepKey()).toBe("The chat screen");
-    pressNext();
     expect(lastStep().element).toBe(send);
     expect(lastStepKey()).toBe("Ask your first question");
 
+    // The turn starting moves the tour to the agent at work...
+    await userEvent.click(screen.getByRole("button", { name: "report turn started" }));
+    expect(lastStep().element).toBe(panel);
+    expect(lastStepKey()).toBe("The agent at work");
+
+    // ...and a failure puts it back at Send, pointing at the fix.
     await userEvent.click(screen.getByRole("button", { name: "fail credential" }));
     expect(lastStep().element).toBe(settingsButton);
     expect(lastStepKey()).toBe("VISTA needs a model connected");
@@ -623,16 +699,37 @@ describe("the first question", () => {
     expect(highlightMock.mock.calls.length).toBeGreaterThan(calls);
   });
 
-  it("finishes on the next success after a failure", async () => {
+  it("goes from the answer to a centred finish, labelled Done, on the next success after a failure", async () => {
     anchor("first-question:send");
-    const finish = anchor("first-question:finish");
-    document.body.appendChild(document.createElement("header")).className = "page-topbar";
+    anchor("model:panel");
+    const answer = anchor("first-question:answer");
     render(tree);
-    pressNext();
     await userEvent.click(screen.getByRole("button", { name: "fail credential" }));
+    await userEvent.click(screen.getByRole("button", { name: "report turn started" }));
     await userEvent.click(screen.getByRole("button", { name: "report success" }));
-    expect(lastStepKey()).toBe("You're ready");
-    expect(lastStep().element).toBe(finish);
+    expect(lastStepKey()).toBe("The answer");
+    expect(lastStep().element).toBe(answer);
+
+    pressNext();
+    expect(lastStepKey()).toBe("You're set up");
+    expect(lastStep().element).toBeUndefined();
+    openPopover();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Documentation" })).toHaveAttribute(
+      "href",
+      "https://genesis-vista.github.io/",
+    );
+  });
+
+  it("leaves the answer in place when a later turn fails", async () => {
+    anchor("first-question:send");
+    anchor("model:panel");
+    anchor("first-question:answer");
+    render(tree);
+    await userEvent.click(screen.getByRole("button", { name: "report turn started" }));
+    await userEvent.click(screen.getByRole("button", { name: "report success" }));
+    await userEvent.click(screen.getByRole("button", { name: "fail other" }));
+    expect(lastStepKey()).toBe("The answer");
   });
 });
 
@@ -649,8 +746,9 @@ describe("the model suggestion", () => {
       }),
       error: null,
     });
-    anchor("model:pick");
+    mountChatAnchors();
     render(tree);
+    walkToPick();
     expect((lastStep().popover as unknown as { description: string }).description).toContain(
       defaultModel,
     );

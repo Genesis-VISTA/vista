@@ -541,7 +541,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       <div className="app-page-body flush">
       <div className="kb-layout">
         {/* ---- Left: list ---- */}
-        <section className="panel kb-list-panel">
+        <section className="panel kb-list-panel" data-tour="knowledge-bases:list">
           <div className="panel-body kb-list-body">
             <input
               className="input"
@@ -977,7 +977,7 @@ function KbDetailView({
       </div>
       <div className="panel-body kb-detail-body">
         {/* ---- Metadata block ---- */}
-        <div className="kb-detail-meta">
+        <div className="kb-detail-meta" data-tour="knowledge-bases:about">
           {editing ? (
             <>
               <label className="project-modal-label">
@@ -1233,7 +1233,7 @@ function KbDetailView({
           }}
         />
 
-        <div className="kb-pubs-list">
+        <div className="kb-pubs-list" data-tour="knowledge-bases:papers">
           {kb.publications.length === 0 ? (
             <div className="kb-empty-block">
               No publications yet. Upload files to populate this knowledge base.

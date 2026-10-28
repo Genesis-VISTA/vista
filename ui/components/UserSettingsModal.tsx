@@ -1293,7 +1293,7 @@ function AgentSection({
   }
 
   return (
-    <section className="settings-section" aria-label="Models & providers" data-tour="model:credential">
+    <section className="settings-section" aria-label="Models & providers" data-tour="model:provider">
       <SectionHeader title="Model provider">
         <span className="user-settings-hint">
           Choose where VISTA runs its assistant. Changes apply from your next message.
@@ -1308,6 +1308,7 @@ function AgentSection({
           </div>
           <div
             id={fieldId("inference_provider")}
+            data-tour="model:providers"
             className="settings-provider-grid"
             role="radiogroup"
             aria-label="Inference provider"
@@ -1383,15 +1384,17 @@ function AgentSection({
         )}
 
         {keyField && copy && (
-          <SavedField
-            key={keyField}
-            label={copy.label}
-            field={keyField}
-            binding={bind(keyField, "on-blur")}
-            secret
-            placeholder="API key"
-            hint={copy.hint}
-          />
+          <div data-tour="model:credential">
+            <SavedField
+              key={keyField}
+              label={copy.label}
+              field={keyField}
+              binding={bind(keyField, "on-blur")}
+              secret
+              placeholder="API key"
+              hint={copy.hint}
+            />
+          </div>
         )}
       </div>
     </section>

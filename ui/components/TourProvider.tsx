@@ -86,6 +86,9 @@ export function useTourEvent(): (event: TourEvent) => void {
   return useContext(TourContext).report;
 }
 
+/** Coachmarks with nothing to point at; they sit in the middle of the window. */
+const CENTRED: ReadonlySet<string> = new Set(["welcome:intro", "first-question:finish"]);
+
 /** What this page load has seen of the tour; a replay starts it over. */
 type Session = {
   events: ReadonlySet<TourEvent>;
@@ -158,6 +161,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  const hasCredential = agent?.hasCredential ?? false;
   const providerDefault = agent?.providers.find((p) => p.id === agent.provider)?.defaultModel ?? null;
 
   const position = useMemo<TourPosition | null>(() => {
@@ -249,7 +253,18 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const reportFailure = useCallback(
     (kind: TourFailure) => {
       if (!running) return;
-      setSession((s) => ({ ...s, failure: kind, pulse: s.pulse + 1 }));
+      setSession((s) => {
+        // A failure after the turn started puts the researcher back at Send,
+        // where the coachmark points at what fixes it. Once the turn has
+        // answered, a later failure is the researcher's own business.
+        let events = s.events;
+        if (events.has("turn-started") && !events.has("turn-succeeded")) {
+          const without = new Set(events);
+          without.delete("turn-started");
+          events = without;
+        }
+        return { ...s, events, failure: kind, pulse: s.pulse + 1 };
+      });
     },
     [running],
   );
@@ -283,15 +298,17 @@ export function TourProvider({ children }: { children: ReactNode }) {
       case "project:overview":
         if (nav.current.pathname !== "/projects") nav.current.router.push("/projects");
         break;
-      case "model:credential":
+      case "model:overview":
+      case "first-question:send":
+        // Opening a project lands in chat, but a researcher can be elsewhere.
+        if (nav.current.pathname !== "/") nav.current.router.push("/");
+        break;
+      case "model:provider":
         openSettings("agent");
         break;
       case "model:pick":
         // The researcher is in chat by now; the picker is behind the modal.
         closeSettings();
-        break;
-      case "first-question:overview":
-        if (nav.current.pathname !== "/") nav.current.router.push("/");
         break;
     }
   }, [stepKey]);
@@ -311,7 +328,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const pulse = session.pulse;
   useEffect(() => {
     if (step === null || subStep === null || anchorKey === null) return;
-    const mark = coachmarkFor(step, subStep, { providerDefault, failure });
+    const mark = coachmarkFor(step, subStep, { providerDefault, hasCredential, failure });
     if (mark === null) return;
     const key = anchorKey;
     const withNext = completesOnNext(step, subStep);
@@ -387,7 +404,11 @@ export function TourProvider({ children }: { children: ReactNode }) {
       // uses its control, or the control goes away (a menu closing, a run
       // starting): driver.js would otherwise keep the rest of the page dead.
       if (!withNext) {
+        // The open skill is explained in place and closed from inside it, so
+        // its coachmark must stay up while the researcher uses it.
+        const staysUp = key === "skills:detail";
         const onDown = (event: Event) => {
+          if (staysUp) return;
           if (event.target instanceof Node && element.contains(event.target)) destroyDriver();
         };
         const gone = new MutationObserver(() => {
@@ -403,8 +424,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // The welcome has nothing to point at; the other steps wait for their anchor.
-    if (key === "welcome:intro") {
+    // A centred coachmark has nothing to point at; the others wait for their anchor.
+    if (CENTRED.has(key)) {
       show(undefined);
       return;
     }
@@ -439,7 +460,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       standAside();
     };
     // `pulse` and `pathname` only redraw: a report or a new page re-targets.
-  }, [step, subStep, anchorKey, failure, providerDefault, pathname, pulse, destroyDriver]);
+  }, [step, subStep, anchorKey, failure, providerDefault, hasCredential, pathname, pulse, destroyDriver]);
 
   // Escape closes the tour. driver.js's own handler also answers the arrow
   // keys, which here would step through nothing, so it is turned off above.
@@ -509,7 +530,7 @@ function renderCoachmark(
   const buttons = [exit, skip];
   let primary = skip;
   if (withNext) {
-    primary = button("Next", "tour-btn tour-btn-primary", actions.next);
+    primary = button(mark.nextLabel ?? "Next","tour-btn tour-btn-primary", actions.next);
     buttons.push(primary);
   }
   const row = document.createElement("div");

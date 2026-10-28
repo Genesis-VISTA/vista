@@ -318,6 +318,7 @@ function ProjectsPageContent() {
           <button
             type="button"
             className="project-new"
+            data-tour="project:new"
             onClick={() => setModal({ mode: "create" })}
           >
             <div className="project-new-plus" aria-hidden="true">+</div>
@@ -418,7 +419,10 @@ function ProjectCard({
   const stats = useProjectStats(project.name);
 
   return (
-    <div className={`project-card${active ? " active" : ""}`}>
+    <div
+      className={`project-card${active ? " active" : ""}`}
+      data-tour={tourTarget ? "project:card" : undefined}
+    >
       <div className="project-card-head">
         <div>
           <div className="project-card-title">{project.name}</div>

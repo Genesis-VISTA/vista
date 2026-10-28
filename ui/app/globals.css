@@ -5500,6 +5500,18 @@ textarea.input:focus {
    state, so the states read without color.
    ------------------------------------------------------------------------- */
 
+/* One box around the heading and the cards, so the tour can point at them together. */
+.hpc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: stretch;
+}
+
+.nav-rail.collapsed .hpc-section {
+  align-items: center;
+}
+
 .hpc-section-head {
   display: flex;
   align-items: center;

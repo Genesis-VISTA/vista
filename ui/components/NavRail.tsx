@@ -322,6 +322,7 @@ export function NavRail() {
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
       aria-label="Primary navigation"
+      data-tour="welcome:sidebar"
     >
       <div className="nav-rail-header">
         {/* The white lockup needs a solid dark plate under it — see the AmSC

@@ -25,14 +25,14 @@ export type TourStepId = (typeof TOUR_STEPS)[number];
  * by app state, by an event, or by the researcher's Next.
  */
 export const TOUR_SUB_STEPS = {
-  welcome: ["intro"],
-  project: ["overview", "open"],
-  model: ["credential", "pick"],
-  "knowledge-bases": ["visit", "overview", "open-kb", "add-files"],
-  skills: ["visit", "overview", "open-skill", "load", "import"],
-  files: ["visit", "overview", "open-examples", "review"],
-  hpc: ["open-card", "settings"],
-  "first-question": ["overview", "send", "finish"],
+  welcome: ["intro", "sidebar"],
+  project: ["overview", "card", "new", "open"],
+  model: ["overview", "composer", "panel", "picker", "provider", "providers", "credential", "pick", "set"],
+  "knowledge-bases": ["visit", "overview", "list", "open-kb", "about", "papers", "add-files"],
+  skills: ["visit", "overview", "loaded", "available", "open-skill", "detail", "load", "import"],
+  files: ["visit", "overview", "outputs", "uploads", "open-chart", "chart-preview", "open-report", "review"],
+  hpc: ["resources", "open-card", "card", "check", "settings"],
+  "first-question": ["send", "activity", "answer", "finish"],
 } as const satisfies Record<TourStepId, readonly string[]>;
 
 export type TourSubStep<S extends TourStepId = TourStepId> = (typeof TOUR_SUB_STEPS)[S][number];
@@ -41,9 +41,11 @@ export type TourSubStep<S extends TourStepId = TourStepId> = (typeof TOUR_SUB_ST
 export type TourEvent =
   | "kb-opened"
   | "skill-opened"
+  | "skill-closed"
   | "example-image-opened"
   | "example-md-opened"
   | "hpc-card-opened"
+  | "turn-started"
   | "turn-succeeded";
 
 /**
@@ -94,8 +96,17 @@ const STEP_PAGES: Partial<Record<TourStepId, string>> = {
 function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean {
   const key = `${step}:${sub}`;
   switch (key) {
+    case "project:overview":
+    case "project:card":
+    case "project:new":
+      // A project already open skips explaining how to pick one.
+      return input.activeProject !== null || input.acknowledged.has(key as Acknowledgement);
     case "project:open":
       return input.activeProject !== null;
+    case "model:provider":
+    case "model:providers":
+      // A researcher with a credential has no use for the provider settings.
+      return input.inference.hasCredential || input.acknowledged.has(key as Acknowledgement);
     case "model:credential":
       return input.inference.hasCredential;
     case "model:pick":
@@ -108,11 +119,17 @@ function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean
       return input.events.has("kb-opened");
     case "skills:open-skill":
       return input.events.has("skill-opened");
-    case "files:open-examples":
-      return input.events.has("example-image-opened") && input.events.has("example-md-opened");
+    case "skills:detail":
+      return input.events.has("skill-closed");
+    case "files:open-chart":
+      return input.events.has("example-image-opened");
+    case "files:open-report":
+      return input.events.has("example-md-opened");
     case "hpc:open-card":
       return input.events.has("hpc-card-opened");
     case "first-question:send":
+      return input.events.has("turn-started");
+    case "first-question:activity":
       return input.events.has("turn-succeeded");
     default:
       // Everything else is passed with Next.
@@ -155,10 +172,13 @@ const ACTION_SUB_STEPS: ReadonlySet<string> = new Set([
   "knowledge-bases:open-kb",
   "skills:visit",
   "skills:open-skill",
+  "skills:detail",
   "files:visit",
-  "files:open-examples",
+  "files:open-chart",
+  "files:open-report",
   "hpc:open-card",
   "first-question:send",
+  "first-question:activity",
 ]);
 
 /**
@@ -180,10 +200,21 @@ export function tourFailureForRefusal(body: unknown): TourFailure {
   return code === "inference_not_configured" ? "credential" : "other";
 }
 
+/** Coachmarks that point at an element another coachmark's anchor already names. */
+const ANCHOR_ALIASES: Record<string, string> = {
+  "model:composer": "first-question:send",
+  "model:picker": "model:pick",
+  "model:set": "model:pick",
+  "first-question:activity": "model:panel",
+  "files:chart-preview": "files:preview",
+  "files:review": "files:preview",
+};
+
 /**
- * The `data-tour` value a coachmark points at. Always `"<step>:<sub-step>"`,
- * except on the first question after a failure, where it points at what fixes
- * it: the settings button for a credential, the model picker for a model.
+ * The `data-tour` value a coachmark points at. `"<step>:<sub-step>"`, except
+ * where one element serves two coachmarks (`ANCHOR_ALIASES`), and on the first
+ * question after a failure, where it points at what fixes it: the settings
+ * button for a credential, the model picker for a model.
  */
 export function tourAnchor(position: TourPosition, failure: TourFailure | null): string {
   const key = `${position.step}:${position.subStep}`;
@@ -191,5 +222,5 @@ export function tourAnchor(position: TourPosition, failure: TourFailure | null):
     if (failure === "credential") return "first-question:settings";
     if (failure === "model") return "model:pick";
   }
-  return key;
+  return ANCHOR_ALIASES[key] ?? key;
 }

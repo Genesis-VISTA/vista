@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type HTMLAttributes } from "react";
-import { useTourEvent } from "@/components/TourProvider";
+import { useTour, useTourEvent } from "@/components/TourProvider";
 import {
   HPC_CLUSTER_TITLES,
   RESOURCE_TREE,
@@ -222,6 +222,11 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
   const [open, setOpen] = useState<Open | null>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const reportTour = useTourEvent();
+  // The tour explains the open card, so it leaves the card open through its
+  // coachmarks (pressing Next is no click "elsewhere"), and closes it when the
+  // tour moves past the cluster step.
+  const tourStep = useTour().position?.step ?? null;
+  if (tourStep !== null && tourStep !== "hpc" && open !== null) setOpen(null);
 
   // Close on Escape or a click anywhere else, like the rail's other overlays.
   useEffect(() => {
@@ -233,6 +238,8 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
       const target = e.target as Node;
       if (popoverRef.current?.contains(target)) return;
       if ((target as HTMLElement).closest?.("[data-hpc-card]")) return;
+      // The tour's coachmarks explain the open card; pressing Next must not close it.
+      if ((target as Element).closest?.(".driver-popover, .driver-overlay")) return;
       setOpen(null);
     }
     window.addEventListener("keydown", onKey);
@@ -288,6 +295,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
 
   return (
     <>
+      <div className="hpc-section" data-tour="hpc:resources">
       {!collapsed ? (
         <div className="hpc-section-head">
           <span className="nav-rail-section-label hpc-section-label">Resources</span>
@@ -314,13 +322,12 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
         <div className="hpc-collapsed-divider" aria-hidden="true" />
       )}
 
-      {groups.map(({ facility, institution, clusters }, index) => (
+      {groups.map(({ facility, institution, clusters }) => (
         <div
           key={facility.id}
           role="group"
           aria-label={facility.name}
           className="hpc-facility"
-          data-tour={index === 0 ? "hpc:open-card" : undefined}
         >
           <div className={collapsed ? "hpc-facility-short" : "hpc-facility-head"} aria-hidden="true">
             {facility.name}
@@ -339,6 +346,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
                 key={cluster}
                 type="button"
                 data-hpc-card={cluster}
+                data-tour={cluster === groups[0]?.clusters[0] ? "hpc:open-card" : undefined}
                 className={`hpc-card${collapsed ? " hpc-card--collapsed" : ""}${isOpen ? " open" : ""}`}
                 aria-label={`${title}: ${label}`}
                 aria-expanded={isOpen}
@@ -366,6 +374,7 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
           })}
         </div>
       ))}
+      </div>
 
       {open && openCard && (
         <HpcDetails
@@ -441,6 +450,7 @@ function HpcDetails({
       role="dialog"
       aria-label={`${title} connection details`}
       className="hpc-popover"
+      data-tour="hpc:card"
       style={{ left, top }}
     >
       <div className="hpc-popover-head">
@@ -452,8 +462,8 @@ function HpcDetails({
       </div>
       {rows.length > 0 && (
         <ul className="hpc-rows">
-          {rows.map((row) => (
-            <li key={row.title} className="hpc-row">
+          {rows.map((row, i) => (
+            <li key={row.title} className="hpc-row" data-tour={i === 0 ? "hpc:check" : undefined}>
               <RowIcon ok={row.ok} />
               <span className="hpc-row-text">
                 <span className="hpc-row-title">{row.title}</span>

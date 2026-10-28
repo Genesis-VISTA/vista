@@ -4,9 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SkillsPage from "@/app/skills/page";
 
 /*
- * The Skills page under the first-boot tour: a skill counts as read when its
- * detail is closed, the detail stays open while it is read, and the page loads
- * nothing itself.
+ * The Skills page under the first-boot tour: a skill's detail is reported when
+ * it opens and again when it closes, the detail stays open while it is read,
+ * and the page loads nothing itself.
  */
 
 const { tourPosition, tourReport } = vi.hoisted(() => ({
@@ -60,24 +60,29 @@ afterEach(() => {
 });
 
 describe("Skills page during the tour", () => {
-  it("carries the tour's anchors on the first skill, the first Load and Import", async () => {
+  it("carries the tour's anchors on both sections, the first skill, the first Load and Import", async () => {
     render(<SkillsPage />);
     await screen.findByText("Other One");
+    expect(document.querySelector('[data-tour="skills:loaded"]')).toHaveTextContent("Loaded One");
+    expect(document.querySelector('[data-tour="skills:available"]')).toHaveTextContent("Other One");
     expect(document.querySelector('[data-tour="skills:open-skill"]')).toHaveTextContent("Loaded One");
     expect(document.querySelector('[data-tour="skills:load"]')?.textContent).toBe("Load");
     expect(document.querySelector('[data-tour="skills:import"]')).toHaveTextContent("Import…");
   });
 
-  it("reports a skill as read only when its detail is closed, and loads nothing", async () => {
+  it("reports a skill when its detail opens and again when it closes, and loads nothing", async () => {
     tourPosition.current = { step: "skills", subStep: "open-skill" };
     render(<SkillsPage />);
     await userEvent.click(await screen.findByText("Other One"));
     await screen.findByText("What it does");
-    expect(tourReport).not.toHaveBeenCalled();
+    expect(tourReport).toHaveBeenCalledExactlyOnceWith("skill-opened");
+    // The detail is what the tour explains next, and it is the anchor of that coachmark.
+    expect(document.querySelector('[data-tour="skills:detail"]')).toHaveTextContent("What it does");
 
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     await waitFor(() => expect(screen.queryByText("What it does")).not.toBeInTheDocument());
-    expect(tourReport).toHaveBeenCalledExactlyOnceWith("skill-opened");
+    expect(tourReport).toHaveBeenCalledTimes(2);
+    expect(tourReport).toHaveBeenLastCalledWith("skill-closed");
     expect(updateProject).not.toHaveBeenCalled();
   });
 
@@ -96,6 +101,6 @@ describe("Skills page during the tour", () => {
     await screen.findByText("What it does");
     act(() => view.rerender(<SkillsPage />));
     expect(screen.getByText("What it does")).toBeInTheDocument();
-    expect(tourReport).not.toHaveBeenCalled();
+    expect(tourReport).not.toHaveBeenCalledWith("skill-closed");
   });
 });
