@@ -19,6 +19,7 @@ function fixture() {
   writeFileSync(path.join(root, 'vista'), '#!/bin/sh\n', 'utf8');
   chmodSync(path.join(root, 'vista'), 0o755);
   writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
+    version: '0.1.4',
     target: { os: 'macos' },
     entrypoint: 'VISTA.app',
     diagnostic_launcher: 'vista',
@@ -32,6 +33,7 @@ test('resolves the launcher beside a valid top-level macOS app', () => {
   assert.deepEqual(resolveMacPackage(resources), {
     packageRoot: root,
     launcherPath: path.join(root, 'vista'),
+    version: '0.1.4',
   });
   rmSync(root, { recursive: true, force: true });
 });
@@ -51,6 +53,7 @@ test('resolves a separately named development app described by its manifest', ()
   assert.deepEqual(resolveMacPackage(resources), {
     packageRoot: root,
     launcherPath: path.join(root, 'vista'),
+    version: '',
   });
   rmSync(root, { recursive: true, force: true });
 });
@@ -88,6 +91,7 @@ function windowFixture(platform) {
   writeFileSync(launcher, '', 'utf8');
   chmodSync(launcher, 0o755);
   writeFileSync(path.join(root, 'manifest.json'), JSON.stringify({
+    version: '0.1.4+3.g1a2b3c4',
     target: { os: windows ? 'windows' : 'linux' },
     entrypoint: windows ? 'app/window/VISTA.exe' : 'app/window/vista-app',
     diagnostic_launcher: windows ? 'vista.cmd' : 'vista',
@@ -101,6 +105,7 @@ test('resolves a Linux package two levels above app/window, starting vista', () 
   assert.deepEqual(resolvePackage({ platform: 'linux', execPath: exe, resourcesPath: '' }), {
     packageRoot: root,
     launcherPath: launcher,
+    version: '0.1.4+3.g1a2b3c4',
   });
   rmSync(root, { recursive: true, force: true });
 });
@@ -110,6 +115,7 @@ test('resolves a Windows package, starting vista.ps1 rather than vista.cmd', () 
   assert.deepEqual(resolvePackage({ platform: 'win32', execPath: exe, resourcesPath: '' }), {
     packageRoot: root,
     launcherPath: launcher,
+    version: '0.1.4+3.g1a2b3c4',
   });
   assert.equal(path.basename(launcher), 'vista.ps1');
   rmSync(root, { recursive: true, force: true });

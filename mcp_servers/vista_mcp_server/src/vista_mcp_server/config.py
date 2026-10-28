@@ -305,7 +305,13 @@ class AppSettings(BaseSettings):
 settings = AppSettings()
 if settings.hf_token:
     os.environ['HF_TOKEN'] = settings.hf_token
+# VISTA's own cache, which holds the shipped embedding weights, wins over any
+# the machine names: HF_HUB_CACHE and HUGGINGFACE_HUB_CACHE outrank HF_HOME, and
+# sentence-transformers takes SENTENCE_TRANSFORMERS_HOME as its cache folder.
 os.environ["HF_HOME"] = str(settings.data_dir / 'huggingface')
+os.environ["HF_HUB_CACHE"] = str(settings.data_dir / 'huggingface' / 'hub')
+for _name in ("HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+    os.environ.pop(_name, None)
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

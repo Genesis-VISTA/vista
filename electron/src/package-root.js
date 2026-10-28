@@ -43,6 +43,16 @@ function readManifest(packageRoot) {
 }
 
 /**
+ * The release the build stamped into the manifest, e.g. 0.1.4 or
+ * 0.1.4+3.g1a2b3c4 -- not the window's own package.json version, which is the
+ * same for every build.
+ * @param {any} manifest
+ */
+function manifestVersion(manifest) {
+  return typeof manifest?.version === 'string' ? manifest.version : '';
+}
+
+/**
  * @param {string} file
  * @param {number} mode
  * @param {string} what
@@ -61,7 +71,7 @@ function requireAccess(file, mode, what) {
  * upgrade is still a replaceable directory rather than an installer.
  *
  * @param {string} resourcesPath
- * @returns {{ packageRoot: string, launcherPath: string }}
+ * @returns {{ packageRoot: string, launcherPath: string, version: string }}
  */
 export function resolveMacPackage(resourcesPath) {
   const appBundle = path.resolve(resourcesPath, '..', '..');
@@ -83,7 +93,7 @@ export function resolveMacPackage(resourcesPath) {
 
   const launcherPath = path.join(packageRoot, 'vista');
   requireAccess(launcherPath, constants.X_OK, 'the diagnostic launcher');
-  return { packageRoot, launcherPath };
+  return { packageRoot, launcherPath, version: manifestVersion(manifest) };
 }
 
 /**
@@ -92,7 +102,7 @@ export function resolveMacPackage(resourcesPath) {
  *
  * @param {string} execPath
  * @param {'linux' | 'win32'} platform
- * @returns {{ packageRoot: string, launcherPath: string }}
+ * @returns {{ packageRoot: string, launcherPath: string, version: string }}
  */
 export function resolveWindowPackage(execPath, platform) {
   const layout = WINDOW_LAYOUTS[platform];
@@ -116,14 +126,14 @@ export function resolveWindowPackage(execPath, platform) {
   const launcherPath = path.join(packageRoot, layout.supervisor);
   // Windows has no execute bit: vista.ps1 only has to be readable.
   requireAccess(launcherPath, platform === 'win32' ? constants.R_OK : constants.X_OK, 'the launcher');
-  return { packageRoot, launcherPath };
+  return { packageRoot, launcherPath, version: manifestVersion(manifest) };
 }
 
 /**
  * The package around this running application, on any platform.
  *
  * @param {{ platform: NodeJS.Platform, execPath: string, resourcesPath: string }} where
- * @returns {{ packageRoot: string, launcherPath: string }}
+ * @returns {{ packageRoot: string, launcherPath: string, version: string }}
  */
 export function resolvePackage({ platform, execPath, resourcesPath }) {
   if (platform === 'darwin') return resolveMacPackage(resourcesPath);
