@@ -35,6 +35,9 @@ import { updateSettings, useSettings, type OnboardingTourState } from "@/lib/set
  */
 const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set(["files:chart-preview", "files:review"]);
 
+/** What answers Escape before the tour: every app dialog (`.modal-backdrop`) and the model menu. */
+const OWNS_ESCAPE = '.modal-backdrop, [role="listbox"], [role="menu"]';
+
 /** How long a step waits for its `data-tour` target before it centres instead. */
 export const TARGET_TIMEOUT_MS = 3000;
 
@@ -489,12 +492,16 @@ export function TourProvider({ children }: { children: ReactNode }) {
     // `pulse` and `pathname` only redraw: a report or a new page re-targets.
   }, [step, subStep, anchorKey, failure, providerDefault, hasCredential, pathname, pulse, destroyDriver]);
 
-  // Escape closes the tour. driver.js's own handler also answers the arrow
-  // keys, which here would step through nothing, so it is turned off above.
+  // Escape closes the tour, unless a dialog or menu is open: then Escape is
+  // for that (each closes itself on it), and the tour stays. driver.js's own
+  // handler also answers the arrow keys, which here would step through
+  // nothing, so it is turned off above.
   useEffect(() => {
     if (!running) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") actions.current.exit();
+      if (e.key !== "Escape") return;
+      if (document.querySelector(OWNS_ESCAPE) !== null) return;
+      actions.current.exit();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);

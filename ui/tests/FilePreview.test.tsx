@@ -60,6 +60,8 @@ describe("FilePreview", () => {
     expect(download.getAttribute("href")).toBe(src);
     // A data URL has no name of its own; the download is saved under the file's.
     expect(download.getAttribute("download")).toBe("risk-scores.svg");
+    // No full-size view: its lightbox would open under the tour.
+    expect(screen.queryByTitle("Show this figure full size")).toBeNull();
   });
 
   it("reads markdown from `src` and asks the backend for nothing", async () => {

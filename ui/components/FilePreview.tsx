@@ -149,7 +149,10 @@ export default function FilePreview(props: Props) {
   const { data, error } = useCappedText(previewUrl, needsText);
 
   let body: React.ReactNode = null;
-  if (renderer === "image") {
+  if (renderer === "image" && props.src) {
+    // The tour's examples: no full-size view, whose lightbox would open under the tour.
+    body = <img src={previewUrl} alt={name} />;
+  } else if (renderer === "image") {
     body = (
       <>
         <button type="button" className="artifact-zoom" onClick={() => setZoom(true)} title="Show this figure full size">

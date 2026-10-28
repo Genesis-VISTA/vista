@@ -225,6 +225,17 @@ describe("TourProvider", () => {
     );
   });
 
+  it("leaves Escape to an open dialog or menu, and stays open", async () => {
+    render(<TourProvider>app</TourProvider>);
+    for (const open of ['<div class="modal-backdrop"></div>', '<div role="listbox"></div>']) {
+      const el = document.body.appendChild(document.createElement("div"));
+      el.innerHTML = open;
+      await userEvent.keyboard("{Escape}");
+      el.remove();
+    }
+    expect(updateSettingsMock).not.toHaveBeenCalledWith(tourWrittenAs({ status: "exited", step: "welcome" }));
+  });
+
   it("moves to the project step and saves it when the welcome and the sidebar are passed", async () => {
     anchor("welcome:sidebar");
     render(<TourProvider>app</TourProvider>);

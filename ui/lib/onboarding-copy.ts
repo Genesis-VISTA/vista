@@ -223,7 +223,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "files:chart-preview": {
     title: "Image preview",
-    body: "Images preview here. Click one to zoom.",
+    body: "Images preview here.",
   },
   "files:open-report": {
     title: "Preview a report",
