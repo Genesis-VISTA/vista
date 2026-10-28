@@ -439,9 +439,10 @@ export function TourProvider({ children }: { children: ReactNode }) {
       // uses its control, or the control goes away (a menu closing, a run
       // starting): driver.js would otherwise keep the rest of the page dead.
       if (!withNext) {
-        // The open skill is explained in place and closed from inside it, so
-        // its coachmark must stay up while the researcher uses it.
-        const staysUp = key === "skills:detail";
+        // The open skill is explained in place and closed from inside it, and
+        // the key is typed (or fetched with Get a token) inside its field, so
+        // their coachmarks stay up while the researcher uses them.
+        const staysUp = key === "skills:detail" || key === "model:credential";
         const onDown = (event: Event) => {
           if (staysUp) return;
           if (event.target instanceof Node && element.contains(event.target)) destroyDriver();

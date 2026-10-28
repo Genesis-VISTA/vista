@@ -135,6 +135,10 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await page.getByRole("radio", { name: /AmSC i2/ }).click();
   await press(page);
   await card(page, "model:credential");
+  // Fetching a token from inside the field leaves the coachmark up.
+  await page.locator('[data-tour="model:credential"] a').first().dispatchEvent("pointerdown");
+  await page.waitForTimeout(300);
+  await expect(page.locator(".driver-popover.vista-tour")).toBeVisible();
   const key = page.getByPlaceholder("API key");
   await key.click();
   await key.fill("sk-test");
