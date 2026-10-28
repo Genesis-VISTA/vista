@@ -663,7 +663,9 @@ progress_event mcp running "Starting scientific tools"
 "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
   --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
 PIDS+=($!)
-wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server" "${PIDS[${#PIDS[@]}-1]}"
+# It binds its port only once the embedding model has loaded, which on a
+# Windows first start (every file freshly scanned) ran past 180s.
+wait_for "$VISTA_MCP_URL" 600 "$LOGS/mcp.log" "the MCP server" "${PIDS[${#PIDS[@]}-1]}"
 progress_event mcp ready
 
 if [[ "$FIRST_RUN" == true ]]; then
