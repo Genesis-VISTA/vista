@@ -359,6 +359,24 @@ $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 # vista-data and knowledge-bases, and a corpus a newer package adds
 # (vista-data/ai-safety) must still be installed. An installed member is never
 # replaced or removed.
+#
+# A part counts as installed only once its extraction finished. The parts being
+# installed are listed in $installing until tar.exe succeeds, so a part still
+# listed at the next start -- tar.exe failed, or the launcher was stopped -- is
+# half there: it is removed and installed again, rather than skipped because its
+# folder exists. Only parts this launcher created are ever listed.
+$installing = Join-Path $STATE '.payload-installing'
+function Remove-UnfinishedParts {
+  if (-not (Test-Path -LiteralPath $installing)) { return }
+  foreach ($part in @(Get-Content -Encoding UTF8 -LiteralPath $installing)) {
+    $part = $part.Trim()
+    if (-not $part -or [IO.Path]::IsPathRooted($part) -or $part.Contains('..')) { continue }
+    $path = Join-Path $STATE $part
+    if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force }
+  }
+  Remove-Item -LiteralPath $installing -Force
+}
+Remove-UnfinishedParts
 $payloadTar = "$PACKAGE\payload\payload.tar"
 $missing = @()
 if (Test-Path $payloadTar) {
@@ -372,8 +390,13 @@ if (Test-Path $payloadTar) {
 }
 if ($missing.Count -gt 0) {
   Log "First run: installing $($missing -join ' ')..."
+  [IO.File]::WriteAllLines($installing, [string[]]$missing)
   & (Join-Path (Join-Path $env:SystemRoot 'System32') 'tar.exe') -xf $payloadTar -C $STATE @missing
-  if ($LASTEXITCODE -ne 0) { Die-WithCode resource-extraction-failed "could not extract the payload into $STATE" }
+  if ($LASTEXITCODE -ne 0) {
+    Remove-UnfinishedParts
+    Die-WithCode resource-extraction-failed "could not extract the payload into $STATE"
+  }
+  Remove-Item -LiteralPath $installing -Force
   Send-StartupEvent resources complete
 } else {
   Send-StartupEvent resources complete -Skipped

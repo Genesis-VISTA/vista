@@ -226,6 +226,46 @@ supervised_suite() {
     printf 'supervised stdout included a non-protocol line\n' >&2
     exit 1
   fi
+
+  # A part counts as installed only once tar finished: one extracted beside a
+  # failure is removed, and one a stopped run left listed is installed afresh.
+  mkdir -p "$TMP/payload-src/vista-data/test-corpus"
+  printf 'paper\n' > "$TMP/payload-src/vista-data/test-corpus/a.pdf"
+  tar -cf "$PACKAGE/payload/payload.tar" -C "$TMP/payload-src" vista-data/test-corpus
+  printf '%s\n' vista-data/test-corpus missing-resource > "$PACKAGE/payload/parts.txt"
+  partial_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/partial-stdout" 2> "$TMP/partial-stderr" || partial_status=$?
+  [[ "$partial_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}' \
+    "$TMP/partial-stdout"
+  if [[ -e "$STATE/vista-data/test-corpus" || -e "$STATE/.payload-installing" ]]; then
+    printf 'a failed extraction left a part, or its list, behind\n' >&2
+    exit 1
+  fi
+  printf '%s\n' vista-data/test-corpus > "$PACKAGE/payload/parts.txt"
+  mkdir -p "$STATE/vista-data/test-corpus"
+  printf 'half\n' > "$STATE/vista-data/test-corpus/partial.pdf"
+  printf '%s\n' vista-data/test-corpus > "$STATE/.payload-installing"
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    TEST_IMAGE_PRESENT=0 TEST_MSB_IMPORT_FAIL=1 \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/resume-stdout" 2> "$TMP/resume-stderr" || true
+  grep -qx '{"protocol":1,"phase":"resources","state":"complete"}' "$TMP/resume-stdout"
+  if [[ -e "$STATE/vista-data/test-corpus/partial.pdf" || ! -f "$STATE/vista-data/test-corpus/a.pdf" \
+    || -e "$STATE/.payload-installing" ]]; then
+    printf 'an unfinished part was not installed afresh\n' >&2
+    exit 1
+  fi
+  rm -rf "$STATE/vista-data"
+  tar -cf "$PACKAGE/payload/payload.tar" -T /dev/null
   : > "$PACKAGE/payload/parts.txt"
 
   image_status=0

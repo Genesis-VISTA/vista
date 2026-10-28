@@ -148,7 +148,8 @@ kill_tree() {
 kill_tree "${@: -1}"
 '@
   $SystemRoot = Join-Path $Tmp 'windows'
-  Write-Script (Join-Path $SystemRoot 'System32/tar.exe') "exec tar `"`$@`"`n"
+  # The launcher's paths are Windows paths: backslashes made slashes, as cmd.exe.
+  Write-Script (Join-Path $SystemRoot 'System32/tar.exe') ('exec tar "${@//\\//}"' + "`n")
   & tar -cf (Join-Path $Package 'payload/payload.tar') -T /dev/null
   $Shell = (Get-Command pwsh).Source
 }
@@ -256,6 +257,38 @@ try {
     '{"protocol":1,"phase":"resources","state":"running","label":"Installing bundled resources"}',
     '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}') `
     'a payload that cannot be extracted fails resources' $r.Stderr
+
+  # A part counts as installed only once tar finished: one extracted beside a
+  # failure is removed, and one a stopped run left listed is installed afresh.
+  $tarExe = if ($OnWindows) { Join-Path $env:SystemRoot 'System32\tar.exe' } else { 'tar' }
+  $payloadSrc = Join-Path $Tmp 'payload-src'
+  Write-Text (Join-Path $payloadSrc 'vista-data/test-corpus/a.pdf') "paper`n"
+  & $tarExe -cf (Join-Path $Package 'payload/payload.tar') -C $payloadSrc vista-data/test-corpus
+  $corpus = Join-Path $State 'vista-data/test-corpus'
+  $installingList = Join-Path $State '.payload-installing'
+  Write-Text (Join-Path $Package 'payload/parts.txt') "vista-data/test-corpus`nmissing-resource`n"
+  $r = Invoke-Launcher $Supervised
+  if ($r.Stdout -notcontains '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}') {
+    Fail "a partly failed extraction did not fail resources: $($r.Stdout -join ' | ') $($r.Stderr)"
+  } elseif ((Test-Path $corpus) -or (Test-Path $installingList)) {
+    Fail 'a failed extraction left a part, or its list, behind'
+  } else { Pass 'a failed extraction removes the parts it extracted' }
+  Write-Text (Join-Path $Package 'payload/parts.txt') "vista-data/test-corpus`n"
+  Write-Text (Join-Path $corpus 'partial.pdf') "half`n"
+  Write-Text $installingList "vista-data/test-corpus`n"
+  $r = Invoke-Launcher $Supervised @{ TEST_IMAGE_PRESENT = '0'; TEST_MSB_IMPORT_FAIL = '1' }
+  if ($r.Stdout -notcontains '{"protocol":1,"phase":"resources","state":"complete"}') {
+    Fail "an unfinished part was not installed: $($r.Stdout -join ' | ') $($r.Stderr)"
+  } elseif ((Test-Path (Join-Path $corpus 'partial.pdf')) -or -not (Test-Path (Join-Path $corpus 'a.pdf')) -or
+      (Test-Path $installingList)) {
+    Fail 'an unfinished part was not installed afresh'
+  } else { Pass 'an unfinished part is removed and installed afresh' }
+  Remove-Item -Recurse -Force (Join-Path $State 'vista-data')
+  if ($OnWindows) {
+    & $tarExe -cf (Join-Path $Package 'payload/payload.tar') -C $emptyDir .
+  } else {
+    & tar -cf (Join-Path $Package 'payload/payload.tar') -T /dev/null
+  }
   Write-Text (Join-Path $Package 'payload/parts.txt') ''
 
   $r = Invoke-Launcher $Supervised @{ TEST_IMAGE_PRESENT = '0'; TEST_MSB_IMPORT_FAIL = '1' }
