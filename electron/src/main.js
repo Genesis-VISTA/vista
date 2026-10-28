@@ -114,6 +114,8 @@ let quitInProgress = null;
 const allowedWindowCloses = new WeakSet();
 /** @type {ReturnType<StartupStateMachine['snapshot']> | null} */
 let latestStartupState = null;
+// The package's release, from its manifest; '' when started with --launcher.
+let packageVersion = '';
 
 function sendStartupState() {
   if (!latestStartupState || !startupWindow || startupWindow.isDestroyed()) return;
@@ -456,7 +458,7 @@ app.whenReady().then(() => {
     let launcherPath = args.launcher ? path.resolve(args.launcher) : '';
     if (!launcherPath) {
       try {
-        ({ launcherPath } = resolvePackage({
+        ({ launcherPath, version: packageVersion } = resolvePackage({
           platform: process.platform,
           execPath: process.execPath,
           resourcesPath: process.resourcesPath,
@@ -591,7 +593,7 @@ app.whenReady().then(() => {
     ipcMain.handle('startup:copy-diagnostics', (event) => {
       if (!fromStartupWindow(event) || !launcherController) return false;
       clipboard.writeText(formatDiagnostics(launcherController.current, {
-        version: app.getVersion(),
+        version: packageVersion || app.getVersion(),
         platform: `${process.platform} ${os.release()} ${process.arch}`,
       }));
       return true;
