@@ -205,8 +205,9 @@ move it aside to test a first run.
    main window is up. Each time the existing window comes forward and only one set of services
    runs.
 7. **An expected error.** Quit, hold port 3000 (`python3 -m http.server 3000`), open VISTA. The
-   startup window names the port conflict, Open Logs opens the logs folder, Copy Diagnostics
-   copies versions, phase and code with no environment values, and Retry stays disabled until
+   startup window names the port conflict, Open Logs opens the logs folder with a fresh
+   `vista-logs-<time>.zip` of them (and the diagnostics) selected, Copy Diagnostics copies the
+   package version, phase and code with no environment values, and Retry stays disabled until
    cleanup finishes. Free the port, select Retry: startup completes.
 8. **Upgrades.** The installer refuses only to replace a running VISTA, so ask for another
    version: with VISTA open, add `--version` with any other value
