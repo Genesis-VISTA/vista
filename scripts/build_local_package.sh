@@ -1259,8 +1259,30 @@ snapshot_download(sys.argv[1], revision=sys.argv[2])
 PYHF
   fi
 
-  [[ -d "$hf/hub/$cache_name/snapshots/$revision" ]] \
+  local cache="$hf/hub/$cache_name"
+  [[ -d "$cache/snapshots/$revision" ]] \
     || die "no weights staged for $model at the pinned revision $revision"
+
+  # A Hugging Face snapshot is symlinks into blobs/, and Windows lets only an
+  # administrator (or Developer Mode) create symlinks: tar.exe could unpack none
+  # of the weights for anyone else, and the MCP server, offline, then had no
+  # model. So the pinned snapshot ships as plain files, which Hugging Face loads
+  # offline the same way, and blobs/ and any other snapshot are dropped.
+  "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$cache/snapshots/$revision" <<'PYPLAIN' \
+    || die "could not turn the staged snapshot into plain files"
+import shutil
+import sys
+from pathlib import Path
+
+snapshot = Path(sys.argv[1])
+plain = snapshot.with_name(snapshot.name + ".plain")
+shutil.copytree(snapshot, plain, symlinks=False)
+shutil.rmtree(snapshot)
+plain.rename(snapshot)
+PYPLAIN
+  rm -rf "${cache:?}/blobs"
+  find "$cache/snapshots" -mindepth 1 -maxdepth 1 ! -name "$revision" -exec rm -rf {} +
+  [[ -z "$(find "$hf" -type l)" ]] || die "the staged weights still hold symlinks: $(find "$hf" -type l)"
   echo "weights     : $model@${revision:0:12}, $(du -sh "$hf" | cut -f1)"
 }
 
@@ -1522,6 +1544,12 @@ fi
 pack_payload() {
   log "packing the payload"
   LC_ALL=C.UTF-8 tar --format=posix -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_MEMBERS[@]}"
+  # The launchers unpack this as the researcher, and on Windows that cannot
+  # create a symlink (see stage_embedding_weights), so none may ship.
+  local links
+  links="$(tar -tvf "$STAGING_PAYLOAD/payload.tar" | grep '^l' || true)"
+  [[ -z "$links" ]] || die "the payload holds symlinks, which Windows cannot unpack without admin rights:
+$links"
   local part
   for part in "${PAYLOAD_PARTS[@]}"; do
     rm -rf "${STAGING_PAYLOAD:?}/$part"

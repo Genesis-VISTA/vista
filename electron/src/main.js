@@ -22,6 +22,7 @@ import { classify, isPdfViewerFrame, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
+import { writeLogArchive } from './log-archive.js';
 import { resolvePackage } from './package-root.js';
 import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
 import { formatDiagnostics, resetAllowed, StartupStateMachine } from './startup-protocol.js';
@@ -114,6 +115,8 @@ let quitInProgress = null;
 const allowedWindowCloses = new WeakSet();
 /** @type {ReturnType<StartupStateMachine['snapshot']> | null} */
 let latestStartupState = null;
+// The package's release, from its manifest; '' when started with --launcher.
+let packageVersion = '';
 
 function sendStartupState() {
   if (!latestStartupState || !startupWindow || startupWindow.isDestroyed()) return;
@@ -456,7 +459,7 @@ app.whenReady().then(() => {
     let launcherPath = args.launcher ? path.resolve(args.launcher) : '';
     if (!launcherPath) {
       try {
-        ({ launcherPath } = resolvePackage({
+        ({ launcherPath, version: packageVersion } = resolvePackage({
           platform: process.platform,
           execPath: process.execPath,
           resourcesPath: process.resourcesPath,
@@ -582,18 +585,27 @@ app.whenReady().then(() => {
         resetInProgress = false;
       }
     });
+    const diagnostics = () => (launcherController ? formatDiagnostics(launcherController.current, {
+      version: packageVersion || app.getVersion(),
+      platform: `${process.platform} ${os.release()} ${process.arch}`,
+    }) : '');
+    // The folder opens with a fresh ZIP of its logs selected, so a researcher
+    // sends one file; without one, the folder alone.
     ipcMain.handle('startup:open-logs', async (event) => {
       if (!fromStartupWindow(event)) return false;
+      try {
+        shell.showItemInFolder(writeLogArchive(logsDirectory, diagnostics()));
+        return true;
+      } catch (error) {
+        console.error(`vista-window: could not archive logs: ${error instanceof Error ? error.message : error}`);
+      }
       const error = await shell.openPath(logsDirectory);
       if (error) console.error(`vista-window: could not open logs: ${error}`);
       return !error;
     });
     ipcMain.handle('startup:copy-diagnostics', (event) => {
       if (!fromStartupWindow(event) || !launcherController) return false;
-      clipboard.writeText(formatDiagnostics(launcherController.current, {
-        version: app.getVersion(),
-        platform: `${process.platform} ${os.release()} ${process.arch}`,
-      }));
+      clipboard.writeText(diagnostics());
       return true;
     });
     ipcMain.handle('startup:quit', (event) => {

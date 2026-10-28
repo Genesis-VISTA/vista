@@ -536,7 +536,13 @@ for env_file in reversed(_ENV_FILES):
 settings = Settings.model_validate({})
 hpc_settings = HpcClusterSettings.model_validate({})
 
+# VISTA's own cache, which holds the shipped embedding weights, wins over any
+# the machine names: HF_HUB_CACHE and HUGGINGFACE_HUB_CACHE outrank HF_HOME, and
+# sentence-transformers takes SENTENCE_TRANSFORMERS_HOME as its cache folder.
 os.environ["HF_HOME"] = str(settings.data_dir / "huggingface")
+os.environ["HF_HUB_CACHE"] = str(settings.data_dir / "huggingface" / "hub")
+for _name in ("HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+    os.environ.pop(_name, None)
 
 logging.basicConfig(
     level=settings.log_level,

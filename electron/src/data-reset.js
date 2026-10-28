@@ -13,11 +13,15 @@ import path from 'node:path';
  * Where each is configured:
  *   huggingface   HF_HOME (backend config.py)
  *   microsandbox  MSB_HOME (scripts/package_launcher.sh)
- *   vista-data    VISTA_DATA_PAYLOAD_DIR (scripts/package_launcher.sh)
  *   logs          the launchers and main.js (window.log is open during a reset)
  *   backups       this module
+ *
+ * vista-data (VISTA_DATA_PAYLOAD_DIR) is moved, not kept: the backend seeds the
+ * science projects when it holds their corpora, so corpora an earlier package
+ * left there would seed a knowledge base this package has no index for. The
+ * launcher re-extracts this package's own parts after the reset.
  */
-export const KEEP = Object.freeze(['backups', 'logs', 'huggingface', 'microsandbox', 'vista-data']);
+export const KEEP = Object.freeze(['backups', 'logs', 'huggingface', 'microsandbox']);
 
 const INDEX_NAME = 'incompatible-data-index.json';
 
