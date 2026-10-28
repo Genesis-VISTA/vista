@@ -82,4 +82,4 @@
 ## 8. Verification
 
 - [x] 8.1 Run `./scripts/ci-local.sh lint` and `./scripts/ci-local.sh backend ui electron test`; all pass
-- [ ] 8.2 Manual (needs a live provider): with a fresh data directory, run `./launch.sh logs`, walk the whole tour on i2 or OLCF, and confirm the first answer cites the AI Safety papers. Quit mid-tour and relaunch to see it resume. Replay from Settings. Open Documentation and see it open in the system browser. Then relaunch with `VISTA_BACKEND_ONBOARDING_TOUR=false` and see no tour
+- [x] 8.2 Manual (needs a live provider): with a fresh data directory, run `./launch.sh logs`, walk the whole tour on i2 or OLCF, and confirm the first answer cites the AI Safety papers. Quit mid-tour and relaunch to see it resume. Replay from Settings. Open Documentation and see it open in the system browser. Then relaunch with `VISTA_BACKEND_ONBOARDING_TOUR=false` and see no tour
