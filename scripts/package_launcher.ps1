@@ -620,9 +620,7 @@ try {
   Send-StartupEvent mcp running -Label 'Starting scientific tools'
   $mcp = Start-VistaService 'mcp' ("`"$PACKAGE\app\mcp_servers\vista_mcp_server\.venv\Scripts\vista-mcp-server.exe`" " +
     "--transport=http --port $MCP_PORT")
-  # It binds its port only once the embedding model has loaded, which on a
-  # Windows first start (every file freshly scanned) ran past 180s.
-  Wait-For $env:VISTA_MCP_URL 600 "$LOGS\mcp.log" 'the MCP server' $mcp
+  Wait-For $env:VISTA_MCP_URL 180 "$LOGS\mcp.log" 'the MCP server' $mcp
   Send-StartupEvent mcp ready
 
   if ($FIRST_RUN) {
