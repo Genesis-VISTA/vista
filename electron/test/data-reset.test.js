@@ -44,7 +44,7 @@ test('moves everything except the keep-list, unknown entries included', () => {
   assert.deepEqual(names(dir), [...KEEP].sort());
   assert.deepEqual(names(backupDir), [
     'forum-git', 'hpc_job_registry.json', 'knowledge-bases', 'some-future-folder',
-    'storage', 'vista.db', 'vista.db-wal', 'volumes',
+    'storage', 'vista-data', 'vista.db', 'vista.db-wal', 'volumes',
   ]);
   assert.deepEqual([...moved].sort(), names(backupDir));
   assert.equal(readFileSync(path.join(backupDir, 'vista.db'), 'utf8'), 'vista.db');
@@ -55,7 +55,7 @@ test('moves everything except the keep-list, unknown entries included', () => {
 
 test('the keep-list is frozen', () => {
   assert.ok(Object.isFrozen(KEEP));
-  assert.deepEqual([...KEEP].sort(), ['backups', 'huggingface', 'logs', 'microsandbox', 'vista-data']);
+  assert.deepEqual([...KEEP].sort(), ['backups', 'huggingface', 'logs', 'microsandbox']);
 });
 
 test('a second reset is made beside the first, even in the same second', () => {
