@@ -124,6 +124,9 @@ placeholder: say so in a comment at its top and in the hand-over.
 
 ## Gotchas
 
+- Replay answers `/settings` with `onboarding_tour_enabled: false`, whatever the
+  capture held, so the first-boot tour never draws over a video. A video about the
+  tour sets `onboarding_tour: true` at the top of its script.
 - `VISTA_SCREENCAST_HOME` replaces `~/.vista/screencasts` as the home of every
   video (and of the self-test's output and the private UI build), e.g. a
   scratch folder for a trial run. `--help` prints the home in effect.

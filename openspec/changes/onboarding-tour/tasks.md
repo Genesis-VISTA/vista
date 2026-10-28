@@ -75,9 +75,9 @@
 
 ## 7. Harnesses and end-to-end
 
-- [ ] 7.1 Add `ui/e2e-hermetic/onboarding.spec.ts`, whose stubs return `onboarding_tour: null`, and walk every step against stubbed responses: welcome; open the AI Safety project; add a credential, then pick a model; open AI Safety Papers; open a skill; open the example image and report; open the Odo card; send the starter question and see the finish coachmark. Also cover skipping a step, Exit (a reload shows no tour), and resuming (a reload mid-tour reopens the same step). Verify with `cd ui && npm run test:e2e:hermetic`
-- [ ] 7.2 Set `onboarding_tour_enabled: false` in the shared `SETTINGS` fixture in `ui/e2e-hermetic/fixtures.ts`, so the other specs never see the tour (done in group 4, when the tour first opened over them). Set `VISTA_BACKEND_ONBOARDING_TOUR=false` for `ui/e2e/smoke.spec.ts` and the Electron e2e. Verify that `npm run test:e2e:hermetic` passes in full, and that `cd electron && npm run test:e2e` passes
-- [ ] 7.3 In `.claude/skills/vista-screencast/lib/server.mjs`, force `onboarding_tour_enabled: false` on replayed `/settings` answers unless the script asks for the tour, and say so in `SKILL.md`. Verify with the skill's `selftest`
+- [x] 7.1 Add `ui/e2e-hermetic/onboarding.spec.ts`, whose stubs return `onboarding_tour: null`, and walk every step against stubbed responses: welcome; open the AI Safety project; add a credential, then pick a model; open AI Safety Papers; open a skill; open the example image and report; open the Odo card; send the starter question and see the finish coachmark. Also cover skipping a step, Exit (a reload shows no tour), and resuming (a reload mid-tour reopens the same step). Verify with `cd ui && npm run test:e2e:hermetic`
+- [x] 7.2 Set `onboarding_tour_enabled: false` in the shared `SETTINGS` fixture in `ui/e2e-hermetic/fixtures.ts`, so the other specs never see the tour (done in group 4, when the tour first opened over them). Set `VISTA_BACKEND_ONBOARDING_TOUR=false` for `ui/e2e/smoke.spec.ts` and the Electron e2e. Verify that `npm run test:e2e:hermetic` passes in full, and that `cd electron && npm run test:e2e` passes
+- [x] 7.3 In `.claude/skills/vista-screencast/lib/server.mjs`, force `onboarding_tour_enabled: false` on replayed `/settings` answers unless the script asks for the tour, and say so in `SKILL.md`. Verify with the skill's `selftest`
 
 ## 8. Verification
 

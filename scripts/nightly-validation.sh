@@ -8,6 +8,8 @@
 # Usage (stack already running with dry-run HPC + a real model):
 #   export VISTA_BACKEND_MODEL=anthropic:claude-sonnet-4-6
 #   export VISTA_RUN_LIVE=1
+#   (start the stack with VISTA_BACKEND_ONBOARDING_TOUR=false, or the first-boot
+#   tour covers the page the Playwright smoke clicks)
 #   export VISTA_MCP_HPC_DRY_RUN=true   # on the MCP process
 #   ./scripts/nightly-validation.sh
 #

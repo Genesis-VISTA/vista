@@ -135,7 +135,7 @@ export function parseScript(text, { assetsDir, file = "script.yaml" } = {}) {
     }
     return step;
   });
-  return { video: doc.video ?? path.basename(path.dirname(file)), pace, steps, runs };
+  return { video: doc.video ?? path.basename(path.dirname(file)), pace, steps, runs, onboardingTour: doc.onboarding_tour === true };
 }
 
 export function loadScript(dir, file = "script.yaml") {
