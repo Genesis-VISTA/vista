@@ -237,6 +237,10 @@ export function HpcStatusSection({ collapsed, visibleClusters, onOpenSettings, t
     function onDown(e: MouseEvent) {
       const target = e.target as Node;
       if (popoverRef.current?.contains(target)) return;
+      // While a coachmark explains the card it ignores the pointer, so a click
+      // on it lands on the page beneath: where it lands is what counts.
+      const box = popoverRef.current?.getBoundingClientRect();
+      if (box && box.width > 0 && e.clientX >= box.left && e.clientX <= box.right && e.clientY >= box.top && e.clientY <= box.bottom) return;
       if ((target as HTMLElement).closest?.("[data-hpc-card]")) return;
       // The tour's coachmarks explain the open card; pressing Next must not close it.
       if ((target as Element).closest?.(".driver-popover, .driver-overlay")) return;

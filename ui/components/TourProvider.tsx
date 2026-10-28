@@ -448,6 +448,22 @@ export function TourProvider({ children }: { children: ReactNode }) {
         };
       }
 
+      // A Next coachmark whose target goes away (a card closed under it) finds
+      // the target again, or centres, rather than pointing at nothing.
+      if (withNext) {
+        const leave = standAside;
+        const gone = new MutationObserver(() => {
+          if (element.isConnected) return;
+          standAside();
+          show(document.querySelector(selector) ?? undefined);
+        });
+        gone.observe(document.body, { childList: true, subtree: true });
+        standAside = () => {
+          leave();
+          gone.disconnect();
+        };
+      }
+
       // A coachmark that waits for an action stands aside once the researcher
       // uses its control, or the control goes away (a menu closing, a run
       // starting): driver.js would otherwise keep the rest of the page dead.

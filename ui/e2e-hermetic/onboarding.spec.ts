@@ -250,6 +250,15 @@ test("hpc: open the Odo card", async ({ page }) => {
   await card(page, "hpc:open-card");
   await page.locator('[data-tour="hpc:open-card"]').click();
   await card(page, "hpc:card");
+  // A click outside, then one on the look-only card, leaves the card open and explained.
+  // driver.js draws its overlay a frame after the coachmark; click once it is there.
+  await expect(page.locator(".driver-overlay")).toHaveCount(1);
+  await page.mouse.click(700, 300);
+  const box = (await page.locator(".hpc-popover").boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + 60);
+  await page.waitForTimeout(300);
+  await expect(page.locator(".hpc-popover")).toBeVisible();
+  await card(page, "hpc:card");
   await press(page);
   await card(page, "hpc:check");
   await press(page);
