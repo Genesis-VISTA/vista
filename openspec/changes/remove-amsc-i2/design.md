@@ -48,10 +48,15 @@ i2 key into MAG requests, and the provider would live on in names forever.
 
 ### D2. `Settings.openai_base_url` defaults to MAG, and a retired i2 URL is treated as unset
 
-The default becomes the MAG preset's `base_url` (`https://mag.genesis.americansciencecloud.org/v1`).
-A field validator on `openai_base_url` replaces any value whose host is
-`api.i2-core.american-science-cloud.org` with that default and sets a flag. `main` logs one
-warning at startup naming `OPENAI_BASE_URL` / `VISTA_BACKEND_OPENAI_BASE_URL`. Without this,
+The default becomes `AMSC_MAG_BASE_URL` (`https://mag.genesis.americansciencecloud.org/v1`),
+defined once in `config.py` and read by the MAG preset too. A model validator on `Settings`
+replaces any `openai_base_url` whose host is `RETIRED_I2_HOST`
+(`api.i2-core.american-science-cloud.org`) with that default, and records the ignored URL
+(`Settings.ignored_openai_base_url`). `config.py` logs one warning naming
+`OPENAI_BASE_URL` / `VISTA_BACKEND_OPENAI_BASE_URL`, straight after it configures logging.
+Settings are built and logging is set up at import, once per process, so that is where
+startup's other configuration messages already go. The entry point (`api.api:main`) would be
+a second place for configuration to report from. Without this,
 every developer `.env` copied from today's `.env.sample` would show as "Custom, from configuration"
 aimed at a dead host after Oct 31.
 
