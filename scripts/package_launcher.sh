@@ -410,7 +410,7 @@ FIRST_RUN=false
 # The payload is extracted out of the package rather than read in place, for
 # two reasons: the knowledge-base row records absolute paths, so reading in
 # place would break when the package is replaced; and the corpus is the
-# researcher's to add to. Each part is skipped when already present, which is
+# researcher's to add to. Each part is skipped once installed, which is
 # what makes a second run cheap and an upgrade a directory replacement.
 #
 # The parts are the members `payload/parts.txt` lists, one per corpus, rather
@@ -422,6 +422,23 @@ FIRST_RUN=false
 # It ships as one tar rather than as folders because some corpus file names
 # are long enough that, under the package folder, they would pass Windows'
 # path-length limit; see build_local_package.sh's pack_payload.
+#
+# A part counts as installed only once its extraction finished. The parts being
+# installed are listed in INSTALLING until tar succeeds, so a part still listed
+# at the next start -- tar failed, or the launcher was stopped -- is half there:
+# it is removed and installed again, rather than skipped because its folder
+# exists. Only parts this launcher created are ever listed.
+INSTALLING="$STATE/.payload-installing"
+remove_unfinished_parts() {
+  [[ -f "$INSTALLING" ]] || return 0
+  local part
+  while IFS= read -r part || [[ -n "$part" ]]; do
+    part="${part%$'\r'}"
+    [[ -z "$part" || "$part" == /* || "$part" == *..* ]] || rm -rf "${STATE:?}/$part"
+  done < "$INSTALLING"
+  rm -f "$INSTALLING"
+}
+remove_unfinished_parts
 missing=()
 if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
   [[ -f "$PACKAGE/payload/parts.txt" ]] \
@@ -433,8 +450,13 @@ if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
 fi
 if (( ${#missing[@]} > 0 )); then
   log "First run: installing ${missing[*]}..."
-  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}" \
-    || die_with_code resource-extraction-failed "could not install the bundled resources"
+  printf '%s\n' "${missing[@]}" > "$INSTALLING" \
+    || die_with_code resource-extraction-failed "could not write $INSTALLING"
+  if ! tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"; then
+    remove_unfinished_parts
+    die_with_code resource-extraction-failed "could not install the bundled resources"
+  fi
+  rm -f "$INSTALLING"
   progress_event resources complete
 else
   progress_event resources complete '' true

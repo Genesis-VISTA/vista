@@ -109,7 +109,9 @@ First run extracts the corpus, vector store, and embedding weights from the pack
 `payload/payload.tar` into the state directory (~1 GB), imports the sandbox image, and seeds the
 database. That takes a few minutes. The startup window shows each real activity; later runs mark
 already-prepared work and start in seconds. Startup failures offer Retry, Open Logs, Copy
-Diagnostics, and Quit without exposing a terminal.
+Diagnostics, and Quit without exposing a terminal. Open Logs leaves a `vista-logs-<time>.zip` of
+the logs and diagnostics in the logs folder, selected, so reporting a failure means sending that
+one file.
 
 VISTA then opens in its own window. Closing the window, or Cmd-Q on macOS, stops VISTA. If the
 window crashes, the services are stopped. If another VISTA window is already open, a second
