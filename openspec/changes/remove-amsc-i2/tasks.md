@@ -26,5 +26,5 @@
 
 ## 6. End-to-end check
 
-- [ ] 6.1 Hermetic check: `./scripts/ci-local.sh` (all lint and test) passes, and `openspec validate remove-amsc-i2 --strict` passes.
+- [x] 6.1 Hermetic check: `./scripts/ci-local.sh` (all lint and test) passes, and `openspec validate remove-amsc-i2 --strict` passes.
 - [ ] 6.2 **Manual / live, not PR CI:** copy a `~/.vista` that was on i2 into a scratch data dir and start `./launch.sh logs`. Confirm that Settings shows AmSC MAG with "Default (claude-sonnet)" and asks for a MAG token. Then enter a real MAG token and confirm a chat turn completes against `mag.genesis.americansciencecloud.org`.
