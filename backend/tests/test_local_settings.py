@@ -13,7 +13,7 @@ from sqlmodel import SQLModel, select
 
 from vista_backend.agents.campaign.mcp_invoke import build_metadata
 from vista_backend.api.settings import get_inference, get_settings, update_settings
-from vista_backend.db.db import _add_missing_columns
+from vista_backend.db.db import _add_missing_columns, _retire_i2_choices
 from vista_backend.db.schemas import (
     LocalSettingsPublic,
     LocalSettingsTable,
@@ -209,6 +209,45 @@ def test_existing_settings_table_gains_new_columns(tmp_path):
         "inference_olcf_api_key",
     } <= columns
     assert personalized == 1
+
+
+@pytest.mark.anyio
+async def test_a_saved_i2_choice_moves_to_the_default(session, default_settings):
+    """
+    The retired i2 provider is cleared with the model chosen on it, and nothing
+    else on the row changes. Run twice: it is a no-op the second time.
+    """
+    row = await local_settings.get(session)
+    row.inference_provider = "i2"
+    row.inference_model = "openai:claude-opus"
+    row.inference_api_key = "legacy-key"
+    row.inference_mag_api_key = "mag-key"
+    row.inference_base_url = "https://custom.example/v1"
+    session.add(row)
+    await session.flush()
+
+    for _ in range(2):
+        await session.run_sync(lambda s: _retire_i2_choices(s.connection()))
+    await session.refresh(row)
+
+    assert row.inference_provider is None
+    assert row.inference_model is None
+    assert row.inference_api_key == "legacy-key"
+    assert row.inference_mag_api_key == "mag-key"
+    assert row.inference_base_url == "https://custom.example/v1"
+    view = await get_inference(await _local(session))
+    assert (view.provider, view.source) == ("mag", "default")
+
+
+@pytest.mark.anyio
+async def test_another_saved_choice_is_left_alone(session):
+    await _put(
+        session,
+        LocalSettingsUpdate(inference_provider="olcf", inference_model="openai:x"),
+    )
+    await session.run_sync(lambda s: _retire_i2_choices(s.connection()))
+    saved = await _local(session)
+    assert (saved.inference_provider, saved.inference_model) == ("olcf", "openai:x")
 
 
 # ---------------------------------------------------------------------------

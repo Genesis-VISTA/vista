@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated as A, AsyncIterator
 from fastapi import Depends
-from sqlalchemy import Connection, event, inspect, text
+from sqlalchemy import Connection, event, inspect, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -148,6 +148,32 @@ def _add_missing_columns(conn: Connection) -> None:
                     f'ADD COLUMN "{column.name}" {column_type}{default}'
                 )
             )
+
+
+def _retire_i2_choices(conn: Connection) -> None:
+    """
+    Move every saved choice of the retired AmSC i2 provider to "no choice".
+
+    The i2-core API was deactivated on 2026-10-31 and `InferenceProvider` no
+    longer names it, so a row still saying `i2` would fail validation when
+    read. NULL already means "follow the default provider" for both tables,
+    and a model chosen on i2 means nothing on another provider, so both go.
+    Rewrites values only, never columns, and is a no-op once nothing says
+    `i2`, so it runs on every start.
+    """
+    log = logging.getLogger(__name__)
+    for name, provider, model in (
+        ("local_settings", "inference_provider", "inference_model"),
+        ("campaign_run", "provider", "model"),
+    ):
+        table = SQLModel.metadata.tables[name]
+        moved = conn.execute(
+            update(table)
+            .where(table.c[provider] == "i2")
+            .values({provider: None, model: None})
+        ).rowcount
+        if moved:
+            log.info("Moved %d %s row(s) off the retired i2 provider", moved, name)
 
 
 DATABASE_INCOMPATIBLE = "database-incompatible"
@@ -336,6 +362,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
+        await conn.run_sync(_retire_i2_choices)
 
     await seed_db(engine)
     # After seeding, so seed_db's empty-database check still sees an empty one.

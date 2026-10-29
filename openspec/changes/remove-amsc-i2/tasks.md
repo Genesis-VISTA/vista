@@ -7,7 +7,7 @@
 
 ## 2. Backend: migrate saved i2 choices
 
-- [ ] 2.1 In `backend/src/vista_backend/db/db.py` `init_db`, add the two idempotent UPDATEs on `local_settings` and `campaign_run` (D3). Verify with a test in `backend/tests/test_local_settings.py` that seeds `inference_provider='i2'`, a model, a MAG token and a Custom endpoint, runs `init_db` twice, and finds provider and model NULL with everything else unchanged. Add a `campaign_run` row on `'i2'` that afterwards loads as `CampaignRunPublic` with `provider is None`.
+- [x] 2.1 In `backend/src/vista_backend/db/db.py` `init_db`, add the two idempotent UPDATEs on `local_settings` and `campaign_run` (D3). Verify with a test in `backend/tests/test_local_settings.py` that seeds `inference_provider='i2'`, a model, a MAG token and a Custom endpoint, runs `init_db` twice, and finds provider and model NULL with everything else unchanged. Add a `campaign_run` row on `'i2'` that afterwards loads as `CampaignRunPublic` with `provider is None`.
 - [x] 2.2 Update the remaining i2 fixtures: `backend/tests/test_local_settings.py` (the `openai_base_url` monkeypatch) and `backend/tests/test_campaign_monitor.py` (`now_on="i2"` → `"mag"`, or another provider the test's intent fits). Verify that `cd backend && uv run --extra dev pytest -m "not live and not hpc and not sandbox"` passes.
 
 ## 3. MCP server: remove the OpenMetadata proxy
