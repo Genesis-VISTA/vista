@@ -456,7 +456,7 @@ class SkillUpdate(BaseModel):
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
-InferenceProvider = Literal["i2", "mag", "olcf", "custom"]
+InferenceProvider = Literal["mag", "olcf", "custom"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
 PreferredUnits = Literal["si", "source"]
@@ -706,8 +706,9 @@ class LocalSettingsTable(SQLModel, table=True):
     """
     inference_provider: str | None = None
     """
-    `i2`, `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
-    until the researcher chooses: i2, or `Settings` where they differ from it.
+    `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
+    until the researcher chooses: the default provider (`DEFAULT_PROVIDER`), or
+    `Settings` where they differ from it.
     """
     inference_base_url: str | None = None
     """
@@ -718,8 +719,9 @@ class LocalSettingsTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    The AmSC i2 provider's access key. Encrypted at rest. Saved before
-    providers existed, so every older key reads as i2's.
+    The access key for an endpoint set in the installation's configuration
+    ("Custom, from configuration"). Encrypted at rest. The key saved before
+    providers existed; no provider preset reads it, so it is never sent to one.
 
     This row *is* the installation's configuration: it is where a researcher's
     key lands when they paste it into the settings modal, and it takes

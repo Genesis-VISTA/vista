@@ -393,9 +393,11 @@ async def test_switching_provider_keeps_every_key(session, default_settings):
     assert saved.inference_api_key == "legacy-key"
 
 
-def test_unknown_provider_is_rejected():
+@pytest.mark.parametrize("provider", ["azure", "i2"])
+def test_unknown_provider_is_rejected(provider):
+    """`i2` included: the retired AmSC i2 provider can no longer be chosen."""
     with pytest.raises(ValueError):
-        LocalSettingsUpdate(inference_provider="azure")
+        LocalSettingsUpdate(inference_provider=provider)
 
 
 @pytest.mark.anyio
