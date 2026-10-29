@@ -14,7 +14,8 @@ from `Settings` (and from the installation's settings row) rather than from what
 
 `resolve_inference_target` is the single place the precedence is decided:
 the provider the researcher chose, else the installation's own `Settings` when
-they differ from the AmSC i2 preset, else i2 (see `PROVIDER_PRESETS`). It never
+they differ from the default preset, else that preset, AmSC MAG (see
+`PROVIDER_PRESETS` and `DEFAULT_PROVIDER`). It never
 raises, because an agent must still build without a credential --
 listing a project's uploads or its MCP tools goes through the same pooled
 agent as chat, and those must keep working on an install where nothing is
@@ -48,8 +49,10 @@ _CONFIGURED_ENDPOINT_PROVIDERS = frozenset(
     {"openai", "openai-chat", "openai-responses"}
 )
 
-ProviderId = Literal["i2", "mag", "olcf", "custom"]
+ProviderId = Literal["mag", "olcf", "custom"]
 TargetSource = Literal["user", "config", "default"]
+
+DEFAULT_PROVIDER: ProviderId = "mag"
 
 
 @dataclass(frozen=True)
@@ -78,15 +81,6 @@ class ProviderPreset:
 # `GET /settings/inference` rather than keeping its own copy, so a URL is
 # never taken from the client and a default model changes in one place.
 PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
-    "i2": ProviderPreset(
-        id="i2",
-        name="AmSC i2",
-        base_url="https://api.i2-core.american-science-cloud.org",
-        default_model="claude-sonnet",
-        # The key saved before provider choice existed, which was almost
-        # always for i2.
-        key_field="inference_api_key",
-    ),
     "mag": ProviderPreset(
         id="mag",
         name="AmSC MAG",
@@ -367,11 +361,11 @@ class InferenceTarget:
     """`None` when the provider has no default and none was chosen."""
     base_url: str
     api_key: str | None
-    provider: ProviderId = "i2"
+    provider: ProviderId = DEFAULT_PROVIDER
     source: TargetSource = "default"
     """
     Where the provider came from: the researcher's choice (`user`), the
-    installation's own `Settings` (`config`), or the i2 preset (`default`).
+    installation's own `Settings` (`config`), or the default preset (`default`).
     """
     model_is_default: bool = False
     """Whether `model` is the provider's default rather than a chosen one."""
@@ -405,21 +399,14 @@ class InferenceTarget:
         return bool(self.api_key)
 
 
-def _differs_from_i2() -> bool:
-    """Whether `Settings` names a target other than the i2 preset's."""
-    i2 = PROVIDER_PRESETS["i2"]
-    assert i2.base_url is not None and i2.default_model is not None
-    return (
-        settings.openai_base_url.rstrip("/") != i2.base_url.rstrip("/")
-        or settings.model.removeprefix("openai:") != i2.default_model
-    )
-
-
-# TODO(remove-amsc-i2 task 1.1): replaces `_differs_from_i2` above, once the
-# i2 preset is gone and `DEFAULT_PROVIDER` names the preset that takes its place.
 def _differs_from_default() -> bool:
     """Whether `Settings` names a target other than the default preset's."""
-    raise NotImplementedError
+    default = PROVIDER_PRESETS[DEFAULT_PROVIDER]
+    assert default.base_url is not None and default.default_model is not None
+    return (
+        settings.openai_base_url.rstrip("/") != default.base_url.rstrip("/")
+        or settings.model.removeprefix("openai:") != default.default_model
+    )
 
 
 def resolve_inference_target(
@@ -436,14 +423,16 @@ def resolve_inference_target(
 
     1. The row names a provider: that preset's URL (Custom: the row's
        `inference_base_url`), that provider's key, and the row's model, else
-       the preset's default -- possibly none. i2's key falls back to
-       `Settings.openai_api_key`.
-    2. No provider, and `Settings` differs from the i2 preset: `Settings`, as
+       the preset's default -- possibly none. The default provider's key falls
+       back to `Settings.openai_api_key`.
+    2. No provider, and `Settings` differs from the default preset: `Settings`, as
        before providers existed, reported as Custom from configuration. The
        row's model and key still win over it, as they always have; its
        `inference_base_url` is Custom's endpoint and is not used here.
-    3. Otherwise i2, with the row's `inference_api_key` (the key saved before
-       providers existed), else `Settings.openai_api_key`.
+    3. Otherwise the default preset, with its own key from the row, else
+       `Settings.openai_api_key`. The row's `inference_api_key`, the key saved
+       before providers existed, is used only in step 2: it is not the default
+       provider's credential.
 
     The row wins where it speaks because it is the only surface a researcher
     can reach without editing files.
@@ -472,7 +461,7 @@ def _resolve_from_settings(
         preset = PROVIDER_PRESETS[provider]  # type: ignore[index]
         default = _qualify(preset.default_model) if preset.default_model else None
         key = row(preset.key_field)
-        if preset.id == "i2":
+        if preset.id == DEFAULT_PROVIDER:
             key = key or env_key
         return InferenceTarget(
             model=row_model or default,
@@ -483,7 +472,7 @@ def _resolve_from_settings(
             model_is_default=row_model is None and default is not None,
         )
 
-    if _differs_from_i2():
+    if _differs_from_default():
         return InferenceTarget(
             model=row_model or settings.model,
             base_url=settings.openai_base_url,
@@ -493,13 +482,13 @@ def _resolve_from_settings(
             model_is_default=row_model is None,
         )
 
-    i2 = PROVIDER_PRESETS["i2"]
-    assert i2.base_url is not None and i2.default_model is not None
+    default = PROVIDER_PRESETS[DEFAULT_PROVIDER]
+    assert default.base_url is not None and default.default_model is not None
     return InferenceTarget(
-        model=row_model or _qualify(i2.default_model),
-        base_url=i2.base_url,
-        api_key=row("inference_api_key") or env_key,
-        provider="i2",
+        model=row_model or _qualify(default.default_model),
+        base_url=default.base_url,
+        api_key=row(default.key_field) or env_key,
+        provider=DEFAULT_PROVIDER,
         source="default",
         model_is_default=row_model is None,
     )
