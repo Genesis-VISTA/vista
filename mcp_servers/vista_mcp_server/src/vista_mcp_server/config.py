@@ -70,7 +70,7 @@ class AppSettings(BaseSettings):
     disable_servers: CommaSeparatedList[str] = ["agenthpc"]
     """
     Names of MCP subservers to skip mounting in server.py. Valid entries:
-    "submit_job", "display_file", "rag", "agenthpc", "omd".
+    "submit_job", "display_file", "rag", "agenthpc".
     agenthpc is disabled by default — its SSH requirements don't work in the AWS deployment.
     """
 
@@ -146,13 +146,6 @@ class AppSettings(BaseSettings):
     """
     hpc_ssh_user: str | None = None
     """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
-
-    omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
-    omd_api_key: str | None = None
-    """
-    Key for the AmSC Open Metadata Server.
-    Same key as the AmSC inference API, get it from https://api.i2-core.american-science-cloud.org
-    """
 
     data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../../data")
     """ Directory for data such as sandbox volumes and other created files """

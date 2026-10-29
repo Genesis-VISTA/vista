@@ -12,7 +12,8 @@
 
 ## 3. MCP server: remove the OpenMetadata proxy
 
-- [ ] 3.1 In `mcp_servers/vista_mcp_server/src/vista_mcp_server/server.py` and `config.py`, remove the `omd` mount, `omd_url` and `omd_api_key`, and drop `"omd"` from the `disable_servers` docstring (D5). Verify that `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest` and `./scripts/ci-local.sh mcp lint` pass, and that `git grep -n -i 'omd_\|openmetadata' -- mcp_servers` is empty.
+- [x] 3.1 In `mcp_servers/vista_mcp_server/src/vista_mcp_server/server.py` and `config.py`, remove the `omd` mount, `omd_url` and `omd_api_key`, and drop `"omd"` from the `disable_servers` docstring (D5). Verify that `cd mcp_servers/vista_mcp_server && uv run --extra dev pytest` and `./scripts/ci-local.sh mcp lint` pass, and that `git grep -n -i 'omd_\|openmetadata' -- mcp_servers` is empty.
+- [x] 3.2 Remove the OMD block from `.env.sample` and the `VISTA_MCP_OMD_API_KEY` row from `docs/development.md`. Verify that a case-insensitive search for `omd` / `openmetadata` outside lockfiles and `openspec/` finds nothing, and `./scripts/ci-local.sh lint` (docs links) passes.
 
 ## 4. UI: no i2 option or copy
 
@@ -21,7 +22,7 @@
 
 ## 5. Docs and samples
 
-- [ ] 5.1 Update `.env.sample` (MAG URL and key source, OMD block removed), `docs/installing.md` (MAG out of the box) and `docs/development.md` (the `OPENAI_*` row; delete the `VISTA_MCP_OMD_API_KEY` row). Verify that `git grep -n -i 'i2-core\|AmSC i2\|OMD_API_KEY' -- . ':!openspec/changes/archive' ':!openspec/changes/remove-amsc-i2'` returns nothing.
+- [ ] 5.1 Update `.env.sample` (MAG URL and key source), `docs/installing.md` (MAG out of the box) and `docs/development.md` (the `OPENAI_*` row). Verify that `git grep -n -i 'i2-core\|AmSC i2' -- . ':!openspec/changes/archive' ':!openspec/changes/remove-amsc-i2'` returns nothing.
 
 ## 6. End-to-end check
 
