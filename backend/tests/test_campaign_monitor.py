@@ -486,8 +486,8 @@ async def test_a_run_keeps_its_model_while_settings_stay_on_that_provider(
 
 @pytest.mark.anyio
 async def test_after_a_provider_switch_a_run_follows_the_default(session, monkeypatch):
-    """OLCF's model name means nothing to i2, so the run moves to i2's default."""
-    job = await _launched_on_olcf(session, now_on="i2")
+    """OLCF's model name means nothing to MAG, so the run moves to MAG's default."""
+    job = await _launched_on_olcf(session, now_on="mag")
 
     asked = await _planner_model(session, job, monkeypatch)
 

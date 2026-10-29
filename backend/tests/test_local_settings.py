@@ -332,53 +332,65 @@ async def test_a_cleared_remote_dir_is_not_set(session):
 
 
 @pytest.fixture
-def i2_settings(monkeypatch):
-    """An installation whose own configuration is the i2 preset's, keyless."""
+def default_settings(monkeypatch):
+    """An installation whose own configuration is the default preset's, keyless."""
     from vista_backend.config import settings
 
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
     monkeypatch.setattr(
-        settings, "openai_base_url", "https://api.i2-core.american-science-cloud.org"
+        settings, "openai_base_url", "https://mag.genesis.americansciencecloud.org/v1"
     )
     monkeypatch.setattr(settings, "openai_api_key", None)
 
 
 @pytest.mark.anyio
-async def test_changing_provider_clears_the_model(session, i2_settings):
+async def test_changing_provider_clears_the_model(session, default_settings):
     await _put(session, LocalSettingsUpdate(inference_model="openai:claude-opus"))
 
-    saved = await _put(session, LocalSettingsUpdate(inference_provider="mag"))
-    assert saved.inference_provider == "mag"
+    saved = await _put(session, LocalSettingsUpdate(inference_provider="olcf"))
+    assert saved.inference_provider == "olcf"
     assert saved.inference_model is None
 
 
 @pytest.mark.anyio
-async def test_provider_change_with_a_model_keeps_that_model(session, i2_settings):
+async def test_provider_change_with_a_model_keeps_that_model(session, default_settings):
     saved = await _put(
         session,
-        LocalSettingsUpdate(inference_provider="mag", inference_model="openai:gpt-oss"),
+        LocalSettingsUpdate(
+            inference_provider="olcf", inference_model="openai:gpt-oss"
+        ),
     )
     assert saved.inference_model == "openai:gpt-oss"
 
 
 @pytest.mark.anyio
-async def test_choosing_the_provider_in_effect_keeps_the_model(session, i2_settings):
-    """An existing researcher on i2 who picks i2 explicitly loses nothing."""
+async def test_choosing_the_provider_in_effect_keeps_the_model(
+    session, default_settings
+):
+    """A researcher on the default who picks AmSC MAG explicitly loses nothing."""
     await _put(session, LocalSettingsUpdate(inference_model="openai:claude-opus"))
-    saved = await _put(session, LocalSettingsUpdate(inference_provider="i2"))
+    saved = await _put(session, LocalSettingsUpdate(inference_provider="mag"))
     assert saved.inference_model == "openai:claude-opus"
 
 
 @pytest.mark.anyio
-async def test_switching_provider_keeps_every_key(session, i2_settings):
-    await _put(session, LocalSettingsUpdate(inference_api_key="i2-key"))
+async def test_switching_provider_keeps_every_key(session, default_settings):
     await _put(
         session,
-        LocalSettingsUpdate(inference_provider="mag", inference_mag_api_key="mag-key"),
+        LocalSettingsUpdate(
+            inference_api_key="legacy-key", inference_mag_api_key="mag-key"
+        ),
     )
-    saved = await _put(session, LocalSettingsUpdate(inference_provider="i2"))
-    assert saved.inference_api_key == "i2-key"
+    await _put(
+        session,
+        LocalSettingsUpdate(
+            inference_provider="olcf", inference_olcf_api_key="olcf-key"
+        ),
+    )
+    saved = await _put(session, LocalSettingsUpdate(inference_provider="mag"))
     assert saved.inference_mag_api_key == "mag-key"
+    assert saved.inference_olcf_api_key == "olcf-key"
+    assert saved.inference_api_key == "legacy-key"
 
 
 def test_unknown_provider_is_rejected():
@@ -387,11 +399,11 @@ def test_unknown_provider_is_rejected():
 
 
 @pytest.mark.anyio
-async def test_inference_view_has_no_secrets(session, i2_settings):
+async def test_inference_view_has_no_secrets(session, default_settings):
     await _put(
         session,
         LocalSettingsUpdate(
-            inference_api_key="i2-secret-value",
+            inference_api_key="legacy-secret-value",
             inference_mag_api_key="mag-secret-value",
         ),
     )
@@ -399,27 +411,26 @@ async def test_inference_view_has_no_secrets(session, i2_settings):
     view = (await get_inference(await _local(session))).model_dump(mode="json")
 
     assert "secret-value" not in str(view)
-    assert [p["id"] for p in view["providers"]] == ["i2", "mag", "olcf", "custom"]
+    assert [p["id"] for p in view["providers"]] == ["mag", "olcf", "custom"]
     assert view["providers"][0] == {
-        "id": "i2",
-        "name": "AmSC i2",
+        "id": "mag",
+        "name": "AmSC MAG",
         "takes_url": False,
         "default_model": "claude-sonnet",
     }
-    assert view["providers"][2] == {
+    assert view["providers"][1] == {
         "id": "olcf",
         "name": "OLCF Inference",
         "takes_url": False,
         "default_model": "gpt-oss-120b",
     }
-    assert view["providers"][3]["takes_url"] is True
-    assert view["provider"] == "i2"
+    assert view["providers"][2]["takes_url"] is True
+    assert view["provider"] == "mag"
     assert view["source"] == "default"
     assert view["model"] == "openai:claude-sonnet"
     assert view["model_is_default"] is True
     assert view["has_credential"] is True
     assert view["keys_set"] == {
-        "i2": True,
         "mag": True,
         "olcf": False,
         "custom": False,
@@ -427,17 +438,17 @@ async def test_inference_view_has_no_secrets(session, i2_settings):
 
 
 @pytest.mark.anyio
-async def test_inference_view_over_http(session, i2_settings):
+async def test_inference_view_over_http(session, default_settings):
     from harness import api_client
 
     with api_client(session) as (client, _):
         response = await client.get("/settings/inference")
     assert response.status_code == 200, response.text
-    assert response.json()["provider"] == "i2"
+    assert response.json()["provider"] == "mag"
 
 
 @pytest.mark.anyio
-async def test_inference_view_on_mag_uses_its_default(session, i2_settings):
+async def test_inference_view_on_mag_uses_its_default(session, default_settings):
     await _put(session, LocalSettingsUpdate(inference_provider="mag"))
     view = await get_inference(await _local(session))
     assert view.provider == "mag"
