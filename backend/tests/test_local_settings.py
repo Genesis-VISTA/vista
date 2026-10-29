@@ -437,6 +437,8 @@ async def test_inference_view_has_no_secrets(session, default_settings):
         "olcf": False,
         "custom": False,
     }
+    # The legacy key is reported apart: no provider reads it.
+    assert view["config_key_set"] is True
 
 
 @pytest.mark.anyio
@@ -458,3 +460,4 @@ async def test_inference_view_on_mag_uses_its_default(session, default_settings)
     assert view.model == "openai:claude-sonnet"
     assert view.model_is_default is True
     assert view.has_credential is False
+    assert view.config_key_set is False

@@ -669,7 +669,9 @@ class TestHttpSurface:
 
         self._no_credential(monkeypatch)
         row = await local_settings.get(session)
-        row.inference_api_key = "row-key"
+        # The default provider's own key: a legacy `inference_api_key` is not
+        # sent to it (`test_existing_key_is_not_sent_to_mag`).
+        row.inference_mag_api_key = "row-key"
         session.add(row)
         await session.flush()
         # Re-read: `ProjectAgent` snapshots the settings at construction, and in

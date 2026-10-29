@@ -1,7 +1,16 @@
 import os
 from pathlib import Path
 from typing import Annotated as A, Literal
-from pydantic import AliasChoices, BaseModel, Field, ByteSize, SecretStr
+from urllib.parse import urlsplit
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ByteSize,
+    PrivateAttr,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
@@ -183,6 +192,13 @@ _ENV_FILES: list[Path] = [
 ]
 
 
+AMSC_MAG_BASE_URL = "https://mag.genesis.americansciencecloud.org/v1"
+""" The AmSC MAG gateway: the default inference endpoint, and the MAG preset's. """
+
+RETIRED_I2_HOST = "api.i2-core.american-science-cloud.org"
+""" The AmSC i2-core API, deactivated on 2026-10-31. A configured URL on it is ignored. """
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES,
@@ -225,10 +241,11 @@ class Settings(BaseSettings):
                 "VISTA_BACKEND_OPENAI_BASE_URL", "OPENAI_BASE_URL"
             )
         ),
-    ] = "https://api.i2-core.american-science-cloud.org"
+    ] = AMSC_MAG_BASE_URL
     """
-    Base URL of the OpenAI-compatible inference endpoint. Defaults to the AmSC
-    Inference API.
+    Base URL of the OpenAI-compatible inference endpoint. Defaults to AmSC MAG.
+    A URL on the retired i2-core API (`RETIRED_I2_HOST`) is replaced by the
+    default, and `ignored_openai_base_url` records it so startup can say so.
 
     Resolved here rather than left to the OpenAI SDK's own `OPENAI_BASE_URL`
     lookup, whose fallback is `api.openai.com` — a host where the default model
@@ -254,6 +271,25 @@ class Settings(BaseSettings):
     install this is normally supplied through the settings UI instead, which
     takes precedence over this value.
     """
+
+    _ignored_openai_base_url: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def _ignore_the_retired_i2_api(self) -> "Settings":
+        """
+        A `.env` copied from an older `.env.sample` still names i2-core. Left
+        alone, it would show as "Custom, from configuration" aimed at a host
+        that no longer answers, so it is treated as unset.
+        """
+        if urlsplit(self.openai_base_url).hostname == RETIRED_I2_HOST:
+            self._ignored_openai_base_url = self.openai_base_url
+            self.openai_base_url = AMSC_MAG_BASE_URL
+        return self
+
+    @property
+    def ignored_openai_base_url(self) -> str | None:
+        """The configured i2-core URL that was replaced by the default, if any."""
+        return self._ignored_openai_base_url
 
     collaboration_server_url: OptionalHttpUrl = None
     """
@@ -542,3 +578,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     force=True,
 )
+
+if settings.ignored_openai_base_url:
+    logging.warning(
+        f"Ignoring the configured inference endpoint {settings.ignored_openai_base_url}: "
+        "the AmSC i2-core API has been deactivated, so AmSC MAG is used instead. "
+        "Remove OPENAI_BASE_URL / VISTA_BACKEND_OPENAI_BASE_URL from your .env, "
+        f"or set it to {AMSC_MAG_BASE_URL}."
+    )

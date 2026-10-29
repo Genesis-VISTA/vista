@@ -35,7 +35,7 @@ from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.exceptions import ModelHTTPError
 
-from ..config import settings
+from ..config import AMSC_MAG_BASE_URL, settings
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance
     from ..db.schemas import LocalSettingsPublic
@@ -84,7 +84,7 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
     "mag": ProviderPreset(
         id="mag",
         name="AmSC MAG",
-        base_url="https://mag.genesis.americansciencecloud.org/v1",
+        base_url=AMSC_MAG_BASE_URL,
         default_model="claude-sonnet",
         key_field="inference_mag_api_key",
     ),
