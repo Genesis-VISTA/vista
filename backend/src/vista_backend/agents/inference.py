@@ -415,6 +415,13 @@ def _differs_from_i2() -> bool:
     )
 
 
+# TODO(remove-amsc-i2 task 1.1): replaces `_differs_from_i2` above, once the
+# i2 preset is gone and `DEFAULT_PROVIDER` names the preset that takes its place.
+def _differs_from_default() -> bool:
+    """Whether `Settings` names a target other than the default preset's."""
+    raise NotImplementedError
+
+
 def resolve_inference_target(
     local: "LocalSettingsPublic | None" = None,
     model: str | None = None,
