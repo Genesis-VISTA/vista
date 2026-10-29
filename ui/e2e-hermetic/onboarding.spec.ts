@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
+import { TOUR_SUB_STEPS } from "../lib/onboarding";
 import { installStub, streamOneTurn, type Stub } from "./stub";
 import { SETTINGS, INFERENCE } from "./fixtures";
 
@@ -62,8 +64,13 @@ async function activeProject(page: Page, name = "molten-salt") {
 
 const popover = (page: Page) => page.locator(".driver-popover.vista-tour");
 
-/** One coachmark: showing, and pointing where it should. */
-async function card(page: Page, where: string) {
+/**
+ * One coachmark, named by its sub-step (`"skills:loaded"`): showing, and
+ * pointing where it should. `where` is its `data-tour` anchor when that is not
+ * the key itself, `"overview"` for a whole screen, or `"center"`. The last test
+ * in this file checks every sub-step is walked here.
+ */
+async function card(page: Page, key: string, where = key) {
   await expect(popover(page)).toBeVisible({ timeout: 8000 });
   if (where === "center") {
     // A centred card hangs on driver's dummy element, not on the app.
@@ -88,12 +95,12 @@ async function writes(stub: Stub) {
 test("welcome, then the projects screen and opening the project", async ({ page }) => {
   await install(page, null);
   await page.goto("/projects");
-  await card(page, "center");
+  await card(page, "welcome:intro", "center");
   await expect(page.locator(".driver-popover")).toContainText("eight minutes");
   await press(page, "Start the tour");
   await card(page, "welcome:sidebar");
   await press(page);
-  await card(page, "overview");
+  await card(page, "project:overview", "overview");
   await press(page);
   await card(page, "project:card");
   await press(page);
@@ -101,13 +108,13 @@ test("welcome, then the projects screen and opening the project", async ({ page 
   await press(page);
   await card(page, "project:open");
   await page.locator('[data-tour="project:open"]').click();
-  await card(page, "overview"); // the chat screen
+  await card(page, "model:overview", "overview"); // the chat screen
   await press(page);
-  await card(page, "first-question:send");
+  await card(page, "model:composer", "first-question:send");
   await press(page);
   await card(page, "model:panel");
   await press(page);
-  await card(page, "model:pick");
+  await card(page, "model:picker", "model:pick");
   await press(page);
   // The fixture's provider has a credential, so Settings is skipped.
   await card(page, "model:pick");
@@ -119,11 +126,11 @@ test("model: add a credential, then pick a model", async ({ page }) => {
     "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { i2: false } },
   });
   await page.goto("/");
-  await card(page, "overview");
+  await card(page, "model:overview", "overview");
   await press(page);
   await press(page);
   await press(page);
-  await card(page, "model:pick");
+  await card(page, "model:picker", "model:pick");
   await expect(page.locator(".driver-popover")).toContainText("First, VISTA needs a model provider");
   await press(page);
   await card(page, "model:provider");
@@ -148,7 +155,7 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await key.blur(); // a key saves when the field is left
   await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_api_key === "sk-test")).toBe(true);
   // The key is confirmed in Settings, which stays open until Next.
-  await card(page, "model:credential");
+  await card(page, "model:saved", "model:credential");
   await expect(page.locator(".driver-popover")).toContainText("Key saved");
   await expect(page.locator(".modal-backdrop")).toHaveCount(1);
   await press(page);
@@ -164,6 +171,7 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await expect(page.locator(".driver-popover.vista-tour")).toBeVisible();
   await page.getByRole("option").first().click();
   await expect(page.locator(".driver-popover")).toContainText("Model set");
+  await card(page, "model:set", "model:pick");
   expect((await stub.bodies("PUT /api/settings")).some((b) => "inference_model" in b)).toBe(true);
   await press(page);
   await card(page, "knowledge-bases:visit");
@@ -175,7 +183,7 @@ test("knowledge bases: open AI Safety Papers", async ({ page }) => {
   await page.goto("/projects");
   await card(page, "knowledge-bases:visit");
   await page.locator('[data-tour="knowledge-bases:visit"]').click();
-  await card(page, "overview");
+  await card(page, "knowledge-bases:overview", "overview");
   await press(page);
   await card(page, "knowledge-bases:list");
   await press(page);
@@ -196,7 +204,7 @@ test("skills: open a skill and close it", async ({ page }) => {
   await page.goto("/projects");
   await card(page, "skills:visit");
   await page.locator('[data-tour="skills:visit"]').click();
-  await card(page, "overview");
+  await card(page, "skills:overview", "overview");
   await press(page);
   await card(page, "skills:loaded");
   await press(page);
@@ -222,7 +230,7 @@ test("files: the example image and report", async ({ page }) => {
   await page.goto("/projects");
   await card(page, "files:visit");
   await page.locator('[data-tour="files:visit"]').click();
-  await card(page, "overview");
+  await card(page, "files:overview", "overview");
   await press(page);
   await card(page, "files:outputs");
   await press(page);
@@ -230,12 +238,12 @@ test("files: the example image and report", async ({ page }) => {
   await press(page);
   await card(page, "files:open-chart");
   await page.locator('[data-tour="files:open-chart"]').click();
-  await card(page, "files:preview");
+  await card(page, "files:chart-preview", "files:preview");
   await expect(page.locator(".file-preview img")).toBeVisible();
   await press(page);
   await card(page, "files:open-report");
   await page.locator('[data-tour="files:open-report"]').click();
-  await card(page, "files:preview");
+  await card(page, "files:review", "files:preview");
   await expect(page.getByRole("heading", { name: "Risk summary" })).toBeVisible();
   await press(page);
   await card(page, "hpc:resources");
@@ -275,11 +283,11 @@ test("first question: send the starter, see the activity, answer and finish", as
   await expect(page.locator("textarea")).toHaveValue(/Cite the papers\.$/);
   await page.locator(".composer-send").click();
   await stub.waitForStream();
-  await card(page, "model:panel");
+  await card(page, "first-question:activity", "model:panel");
   await streamOneTurn(stub);
   await card(page, "first-question:answer");
   await press(page);
-  await card(page, "center");
+  await card(page, "first-question:finish", "center");
   await expect(page.getByRole("link", { name: "Documentation" })).toBeVisible();
   await press(page, "Done");
   await expect(page.locator(".driver-popover")).toHaveCount(0);
@@ -312,17 +320,17 @@ test("first question: a refused turn points at Settings", async ({ page }) => {
 test("skipping a step moves to the next step and saves it", async ({ page }) => {
   const stub = await install(page, null);
   await page.goto("/projects");
-  await card(page, "center");
+  await card(page, "welcome:intro", "center");
   await press(page, "Skip this step");
   // Welcome is passed over: the Projects screen is next.
-  await card(page, "overview");
+  await card(page, "project:overview", "overview");
   await expect.poll(async () => (await writes(stub)).at(-1)).toEqual({ status: "in_progress", step: "project" });
 });
 
 test("Exit closes the tour for good: a reload shows none", async ({ page }) => {
   const stub = await install(page, null);
   await page.goto("/projects");
-  await card(page, "center");
+  await card(page, "welcome:intro", "center");
   await press(page, "Exit tutorial");
   await expect(page.locator(".driver-popover")).toHaveCount(0);
   await expect.poll(async () => (await writes(stub)).at(-1)).toMatchObject({ status: "exited" });
@@ -337,11 +345,11 @@ test("a reload mid-tour reopens the same step", async ({ page }) => {
   await page.goto("/projects");
   await press(page, "Start the tour");
   await press(page); // sidebar
-  await card(page, "overview"); // the Projects screen: step "project"
+  await card(page, "project:overview", "overview"); // the Projects screen: step "project"
   await expect.poll(async () => (await writes(stub)).at(-1)).toEqual({ status: "in_progress", step: "project" });
   const title = await popover(page).locator(".driver-popover-title").innerText();
   await page.reload();
-  await card(page, "overview");
+  await card(page, "project:overview", "overview");
   await expect(popover(page).locator(".driver-popover-title")).toHaveText(title);
 });
 
@@ -350,7 +358,7 @@ test("a click on the control of a Next-only coachmark opens nothing and pulses t
   const stub = await install(page, "skills");
   await page.goto("/projects");
   await page.locator('[data-tour="skills:visit"]').click();
-  await card(page, "overview");
+  await card(page, "skills:overview", "overview");
   await press(page);
   await press(page);
   await press(page);
@@ -378,7 +386,7 @@ test("Escape closes the open settings dialog and leaves the tour; with nothing o
     "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { i2: false } },
   });
   await page.goto("/");
-  await card(page, "overview");
+  await card(page, "model:overview", "overview");
   await press(page);
   await press(page);
   await press(page);
@@ -401,7 +409,7 @@ test("Escape with a skill's detail open does not exit the tour", async ({ page }
   const stub = await install(page, "skills");
   await page.goto("/projects");
   await page.locator('[data-tour="skills:visit"]').click();
-  await card(page, "overview");
+  await card(page, "skills:overview", "overview");
   await press(page);
   await press(page);
   await press(page);
@@ -413,4 +421,12 @@ test("Escape with a skill's detail open does not exit the tour", async ({ page }
   // a click outside), and the tour leaves the key to a dialog that is open.
   await expect(popover(page)).toBeVisible();
   expect((await writes(stub)).some((s) => s.status === "exited")).toBe(false);
+});
+
+test("every sub-step is walked by a card() check in this file", () => {
+  const source = readFileSync(test.info().file, "utf8");
+  const walked = new Set([...source.matchAll(/card\(page, "([^"]+)"/g)].map((m) => m[1]));
+  const all = Object.entries(TOUR_SUB_STEPS).flatMap(([step, subs]) => subs.map((s) => `${step}:${s}`));
+  // A sub-step added to the tour needs a walk here that checks its coachmark lands.
+  expect(all.filter((key) => !walked.has(key))).toEqual([]);
 });
