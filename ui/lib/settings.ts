@@ -29,9 +29,9 @@ export type LocalSettings = {
   inference_model: string | null;
   /** Custom's endpoint; the other providers' come from the backend's presets. */
   inference_base_url: string | null;
-  /** AmSC i2's key (the one key there was before provider choice). */
+  /** The key for an endpoint set in the installation's configuration; no provider reads it. */
   inference_api_key: string | null;
-  /** `i2`, `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
+  /** `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
   inference_provider?: string | null;
   inference_mag_api_key?: string | null;
   /** OLCF Inference's S3M token, kept apart from the Odo and Frontier ones. */

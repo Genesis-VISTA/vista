@@ -187,7 +187,7 @@ type FieldBinding = {
 /** How each field is named when its save is announced. */
 const FIELD_LABELS: Record<string, string> = {
   inference_provider: "Inference provider",
-  inference_api_key: "AmSC i2 API key",
+  inference_api_key: "API key for the configured endpoint",
   inference_mag_api_key: "AmSC MAG project access token",
   inference_olcf_api_key: "OLCF Inference S3M token",
   inference_custom_api_key: "Custom endpoint API key",
@@ -641,10 +641,12 @@ function SettingsNav({
   const view = useHpcStatus();
   // The Settings badge describes this researcher's setup, not a credential
   // inherited invisibly from the installation environment. A configured
-  // installation uses the legacy i2 key field until the researcher makes an
-  // explicit provider choice; every other provider has its own saved-key flag.
+  // installation uses the legacy key field until the researcher makes an
+  // explicit provider choice; every provider has its own saved-key flag.
   const savedCredential = settings
-    ? settings.keysSet[settings.source === "config" ? "i2" : settings.provider]
+    ? settings.source === "config"
+      ? settings.configKeySet
+      : settings.keysSet[settings.provider]
     : false;
   // A saved credential alone is not enough for providers without a default
   // model, and Custom also needs an endpoint.
@@ -1145,7 +1147,6 @@ function ComputeResourceRow({
 
 /** Which stored key each provider uses; see `PROVIDER_PRESETS` in the backend. */
 const PROVIDER_KEY_FIELDS: Record<string, TextField> = {
-  i2: "inference_api_key",
   mag: "inference_mag_api_key",
   olcf: "inference_olcf_api_key",
   custom: "inference_custom_api_key",
@@ -1159,19 +1160,6 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
     return { label: "API key", hint: <>Key for the configured endpoint. {KEY_SUFFIX}</> };
   }
   switch (provider) {
-    case "i2":
-      return {
-        label: "AmSC i2 API key",
-        hint: (
-          <>
-            {KEY_SUFFIX}{" "}
-            <a href="https://api.i2-core.american-science-cloud.org" target="_blank" rel="noopener noreferrer">
-              Get a key
-            </a>
-            .
-          </>
-        ),
-      };
     case "mag":
       return {
         label: "AmSC MAG project access token",

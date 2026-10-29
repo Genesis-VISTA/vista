@@ -35,8 +35,7 @@ const PROJECT: Project = {
 };
 
 const PRESETS = [
-  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet", key: "inference_api_key" },
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null, key: "inference_mag_api_key" },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet", key: "inference_mag_api_key" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b", key: "inference_olcf_api_key" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null, key: "inference_custom_api_key" },
 ] as const;
@@ -45,7 +44,7 @@ let row: Record<string, unknown>;
 let puts: Array<Record<string, unknown>>;
 
 function effectiveProvider(): string {
-  return (row.inference_provider as string | null) ?? "i2";
+  return (row.inference_provider as string | null) ?? "mag";
 }
 
 function inferenceView() {
@@ -61,6 +60,7 @@ function inferenceView() {
     model_is_default: row.inference_model == null && model !== null,
     has_credential: Boolean(row[preset.key]),
     keys_set: Object.fromEntries(PRESETS.map((p) => [p.id, Boolean(row[p.key])])),
+    config_key_set: Boolean(row.inference_api_key),
   };
 }
 
@@ -79,10 +79,12 @@ beforeEach(() => {
     email: "researcher@ornl.gov",
     hpc_hidden_clusters: [],
     inference_provider: null,
-    // Chosen on i2 before the switch: it must not follow the researcher to MAG.
+    // Chosen on MAG before the switch: it must not follow the researcher to Custom.
     inference_model: "openai:claude-opus",
-    inference_api_key: "i2-key",
+    inference_api_key: "legacy-key",
     inference_mag_api_key: "mag-token",
+    inference_custom_api_key: "custom-key",
+    inference_base_url: "https://custom.example/v1",
   };
   vi.stubGlobal(
     "fetch",
@@ -125,7 +127,7 @@ afterEach(() => {
 });
 
 describe("switching provider in Settings", () => {
-  it("clears the picker to no model on MAG, and back on i2 shows its default with the key intact", async () => {
+  it("clears the picker to no model on Custom, and back on MAG shows its default with the token intact", async () => {
     render(
       <>
         <ModelPicker />
@@ -136,17 +138,18 @@ describe("switching provider in Settings", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^Models and providers\b/ }));
     const agent = await screen.findByRole("region", { name: "Models & providers" });
-    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
+    await userEvent.click(within(agent).getByRole("radio", { name: /^Custom/ }));
     expect(await screen.findByRole("button", { name: /^Model: No model/ })).toBeInTheDocument();
+    expect(within(agent).getByLabelText(/^Custom endpoint API key/)).toHaveValue("custom-key");
+
+    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
+    expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
     expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
 
-    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC i2/ }));
-    expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
-
     // Only the choice was sent, never a key: switching leaves every key as it was.
-    await waitFor(() => expect(puts).toEqual([{ inference_provider: "mag" }, { inference_provider: "i2" }]));
-    expect(row.inference_api_key).toBe("i2-key");
+    await waitFor(() => expect(puts).toEqual([{ inference_provider: "custom" }, { inference_provider: "mag" }]));
+    expect(row.inference_api_key).toBe("legacy-key");
     expect(row.inference_mag_api_key).toBe("mag-token");
+    expect(row.inference_custom_api_key).toBe("custom-key");
   });
 });

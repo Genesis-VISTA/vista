@@ -17,8 +17,8 @@
 
 ## 4. UI: no i2 option or copy
 
-- [ ] 4.1 In `ui/components/UserSettingsModal.tsx`, remove `i2` from `PROVIDER_KEY_FIELDS` and `keyFieldCopy`, relabel `inference_api_key` in `FIELD_LABELS` as the configured endpoint's key, and replace `keysSet[settings.source === "config" ? "i2" : …]` with `configKeySet`. In `ui/lib/agent-settings.ts`, map `config_key_set` → `configKeySet`. Verify that `cd ui && npm run lint` and `npx tsc --noEmit` pass.
-- [ ] 4.2 Update `ui/tests/ModelPicker.test.tsx`, `ui/tests/UserSettingsModal.test.tsx`, `ui/tests/agent-settings.test.ts`, `ui/tests/provider-switch-flow.test.tsx` and `ui/e2e-hermetic/fixtures.ts` so the default fixture is MAG. Add an assertion that the provider choice shows no "AmSC i2" option and no i2-core link. Verify that `./scripts/ci-local.sh ui test` passes. That command runs `next build` into `ui/.next`, so don't run it beside a live `launch.sh` stack in the same checkout.
+- [x] 4.1 In `ui/components/UserSettingsModal.tsx`, remove `i2` from `PROVIDER_KEY_FIELDS` and `keyFieldCopy`, relabel `inference_api_key` in `FIELD_LABELS` as the configured endpoint's key, and replace `keysSet[settings.source === "config" ? "i2" : …]` with `configKeySet`. In `ui/lib/agent-settings.ts`, map `config_key_set` → `configKeySet`. Verify that `cd ui && npm run lint` and `npx tsc --noEmit` pass.
+- [x] 4.2 Update `ui/tests/ModelPicker.test.tsx`, `ui/tests/UserSettingsModal.test.tsx`, `ui/tests/agent-settings.test.ts`, `ui/tests/provider-switch-flow.test.tsx` and `ui/e2e-hermetic/fixtures.ts` so the default fixture is MAG. Add an assertion that the provider choice shows no "AmSC i2" option and no i2-core link. Verify that `./scripts/ci-local.sh ui test` passes. That command runs `next build` into `ui/.next`, so don't run it beside a live `launch.sh` stack in the same checkout.
 
 ## 5. Docs and samples
 

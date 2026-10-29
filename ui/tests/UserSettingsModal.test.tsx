@@ -144,18 +144,18 @@ function statusView(): HpcStatusView {
 function agentSettings(overrides: Partial<AgentSettings> = {}): AgentSettings {
   return {
     providers: [
-      { id: "i2", name: "AmSC i2", takesUrl: false, defaultModel: "claude-sonnet" },
-      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: null },
+      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: "claude-sonnet" },
       { id: "olcf", name: "OLCF Inference", takesUrl: false, defaultModel: "gpt-oss-120b" },
       { id: "custom", name: "Custom", takesUrl: true, defaultModel: null },
     ],
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    baseUrl: "https://api.i2-core.american-science-cloud.org",
+    baseUrl: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     modelIsDefault: true,
     hasCredential: true,
-    keysSet: { i2: true, mag: false, olcf: false, custom: false },
+    keysSet: { mag: true, olcf: false, custom: false },
+    configKeySet: false,
     ...overrides,
   };
 }
@@ -798,48 +798,55 @@ describe("UserSettingsModal: Models & providers", () => {
     return within(agent).getByRole("radio", { name: new RegExp(`^${name}`) });
   }
 
-  it("offers the backend's providers in order, with i2's key and no Model or endpoint field", async () => {
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "i2-key" }));
+  it("offers the backend's providers in order, with MAG's token and no Model or endpoint field", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_mag_api_key: "mag-token" }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
     const choices = within(agent).getByRole("radiogroup", { name: "Inference provider" });
     expect(within(choices).getAllByRole("radio").map((choice) => choice.querySelector(".settings-provider-name")?.textContent)).toEqual([
-      "AmSC i2", "AmSC MAG", "OLCF Inference", "Custom",
+      "AmSC MAG", "OLCF Inference", "Custom",
     ]);
-    expect(provider(agent, "AmSC i2")).toBeChecked();
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    expect(provider(agent, "AmSC MAG")).toBeChecked();
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
     expect(agent).toHaveTextContent("Uses claude-sonnet");
     expect(within(agent).queryByLabelText(/^Model/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
   });
 
+  it("neither offers nor links to the retired AmSC i2", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await providerRegion();
+
+    expect(within(agent).queryByRole("radio", { name: /AmSC i2/ })).toBeNull();
+    expect(agent.querySelector('a[href*="i2-core"]')).toBeNull();
+    expect(agent).not.toHaveTextContent("i2");
+  });
+
   it("switching provider shows that provider's own key field", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ inference_api_key: "i2-key", inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
+      settingsRow({ inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
-    const i2 = provider(agent, "AmSC i2");
-    expect(i2).toHaveAttribute("tabindex", "0");
-    i2.focus();
+    const mag = provider(agent, "AmSC MAG");
+    expect(mag).toHaveAttribute("tabindex", "0");
+    mag.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(provider(agent, "AmSC MAG")).toBeChecked();
-    expect(provider(agent, "AmSC MAG")).toHaveFocus();
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
-    expect(within(agent).queryByLabelText(/^AmSC i2 API key/)).toBeNull();
+    expect(provider(agent, "OLCF Inference")).toBeChecked();
+    expect(provider(agent, "OLCF Inference")).toHaveFocus();
+    expect(within(agent).getByLabelText(/^OLCF Inference S3M token/)).toHaveValue("s3m");
+    expect(within(agent).queryByLabelText(/^AmSC MAG project access token/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
+
+    await userEvent.click(provider(agent, "Custom"));
     expect(agent).toHaveTextContent("no default model");
 
-    await userEvent.click(provider(agent, "OLCF Inference"));
-    const olcf = within(agent).getByLabelText(/^OLCF Inference S3M token/);
-    expect(olcf).toHaveValue("s3m");
-    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
-    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
-
-    await userEvent.click(provider(agent, "AmSC i2"));
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    await userEvent.click(provider(agent, "AmSC MAG"));
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
   });
 
   it("only Custom shows an endpoint field; the choice saves at once, then the endpoint and key", async () => {
@@ -884,7 +891,7 @@ describe("UserSettingsModal: Models & providers", () => {
 
   it("marks the section not ready when the effective provider has no key", async () => {
     useAgentSettingsMock.mockReturnValue({
-      settings: agentSettings({ hasCredential: false, keysSet: { i2: false, mag: false, olcf: false, custom: false } }),
+      settings: agentSettings({ hasCredential: false, keysSet: { mag: false, olcf: false, custom: false } }),
       error: null,
       modelChoiceRequest: 0,
     });
@@ -899,7 +906,7 @@ describe("UserSettingsModal: Models & providers", () => {
       settings: agentSettings({
         source: "default",
         hasCredential: true,
-        keysSet: { i2: false, mag: false, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: false },
       }),
       error: null,
       modelChoiceRequest: 0,
@@ -913,19 +920,39 @@ describe("UserSettingsModal: Models & providers", () => {
   it("does not call a key-only provider ready before a model is chosen", async () => {
     useAgentSettingsMock.mockReturnValue({
       settings: agentSettings({
-        provider: "mag",
+        provider: "custom",
+        baseUrl: "https://custom.example/v1",
         model: null,
         modelIsDefault: false,
         hasCredential: true,
-        keysSet: { i2: false, mag: true, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: true },
       }),
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_provider: "mag" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_provider: "custom" }));
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Not ready");
+  });
+
+  it("reads a configured endpoint's readiness from its own saved key", async () => {
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({
+        provider: "custom",
+        source: "config",
+        baseUrl: "https://dev.example/v1",
+        keysSet: { mag: false, olcf: false, custom: false },
+        configKeySet: true,
+      }),
+      error: null,
+      modelChoiceRequest: 0,
+    });
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Models and providers")).toHaveTextContent("Ready");
+    expect(entry("Models and providers")).not.toHaveTextContent("Not ready");
   });
 });
 
