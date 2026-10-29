@@ -40,8 +40,8 @@ is installed, where it keeps its state, first-launch behaviour and Linux trouble
 
 ## What it does
 
-- **Chat with a scientific agent** backed by the inference endpoint you choose (AmSC i2, AmSC
-  MAG, OLCF Inference or your own).
+- **Chat with a scientific agent** backed by the inference endpoint you choose (AmSC MAG,
+  OLCF Inference or your own).
 - **Projects** scope what the agent knows and can do: its system prompt, skills, tools and
   usage limits. Shared, with the skills and knowledge bases they use, by publishing them to a
   collaboration server and importing them. See [project onboarding](docs/project-onboarding.md).

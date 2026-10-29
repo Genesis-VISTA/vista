@@ -22,7 +22,7 @@
 
 ## 5. Docs and samples
 
-- [ ] 5.1 Update `.env.sample` (MAG URL and key source), `docs/installing.md` (MAG out of the box) and `docs/development.md` (the `OPENAI_*` row). Verify that `git grep -n -i 'i2-core\|AmSC i2' -- . ':!openspec/changes/archive' ':!openspec/changes/remove-amsc-i2'` returns nothing.
+- [x] 5.1 Update `.env.sample` (MAG URL and key source), `docs/installing.md` (MAG out of the box, and a line for researchers who were on i2), `docs/development.md` (the `OPENAI_*` row) and `README.md` (the provider list). Verify that a case-insensitive search for `i2-core` / `AmSC i2` outside `openspec/` finds only the code and tests that detect the retired host or reject the retired provider, and the `docs/installing.md` line for researchers who were on i2; and that `./scripts/ci-local.sh lint` (docs links) passes.
 
 ## 6. End-to-end check
 

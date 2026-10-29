@@ -73,7 +73,7 @@ run of `./launch.sh`, change `.env` rather than exporting it.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. Get an AmSC key from <https://api.i2-core.american-science-cloud.org>. | AmSC i2, `openai:claude-sonnet` |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. `OPENAI_API_KEY` is an AmSC MAG project access token, from <https://my.amsc.energy.gov/>. | AmSC MAG, `openai:claude-sonnet` |
 | `VISTA_DATA_TOKEN` | A code.ornl.gov token for `v28/vista-data`, the private corpora | None |
 | `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab; see [hypothesis-forum-hosting.md](hypothesis-forum-hosting.md) | `false` in a checkout |
 | `VISTA_BACKEND_PALISADE__*` | The security sidecar; see [palisade.md](palisade.md) | off |
