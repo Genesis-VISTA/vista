@@ -266,13 +266,13 @@ def test_a_deployment_listens_with_tls(monkeypatch, tmp_path):
         monkeypatch,
         auth_mode="oidc",
         host="0.0.0.0",
-        port="8001",
+        port="8081",
         data_dir=str(tmp_path),
         ssl_certfile=str(tmp_path / "server.crt"),
         ssl_keyfile=str(tmp_path / "server.key"),
         root_path="/vista/api",
     )
-    assert ran[0]["host"] == "0.0.0.0" and ran[0]["port"] == 8001
+    assert ran[0]["host"] == "0.0.0.0" and ran[0]["port"] == 8081
     assert ran[0]["root_path"] == "/vista/api"
     assert ran[0]["ssl_certfile"] == tmp_path / "server.crt"
 

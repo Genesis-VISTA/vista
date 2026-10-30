@@ -100,7 +100,7 @@ VISTA Desktop (its backend, on the researcher's machine)
   → https://obsidian.ccs.ornl.gov/vista/api/*   APISIX: openid-connect + authz-keycloak (apisix/vista),
                                                 strips /vista/api; /vista/api/sign-in is a browser
                                                 login, the rest token-only
-  → https://172.30.26.90:8001                   Holly: self-signed TLS, not verified by APISIX
+  → https://172.30.26.90:8081                   Holly: self-signed TLS, not verified by APISIX
   → vista-collaboration-server                  auth_mode=oidc, root_path=/vista/api
 ```
 
