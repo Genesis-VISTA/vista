@@ -16,6 +16,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: "http://127.0.0.1:8002",
     source: "settings",
     server_version: "0.1.0",
+    signed_in: true,
+    sign_in_required: false,
+    sign_in_url: null,
     ...overrides,
   };
 }
@@ -52,6 +55,13 @@ describe("availability", () => {
 
   it("is on only for a reachable server", () => {
     expect(availability({ status: status(), error: null })).toEqual({ available: true, reason: null });
+  });
+
+  it("is off for a reachable server that wants a token", () => {
+    const reason = "Get a token from https://c.test/sign-in and paste it under Settings → Collaboration.";
+    expect(
+      availability({ status: status({ signed_in: false, sign_in_required: true, reason }), error: null }),
+    ).toEqual({ available: false, reason });
   });
 
   it("carries the backend's reason when off", () => {

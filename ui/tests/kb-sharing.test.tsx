@@ -45,6 +45,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    signed_in: true,
+    sign_in_required: false,
+    sign_in_url: null,
     ...overrides,
   };
 }

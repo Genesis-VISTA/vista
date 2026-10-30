@@ -1,0 +1,23 @@
+[Unit]
+Description=VISTA collaboration server
+After=network-online.target remote-fs.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=vista
+ExecStart=/usr/bin/bash /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/launch.sh
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+Environment=VISTA_ENV_FILE=/sw/holly/apps/vista/etc/env
+Environment=HOME=/sw/holly/apps/vista/var
+Environment=UV_PROJECT_ENVIRONMENT=/sw/holly/apps/vista/var/venv
+Environment=UV_CACHE_DIR=/sw/holly/apps/vista/var/uv-cache
+Environment=UV_PYTHON_INSTALL_DIR=/sw/holly/apps/vista/var/uv-python
+Environment=PATH=/sw/holly/apps/vista/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

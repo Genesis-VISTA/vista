@@ -111,7 +111,7 @@ async def test_an_item_can_be_created_with_an_id_of_the_clients(client, anon):
     again = await client.post("/items", json={**body, "manifest": {"n": 2}})
     assert again.status_code == 409
     # The first is untouched, and the server still works after the refusal.
-    versions = (await anon.get(f"/items/{chosen}/versions")).json()
+    versions = (await client.get(f"/items/{chosen}/versions")).json()
     assert [v["manifest"] for v in versions] == [{}]
     assert len((await client.get("/items")).json()) == 1
     await _item(client)
@@ -294,20 +294,20 @@ async def test_a_version_without_a_blob_has_none_to_download(client):
 
 
 # ---------------------------------------------------------------------------
-# Identity stub
+# dev-headers identity
 # ---------------------------------------------------------------------------
 
 
 async def test_writes_need_an_install_id(anon):
     assert (await _create(anon)).status_code == 401
-    assert (await anon.get("/items")).json() == []
     assert (await anon.post("/blobs", files={"file": ("a", b"a")})).status_code == 401
 
 
-async def test_reads_need_no_identity(client, anon):
+async def test_reads_need_an_install_id_too(client, anon):
     item = await _item(client)
-    assert (await anon.get("/items")).status_code == 200
-    assert (await anon.get(f"/items/{item['id']}")).status_code == 200
+    assert (await anon.get("/items")).status_code == 401
+    assert (await anon.get(f"/items/{item['id']}")).status_code == 401
+    assert (await client.get(f"/items/{item['id']}")).status_code == 200
 
 
 async def test_an_install_id_that_is_not_a_uuid_is_400(anon):
@@ -378,10 +378,24 @@ async def test_data_survives_a_restart(settings):
     second = create_app(settings)
     async with second.router.lifespan_context(second):
         async with AsyncClient(
-            transport=ASGITransport(app=second), base_url="http://c"
+            transport=ASGITransport(app=second), base_url="http://c", headers=headers()
         ) as c:
             res = await c.get(f"/items/{item['id']}/versions/1")
     assert res.json()["manifest"] == {"kept": True}
+
+
+async def test_a_database_on_nfs_uses_the_rollback_journal(settings):
+    nfs = settings.model_copy(update={"sqlite_journal_mode": "DELETE"})
+    app = create_app(nfs)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://c", headers=headers()
+        ) as c:
+            await _item(c)
+        async with app.state.engine.connect() as conn:
+            mode = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar()
+    assert mode == "delete"
+    assert not (settings.data_dir / "collaboration.db-wal").exists()
 
 
 def test_explicit_settings_beat_the_environment(monkeypatch, tmp_path):

@@ -24,10 +24,12 @@ def settings(tmp_path) -> CollabSettings:
     data_dir = tmp_path / "collab"
     # Every setting a test relies on is explicit, so a `VISTA_COLLAB_*` value in
     # the environment or a `.env` (a real database URL above all) cannot leak in.
+    # The item tests name themselves with headers; `test_auth.py` covers tokens.
     return CollabSettings(
         data_dir=data_dir,
         database_url=f"sqlite+aiosqlite:///{data_dir / 'collaboration.db'}",
         max_blob_size=1024,
+        auth_mode="dev-headers",
     )
 
 

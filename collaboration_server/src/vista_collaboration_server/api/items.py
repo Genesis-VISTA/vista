@@ -15,11 +15,12 @@ from ..db.schemas import (
     VersionPublic,
 )
 from ..services import blobs, items
-from ..services.identity import IdentityDep
+from ..services.identity import UserDep, get_user
 
-# Writes require an identity (`IdentityDep`); reads need none until access
-# control exists, which will be decided in `services/identity.py`.
-router = APIRouter(tags=["items"])
+# Every route needs a signed-in user (`services/identity.py`), reads included,
+# and any user may read and write everything: who may change what is not
+# decided yet. Writes record who made them.
+router = APIRouter(tags=["items"], dependencies=[Depends(get_user)])
 
 
 def get_settings(request: Request) -> CollabSettings:
@@ -47,11 +48,11 @@ async def list_items(
 
 @router.post("/items", status_code=201)
 async def create_item(
-    data: ItemCreate, session: SessionDep, identity: IdentityDep, settings: SettingsDep
+    data: ItemCreate, session: SessionDep, user: UserDep, settings: SettingsDep
 ) -> ItemPublic:
     """A new item, created with its version 1 from `manifest` and `blob_ref`."""
     _require_blob(settings, data.blob_ref)
-    return ItemPublic.model_validate(await items.create_item(session, data, identity))
+    return ItemPublic.model_validate(await items.create_item(session, data, user))
 
 
 @router.get("/items/{item_id}")
@@ -72,7 +73,7 @@ async def publish_version(
     item_id: uuid.UUID,
     data: VersionCreate,
     session: SessionDep,
-    identity: IdentityDep,
+    user: UserDep,
     settings: SettingsDep,
 ) -> VersionPublic:
     """
@@ -84,7 +85,7 @@ async def publish_version(
     ):
         await items.get_item(session, item_id)  # an unknown item is 404, not 422
         _require_blob(settings, data.blob_ref)
-    row = await items.publish(session, item_id, data, identity)
+    row = await items.publish(session, item_id, data, user)
     return VersionPublic.model_validate(row)
 
 
@@ -113,9 +114,7 @@ async def get_version_blob(
 
 
 @router.post("/blobs", status_code=201)
-async def upload_blob(
-    file: A[UploadFile, File()], identity: IdentityDep, settings: SettingsDep
-) -> BlobPublic:
+async def upload_blob(file: A[UploadFile, File()], settings: SettingsDep) -> BlobPublic:
     """
     Store a blob, to be named by a version published after it. Returns its
     reference, the SHA-256 of its bytes.
@@ -125,9 +124,7 @@ async def upload_blob(
 
 
 @router.post("/blobs/stream", status_code=201)
-async def upload_blob_stream(
-    request: Request, identity: IdentityDep, settings: SettingsDep
-) -> BlobPublic:
+async def upload_blob_stream(request: Request, settings: SettingsDep) -> BlobPublic:
     """
     Store a blob sent as the raw request body, for one too large for a
     multipart `POST /blobs` (a knowledge base). It is written to disk as it

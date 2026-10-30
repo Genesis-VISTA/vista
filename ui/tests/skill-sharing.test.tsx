@@ -1,7 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetCollaborationForTests, type CollaborationStatus } from "@/lib/collaboration";
+import {
+  resetCollaborationForTests,
+  useCollaboration,
+  type CollaborationStatus,
+} from "@/lib/collaboration";
 import {
   importAction,
   publishSkill,
@@ -45,6 +49,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    signed_in: true,
+    sign_in_required: false,
+    sign_in_url: null,
     ...overrides,
   };
 }
@@ -167,6 +174,22 @@ describe("publishSkill", () => {
       code: "version_conflict",
       headVersion: 4,
     });
+  });
+
+  it("checks the server again when the token is refused", async () => {
+    const reason = "Your token has expired. Get a token from the sign-in page.";
+    let current = status();
+    routes["GET /api/collaboration/status"] = () => json(current);
+    const { result: view } = renderHook(() => useCollaboration());
+    await waitFor(() => expect(view.current.available).toBe(true));
+    routes["POST /api/skills/salt-density/publish"] = () => {
+      current = status({ signed_in: false, sign_in_required: true, reason });
+      return json({ detail: reason, code: "collaboration_sign_in_required" }, 401);
+    };
+    const result = await publishSkill("salt-density");
+    expect(result).toMatchObject({ ok: false, code: "collaboration_sign_in_required" });
+    // Every Publish and Import control follows, not only this one.
+    await waitFor(() => expect(view.current).toMatchObject({ available: false, reason }));
   });
 });
 

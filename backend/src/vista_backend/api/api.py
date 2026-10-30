@@ -22,7 +22,9 @@ from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.collaboration import (
     CollaborationError,
+    CollaborationForbidden,
     CollaborationRefused,
+    CollaborationUnauthorized,
     CollaborationUnavailable,
     SharingConflict,
 )
@@ -174,11 +176,16 @@ async def _collaboration_error(
     request: Request, exc: CollaborationError
 ) -> JSONResponse:
     """
-    A collaboration server that cannot be reached is 503, one that refused or
+    A collaboration server that cannot be reached is 503, one that refused the
+    token 401, one that refused the account 403, one that refused otherwise or
     answered nonsense 502; `detail` is the sentence to show.
     """
     if isinstance(exc, CollaborationUnavailable):
         status, code = 503, "collaboration_unavailable"
+    elif isinstance(exc, CollaborationUnauthorized):
+        status, code = 401, "collaboration_sign_in_required"
+    elif isinstance(exc, CollaborationForbidden):
+        status, code = 403, "collaboration_forbidden"
     elif isinstance(exc, CollaborationRefused):
         status, code = 502, "collaboration_refused"
     else:
