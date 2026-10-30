@@ -93,68 +93,74 @@ uv run --extra dev pytest -vv
 
 or `./scripts/ci-local.sh collab` from the repository root, which also lints and type-checks.
 
-## Deployment: Holly, behind Obsidian
+## Deployment
 
-```
-VISTA Desktop (its backend, on the researcher's machine)
-  → https://obsidian.ccs.ornl.gov/vista/api/*   APISIX: openid-connect + authz-keycloak (apisix/vista),
-                                                strips /vista/api; /vista/api/sign-in is a browser
-                                                login, the rest token-only
-  → https://172.30.26.90:8081                   Holly: self-signed TLS, not verified by APISIX
-  → vista-collaboration-server                  auth_mode=oidc, root_path=/vista/api
-```
+The collaboration server is currently deployed on Holly behind AAIMS group Keycloak auth.
 
-The gateway's half is in the Obsidian repository, `infra/apisix/config.jsonnet` (the
-`vista-api` service and its three `/vista/api` routes), and the `apisix/vista` role and the
-`VISTA` resource and policy in `infra/kc/obsidian-realm.json`. Beta users are given the role in
-Keycloak's admin console.
-
-Holly's image is built reproducibly, so everything lives on the `/sw/holly/apps` NFS mount,
-under `/sw/holly/apps/vista`, and the image gains only the systemd unit in
-`/etc/systemd/system`. That is a copy, not a link: systemd reads its units at boot, before NFS
-is mounted. The server runs as an account with a fixed uid that owns
-`/sw/holly/apps/vista` (`User=` in the unit; `vista` there). The database is on NFS, so it uses
-SQLite's rollback journal (`VISTA_COLLAB_SQLITE_JOURNAL_MODE=DELETE`): WAL needs shared memory,
-which a network filesystem cannot give.
-
-The directory stays closed to everyone but that account and its group (mode 770, `etc/env`
-660), so systemd, running as root and squashed to nobody by NFS, cannot open anything in it.
-The unit is written for that: `launch.sh` reads `etc/env` itself, as the service's user, and
-there is no `EnvironmentFile`, `WorkingDirectory` or `ProtectSystem` sandbox, each of which
-systemd would resolve as root. Never make `etc/env` world-readable to get around this.
-
-As that account (NFS's `root_squash` usually stops root writing there):
-
+To set up a deployment from scratch:
 ```bash
+sudo useradd --system --uid 910 --user-group --home-dir /sw/holly/apps/vista/var --no-create-home --shell /usr/sbin/nologin vista
+sudo usermod -aG vista $USER
+# logout/login to refresh groups
+mkdir -p /sw/holly/apps/vista
+chown -R $USER:vista /sw/holly/apps/vista
+chmod -R u+rwX,g+rwX,o-rwx /sw/holly/apps/vista
+
+# Start session as vista user
+sudo su -s /bin/bash - vista
+
 cd /sw/holly/apps/vista
 mkdir -p bin etc var
 curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$PWD/bin" UV_NO_MODIFY_PATH=1 sh
-git clone <the VISTA repository> vista
-cp vista/collaboration_server/deploy/holly/env.example etc/env     # then review it
-```
 
-Then, as root:
+git clone https://github.com/Genesis-VISTA/vista.git vista
+# or
+# read -s GITLAB_TOKEN # Generate a readonly gitlab token to pull VISTA, paste it here
+# echo "https://oauth:$GITLAB_TOKEN@gitlab.com" > /$HOME/.git-credentials
+# chmod 600 /$HOME/.git-credentials
+# git config --global credential.helper store
+# git clone https://gitlab.com/amsc2/genesis/vista.git ./vista
 
-```bash
-sudo cp /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service \
-  /etc/systemd/system/
+cp vista/collaboration_server/deploy/holly/env.example etc/env
+
+# edit etc/env if needed (defaults should be fine though)
+chmod -R u+rwX,g+rwX,o-rwx *
+
+# exit vista user shell
+
+cat /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service | sudo tee /etc/systemd/system/vista-collab.service
 sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
-journalctl -u vista-collab -f
+
+# view logs during boot
+sudo journalctl -u vista-collab -n 50 -f
+# verify
+no_proxy='localhost,127.0.0.1,0.0.0.0' curl  -k https://127.0.0.1:8081/version
 ```
 
-[`deploy/holly/launch.sh`](deploy/holly/launch.sh) makes a ten-year self-signed certificate on
-first start if there is none, then runs the server. To update, pull the checkout and
-`sudo systemctl restart vista-collab`; copy the unit again only when it changes. Then check
-it end to end, through the gateway, with a real account (manual only; it leaves a `smoke-test` item behind):
-
+To update existing installation:
 ```bash
-uv run python scripts/smoke.py https://obsidian.ccs.ornl.gov/vista/api
+# Start session as vista user
+sudo su -s /bin/bash - vista
+
+cd /sw/holly/apps/vista
+git -C vista pull
+
+# update env if needed
+cp vista/collaboration_server/deploy/holly/env.example etc/env
+
+chmod -R u+rwX,g+rwX,o-rwx *
+
+# exit vista user shell
+
+cat /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service | sudo tee /etc/systemd/system/vista-collab.service
+sudo systemctl restart vista-collab
 ```
 
-The self-signed certificate keeps tokens and data unreadable on the network between Slate and
-Holly. Because APISIX does not verify it, it does not stop someone able to pose as Holly on
-that network; such a person could capture a token and use it until it expires, but not forge
-one.
+Currently, vista is not part of the Holly ansible set up, and so the service won't persist on reboot. To start it manually:
+```bash
+cat /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service | sudo tee /etc/systemd/system/vista-collab.service
+sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
+```
 
 ### Follow-ups
 
