@@ -4,7 +4,7 @@ as a researcher would reach it. Manual only, never in CI: it asks for a real
 token, and leaves a `smoke-test` item on the server.
 
     cd collaboration_server
-    uv run python scripts/smoke.py [https://obsidian.ccs.ornl.gov/vista/api]
+    uv run --extra dev python scripts/smoke.py [https://obsidian.ccs.ornl.gov/vista/api]
 
 Asks for the token from the server's `/sign-in` page (as VISTA's Settings
 does), then: `/version`, `/me`, a blob upload, a new item naming it, and

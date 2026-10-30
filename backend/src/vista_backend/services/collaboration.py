@@ -83,6 +83,13 @@ class CollaborationUnauthorized(CollaborationRefused):
     """The server, or a gateway in front of it, refused the token (or its absence)."""
 
 
+class CollaborationForbidden(CollaborationRefused):
+    """
+    The token is good but its account has not been given access (403): a new
+    token will not help, so this is not `CollaborationUnauthorized`.
+    """
+
+
 class VersionConflict(CollaborationRefused):
     """A publish named a parent that is no longer the item's head."""
 
@@ -274,7 +281,13 @@ class CollaborationClient:
                 f"The collaboration server at {self.base_url} redirects to "
                 f"{location}; use that address in Settings → Collaboration."
             )
-        if response.status_code in (401, 403):
+        if response.status_code == 403:
+            raise CollaborationForbidden(
+                f"{_detail(response)} Signing in again will not help: ask the "
+                f"administrators of {self.base_url} for access.",
+                403,
+            )
+        if response.status_code == 401:
             raise CollaborationUnauthorized(
                 f"{_detail(response)} {sign_in_message(self.base_url)}",
                 response.status_code,
@@ -321,7 +334,11 @@ class CollaborationClient:
         """What the server is; refuses one that is not a server this backend speaks to."""
         try:
             info = await self._call(ServerInfo, "GET", "/version")
-        except CollaborationUnavailable, CollaborationUnauthorized:
+        except (
+            CollaborationUnavailable,
+            CollaborationUnauthorized,
+            CollaborationForbidden,
+        ):
             raise
         except CollaborationRefused as error:
             raise CollaborationUnavailable(

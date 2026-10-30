@@ -50,8 +50,10 @@ class User:
 class TokenVerifier:
     """
     Checks access tokens from the realm. Its keys come from the realm's JWKS
-    endpoint through PyJWT's `PyJWKClient`, which caches them and fetches
-    again (with a cooldown) when a token names one it does not have. `keys`
+    endpoint through PyJWT's `PyJWKClient`, which caches the key set for five
+    minutes and fetches again (with a cooldown) when a token names a key it
+    does not have. Not `cache_keys`: that keeps each key for the life of the
+    process, so one the realm has withdrawn would still be trusted. `keys`
     (a JWKS document) skips fetching, for tests.
     """
 
@@ -61,7 +63,7 @@ class TokenVerifier:
         self.role_client, _, self.role = settings.oidc_required_role.partition("/")
         self._keys = jwt.PyJWKSet.from_dict(keys) if keys else None
         self._client = jwt.PyJWKClient(
-            f"{self.issuer}/protocol/openid-connect/certs", cache_keys=True, timeout=10
+            f"{self.issuer}/protocol/openid-connect/certs", timeout=10
         )
 
     def _signing_key(self, token: str) -> jwt.PyJWK:

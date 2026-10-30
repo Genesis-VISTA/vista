@@ -57,6 +57,7 @@ export type SharingCode =
   | "knowledge_base_conflict"
   | "collaboration_unavailable"
   | "collaboration_sign_in_required"
+  | "collaboration_forbidden"
   | "collaboration_refused"
   | "collaboration_error";
 
@@ -91,7 +92,8 @@ export async function refusal(res: Response): Promise<SharingRefusal> {
   const detail = body.detail ?? body.error;
   // The token expired or was refused since the last check: every Publish and
   // Import control follows, rather than each failing the same way in turn.
-  if (body.code === "collaboration_sign_in_required") void refreshCollaborationStatus();
+  if (body.code === "collaboration_sign_in_required" || body.code === "collaboration_forbidden")
+    void refreshCollaborationStatus();
   return {
     ok: false,
     status: res.status,

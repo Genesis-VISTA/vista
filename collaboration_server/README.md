@@ -153,6 +153,7 @@ chmod -R u+rwX,g+rwX,o-rwx *
 # exit vista user shell
 
 cat /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service | sudo tee /etc/systemd/system/vista-collab.service
+sudo systemctl daemon-reload
 sudo systemctl restart vista-collab
 ```
 

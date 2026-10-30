@@ -86,15 +86,25 @@ async def test_without_a_token_the_status_says_where_to_get_one(oidc_server, ses
     assert res.json()["code"] == "collaboration_sign_in_required"
 
 
-async def test_a_token_without_access_asks_for_another(oidc_server, session):
+async def test_an_account_without_access_is_not_sent_to_sign_in_again(
+    oidc_server, session
+):
+    """A new token would not have the role either: say so, not "sign in"."""
     local = await _save(
         session,
         collaboration_server_url=URL,
         collaboration_token=oidc_server.token(roles=[]),
     )
     status = await collaboration.status(local)
-    assert status.sign_in_required and not status.signed_in
+    assert status.reachable and not status.signed_in
+    assert not status.sign_in_required
     assert "not been given access" in status.reason
+    assert "ask the administrators" in status.reason
+
+    with api_client(session) as (client, _):
+        res = await client.get("/collaboration/skills")
+    assert res.status_code == 403
+    assert res.json()["code"] == "collaboration_forbidden"
 
 
 async def test_the_gateway_asking_for_a_token(monkeypatch, session):

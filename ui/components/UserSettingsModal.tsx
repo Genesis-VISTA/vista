@@ -1532,7 +1532,8 @@ function collaborationLabel(view: CollaborationView): string {
   if (!view.status) return view.checking ? "Checking" : "Unknown";
   if (!view.status.configured) return "Not set";
   if (view.available) return "Connected";
-  return view.status.sign_in_required ? "Sign in" : "Unreachable";
+  if (view.status.sign_in_required) return "Sign in";
+  return view.status.reachable ? "Refused" : "Unreachable";
 }
 
 /**
