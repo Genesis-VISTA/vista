@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # Start the collaboration server on Holly, as systemd's vista-collab.service does.
-#
-# Reads its settings from the environment (systemd loads /sw/holly/apps/vista/etc/env;
-# see env.example). Makes a self-signed certificate the first time, if there is
-# none at VISTA_COLLAB_SSL_CERTFILE / VISTA_COLLAB_SSL_KEYFILE: Obsidian's
-# gateway talks HTTPS to this server without verifying the certificate, so it
-# only has to exist, and lasts ten years so that nothing needs renewing.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$here/../.." && pwd)"
+
+env_file="${VISTA_ENV_FILE:?set VISTA_ENV_FILE to the settings file (see env.example)}"
+set -o allexport; source "$env_file"; set +o allexport
 
 cert="${VISTA_COLLAB_SSL_CERTFILE:?set VISTA_COLLAB_SSL_CERTFILE (see env.example)}"
 key="${VISTA_COLLAB_SSL_KEYFILE:?set VISTA_COLLAB_SSL_KEYFILE (see env.example)}"

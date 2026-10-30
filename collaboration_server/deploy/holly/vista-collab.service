@@ -1,39 +1,18 @@
-# The collaboration server on Holly. Everything it uses lives on the
-# /sw/holly/apps NFS mount, so the only change to Holly's image is this file:
-#   /sw/holly/apps/vista/vista   the checkout (WorkingDirectory, ExecStart)
-#   /sw/holly/apps/vista/etc     its settings (env, from env.example)
-#   /sw/holly/apps/vista/var     its data, certificate, virtualenv and uv's cache
-#   /sw/holly/apps/vista/bin     uv
-# Install with:
-#   sudo cp vista-collab.service /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
-# A copy, not `systemctl link`: systemd reads its units at boot, before NFS is
-# mounted, so a unit linked from NFS is missing then and never starts.
 [Unit]
 Description=VISTA collaboration server
 After=network-online.target remote-fs.target
 Wants=network-online.target
-RequiresMountsFor=/sw/holly/apps/vista
 
 [Service]
 Type=exec
-# An account that owns /sw/holly/apps/vista, from the directory service rather
-# than the image. Not systemd's DynamicUser: its throwaway ids mean nothing on
-# a shared mount, and root cannot change owners there.
 User=vista
-EnvironmentFile=/sw/holly/apps/vista/etc/env
-WorkingDirectory=/sw/holly/apps/vista/vista/collaboration_server
-ExecStart=/sw/holly/apps/vista/vista/collaboration_server/deploy/holly/launch.sh
+ExecStart=/usr/bin/bash /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/launch.sh
 Restart=on-failure
 RestartSec=5
 
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/sw/holly/apps/vista/var
-# Everything uv writes goes under var/, the one writable path: the checkout is
-# read-only here, so the virtualenv cannot be its .venv.
+Environment=VISTA_ENV_FILE=/sw/holly/apps/vista/etc/env
 Environment=HOME=/sw/holly/apps/vista/var
 Environment=UV_PROJECT_ENVIRONMENT=/sw/holly/apps/vista/var/venv
 Environment=UV_CACHE_DIR=/sw/holly/apps/vista/var/uv-cache

@@ -112,10 +112,16 @@ Keycloak's admin console.
 Holly's image is built reproducibly, so everything lives on the `/sw/holly/apps` NFS mount,
 under `/sw/holly/apps/vista`, and the image gains only the systemd unit in
 `/etc/systemd/system`. That is a copy, not a link: systemd reads its units at boot, before NFS
-is mounted. The server runs as an account from the directory service that owns
+is mounted. The server runs as an account with a fixed uid that owns
 `/sw/holly/apps/vista` (`User=` in the unit; `vista` there). The database is on NFS, so it uses
 SQLite's rollback journal (`VISTA_COLLAB_SQLITE_JOURNAL_MODE=DELETE`): WAL needs shared memory,
 which a network filesystem cannot give.
+
+The directory stays closed to everyone but that account and its group (mode 770, `etc/env`
+660), so systemd, running as root and squashed to nobody by NFS, cannot open anything in it.
+The unit is written for that: `launch.sh` reads `etc/env` itself, as the service's user, and
+there is no `EnvironmentFile`, `WorkingDirectory` or `ProtectSystem` sandbox, each of which
+systemd would resolve as root. Never make `etc/env` world-readable to get around this.
 
 As that account (NFS's `root_squash` usually stops root writing there):
 
