@@ -53,7 +53,12 @@ def _mock_client(handler):
     return factory
 
 
+CONFIGURED_ENDPOINT = "https://configured.example"
+""" An endpoint set in the installation's configuration, served without `/v1`. """
+
+
 async def _with_credential(session, *, model: str = "openai:claude-sonnet"):
+    """The key for `CONFIGURED_ENDPOINT`: the row's `inference_api_key`."""
     return await local_settings.update(
         session,
         LocalSettingsUpdate(inference_model=model, inference_api_key="row-secret-key"),
@@ -69,6 +74,7 @@ async def _with_credential(session, *, model: str = "openai:claude-sonnet"):
 async def test_lists_models_from_the_configured_endpoint(session, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(settings, "openai_base_url", CONFIGURED_ENDPOINT)
 
     project = await seed_project(session)
     await _with_credential(session)
@@ -278,6 +284,7 @@ async def test_unconfigured_provider_reports_unsupported(session, monkeypatch):
 async def test_rejected_credential_is_reported(session, monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(settings, "openai_base_url", CONFIGURED_ENDPOINT)
 
     project = await seed_project(session)
     await _with_credential(session)

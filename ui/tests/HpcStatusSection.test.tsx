@@ -341,6 +341,44 @@ describe("HpcStatusSection", () => {
   });
 });
 
+describe("HpcStatusSection: the tour's anchors", () => {
+  beforeEach(() => {
+    useHpcStatusMock.mockReturnValue(
+      view([{ status: status("odo", "ready") }, { status: status("frontier", "ready") }]),
+    );
+  });
+
+  it("anchors the whole section, and the first card in it", () => {
+    renderSection({ visible: ["frontier", "odo"] });
+    const section = document.querySelector('[data-tour="hpc:resources"]');
+    expect(section).toHaveTextContent("Resources");
+    expect(section).toContainElement(document.querySelector('[data-tour="hpc:open-card"]'));
+    expect(document.querySelector('[data-tour="hpc:open-card"]')).toHaveAccessibleName("Odo: Ready");
+  });
+
+  it("anchors the open card and its first check", async () => {
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
+    const card = document.querySelector('[data-tour="hpc:card"]');
+    expect(card).toHaveAccessibleName("Odo connection details");
+    const check = document.querySelector('[data-tour="hpc:check"]');
+    expect(card).toContainElement(check as HTMLElement);
+    expect(check).toHaveTextContent("Facility is up");
+    expect(document.querySelector('[data-tour="hpc:settings"]')).toBeInTheDocument();
+  });
+
+  it("stays open when a coachmark is pressed, which is no click elsewhere", async () => {
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
+    const coachmark = document.body.appendChild(document.createElement("div"));
+    coachmark.className = "driver-popover";
+    await userEvent.click(coachmark);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await userEvent.click(document.body);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("HpcStatusSection: Lux", () => {
   const LUX_READY = status("lux", "ready", {
     facility: {

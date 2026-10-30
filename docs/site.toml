@@ -1,0 +1,26 @@
+# Which docs/ pages genesis-vista.github.io publishes, in nav order, and which it doesn't.
+# Every docs/*.md is listed once or excluded: scripts/docs_site/check_manifest.py checks it
+# (docs:manifest). See openspec/changes/docs-site-publishing.
+exclude = ["releasing.md", "validation-lane.md", "evaluation-runbook.md", "palisade.md", "new_backend_plan.md"]
+
+[[section]]
+title = "Reference"
+pages = [
+  { file = "installing.md", title = "Installing VISTA" },
+  { file = "hpc.md", title = "HPC clusters" },
+  { file = "hpc-jobs.md", title = "HPC jobs" },
+  { file = "skill-onboarding.md", title = "Skill onboarding" },
+  { file = "project-onboarding.md", title = "Project onboarding" },
+  { file = "api-example-alloy-tc.md", title = "API example: estimating Tc" },
+  { file = "multi-agent-framework.md", title = "Multi-agent campaigns" },
+  { file = "splash-planner-playbook.md", title = "SPLASH planner playbook" },
+  { file = "hypothesis-forum-hosting.md", title = "Hosting a shared Hypothesis Lab" },
+  { file = "forum-git-format.md", title = "Hypothesis Lab forum format" },
+]
+
+[[section]]
+title = "Developers"
+pages = [
+  { file = "development.md", title = "Developing VISTA" },
+  { file = "building-packages.md", title = "Building packages" },
+]

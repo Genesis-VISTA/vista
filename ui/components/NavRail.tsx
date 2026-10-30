@@ -13,7 +13,9 @@ import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
+import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
 import { UserSettingsModal } from "./UserSettingsModal";
+import { useTour } from "./TourProvider";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
 
@@ -107,6 +109,18 @@ const GLOBAL_ENTRIES: NavEntry[] = [
   },
 ];
 
+/**
+ * The tour's anchors on the entries it first points at, by href. An entry
+ * carries its anchor only while the researcher is not on its page: there the
+ * page's own item has it, and the rail comes first in the document, so it
+ * would win the lookup.
+ */
+const TOUR_ENTRY_ANCHORS: Record<string, string> = {
+  "/knowledge-bases": "knowledge-bases:visit",
+  "/skills": "skills:visit",
+  "/files": "files:visit",
+};
+
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
   {
     label: "Chat",
@@ -163,19 +177,22 @@ export function NavRail() {
   const activeProject = useActiveProject();
   const { settings, loading: settingsLoading } = useSettings();
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Set when settings were opened from a cluster's card, to expand only that section. */
-  const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
+  const settingsModal = useSettingsModal();
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
-  const collapsed = useSyncExternalStore(
+  const storedCollapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
     railGetServerSnapshot
   );
+  // The tour points at labelled entries, so it borrows an expanded rail. The
+  // stored choice is neither read nor written meanwhile, and returns after.
+  const { running: touring } = useTour();
+  const collapsed = storedCollapsed && !touring;
 
   function toggle() {
+    if (touring) return;
     setTip(null);
-    setRailCollapsed(!collapsed);
+    setRailCollapsed(!storedCollapsed);
   }
 
   /**
@@ -254,6 +271,7 @@ export function NavRail() {
         href={entry.href!}
         className={`nav-rail-entry${isActive ? " active" : ""} ${className}`.trim()}
         aria-label={entry.label}
+        data-tour={pathname === entry.href ? undefined : TOUR_ENTRY_ANCHORS[entry.href]}
         {...tipProps(entry.label)}
       >
         {inner}
@@ -297,14 +315,14 @@ export function NavRail() {
 
   function openSettingsFor(cluster: HpcCluster) {
     setTip(null);
-    setSettingsCluster(cluster);
-    setSettingsOpen(true);
+    openSettings(cluster);
   }
 
   return (
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
       aria-label="Primary navigation"
+      data-tour="welcome:sidebar"
     >
       <div className="nav-rail-header">
         {/* The white lockup needs a solid dark plate under it — see the AmSC
@@ -407,12 +425,10 @@ export function NavRail() {
       <button
         type="button"
         className="nav-rail-settings"
-        onClick={() => {
-          setSettingsCluster(undefined);
-          setSettingsOpen(true);
-        }}
+        onClick={() => openSettings()}
         disabled={!settings}
         aria-label="Open settings"
+        data-tour="first-question:settings"
         {...tipProps(settingsHint)}
       >
         <span className="nav-rail-icon" aria-hidden="true">
@@ -432,11 +448,8 @@ export function NavRail() {
         </div>
       )}
 
-      {settingsOpen && (
-        <UserSettingsModal
-          initialCluster={settingsCluster}
-          onClose={() => setSettingsOpen(false)}
-        />
+      {settingsModal.open && (
+        <UserSettingsModal initialSection={settingsModal.section} onClose={closeSettings} />
       )}
     </aside>
   );

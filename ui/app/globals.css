@@ -5500,6 +5500,18 @@ textarea.input:focus {
    state, so the states read without color.
    ------------------------------------------------------------------------- */
 
+/* One box around the heading and the cards, so the tour can point at them together. */
+.hpc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: stretch;
+}
+
+.nav-rail.collapsed .hpc-section {
+  align-items: center;
+}
+
 .hpc-section-head {
   display: flex;
   align-items: center;
@@ -6869,4 +6881,138 @@ textarea.input:focus {
   margin: 0 0 8px;
   font-size: 12px;
   color: var(--muted);
+}
+
+/* ---------- First-boot tour (driver.js) -------------------------------
+   driver.js ships its own light-only colours; these put the coachmark on the
+   theme tokens. The dimming is its overlay's inline fill, set to --scrim-strong
+   in TourProvider. The popover's text and buttons are VISTA's own markup. */
+.driver-popover.vista-tour {
+  background-color: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  min-width: 280px;
+  max-width: 360px;
+  font-family: var(--font-body);
+  box-shadow: var(--shadow-popover);
+}
+
+/* Nothing is dimmed behind an overview, so its card carries a strong border instead. */
+.driver-popover.vista-tour.vista-tour-overview {
+  border: 2px solid var(--brand-fill);
+}
+
+/* A click outside the target: the coachmark pulses to show where the tour is. */
+@keyframes vista-tour-nudge {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.05); }
+  65% { transform: scale(0.98); }
+}
+
+.driver-popover.vista-tour.vista-tour-nudge {
+  outline: 3px solid var(--brand-fill);
+  outline-offset: 3px;
+  animation: vista-tour-nudge 420ms ease-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-popover.vista-tour.vista-tour-nudge {
+    animation: none;
+  }
+}
+
+.vista-tour .driver-popover-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.vista-tour .driver-popover-description {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.vista-tour .driver-popover-description p {
+  margin: 8px 0 0;
+}
+
+.vista-tour .tour-link {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.vista-tour .driver-popover-arrow {
+  border-color: var(--surface);
+}
+
+.vista-tour .driver-popover-arrow-side-left {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-right {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-top {
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-bottom {
+  border-top-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .tour-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.vista-tour .tour-btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.vista-tour .tour-btn:hover {
+  background: var(--surface-active);
+}
+
+.vista-tour .tour-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.vista-tour .tour-btn-quiet {
+  border-color: transparent;
+  color: var(--muted-2);
+  margin-right: auto;
+}
+
+.vista-tour .tour-btn-primary {
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--on-brand);
+}
+
+.vista-tour .tour-btn-primary:hover {
+  background: var(--brand-fill-hover);
 }

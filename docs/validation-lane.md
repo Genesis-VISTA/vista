@@ -110,6 +110,11 @@ export PLAYWRIGHT_BASE_URL=http://127.0.0.1:3000
 npx playwright test -c playwright.config.ts
 ```
 
+Start the stack under test with `VISTA_BACKEND_ONBOARDING_TOUR=false`: on a fresh
+install the first-boot tour would otherwise draw over the page the smoke clicks.
+(The hermetic suite's `SETTINGS` fixture and the Electron e2e's fixture server
+need no flag.)
+
 Flow: open app → open Projects → activate the default
 `ai-safety-autonomous-labs` project → send a chat message asking for a
 `rag_search` over the AI-safety papers → observe a tool-call bubble and/or

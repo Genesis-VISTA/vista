@@ -199,7 +199,7 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`, `install`, `launcher`, `docs`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
@@ -207,6 +207,7 @@ Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`,
 ./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
 ./scripts/ci-local.sh collab           # collaboration server lint, typecheck, tests
 ./scripts/ci-local.sh electron         # window typecheck + routing tests
+./scripts/ci-local.sh docs             # Markdown links, the site manifest, strict build of the published pages
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
 
@@ -291,6 +292,16 @@ is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
 - **Tests.** `test_forum_git.py` runs the real client against temporary bare
   repositories as two installs; orchestrator/API/simulation tests use
   `tests/harness/fake_forum.py` (the `fake_forum` / `client` fixtures).
+
+## Docs and the public site
+
+`docs/site.toml` decides which `docs/*.md` pages genesis-vista.github.io publishes: every
+page is either listed (with its section, nav order and title) or in `exclude`. Adding,
+renaming or deleting a doc means listing or excluding it there in the same MR, or
+`docs:manifest` fails. `docs:site` builds the listed pages strictly with MkDocs, so a link
+or anchor into a published page must resolve. The site shows the latest release, never main:
+a docs change reaches it with the next release. `scripts/docs_site/sync_docs.py` copies the
+pages into the site repo, and its command line is a contract with that repo.
 
 ## Text encoding
 

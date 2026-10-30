@@ -19,6 +19,9 @@ export const SETTINGS = {
   collaboration_server_url: null,
   email: "hermetic@example.invalid",
   hpc_hidden_clusters: [] as string[],
+  // The first-boot tour would open over every page these specs drive.
+  onboarding_tour: null,
+  onboarding_tour_enabled: false,
 };
 
 const OK = (message: string) => ({ ok: true, reason: null, message });
@@ -194,24 +197,24 @@ export const MODELS = {
 };
 
 /**
- * `GET /settings/inference`: a fresh install, on AmSC i2 with its default
+ * `GET /settings/inference`: a fresh install, on AmSC MAG with its default
  * model and a key, so the picker reads "Default (claude-sonnet)" and a send
  * is never held for want of a model.
  */
 export const INFERENCE = {
   providers: [
-    { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
-    { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+    { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
     { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
     { id: "custom", name: "Custom", takes_url: true, default_model: null },
   ],
-  provider: "i2",
+  provider: "mag",
   source: "default",
-  base_url: "https://api.i2-core.american-science-cloud.org",
+  base_url: "https://mag.genesis.americansciencecloud.org/v1",
   model: "openai:claude-sonnet",
   model_is_default: true,
   has_credential: true,
-  keys_set: { i2: true, mag: false, olcf: false, custom: false },
+  keys_set: { mag: true, olcf: false, custom: false },
+  config_key_set: false,
 };
 
 /**

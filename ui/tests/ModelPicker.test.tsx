@@ -48,8 +48,7 @@ const PROJECT: Project = {
 };
 
 const PROVIDERS = [
-  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
@@ -57,25 +56,27 @@ const PROVIDERS = [
 function view(overrides: Record<string, unknown> = {}) {
   return {
     providers: PROVIDERS,
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    base_url: "https://api.i2-core.american-science-cloud.org",
+    base_url: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     model_is_default: true,
     has_credential: true,
-    keys_set: { i2: true, mag: false, olcf: false, custom: false },
+    keys_set: { mag: true, olcf: false, custom: false },
+    config_key_set: false,
     ...overrides,
   };
 }
 
 const CHOSEN_OPUS = { model: "openai:claude-opus", model_is_default: false };
-const MAG_NO_MODEL = {
-  provider: "mag",
+/** Custom with no model chosen: the one provider that has no default. */
+const CUSTOM_NO_MODEL = {
+  provider: "custom",
   source: "user",
-  base_url: "https://mag.genesis.americansciencecloud.org/v1",
+  base_url: "https://custom.example/v1",
   model: null,
   model_is_default: false,
-  keys_set: { i2: true, mag: true, olcf: false, custom: false },
+  keys_set: { mag: true, olcf: false, custom: true },
 };
 
 let inference: Record<string, unknown>;
@@ -152,7 +153,7 @@ describe("ModelPicker label", () => {
   });
 
   it("says there is no model on a provider without a default", async () => {
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     render(<ModelPicker />);
     expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
   });
@@ -162,10 +163,10 @@ describe("ModelPicker label", () => {
     render(<ModelPicker />);
     expect(
       await screen.findByRole("button", {
-        name: /Model: retired-model, not listed by AmSC i2/,
+        name: /Model: retired-model, not listed by AmSC MAG/,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("not listed by AmSC i2")).toBeInTheDocument();
+    expect(screen.getByText("not listed by AmSC MAG")).toBeInTheDocument();
   });
 
   it("follows a provider change without a remount, and refetches the list", async () => {
@@ -176,7 +177,7 @@ describe("ModelPicker label", () => {
 
     // What Settings does after saving a provider: the backend has cleared
     // the model, and Settings refreshes the shared store.
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     await act(() => refreshAgentSettings());
 
     expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
@@ -327,7 +328,7 @@ describe("ModelPicker menu", () => {
 
 describe("sending without a model", () => {
   it("holds the send and opens the picker asking for a model", async () => {
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     render(<ModelPicker />);
     await screen.findByRole("button", { name: /Model: No model/ });
 
@@ -338,7 +339,7 @@ describe("sending without a model", () => {
 
     expect(held).toBe(true);
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Choose a model first. AmSC MAG has no default model.",
+      "Choose a model first. Custom has no default model.",
     );
     expect(screen.getByRole("listbox")).toBeInTheDocument();
   });
@@ -419,7 +420,7 @@ describe("ModelPicker in a chat", () => {
   });
 
   it("a held send is answered by choosing a model for the chat", async () => {
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     render(<OpenChat />);
     await screen.findByRole("button", { name: /Model: No model/ });
 

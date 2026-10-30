@@ -23,6 +23,12 @@ type Props = {
    * has already loaded from the same URL even after the file has changed.
    */
   version?: string;
+  /**
+   * Where the content is, when it is not a project file: preview and download
+   * use it in place of the project file's URL. The tour's example files are
+   * `data:` URLs.
+   */
+  src?: string;
 };
 
 type Renderer = "image" | "text" | "csv" | "markdown" | "html" | "pdf" | "none";
@@ -134,14 +140,19 @@ function CsvTable({ name, loaded, size }: { name: string; loaded: Loaded; size?:
 export default function FilePreview(props: Props) {
   const { name, size } = props;
   const renderer = rendererFor(name);
-  const previewUrl = fileUrl(props, true);
-  const downloadUrl = fileUrl(props, false);
+  const previewUrl = props.src ?? fileUrl(props, true);
+  const downloadUrl = props.src ?? fileUrl(props, false);
+  // A `src` URL carries no file name of its own, so the download is named here.
+  const downloadProps = props.src ? { download: name } : fileLinkProps(downloadUrl);
   const [zoom, setZoom] = useState(false);
   const needsText = renderer === "text" || renderer === "csv" || renderer === "markdown" || renderer === "html";
   const { data, error } = useCappedText(previewUrl, needsText);
 
   let body: React.ReactNode = null;
-  if (renderer === "image") {
+  if (renderer === "image" && props.src) {
+    // The tour's examples: no full-size view, whose lightbox would open under the tour.
+    body = <img src={previewUrl} alt={name} />;
+  } else if (renderer === "image") {
     body = (
       <>
         <button type="button" className="artifact-zoom" onClick={() => setZoom(true)} title="Show this figure full size">
@@ -161,7 +172,7 @@ export default function FilePreview(props: Props) {
     body = (
       <div className="file-preview-empty">
         <p className="muted">No preview for this type.</p>
-        <a className="button" href={downloadUrl} {...fileLinkProps(downloadUrl)}>
+        <a className="button" href={downloadUrl} {...downloadProps}>
           Download
         </a>
       </div>
@@ -220,7 +231,7 @@ export default function FilePreview(props: Props) {
       <div className="file-preview-bar">
         <span className="file-preview-name">{name}</span>
         {renderer !== "none" && (
-          <a className="button ghost button-sm" href={downloadUrl} {...fileLinkProps(downloadUrl)}>
+          <a className="button ghost button-sm" href={downloadUrl} {...downloadProps}>
             Download
           </a>
         )}

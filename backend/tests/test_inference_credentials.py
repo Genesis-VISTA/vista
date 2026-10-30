@@ -134,33 +134,41 @@ def test_resolved_target_reaches_the_built_client(monkeypatch):
 
 
 @pytest.fixture
-def i2_settings(monkeypatch):
-    """An installation whose own configuration is the i2 preset's, keyless."""
+def default_settings(monkeypatch):
+    """An installation whose own configuration is the default preset's, keyless."""
     monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
     monkeypatch.setattr(
-        settings, "openai_base_url", "https://api.i2-core.american-science-cloud.org"
+        settings, "openai_base_url", "https://mag.genesis.americansciencecloud.org/v1"
     )
     monkeypatch.setattr(settings, "openai_api_key", None)
 
 
 def test_presets():
-    i2, mag, olcf, custom = (
-        PROVIDER_PRESETS[p] for p in ("i2", "mag", "olcf", "custom")
-    )
-    assert list(PROVIDER_PRESETS) == ["i2", "mag", "olcf", "custom"]
-    assert i2.base_url == "https://api.i2-core.american-science-cloud.org"
-    assert i2.default_model == "claude-sonnet"
+    mag, olcf, custom = (PROVIDER_PRESETS[p] for p in ("mag", "olcf", "custom"))
+    assert list(PROVIDER_PRESETS) == ["mag", "olcf", "custom"]
     assert mag.base_url == "https://mag.genesis.americansciencecloud.org/v1"
     assert mag.default_model == "claude-sonnet"
     assert olcf.name == "OLCF Inference"
     assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
     assert olcf.default_model == "gpt-oss-120b"
     assert custom.takes_url and custom.default_model is None
-    assert not i2.takes_url and not mag.takes_url and not olcf.takes_url
+    assert not mag.takes_url and not olcf.takes_url
+
+
+def test_no_preset_reaches_i2_core():
+    """The i2-core API is deactivated; nothing may point at it."""
+    assert all("i2-core" not in (p.base_url or "") for p in PROVIDER_PRESETS.values())
+
+
+def test_default_provider_is_mag():
+    # Imported here so the rest of this file runs before DEFAULT_PROVIDER exists.
+    from vista_backend.agents.inference import DEFAULT_PROVIDER
+
+    assert DEFAULT_PROVIDER == "mag"
 
 
 _ALL_KEYS = dict(
-    inference_api_key="i2-key",
+    inference_api_key="legacy-key",
     inference_mag_api_key="mag-key",
     inference_olcf_api_key="olcf-key",
     inference_custom_api_key="custom-key",
@@ -171,14 +179,13 @@ _ALL_KEYS = dict(
 @pytest.mark.parametrize(
     "provider,base_url,key,model",
     [
-        ("i2", PROVIDER_PRESETS["i2"].base_url, "i2-key", "openai:claude-sonnet"),
         ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", "openai:claude-sonnet"),
         ("olcf", PROVIDER_PRESETS["olcf"].base_url, "olcf-key", "openai:gpt-oss-120b"),
         ("custom", "https://custom.example/v1", "custom-key", None),
     ],
 )
 def test_row_provider_picks_its_url_key_and_default(
-    i2_settings, provider, base_url, key, model
+    default_settings, provider, base_url, key, model
 ):
     """Each provider uses its own key, so switching never loses another's."""
     target = resolve_inference_target(_local(inference_provider=provider, **_ALL_KEYS))
@@ -190,7 +197,7 @@ def test_row_provider_picks_its_url_key_and_default(
     assert target.model_is_default is (model is not None)
 
 
-def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
+def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(default_settings):
     """A compute token is not known to be accepted for inference."""
     cluster_tokens = dict(odo_s3m_token="odo-s3m", frontier_s3m_token="frontier-s3m")
     target = resolve_inference_target(
@@ -207,7 +214,7 @@ def test_olcf_uses_its_own_key_not_the_cluster_s3m_tokens(i2_settings):
     assert target.api_key == "olcf-key"
 
 
-def test_row_provider_uses_the_chosen_model(i2_settings):
+def test_row_provider_uses_the_chosen_model(default_settings):
     target = resolve_inference_target(
         _local(inference_provider="mag", inference_model="openai:gpt-oss", **_ALL_KEYS)
     )
@@ -215,41 +222,67 @@ def test_row_provider_uses_the_chosen_model(i2_settings):
     assert target.model_is_default is False
 
 
-def test_i2_key_falls_back_to_the_environment(i2_settings, monkeypatch):
+def test_default_providers_key_falls_back_to_the_environment(
+    default_settings, monkeypatch
+):
     monkeypatch.setattr(settings, "openai_api_key", SecretStr("from-env"))
+    # Chosen or not, the default provider (MAG) takes the environment's key ...
     assert (
-        resolve_inference_target(_local(inference_provider="i2")).api_key == "from-env"
+        resolve_inference_target(_local(inference_provider="mag")).api_key == "from-env"
     )
-    # Not to another provider: the environment's key is i2's.
-    assert resolve_inference_target(_local(inference_provider="mag")).api_key is None
+    assert resolve_inference_target(_local()).api_key == "from-env"
+    # ... a saved MAG token still wins over it ...
+    assert (
+        resolve_inference_target(_local(inference_mag_api_key="mag-key")).api_key
+        == "mag-key"
+    )
+    # ... and no other provider does: the environment's key is the default's.
+    assert resolve_inference_target(_local(inference_provider="olcf")).api_key is None
 
 
-def test_nothing_set_is_i2_with_its_default(i2_settings):
+def test_nothing_set_is_mag_with_its_default(default_settings):
     target = resolve_inference_target(_local())
-    assert target.provider == "i2"
+    assert target.provider == "mag"
     assert target.source == "default"
     assert target.model == "openai:claude-sonnet"
     assert target.model_is_default is True
-    assert target.base_url == PROVIDER_PRESETS["i2"].base_url
+    assert target.base_url == PROVIDER_PRESETS["mag"].base_url
 
 
-def test_existing_key_is_the_i2_key(i2_settings):
-    """A key saved before providers existed keeps working, as i2's."""
+def test_existing_key_is_not_sent_to_mag(default_settings):
+    """
+    A key saved before providers existed was i2's; MAG takes a project access
+    token, so the old key must not be sent there.
+    """
     target = resolve_inference_target(
         _local(inference_api_key="saved-before", inference_base_url="https://old/v1")
     )
-    assert target.provider == "i2"
-    assert target.api_key == "saved-before"
-    # The old endpoint column is Custom's now, and unused for i2.
-    assert target.base_url == PROVIDER_PRESETS["i2"].base_url
+    assert target.provider == "mag"
+    assert target.api_key is None
+    # The old endpoint column is Custom's, and unused for MAG.
+    assert target.base_url == PROVIDER_PRESETS["mag"].base_url
+
+
+def test_a_saved_i2_choice_resolves_as_no_choice(default_settings):
+    """
+    A row still naming i2 (before the startup data fix has run) is ignored:
+    MAG, from the default, without the i2 key.
+    """
+    target = resolve_inference_target(
+        _local(inference_provider="i2", inference_api_key="i2-key")
+    )
+    assert target.provider == "mag"
+    assert target.source == "default"
+    assert target.base_url == PROVIDER_PRESETS["mag"].base_url
+    assert target.api_key is None
 
 
 @pytest.mark.parametrize(
     "field,value",
     [("openai_base_url", "https://dev.example/v1"), ("model", "openai:other")],
 )
-def test_configuration_differing_from_i2_is_custom_from_config(
-    i2_settings, monkeypatch, field, value
+def test_configuration_differing_from_the_default_is_custom_from_config(
+    default_settings, monkeypatch, field, value
 ):
     monkeypatch.setattr(settings, field, value)
     target = resolve_inference_target(_local(inference_api_key="row-key"))
@@ -260,14 +293,14 @@ def test_configuration_differing_from_i2_is_custom_from_config(
     assert target.api_key == "row-key"
 
 
-def test_a_chosen_provider_beats_the_configuration(i2_settings, monkeypatch):
+def test_a_chosen_provider_beats_the_configuration(default_settings, monkeypatch):
     monkeypatch.setattr(settings, "openai_base_url", "https://dev.example/v1")
     target = resolve_inference_target(_local(inference_provider="mag", **_ALL_KEYS))
     assert target.provider == "mag"
     assert target.base_url == PROVIDER_PRESETS["mag"].base_url
 
 
-def test_no_model_is_a_named_condition(i2_settings):
+def test_no_model_is_a_named_condition(default_settings):
     with pytest.raises(MissingInferenceModel) as excinfo:
         require_inference_credential(
             _local(
@@ -280,7 +313,7 @@ def test_no_model_is_a_named_condition(i2_settings):
     assert "model picker" in excinfo.value.detail
 
 
-def test_no_model_still_builds_an_agent_model(i2_settings):
+def test_no_model_still_builds_an_agent_model(default_settings):
     """
     Agents are built before anything reaches the model, so building must not
     fail; using the built model raises the named condition.
@@ -306,14 +339,14 @@ def test_no_model_still_builds_an_agent_model(i2_settings):
 @pytest.mark.parametrize(
     "row_model", [None, "openai:row-choice"], ids=["default", "row"]
 )
-def test_override_beats_the_row_and_the_provider_default(i2_settings, row_model):
+def test_override_beats_the_row_and_the_provider_default(default_settings, row_model):
     local = _local(inference_provider="mag", inference_model=row_model, **_ALL_KEYS)
     target = resolve_inference_target(local, "openai:chat-choice")
     assert target.model == "openai:chat-choice"
     assert target.model_is_default is False
 
 
-def test_override_keeps_provider_endpoint_and_key(i2_settings):
+def test_override_keeps_provider_endpoint_and_key(default_settings):
     local = _local(inference_provider="mag", inference_model="openai:row", **_ALL_KEYS)
     plain = resolve_inference_target(local)
     target = resolve_inference_target(local, "openai:chat-choice")
@@ -326,12 +359,12 @@ def test_override_keeps_provider_endpoint_and_key(i2_settings):
     assert target.api_key == "mag-key"
 
 
-def test_no_override_changes_nothing(i2_settings):
+def test_no_override_changes_nothing(default_settings):
     local = _local(inference_provider="mag", **_ALL_KEYS)
     assert resolve_inference_target(local, None) == resolve_inference_target(local)
 
 
-def test_override_on_a_provider_with_no_default_passes_the_guard(i2_settings):
+def test_override_on_a_provider_with_no_default_passes_the_guard(default_settings):
     """A chat can name its own model where the researcher never set a default."""
     local = _local(
         inference_provider="custom",
@@ -344,7 +377,7 @@ def test_override_on_a_provider_with_no_default_passes_the_guard(i2_settings):
     assert target.model == "openai:chat-choice"
 
 
-def test_override_is_the_model_that_gets_built(i2_settings):
+def test_override_is_the_model_that_gets_built(default_settings):
     local = _local(inference_provider="mag", **_ALL_KEYS)
     model = build_model_for(local, "openai:chat-choice")
     assert model.model_name == "chat-choice"
@@ -636,7 +669,9 @@ class TestHttpSurface:
 
         self._no_credential(monkeypatch)
         row = await local_settings.get(session)
-        row.inference_api_key = "row-key"
+        # The default provider's own key: a legacy `inference_api_key` is not
+        # sent to it (`test_existing_key_is_not_sent_to_mag`).
+        row.inference_mag_api_key = "row-key"
         session.add(row)
         await session.flush()
         # Re-read: `ProjectAgent` snapshots the settings at construction, and in

@@ -73,8 +73,7 @@ run of `./launch.sh`, change `.env` rather than exporting it.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. Get an AmSC key from <https://api.i2-core.american-science-cloud.org>. | AmSC i2, `openai:claude-sonnet` |
-| `VISTA_MCP_OMD_API_KEY` | Key for the OpenMetaData catalog. Also uses the AmSC inference API key | None |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. `OPENAI_API_KEY` is an AmSC MAG project access token, from <https://my.amsc.energy.gov/>. | AmSC MAG, `openai:claude-sonnet` |
 | `VISTA_DATA_TOKEN` | A code.ornl.gov token for `v28/vista-data`, the private corpora | None |
 | `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab; see [hypothesis-forum-hosting.md](hypothesis-forum-hosting.md) | `false` in a checkout |
 | `VISTA_BACKEND_PALISADE__*` | The security sidecar; see [palisade.md](palisade.md) | off |
@@ -191,3 +190,21 @@ own copy. Use `build_local_package.sh` only for a complete, relocatable release 
 `lint --fast`. Live, HPC and Playwright checks run on a schedule or by hand; see
 [validation-lane.md](validation-lane.md). The testing roadmap's requirements are in
 [`openspec/specs/`](../openspec/specs/).
+
+## The docs site
+
+The pages of `docs/` listed in `docs/site.toml` are published at
+<https://genesis-vista.github.io/docs/>, built from VISTA's latest release. A docs change
+shows up there with the next release. `./scripts/ci-local.sh docs` checks the links, the
+manifest and a strict build of the published pages.
+
+To preview the site locally, from the repo root:
+
+```bash
+git clone --depth 1 https://github.com/Genesis-VISTA/genesis-vista.github.io ../vista-site
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I scripts/docs_site/sync_docs.py . ../vista-site --ref local
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I -m mkdocs serve -f ../vista-site/mkdocs.generated.yml
+```
+
+The Material version matches `MKDOCS_MATERIAL_VERSION` in `.gitlab-ci.yml`. Links between
+published pages must be relative links that `docs:links` accepts.

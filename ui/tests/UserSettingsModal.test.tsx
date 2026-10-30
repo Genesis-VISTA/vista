@@ -149,18 +149,18 @@ function statusView(): HpcStatusView {
 function agentSettings(overrides: Partial<AgentSettings> = {}): AgentSettings {
   return {
     providers: [
-      { id: "i2", name: "AmSC i2", takesUrl: false, defaultModel: "claude-sonnet" },
-      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: null },
+      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: "claude-sonnet" },
       { id: "olcf", name: "OLCF Inference", takesUrl: false, defaultModel: "gpt-oss-120b" },
       { id: "custom", name: "Custom", takesUrl: true, defaultModel: null },
     ],
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    baseUrl: "https://api.i2-core.american-science-cloud.org",
+    baseUrl: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     modelIsDefault: true,
     hasCredential: true,
-    keysSet: { i2: true, mag: false, olcf: false, custom: false },
+    keysSet: { mag: true, olcf: false, custom: false },
+    configKeySet: false,
     ...overrides,
   };
 }
@@ -245,13 +245,36 @@ describe("UserSettingsModal navigation", () => {
 
   it("opened for one cluster, shows that cluster's section only", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
     const frontier = await region("Frontier");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(entry("Models and providers")).not.toHaveAttribute("aria-current");
     expect(frontier).toHaveTextContent("ORNL › OLCF");
     expect(screen.queryByRole("region", { name: "Models & providers" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Odo" })).toBeNull();
+  });
+
+  it("opened at the model provider, shows it and marks it current", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="agent" />);
+    await region("Models & providers");
+    expect(screen.getByText("Model provider")).toBeInTheDocument();
+    expect(entry("Models and providers")).toHaveAttribute("aria-current", "page");
+    expect(entry("Research profile")).not.toHaveAttribute("aria-current");
+  });
+
+  it("opened at a section, starts on the section pane, which is what a narrow window shows", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { container } = render(<UserSettingsModal onClose={() => {}} initialSection="agent" />);
+    await region("Models & providers");
+    expect(container.querySelector(".settings-layout")).toHaveAttribute("data-pane", "section");
+  });
+
+  it("opened plainly, starts on the list pane", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { container } = render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(container.querySelector(".settings-layout")).toHaveAttribute("data-pane", "nav");
   });
 
   it("marks a hidden resource and still lists it under its facility", async () => {
@@ -266,7 +289,7 @@ describe("UserSettingsModal navigation", () => {
 
   it("saves a field left for another section, and still shows it on return", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.type(await screen.findByLabelText(/Odo remote directory/), "/odo/vista");
     await openOn("Frontier");
     // Leaving the field saved it, without waiting for the pause.
@@ -644,6 +667,44 @@ describe("UserSettingsModal research profile", () => {
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ email: "ada@ornl.gov" }));
   });
 
+  it("links to the documentation, in a new tab", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const profile = await region("Research profile");
+    const link = within(profile).getByRole("link", { name: "Documentation" });
+    expect(link).toHaveAttribute("href", "https://genesis-vista.github.io/");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  });
+
+  it("Replay tutorial restarts it at the welcome step and closes Settings", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    updateSettingsMock.mockResolvedValue(settingsRow());
+    const onClose = vi.fn();
+    render(<UserSettingsModal onClose={onClose} />);
+    const profile = await region("Research profile");
+
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      onboarding_tour: { status: "in_progress", step: "welcome" },
+    });
+  });
+
+  it("keeps Settings open and says why when Replay cannot be saved", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    updateSettingsMock.mockRejectedValue(new Error("backend down"));
+    const onClose = vi.fn();
+    render(<UserSettingsModal onClose={onClose} />);
+    const profile = await region("Research profile");
+
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
+
+    expect(await within(profile).findByText("backend down")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("can turn personalization off without deleting the profile", async () => {
     fetchSettingsMock.mockResolvedValue(
       settingsRow({ research_role: "Nuclear engineer", research_interests: ["Corrosion"] }),
@@ -673,7 +734,7 @@ describe("UserSettingsModal autosave", () => {
 
   it("saves a typed remote directory after a pause, once, trimmed, and refreshes the cards", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
     await userEvent.type(
       await screen.findByLabelText(/Frontier remote directory/),
@@ -694,7 +755,7 @@ describe("UserSettingsModal autosave", () => {
 
   it("saves a pasted token once, and rechecks only that cluster", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     await userEvent.click(await screen.findByLabelText(/Odo S3M token/));
     await userEvent.paste("new-odo");
@@ -708,7 +769,7 @@ describe("UserSettingsModal autosave", () => {
 
   it("saves nothing of a token typed by hand until the field loses focus", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     await userEvent.type(await screen.findByLabelText(/Odo S3M token/), "abc");
     await new Promise((r) => setTimeout(r, 1000)); // past the text pause
@@ -722,7 +783,7 @@ describe("UserSettingsModal autosave", () => {
     fetchSettingsMock.mockResolvedValue(
       settingsRow({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok" }),
     );
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
     await userEvent.clear(await screen.findByLabelText(/Frontier S3M token/));
     await userEvent.tab();
@@ -733,7 +794,7 @@ describe("UserSettingsModal autosave", () => {
   it("still saves a change made straight before closing", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     const onClose = vi.fn();
-    render(<UserSettingsModal onClose={onClose} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={onClose} initialSection="frontier" />);
 
     await userEvent.type(await screen.findByLabelText(/Frontier remote directory/), "/frontier/vista");
     expect(updateSettingsMock).not.toHaveBeenCalled();
@@ -744,7 +805,7 @@ describe("UserSettingsModal autosave", () => {
 
   it("hiding a cluster saves the list at once, leaves its token alone, and refreshes the rail", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ nersc_iri_token: "iri-tok" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const toggle = await screen.findByRole("switch", { name: "Show Perlmutter in sidebar" });
     await userEvent.click(toggle);
@@ -761,14 +822,14 @@ describe("UserSettingsModal autosave", () => {
 
   it("showing a hidden cluster again sends an empty list", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["odo"] }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ hpc_hidden_clusters: [] }));
   });
 
   it("an unchanged field triggers no save and no recheck", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: "/odo" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByLabelText(/Odo remote directory/));
     await userEvent.tab();
     await userEvent.click(screen.getByRole("button", { name: "Close settings" }));
@@ -787,7 +848,7 @@ describe("UserSettingsModal save marks", () => {
 
   it("has no save indicator by the title", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalled());
     expect(screen.queryByText("Saving…")).toBeNull();
@@ -798,7 +859,7 @@ describe("UserSettingsModal save marks", () => {
     let release: (value: LocalSettings) => void = () => {};
     updateSettingsMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     const dir = await screen.findByLabelText(/Odo remote directory/);
     const token = screen.getByLabelText(/Odo S3M token/);
@@ -813,7 +874,7 @@ describe("UserSettingsModal save marks", () => {
 
   it("marks a switch beside it", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     const toggle = await screen.findByRole("switch", { name: "Show Odo in sidebar" });
     await userEvent.click(toggle);
     await waitFor(() => expect(markOf(toggle)).toBe("saved"));
@@ -824,7 +885,7 @@ describe("UserSettingsModal save marks", () => {
     let release: (value: LocalSettings) => void = () => {};
     updateSettingsMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
 
     const account = await screen.findByLabelText(/Lux account/);
     await userEvent.type(account, "abc123");
@@ -837,7 +898,7 @@ describe("UserSettingsModal save marks", () => {
   it("marks a failure with a cross and the reason, keeping what was typed", async () => {
     updateSettingsMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative/dir");
@@ -853,7 +914,7 @@ describe("UserSettingsModal save marks", () => {
     let reject: (e: Error) => void = () => {};
     updateSettingsMock.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     await userEvent.type(await screen.findByLabelText(/NERSC remote directory/), "relative/dir");
     await openOn("Models and providers"); // leaving the field sends it
@@ -869,7 +930,7 @@ describe("UserSettingsModal save marks", () => {
   it("clears the cross, the reason and the navigation mark once the field saves", async () => {
     updateSettingsMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative");
@@ -895,48 +956,55 @@ describe("UserSettingsModal: Models & providers", () => {
     return within(agent).getByRole("radio", { name: new RegExp(`^${name}`) });
   }
 
-  it("offers the backend's providers in order, with i2's key and no Model or endpoint field", async () => {
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "i2-key" }));
+  it("offers the backend's providers in order, with MAG's token and no Model or endpoint field", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_mag_api_key: "mag-token" }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
     const choices = within(agent).getByRole("radiogroup", { name: "Inference provider" });
     expect(within(choices).getAllByRole("radio").map((choice) => choice.querySelector(".settings-provider-name")?.textContent)).toEqual([
-      "AmSC i2", "AmSC MAG", "OLCF Inference", "Custom",
+      "AmSC MAG", "OLCF Inference", "Custom",
     ]);
-    expect(provider(agent, "AmSC i2")).toBeChecked();
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    expect(provider(agent, "AmSC MAG")).toBeChecked();
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
     expect(agent).toHaveTextContent("Uses claude-sonnet");
     expect(within(agent).queryByLabelText(/^Model/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
   });
 
+  it("neither offers nor links to the retired AmSC i2", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await providerRegion();
+
+    expect(within(agent).queryByRole("radio", { name: /AmSC i2/ })).toBeNull();
+    expect(agent.querySelector('a[href*="i2-core"]')).toBeNull();
+    expect(agent).not.toHaveTextContent("i2");
+  });
+
   it("switching provider shows that provider's own key field", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ inference_api_key: "i2-key", inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
+      settingsRow({ inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
-    const i2 = provider(agent, "AmSC i2");
-    expect(i2).toHaveAttribute("tabindex", "0");
-    i2.focus();
+    const mag = provider(agent, "AmSC MAG");
+    expect(mag).toHaveAttribute("tabindex", "0");
+    mag.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(provider(agent, "AmSC MAG")).toBeChecked();
-    expect(provider(agent, "AmSC MAG")).toHaveFocus();
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
-    expect(within(agent).queryByLabelText(/^AmSC i2 API key/)).toBeNull();
+    expect(provider(agent, "OLCF Inference")).toBeChecked();
+    expect(provider(agent, "OLCF Inference")).toHaveFocus();
+    expect(within(agent).getByLabelText(/^OLCF Inference S3M token/)).toHaveValue("s3m");
+    expect(within(agent).queryByLabelText(/^AmSC MAG project access token/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
+
+    await userEvent.click(provider(agent, "Custom"));
     expect(agent).toHaveTextContent("no default model");
 
-    await userEvent.click(provider(agent, "OLCF Inference"));
-    const olcf = within(agent).getByLabelText(/^OLCF Inference S3M token/);
-    expect(olcf).toHaveValue("s3m");
-    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
-    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
-
-    await userEvent.click(provider(agent, "AmSC i2"));
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    await userEvent.click(provider(agent, "AmSC MAG"));
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
   });
 
   it("only Custom shows an endpoint field; the choice saves at once, then the endpoint and key", async () => {
@@ -981,7 +1049,7 @@ describe("UserSettingsModal: Models & providers", () => {
 
   it("marks the section not ready when the effective provider has no key", async () => {
     useAgentSettingsMock.mockReturnValue({
-      settings: agentSettings({ hasCredential: false, keysSet: { i2: false, mag: false, olcf: false, custom: false } }),
+      settings: agentSettings({ hasCredential: false, keysSet: { mag: false, olcf: false, custom: false } }),
       error: null,
       modelChoiceRequest: 0,
     });
@@ -996,7 +1064,7 @@ describe("UserSettingsModal: Models & providers", () => {
       settings: agentSettings({
         source: "default",
         hasCredential: true,
-        keysSet: { i2: false, mag: false, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: false },
       }),
       error: null,
       modelChoiceRequest: 0,
@@ -1010,19 +1078,39 @@ describe("UserSettingsModal: Models & providers", () => {
   it("does not call a key-only provider ready before a model is chosen", async () => {
     useAgentSettingsMock.mockReturnValue({
       settings: agentSettings({
-        provider: "mag",
+        provider: "custom",
+        baseUrl: "https://custom.example/v1",
         model: null,
         modelIsDefault: false,
         hasCredential: true,
-        keysSet: { i2: false, mag: true, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: true },
       }),
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_provider: "mag" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_provider: "custom" }));
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Not ready");
+  });
+
+  it("reads a configured endpoint's readiness from its own saved key", async () => {
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({
+        provider: "custom",
+        source: "config",
+        baseUrl: "https://dev.example/v1",
+        keysSet: { mag: false, olcf: false, custom: false },
+        configKeySet: true,
+      }),
+      error: null,
+      modelChoiceRequest: 0,
+    });
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Models and providers")).toHaveTextContent("Ready");
+    expect(entry("Models and providers")).not.toHaveTextContent("Not ready");
   });
 });
 
@@ -1037,7 +1125,7 @@ describe("UserSettingsModal: Globus address", () => {
 
   async function startOdo() {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     const odo = await region("Odo");
     await userEvent.click(within(odo).getByRole("button", { name: "Connect" }));
     return within(odo).findByRole("textbox", { name: "Odo Globus login address" });
@@ -1077,7 +1165,7 @@ describe("UserSettingsModal: Lux", () => {
     fetchSettingsMock.mockResolvedValue(
       settingsRow({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
     );
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     const lux = await region("Lux");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(lux).toHaveTextContent("Ready");
@@ -1092,7 +1180,7 @@ describe("UserSettingsModal: Lux", () => {
 
   it("saving the Lux account sends only that field", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
     await userEvent.tab();
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_account: "abc123" }));
@@ -1103,7 +1191,7 @@ describe("UserSettingsModal: Lux", () => {
 
   it("clearing the Lux remote directory sends null", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ lux_remote_dir: "/lux/vista" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.clear(await screen.findByLabelText(/Lux remote directory/));
     await userEvent.tab();
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_remote_dir: null }));
@@ -1111,7 +1199,7 @@ describe("UserSettingsModal: Lux", () => {
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Lux in sidebar" }));
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] }));
     expect(recheckMock).not.toHaveBeenCalled();

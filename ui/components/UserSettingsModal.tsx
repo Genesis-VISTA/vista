@@ -40,7 +40,7 @@ import {
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
-type Section =
+export type SettingsSection =
   | "appearance"
   | "profile"
   | "agent"
@@ -48,6 +48,7 @@ type Section =
   | "collaboration"
   | "compute"
   | HpcCluster;
+type Section = SettingsSection;
 
 /**
  * The repository tokens and the collaboration server's, which unlike every
@@ -187,7 +188,7 @@ type FieldBinding = {
 /** How each field is named when its save is announced. */
 const FIELD_LABELS: Record<string, string> = {
   inference_provider: "Inference provider",
-  inference_api_key: "AmSC i2 API key",
+  inference_api_key: "API key for the configured endpoint",
   inference_mag_api_key: "AmSC MAG project access token",
   inference_olcf_api_key: "OLCF Inference S3M token",
   inference_custom_api_key: "Custom endpoint API key",
@@ -245,25 +246,25 @@ const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
  * sends whatever is still pending. Each field marks its own save (a check, a
  * cross with the reason, or a spinner when slow), a section holding a failed
  * field is marked in the navigation, and a hidden live region announces each
- * outcome. Opened from a cluster's card (`initialCluster`) it shows that
- * cluster's section, and otherwise Research profile. Below about 720 px of modal width the
+ * outcome. Opened at a named section (`initialSection`, as from a
+ * cluster's card) it shows that section, and otherwise Research profile. Below about 720 px of modal width the
  * navigation and the section take turns (see `.settings-layout`).
  */
 export function UserSettingsModal({
   onClose,
-  initialCluster,
+  initialSection,
 }: {
   onClose: () => void;
-  initialCluster?: HpcCluster;
+  initialSection?: Section;
 }) {
   const [user, setUser] = useState<LocalSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [section, setSection] = useState<Section>(initialCluster ?? "profile");
+  const [section, setSection] = useState<Section>(initialSection ?? "profile");
   // Only read in a narrow modal, where the list and a section take turns. A
-  // deep link from a card goes straight to its section there too.
-  const [pane, setPane] = useState<"nav" | "section">(initialCluster ? "section" : "nav");
+  // deep link (a card, the tour) goes straight to its section there too.
+  const [pane, setPane] = useState<"nav" | "section">(initialSection ? "section" : "nav");
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   // The latest draft, for the save callbacks, which outlive a render.
   const draftRef = useRef<Draft | null>(null);
@@ -352,6 +353,12 @@ export function UserSettingsModal({
   function close() {
     void autosave.flush();
     onClose();
+  }
+
+  /** Mark the tour as starting over; the tour reads this from the shared settings. */
+  async function replayTour() {
+    await updateSettings({ onboarding_tour: { status: "in_progress", step: "welcome" } });
+    close();
   }
 
   // Close on Escape so the modal behaves like every other dialog in the app.
@@ -500,6 +507,7 @@ export function UserSettingsModal({
         setInterests={setInterests}
         setChoice={setProfileChoice}
         setPersonalizeResponses={setPersonalizeResponses}
+        onReplayTour={replayTour}
         marks={autosave.marks}
         errors={autosave.errors}
       />
@@ -653,10 +661,12 @@ function SettingsNav({
   const view = useHpcStatus();
   // The Settings badge describes this researcher's setup, not a credential
   // inherited invisibly from the installation environment. A configured
-  // installation uses the legacy i2 key field until the researcher makes an
-  // explicit provider choice; every other provider has its own saved-key flag.
+  // installation uses the legacy key field until the researcher makes an
+  // explicit provider choice; every provider has its own saved-key flag.
   const savedCredential = settings
-    ? settings.keysSet[settings.source === "config" ? "i2" : settings.provider]
+    ? settings.source === "config"
+      ? settings.configKeySet
+      : settings.keysSet[settings.provider]
     : false;
   // A saved credential alone is not enough for providers without a default
   // model, and Custom also needs an endpoint.
@@ -838,6 +848,7 @@ function ResearchProfileSection({
   setInterests,
   setChoice,
   setPersonalizeResponses,
+  onReplayTour,
   marks,
   errors,
 }: {
@@ -846,10 +857,21 @@ function ResearchProfileSection({
   setInterests: (interests: string[]) => void;
   setChoice: (field: ProfileChoiceField, value: string) => void;
   setPersonalizeResponses: (enabled: boolean) => void;
+  onReplayTour: () => Promise<void>;
   marks: Record<string, FieldMark>;
   errors: Record<string, string>;
 }) {
   const [interest, setInterest] = useState("");
+  const [replayError, setReplayError] = useState<string | null>(null);
+
+  async function replay() {
+    setReplayError(null);
+    try {
+      await onReplayTour();
+    } catch (e) {
+      setReplayError(e instanceof Error ? e.message : "Couldn't start the tour.");
+    }
+  }
 
   function addInterest() {
     const value = interest.trim();
@@ -1030,6 +1052,23 @@ function ResearchProfileSection({
           </svg>
           Profile fields are private to this VISTA installation and are sent only as context to the selected model provider.
         </div>
+
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">Help</h3>
+            <p className="user-settings-hint">
+              <a href="https://genesis-vista.github.io/" target="_blank" rel="noopener noreferrer">
+                Documentation
+              </a>
+            </p>
+          </div>
+          <div className="settings-interest-add">
+            <button type="button" className="button ghost button-xs" onClick={() => void replay()}>
+              Replay tutorial
+            </button>
+          </div>
+          {replayError && <div className="error" style={{ fontSize: 13 }}>{replayError}</div>}
+        </div>
       </div>
     </section>
   );
@@ -1157,7 +1196,6 @@ function ComputeResourceRow({
 
 /** Which stored key each provider uses; see `PROVIDER_PRESETS` in the backend. */
 const PROVIDER_KEY_FIELDS: Record<string, TextField> = {
-  i2: "inference_api_key",
   mag: "inference_mag_api_key",
   olcf: "inference_olcf_api_key",
   custom: "inference_custom_api_key",
@@ -1171,19 +1209,6 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
     return { label: "API key", hint: <>Key for the configured endpoint. {KEY_SUFFIX}</> };
   }
   switch (provider) {
-    case "i2":
-      return {
-        label: "AmSC i2 API key",
-        hint: (
-          <>
-            {KEY_SUFFIX}{" "}
-            <a href="https://api.i2-core.american-science-cloud.org" target="_blank" rel="noopener noreferrer">
-              Get a key
-            </a>
-            .
-          </>
-        ),
-      };
     case "mag":
       return {
         label: "AmSC MAG project access token",
@@ -1268,7 +1293,7 @@ function AgentSection({
   }
 
   return (
-    <section className="settings-section" aria-label="Models & providers">
+    <section className="settings-section" aria-label="Models & providers" data-tour="model:provider">
       <SectionHeader title="Model provider">
         <span className="user-settings-hint">
           Choose where VISTA runs its assistant. Changes apply from your next message.
@@ -1283,6 +1308,7 @@ function AgentSection({
           </div>
           <div
             id={fieldId("inference_provider")}
+            data-tour="model:providers"
             className="settings-provider-grid"
             role="radiogroup"
             aria-label="Inference provider"
@@ -1358,15 +1384,17 @@ function AgentSection({
         )}
 
         {keyField && copy && (
-          <SavedField
-            key={keyField}
-            label={copy.label}
-            field={keyField}
-            binding={bind(keyField, "on-blur")}
-            secret
-            placeholder="API key"
-            hint={copy.hint}
-          />
+          <div data-tour="model:credential">
+            <SavedField
+              key={keyField}
+              label={copy.label}
+              field={keyField}
+              binding={bind(keyField, "on-blur")}
+              secret
+              placeholder="API key"
+              hint={copy.hint}
+            />
+          </div>
         )}
       </div>
     </section>

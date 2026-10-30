@@ -21,6 +21,7 @@ const CASES = [
   ['Globus authorize', 'https://auth.globus.org/v2/oauth2/authorize?client_id=x&code_challenge=y', 'external'],
   ['token source', 'https://docs.olcf.ornl.gov/services_and_applications/s3m/', 'external'],
   ['skill repo', 'https://github.com/org/skill', 'external'],
+  ['documentation site', 'https://genesis-vista.github.io/', 'external'],
   ['plain http elsewhere', 'http://example.org/', 'external'],
 
   // Near misses that must not pass for VISTA's origin.

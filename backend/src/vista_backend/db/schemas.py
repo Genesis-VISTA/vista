@@ -7,7 +7,7 @@ import uuid
 from typing import Annotated as A, Any, Literal, Optional
 from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
 from pydantic_ai import UsageLimits
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
 from ..utils.types import OptionalHttpUrl
@@ -456,7 +456,7 @@ class SkillUpdate(BaseModel):
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
-InferenceProvider = Literal["i2", "mag", "olcf", "custom"]
+InferenceProvider = Literal["mag", "olcf", "custom"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
 PreferredUnits = Literal["si", "source"]
@@ -522,6 +522,18 @@ _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 """ One `@`, no spaces, and a dot in the domain: a shape check, not a delivery check. """
 
 
+class OnboardingTourState(BaseModel):
+    """
+    Where the researcher is in the first-boot tour. Checked on writes only, like
+    `HpcCluster`: the stored JSON is read back as it is, so a step id that a
+    later version drops cannot make reading the settings fail.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["in_progress", "finished", "exited"]
+    step: str
+
+
 class LocalSettingsUpdate(SQLModel):
     """
     The settings a researcher can change. `install_id` is not among them: it is
@@ -565,6 +577,8 @@ class LocalSettingsUpdate(SQLModel):
     frontier_globus_https_token: str | None = None
     hpc_hidden_clusters: list[HpcCluster] | None = None
     """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
+    onboarding_tour: OnboardingTourState | None = None
+    """ The tour's progress; `null` forgets it, so the tour starts again. """
     github_token: str | None = None
     """
     The researcher's GitHub token, or what to do with it. Write-only: absent or
@@ -683,6 +697,18 @@ class LocalSettingsPublic(SQLModel):
     reading the settings fail.
     """
 
+    onboarding_tour: dict[str, Any] | None = None
+    """
+    `{"status", "step"}` as last written; `null` means the tour never started,
+    which is what an upgraded installation has. Plain on the way out.
+    """
+    onboarding_tour_enabled: bool = True
+    """
+    Whether the installation's configuration allows the tour
+    (`Settings.onboarding_tour`). Read-only: not on `LocalSettingsUpdate`, and
+    not on the row; `services/local_settings.to_public` fills it.
+    """
+
     @field_validator("hpc_hidden_clusters", mode="before")
     @classmethod
     def _null_is_none_hidden(cls, v):
@@ -727,8 +753,9 @@ class LocalSettingsTable(SQLModel, table=True):
     """
     inference_provider: str | None = None
     """
-    `i2`, `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
-    until the researcher chooses: i2, or `Settings` where they differ from it.
+    `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
+    until the researcher chooses: the default provider (`DEFAULT_PROVIDER`), or
+    `Settings` where they differ from it.
     """
     inference_base_url: str | None = None
     """
@@ -739,8 +766,9 @@ class LocalSettingsTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    The AmSC i2 provider's access key. Encrypted at rest. Saved before
-    providers existed, so every older key reads as i2's.
+    The access key for an endpoint set in the installation's configuration
+    ("Custom, from configuration"). Encrypted at rest. The key saved before
+    providers existed; no provider preset reads it, so it is never sent to one.
 
     This row *is* the installation's configuration: it is where a researcher's
     key lands when they paste it into the settings modal, and it takes
@@ -913,6 +941,14 @@ class LocalSettingsTable(SQLModel, table=True):
     Clusters turned off in the NavRail, whose availability is then never
     checked. Stored as what is *hidden* so that a cluster added later shows by
     default, with nothing to migrate.
+    """
+    onboarding_tour: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    """
+    First-boot tour progress, `{"status": "in_progress" | "finished" | "exited",
+    "step": "<id>"}`; `None` means never started. JSON so a new step id never
+    needs a schema change.
     """
 
 

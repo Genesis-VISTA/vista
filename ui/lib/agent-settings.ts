@@ -28,7 +28,7 @@ export type ProviderOption = {
 export type AgentSettings = {
   providers: ProviderOption[];
   provider: string;
-  /** The researcher's choice, the installation's configuration, or i2 by default. */
+  /** The researcher's choice, the installation's configuration, or the default provider. */
   source: "user" | "config" | "default";
   baseUrl: string;
   /** The model in effect as stored (`openai:<name>`); null when there is none. */
@@ -38,6 +38,8 @@ export type AgentSettings = {
   hasCredential: boolean;
   /** Whether the researcher saved a key for each provider. */
   keysSet: Record<string, boolean>;
+  /** Whether the researcher saved a key for an endpoint set in the installation's configuration. */
+  configKeySet: boolean;
 };
 
 type InferenceView = {
@@ -49,6 +51,7 @@ type InferenceView = {
   model_is_default: boolean;
   has_credential: boolean;
   keys_set: Record<string, boolean>;
+  config_key_set: boolean;
 };
 
 type Snapshot = {
@@ -87,6 +90,7 @@ function fromView(v: InferenceView): AgentSettings {
     modelIsDefault: v.model_is_default,
     hasCredential: v.has_credential,
     keysSet: v.keys_set,
+    configKeySet: v.config_key_set,
   };
 }
 

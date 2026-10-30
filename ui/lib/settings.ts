@@ -10,6 +10,12 @@
 
 import { useEffect, useReducer } from "react";
 
+/** The first-boot tour's progress, as the backend's `OnboardingTourState` checks it on writes. */
+export type OnboardingTourState = {
+  status: "in_progress" | "finished" | "exited";
+  step: string;
+};
+
 /** Backend `LocalSettingsPublic` — returned by `GET /settings` and `PUT /settings`. */
 export type LocalSettings = {
   /** This installation's identity, made once when its settings were created. */
@@ -26,12 +32,16 @@ export type LocalSettings = {
   email: string | null;
   /** Clusters left out of the NavRail's HPC section. `[]` shows them all. */
   hpc_hidden_clusters?: string[];
+  /** The first-boot tour's progress; null when it never started. */
+  onboarding_tour?: OnboardingTourState | null;
+  /** Whether this installation's configuration allows the tour. Read-only. */
+  onboarding_tour_enabled?: boolean;
   inference_model: string | null;
   /** Custom's endpoint; the other providers' come from the backend's presets. */
   inference_base_url: string | null;
-  /** AmSC i2's key (the one key there was before provider choice). */
+  /** The key for an endpoint set in the installation's configuration; no provider reads it. */
   inference_api_key: string | null;
-  /** `i2`, `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
+  /** `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
   inference_provider?: string | null;
   inference_mag_api_key?: string | null;
   /** OLCF Inference's S3M token, kept apart from the Odo and Frontier ones. */
@@ -125,6 +135,8 @@ export type LocalSettingsUpdate = {
   nersc_iri_token?: string | null;
   /** Clusters to leave out of the NavRail. `[]` shows them all. */
   hpc_hidden_clusters?: string[] | null;
+  /** The tour's progress; null forgets it, so the tour starts again. */
+  onboarding_tour?: OnboardingTourState | null;
   /** Write-only, unlike the fields above: `null` keeps the saved token, `""` removes it. */
   github_token?: string | null;
   /** Write-only, like `github_token`. */

@@ -118,8 +118,10 @@ window crashes, the services are stopped. If another VISTA window is already ope
 launch brings the existing startup or main window forward rather than starting another stack.
 
 Paste your inference API key into Settings › Models & providers (Settings is at the bottom of the sidebar).
-AmSC i2 is the provider out of the box; AmSC MAG, OLCF Inference and a custom endpoint are the
-other choices there, each with its own key. Settings saves as you go, and a change takes effect
+AmSC MAG is the provider out of the box, and takes a project access token from
+<https://my.amsc.energy.gov/>; OLCF Inference and a custom endpoint are the other choices there,
+each with its own key. If you used AmSC i2, which AmSC retired on 2026-10-31, VISTA moves you to
+AmSC MAG: enter a MAG token there. Settings saves as you go, and a change takes effect
 on your next message; no restart. Choose a model from the picker at the top of the chat.
 
 Links to other sites, including the Globus login, open in your default browser; VISTA's own

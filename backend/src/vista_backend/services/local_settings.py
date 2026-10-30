@@ -11,6 +11,7 @@ from typing import Annotated as A
 from fastapi import Depends
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import (
     LOCAL_SETTINGS_ID,
@@ -75,13 +76,20 @@ async def update(
     return row
 
 
+def to_public(row: LocalSettingsTable) -> LocalSettingsPublic:
+    """The row as the API shows it, with what comes from configuration, not the row."""
+    public = LocalSettingsPublic.model_validate(row)
+    public.onboarding_tour_enabled = settings.onboarding_tour
+    return public
+
+
 async def get_public(session: SessionDep) -> LocalSettingsPublic:
     """
     The settings as agents and routes read them: no write-only tokens. Also the
     dependency behind `LocalSettingsDep`; `SessionDep` is a plain `AsyncSession`
     to any other caller.
     """
-    return LocalSettingsPublic.model_validate(await get(session))
+    return to_public(await get(session))
 
 
 LocalSettingsDep = A[LocalSettingsPublic, Depends(get_public)]
