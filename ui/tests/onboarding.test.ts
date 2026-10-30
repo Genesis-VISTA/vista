@@ -13,7 +13,7 @@ import {
 } from "@/lib/onboarding";
 import { coachmarkFor } from "@/lib/onboarding-copy";
 
-/** A fresh install on AmSC i2: no credential, no project, nothing done yet. */
+/** A fresh install on AmSC MAG: no credential, no project, nothing done yet. */
 function input(over: Partial<TourInput> = {}): TourInput {
   return {
     pathname: "/",
@@ -77,7 +77,7 @@ describe("nextTourStep", () => {
     expect(nextTourStep(input(withKey))).toEqual({ step: "model", subStep: "pick" });
   });
 
-  it("keeps i2 on the picker while only the default model is in effect", () => {
+  it("keeps MAG on the picker while only the default model is in effect", () => {
     const out = nextTourStep(
       input({
         ...at("model"),

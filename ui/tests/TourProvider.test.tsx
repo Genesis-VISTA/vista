@@ -60,9 +60,9 @@ function localSettings(over: Partial<LocalSettings> = {}): LocalSettings {
 function agentSettings(over: Partial<AgentSettings> = {}): AgentSettings {
   return {
     providers: [
-      { id: "i2", name: "AmSC i2", takesUrl: false, defaultModel: "claude-sonnet" },
+      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: "claude-sonnet" },
     ],
-    provider: "i2",
+    provider: "mag",
     source: "default",
     baseUrl: "",
     model: null,
@@ -348,7 +348,7 @@ describe("TourProvider", () => {
     useAgentSettingsMock.mockReturnValue({
       settings: agentSettings({
         hasCredential: true,
-        providers: [{ id: "i2", name: "Custom", takesUrl: true, defaultModel: null }],
+        providers: [{ id: "mag", name: "Custom", takesUrl: true, defaultModel: null }],
       }),
       error: null,
     });
@@ -802,7 +802,7 @@ describe("the model suggestion", () => {
     useAgentSettingsMock.mockReturnValue({
       settings: agentSettings({
         hasCredential: true,
-        providers: [{ id: "i2", name, takesUrl: false, defaultModel }],
+        providers: [{ id: "mag", name, takesUrl: false, defaultModel }],
       }),
       error: null,
     });
