@@ -109,8 +109,10 @@ The gateway's half is in the Obsidian repository, `infra/apisix/config.jsonnet` 
 `VISTA` resource and policy in `infra/kc/obsidian-realm.json`. Beta users are given the role in
 Keycloak's admin console.
 
-On Holly, from a checkout at `/opt/vista`, as a `vista` user that owns `/var/lib/vista-collab`,
-with [uv](https://docs.astral.sh/uv/) installed system-wide:
+On Holly, from a checkout at `/opt/vista`, with [uv](https://docs.astral.sh/uv/) installed
+system-wide. There is no account to create: the unit uses systemd's `DynamicUser`, and
+systemd makes `/var/lib/vista-collab` (really `/var/lib/private/vista-collab`, readable only
+by root and the service) for the database, blobs, certificate and virtualenv:
 
 ```bash
 sudo mkdir -p /etc/vista-collab

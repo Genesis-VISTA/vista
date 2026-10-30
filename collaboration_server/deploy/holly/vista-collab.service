@@ -1,8 +1,8 @@
 # The collaboration server on Holly. Install with:
 #   sudo cp vista-collab.service /etc/systemd/system/
 #   sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
-# Assumes the checkout at /opt/vista and a `vista` user that owns
-# /var/lib/vista-collab; change WorkingDirectory and ExecStart if it lives elsewhere.
+# Assumes a world-readable checkout at /opt/vista; change WorkingDirectory and
+# ExecStart if it lives elsewhere.
 [Unit]
 Description=VISTA collaboration server
 After=network-online.target
@@ -10,21 +10,21 @@ Wants=network-online.target
 
 [Service]
 Type=exec
-User=vista
-Group=vista
+# No account to create: systemd runs the server as a user of its own, and makes
+# /var/lib/vista-collab, its one writable path, owned by that user (re-owning it
+# should the user's id ever change). DynamicUser also implies ProtectSystem=strict,
+# ProtectHome=read-only, PrivateTmp and NoNewPrivileges.
+DynamicUser=yes
+StateDirectory=vista-collab
 EnvironmentFile=/etc/vista-collab/env
 WorkingDirectory=/opt/vista/collaboration_server
 ExecStart=/opt/vista/collaboration_server/deploy/holly/launch.sh
 Restart=on-failure
 RestartSec=5
 
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/vista-collab
-# Everything uv writes goes under /var/lib/vista-collab, the one writable path:
-# the checkout is read-only here, so the virtualenv cannot be its .venv.
+# Everything uv writes goes under /var/lib/vista-collab: the checkout is
+# read-only here, so the virtualenv cannot be its .venv.
+Environment=HOME=/var/lib/vista-collab
 Environment=UV_PROJECT_ENVIRONMENT=/var/lib/vista-collab/venv
 Environment=UV_CACHE_DIR=/var/lib/vista-collab/uv-cache
 Environment=UV_PYTHON_INSTALL_DIR=/var/lib/vista-collab/uv-python
