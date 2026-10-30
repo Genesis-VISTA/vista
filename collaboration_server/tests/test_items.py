@@ -384,6 +384,20 @@ async def test_data_survives_a_restart(settings):
     assert res.json()["manifest"] == {"kept": True}
 
 
+async def test_a_database_on_nfs_uses_the_rollback_journal(settings):
+    nfs = settings.model_copy(update={"sqlite_journal_mode": "DELETE"})
+    app = create_app(nfs)
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://c", headers=headers()
+        ) as c:
+            await _item(c)
+        async with app.state.engine.connect() as conn:
+            mode = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar()
+    assert mode == "delete"
+    assert not (settings.data_dir / "collaboration.db-wal").exists()
+
+
 def test_explicit_settings_beat_the_environment(monkeypatch, tmp_path):
     """Why the fixtures pass `database_url`: init values win over `VISTA_COLLAB_*`."""
     monkeypatch.setenv("VISTA_COLLAB_DATABASE_URL", "sqlite+aiosqlite:////elsewhere.db")

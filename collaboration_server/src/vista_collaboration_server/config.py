@@ -105,6 +105,13 @@ class CollabSettings(BaseSettings):
     ]
     """ SQLAlchemy async database URL. Defaults to SQLite in `data_dir`. """
 
+    sqlite_journal_mode: Literal["WAL", "DELETE"] = "WAL"
+    """
+    SQLite's journal. WAL needs shared memory between connections, which a
+    network filesystem cannot give: a database on NFS (as on Holly) takes
+    `DELETE`, the rollback journal, which is safe there with one server process.
+    """
+
     max_blob_size: ByteSize = ByteSize(2 * 1024**3)
     """ The largest blob `POST /blobs` or `POST /blobs/stream` accepts, in bytes. """
 

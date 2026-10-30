@@ -109,23 +109,37 @@ The gateway's half is in the Obsidian repository, `infra/apisix/config.jsonnet` 
 `VISTA` resource and policy in `infra/kc/obsidian-realm.json`. Beta users are given the role in
 Keycloak's admin console.
 
-On Holly, from a checkout at `/opt/vista`, with [uv](https://docs.astral.sh/uv/) installed
-system-wide. There is no account to create: the unit uses systemd's `DynamicUser`, and
-systemd makes `/var/lib/vista-collab` (really `/var/lib/private/vista-collab`, readable only
-by root and the service) for the database, blobs, certificate and virtualenv:
+Holly's image is built reproducibly, so everything lives on the `/sw/holly/apps` NFS mount,
+under `/sw/holly/apps/vista`, and the image gains only the systemd unit in
+`/etc/systemd/system`. That is a copy, not a link: systemd reads its units at boot, before NFS
+is mounted. The server runs as an account from the directory service that owns
+`/sw/holly/apps/vista` (`User=` in the unit; `vista` there). The database is on NFS, so it uses
+SQLite's rollback journal (`VISTA_COLLAB_SQLITE_JOURNAL_MODE=DELETE`): WAL needs shared memory,
+which a network filesystem cannot give.
+
+As that account (NFS's `root_squash` usually stops root writing there):
 
 ```bash
-sudo mkdir -p /etc/vista-collab
-sudo cp deploy/holly/env.example /etc/vista-collab/env       # then review it
-sudo cp deploy/holly/vista-collab.service /etc/systemd/system/
+cd /sw/holly/apps/vista
+mkdir -p bin etc var
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="$PWD/bin" UV_NO_MODIFY_PATH=1 sh
+git clone <the VISTA repository> vista
+cp vista/collaboration_server/deploy/holly/env.example etc/env     # then review it
+```
+
+Then, as root:
+
+```bash
+sudo cp /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.service \
+  /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
 journalctl -u vista-collab -f
 ```
 
 [`deploy/holly/launch.sh`](deploy/holly/launch.sh) makes a ten-year self-signed certificate on
 first start if there is none, then runs the server. To update, pull the checkout and
-`sudo systemctl restart vista-collab`. Then check it end to end, through the gateway, with a
-real account (manual only; it leaves a `smoke-test` item behind):
+`sudo systemctl restart vista-collab`; copy the unit again only when it changes. Then check
+it end to end, through the gateway, with a real account (manual only; it leaves a `smoke-test` item behind):
 
 ```bash
 uv run python scripts/smoke.py https://obsidian.ccs.ornl.gov/vista/api

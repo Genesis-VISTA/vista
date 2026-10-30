@@ -46,7 +46,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.blobs_dir.mkdir(parents=True, exist_ok=True)
-        engine = make_engine(settings.database_url)
+        engine = make_engine(settings.database_url, settings.sqlite_journal_mode)
         await init_db(engine)
         app.state.engine = engine
         try:
