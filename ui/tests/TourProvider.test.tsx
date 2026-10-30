@@ -69,6 +69,7 @@ function agentSettings(over: Partial<AgentSettings> = {}): AgentSettings {
     modelIsDefault: true,
     hasCredential: false,
     keysSet: {},
+    configKeySet: false,
     ...over,
   };
 }
