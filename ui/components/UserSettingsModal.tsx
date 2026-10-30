@@ -1570,7 +1570,7 @@ function CollaborationSection({
           label="Collaboration server"
           field="collaboration_server_url"
           binding={binding}
-          placeholder={fromConfig && status?.url ? status.url : "https://collab.example.org"}
+          placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
           hint={
             fromConfig ? (
               <>
