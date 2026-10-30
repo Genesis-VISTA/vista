@@ -5,6 +5,10 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dir="$(cd "$here/../.." && pwd)"
 
+export https_proxy='http://proxy.ccs.ornl.gov:3128';
+export http_proxy='http://proxy.ccs.ornl.gov:3128';
+export no_proxy='localhost,127.0.0.1,0.0.0.0';
+
 env_file="${VISTA_ENV_FILE:?set VISTA_ENV_FILE to the settings file (see env.example)}"
 set -o allexport; source "$env_file"; set +o allexport
 
