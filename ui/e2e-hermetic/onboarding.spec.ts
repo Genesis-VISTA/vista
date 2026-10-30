@@ -123,7 +123,7 @@ test("welcome, then the projects screen and opening the project", async ({ page 
 test("model: add a credential, then pick a model", async ({ page }) => {
   await activeProject(page);
   const stub = await install(page, "model", {
-    "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { i2: false } },
+    "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { mag: false } },
   });
   await page.goto("/");
   await card(page, "model:overview", "overview");
@@ -139,7 +139,7 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   // The provider is chosen on this coachmark, so its cards stay usable.
   await page.getByRole("radio", { name: /OLCF Inference/ }).click();
   await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_provider === "olcf")).toBe(true);
-  await page.getByRole("radio", { name: /AmSC i2/ }).click();
+  await page.getByRole("radio", { name: /AmSC MAG/ }).click();
   await press(page);
   await card(page, "model:credential");
   // Fetching a token from inside the field leaves the coachmark up.
@@ -151,9 +151,9 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await key.fill("sk-test");
   await expect(key).toHaveValue("sk-test");
   // The backend will report the key as set once it has been saved; the page asks again after saving.
-  await stub.setRoute("GET /api/settings/inference", { ...INFERENCE, has_credential: true, keys_set: { i2: true } });
+  await stub.setRoute("GET /api/settings/inference", { ...INFERENCE, has_credential: true, keys_set: { mag: true } });
   await key.blur(); // a key saves when the field is left
-  await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_api_key === "sk-test")).toBe(true);
+  await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.inference_mag_api_key === "sk-test")).toBe(true);
   // The key is confirmed in Settings, which stays open until Next.
   await card(page, "model:saved", "model:credential");
   await expect(page.locator(".driver-popover")).toContainText("Key saved");
@@ -383,7 +383,7 @@ test("a click on the control of a Next-only coachmark opens nothing and pulses t
 test("Escape closes the open settings dialog and leaves the tour; with nothing open it exits", async ({ page }) => {
   await activeProject(page);
   const stub = await install(page, "model", {
-    "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { i2: false } },
+    "GET /api/settings/inference": { ...INFERENCE, has_credential: false, keys_set: { mag: false } },
   });
   await page.goto("/");
   await card(page, "model:overview", "overview");

@@ -137,7 +137,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "model:providers": {
     title: "Pick a provider",
-    body: "AmSC i2 and AmSC MAG suggest claude-sonnet; OLCF Inference suggests gpt-oss-120b; Custom is your own endpoint.",
+    body: "AmSC MAG suggests claude-sonnet; OLCF Inference suggests gpt-oss-120b; Custom is your own endpoint.",
   },
   "model:credential": {
     title: "Add your key",
