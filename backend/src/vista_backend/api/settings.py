@@ -34,7 +34,7 @@ async def update_settings(
         if updates.inference_provider != current.provider:
             updates.inference_model = None
     row = await local_settings.update(session, updates)
-    return LocalSettingsPublic.model_validate(row)
+    return local_settings.to_public(row)
 
 
 class InferenceProviderOption(BaseModel):

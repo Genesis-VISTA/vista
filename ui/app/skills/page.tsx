@@ -20,6 +20,7 @@ import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
+import { useTour } from "@/components/TourProvider";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
@@ -30,6 +31,7 @@ export default function SkillsPage() {
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const tour = useTour();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [pendingPublish, setPendingPublish] = useState<SkillSummary | null>(null);
@@ -149,9 +151,17 @@ export default function SkillsPage() {
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
+      tour.report("skill-opened");
     } catch {
       // ignore
     }
+  }
+
+  // The tour explains the open skill, then waits for it to be closed, so it
+  // moves on to Load only once the researcher is done reading.
+  function closeDetail() {
+    setSelected(null);
+    tour.report("skill-closed");
   }
 
   const term = filter.trim().toLowerCase();
@@ -172,6 +182,10 @@ export default function SkillsPage() {
     [skills, loadedSlugs, matches]
   );
 
+  // The cards the tour points at: the first skill, and the first Load button.
+  const tourOpenSlug = (loadedSkills[0] ?? otherSkills[0])?.slug;
+  const tourLoadSlug = otherSkills[0]?.slug;
+
   function card(skill: SkillSummary, loaded: boolean) {
     const busy = busySlug === skill.slug;
     const onServer = isOnServer(skill, serverUrl);
@@ -182,6 +196,7 @@ export default function SkillsPage() {
       <div
         key={skill.slug}
         className="skill-item"
+        data-tour={skill.slug === tourOpenSlug ? "skills:open-skill" : undefined}
         onClick={() => openDetail(skill.slug)}
         role="button"
         tabIndex={0}
@@ -267,6 +282,7 @@ export default function SkillsPage() {
                 type="button"
                 className="button secondary button-sm"
                 disabled={busy}
+                data-tour={skill.slug === tourLoadSlug ? "skills:load" : undefined}
                 onClick={(e) => {
                   e.stopPropagation();
                   void setLoaded(skill.slug, true);
@@ -306,6 +322,7 @@ export default function SkillsPage() {
               type="button"
               className="button button-sm"
               onClick={() => setShowImport(true)}
+              data-tour="skills:import"
               title="Import skills from a GitHub or GitLab repository, or a local folder, into this project"
               disabled={!projectName}
             >
@@ -333,7 +350,7 @@ export default function SkillsPage() {
             </div>
           )}
           <h3 className="skill-section-title">Loaded in this project</h3>
-          <div className="skill-section">
+          <div className="skill-section" data-tour="skills:loaded">
             {loadedSlugs.size === 0 ? (
               <div className="skill-empty">
                 No skills loaded for this project. Load one from the skills on
@@ -353,7 +370,7 @@ export default function SkillsPage() {
             )}
           </div>
           <h3 className="skill-section-title">Other skills on this computer</h3>
-          <div className="skill-section">
+          <div className="skill-section" data-tour="skills:available">
             {otherSkills.length === 0 ? (
               <div className="skill-empty">No other skills.</div>
             ) : (
@@ -366,8 +383,8 @@ export default function SkillsPage() {
       </div>
 
       {selected && (
-        <div className="modal-backdrop" onClick={() => setSelected(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={closeDetail}>
+          <div className="modal" data-tour="skills:detail" onClick={(e) => e.stopPropagation()}>
             <div className="panel-header">
               <div className="panel-title">
                 {typeof selected.frontmatter?.name === "string"
@@ -378,7 +395,7 @@ export default function SkillsPage() {
               <button
                 type="button"
                 className="button ghost"
-                onClick={() => setSelected(null)}
+                onClick={closeDetail}
               >
                 Close
               </button>

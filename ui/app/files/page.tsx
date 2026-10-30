@@ -7,6 +7,9 @@ import { useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import FilePreview from "@/components/FilePreview";
+import { useTour } from "@/components/TourProvider";
+import { EXAMPLE_FILES, exampleAt } from "@/lib/onboarding-examples";
+import type { TourEvent } from "@/lib/onboarding";
 import {
   ancestorFolders,
   buildTree,
@@ -45,6 +48,13 @@ const SECTIONS: { kind: FileKind; title: string; sandboxPath: string; empty: str
     empty: "No uploaded files yet.",
   },
 ];
+
+/** The tour's anchor on an example's row: the one its opening completes. */
+function exampleAnchor(opened: TourEvent | undefined): string | undefined {
+  if (opened === "example-image-opened") return "files:open-chart";
+  if (opened === "example-md-opened") return "files:open-report";
+  return undefined;
+}
 
 /** Encode a (possibly nested) relative path per segment, keeping `/` literal. */
 function encodePath(path: string): string {
@@ -140,17 +150,58 @@ function FilesPageInner() {
   // A turn that just finished may have written or displayed files.
   useOnChatRunFinished(projectName, () => void loadListing());
 
+  // While the tour's files step is up, its example files join the listing.
+  // They are made here and never sent anywhere; a real file of the same name wins.
+  const tour = useTour();
+  const showExamples = tour.position?.step === "files";
+  const reportTour = tour.report;
+  const shown = useMemo<Listing>(() => {
+    // After the real listing, so a real file of the same name is known by then.
+    if (!showExamples || !loaded) return listing;
+    const withExamples: Listing = { uploads: [...listing.uploads], outputs: [...listing.outputs] };
+    for (const { kind, file } of EXAMPLE_FILES) {
+      if (!listing[kind].some((f) => f.name === file.name)) withExamples[kind].push(file);
+    }
+    return withExamples;
+  }, [listing, showExamples, loaded]);
+
   const trees = useMemo(
     () => ({
-      uploads: buildTree(listing.uploads),
-      outputs: buildTree(listing.outputs),
+      uploads: buildTree(shown.uploads),
+      outputs: buildTree(shown.outputs),
     }),
-    [listing],
+    [shown],
   );
 
   const selectedFile = selected
-    ? (listing[selected.kind].find((f) => f.name === selected.path) ?? null)
+    ? (shown[selected.kind].find((f) => f.name === selected.path) ?? null)
     : null;
+  /** The example `file` is, as opposed to a real file of the same name. */
+  function exampleFor(kind: FileKind, file: ListedFile) {
+    const example = showExamples ? exampleAt(kind, file.name) : undefined;
+    return example?.file === file ? example : undefined;
+  }
+  const selectedExample = selected && selectedFile ? exampleFor(selected.kind, selectedFile) : undefined;
+  const selectedExampleEvent = selectedExample?.opened;
+  useEffect(() => {
+    if (selectedExampleEvent) reportTour(selectedExampleEvent);
+  }, [selectedExampleEvent, reportTour]);
+  // The examples go when their step does. One still selected would leave the
+  // preview saying a file is missing, so the selection goes with it.
+  const selectedKind = selected?.kind;
+  const selectedPath = selected?.path;
+  const examplesWereShown = useRef(false);
+  useEffect(() => {
+    if (showExamples) {
+      examplesWereShown.current = true;
+      return;
+    }
+    if (!examplesWereShown.current) return;
+    examplesWereShown.current = false;
+    if (!selectedKind || !selectedPath) return;
+    const isReal = listing[selectedKind].some((f) => f.name === selectedPath);
+    if (!isReal && exampleAt(selectedKind, selectedPath)) router.replace("/files");
+  }, [showExamples, selectedKind, selectedPath, listing, router]);
   // A new selection (a click or the URL) opens the folders above it and closes
   // none: folders the researcher opened stay open. Adjusted while rendering
   // rather than in an effect, so the tree never paints with them shut.
@@ -282,6 +333,31 @@ function FilesPageInner() {
     const isSelected = selected?.kind === kind && selected.path === node.path;
     const busy = deleting === `${kind}:${node.path}`;
     const downloadHref = `/api/files/${kind}/${encodePath(node.path)}${projectQuery}`;
+    if (exampleFor(kind, file)) {
+      // An example is not in the project: nothing to download, delete or show.
+      return (
+        <li key={`f:${node.path}`}>
+          <div
+            className={`files-row ${isSelected ? "selected" : ""}`}
+            data-tour={exampleAnchor(exampleFor(kind, file)?.opened)}
+          >
+            <button
+              type="button"
+              className="files-file"
+              style={indent}
+              aria-current={isSelected ? "true" : undefined}
+              onClick={() => select(kind, node.path)}
+            >
+              <span className="files-file-name">{node.name}</span>
+              <span className="files-file-meta">{(file.size / 1024).toFixed(1)} KB</span>
+            </button>
+            <div className="files-row-actions">
+              <span className="tag">Example</span>
+            </div>
+          </div>
+        </li>
+      );
+    }
     return (
       <li key={`f:${node.path}`}>
         <div className={`files-row ${isSelected ? "selected" : ""}`}>
@@ -417,7 +493,7 @@ function FilesPageInner() {
               <div className="files-layout">
                 <div className="files-trees">
                   {SECTIONS.map(({ kind, title, sandboxPath, empty }) => (
-                    <div key={kind} className="files-section">
+                    <div key={kind} className="files-section" data-tour={`files:${kind}`}>
                       <div className="files-section-head">
                         <h2 className="files-section-title">{title}</h2>
                         <span className="tag">{sandboxPath}</span>
@@ -432,7 +508,7 @@ function FilesPageInner() {
                     </div>
                   ))}
                 </div>
-                <div className="files-preview-pane">
+                <div className="files-preview-pane" data-tour="files:preview">
                   {selected && selectedFile ? (
                     <FilePreview
                       key={`${selected.kind}:${selected.path}:${selectedFile.modifiedAt}`}
@@ -442,6 +518,7 @@ function FilesPageInner() {
                       size={selectedFile.size}
                       projectName={projectName}
                       version={selectedFile.modifiedAt}
+                      src={selectedExample?.src}
                     />
                   ) : selected && loaded && !isLoading ? (
                     <div className="chat-bubble">

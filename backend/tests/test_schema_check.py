@@ -89,3 +89,10 @@ def test_extra_nullable_columns_and_unknown_tables_are_ignored(conn):
 def test_the_allowlist_skips_a_named_quirk(conn):
     conn.execute("ALTER TABLE project DROP COLUMN modified")
     assert schema_problems(conn, allow={"project.modified"}) == []
+
+
+def test_a_database_made_before_the_tour_column_passes(conn):
+    conn.execute("ALTER TABLE local_settings DROP COLUMN onboarding_tour")
+
+    assert schema_problems(conn)  # a strict check still names it
+    assert schema_problems(conn, assume_additive=True) == []

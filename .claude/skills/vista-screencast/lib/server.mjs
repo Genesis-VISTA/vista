@@ -22,6 +22,17 @@ export function normQuery(search) {
 
 export const keyOf = (method, pathname, query) => `${method.toUpperCase()} ${pathname}${query ? "?" + query : ""}`;
 
+/**
+ * A replayed `/settings` answer, with the first-boot tour forced off unless the
+ * script asks for it (`onboarding_tour: true` at its top level). Otherwise the
+ * tour would draw over every video made from a capture taken on a fresh install.
+ */
+export function withTourSetting(body, tourOn) {
+  const doc = typeof body === "string" ? parseJson(Buffer.from(body, "utf-8")) : body;
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return body;
+  return { ...doc, onboarding_tour_enabled: tourOn === true };
+}
+
 const AGENT_RUN = /^\/projects\/([^/]+)\/agent\/run$/;
 
 /** Captured responses from `capture/responses.jsonl`, grouped by request key. */
@@ -159,6 +170,9 @@ export function startReplayServer({ plan, responses, port = PORTS.server, speed 
       return res.end(JSON.stringify({ detail: `vista-screencast replay has no response for ${key}` }));
     }
     res.writeHead(hit.status ?? 200, { "content-type": hit.type ?? "application/json" });
+    if (url.pathname === "/settings" && !hit.encoding && (hit.status ?? 200) === 200 && (hit.type ?? "application/json").includes("json")) {
+      return res.end(JSON.stringify(withTourSetting(hit.body, plan.onboardingTour)));
+    }
     if (hit.encoding === "base64") res.end(Buffer.from(hit.body, "base64"));
     else res.end(typeof hit.body === "string" ? hit.body : JSON.stringify(hit.body));
   });

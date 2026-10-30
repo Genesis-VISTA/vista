@@ -203,6 +203,13 @@ class Settings(BaseSettings):
 
     log_level: LogLevel = "INFO"
 
+    onboarding_tour: bool = True
+    """
+    Whether the first-boot tour may open. Set `VISTA_BACKEND_ONBOARDING_TOUR=false`
+    for a managed or demo installation. Reported read-only by `GET /settings`;
+    the researcher's own progress lives in `LocalSettingsTable.onboarding_tour`.
+    """
+
     model: str = "openai:claude-sonnet"
     """
     LLM to use.

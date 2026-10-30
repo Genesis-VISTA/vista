@@ -17,6 +17,10 @@ steps:
 is shown running, `think_s` the pause before the agent's first event. Timing is
 never stored per event; change `pace` (or a tool's `duration_s`) instead.
 
+`onboarding_tour: true` (top level, beside `pace`) lets the first-boot tour run in
+the replay. Without it, replay forces `onboarding_tour_enabled: false` on every
+`/settings` answer, so a capture taken on a fresh install never shows the tour.
+
 ## A scene
 
 Most scenes take this shape; the comments say why each step sits where it does.

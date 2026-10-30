@@ -112,3 +112,17 @@ test("queries match regardless of parameter order", () => {
   assert.equal(normQuery("?b=2&a=1"), "a=1&b=2");
   assert.equal(pickResponse([{ action: 3, seq: 1 }], 0).action, 3);
 });
+
+test("a replayed /settings answer has the first-boot tour off unless the script asks for it", async () => {
+  const rows = [{ seq: 1, action: 0, method: "GET", path: "/settings", body: { theme: "dark", onboarding_tour_enabled: true } }];
+  const askedFor = async (script) => {
+    const server = await startReplayServer({ plan: parseScript(script), responses: responses(rows), port: 0 });
+    try {
+      return (await (await fetch(`${server.url}/settings`)).json()).onboarding_tour_enabled;
+    } finally {
+      await server.stop();
+    }
+  };
+  assert.equal(await askedFor("steps:\n  - goto: /projects\n"), false);
+  assert.equal(await askedFor("onboarding_tour: true\nsteps:\n  - goto: /projects\n"), true);
+});
