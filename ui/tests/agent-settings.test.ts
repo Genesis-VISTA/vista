@@ -9,8 +9,7 @@ import {
 import { qualifyModelInput } from "@/lib/models";
 
 const PROVIDERS = [
-  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
@@ -18,13 +17,14 @@ const PROVIDERS = [
 function inferenceView(overrides: Record<string, unknown> = {}) {
   return {
     providers: PROVIDERS,
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    base_url: "https://api.i2-core.american-science-cloud.org",
+    base_url: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     model_is_default: true,
     has_credential: true,
-    keys_set: { i2: true, mag: false, olcf: false, custom: false },
+    keys_set: { mag: true, olcf: false, custom: false },
+    config_key_set: false,
     ...overrides,
   };
 }
@@ -56,14 +56,15 @@ describe("agent settings store", () => {
     await waitFor(() => expect(result.current.settings).not.toBeNull());
     expect(fetchMock).toHaveBeenCalledWith("/api/settings/inference", expect.anything());
     expect(result.current.settings).toMatchObject({
-      provider: "i2",
+      provider: "mag",
       model: "openai:claude-sonnet",
       modelIsDefault: true,
-      keysSet: { i2: true, mag: false, olcf: false, custom: false },
+      keysSet: { mag: true, olcf: false, custom: false },
+      configKeySet: false,
     });
     expect(result.current.settings?.providers[0]).toEqual({
-      id: "i2",
-      name: "AmSC i2",
+      id: "mag",
+      name: "AmSC MAG",
       takesUrl: false,
       defaultModel: "claude-sonnet",
     });
@@ -72,13 +73,13 @@ describe("agent settings store", () => {
   it("a refresh updates every subscriber", async () => {
     const a = renderHook(() => useAgentSettings());
     const b = renderHook(() => useAgentSettings());
-    await waitFor(() => expect(a.result.current.settings?.provider).toBe("i2"));
+    await waitFor(() => expect(a.result.current.settings?.provider).toBe("mag"));
 
-    current = inferenceView({ provider: "mag", source: "user", model: null, model_is_default: false });
+    current = inferenceView({ provider: "custom", source: "user", model: null, model_is_default: false });
     await act(() => refreshAgentSettings());
 
-    expect(a.result.current.settings?.provider).toBe("mag");
-    expect(b.result.current.settings?.provider).toBe("mag");
+    expect(a.result.current.settings?.provider).toBe("custom");
+    expect(b.result.current.settings?.provider).toBe("custom");
     expect(b.result.current.settings?.model).toBeNull();
   });
 
@@ -88,7 +89,7 @@ describe("agent settings store", () => {
     expect(holdSendWithoutModel()).toBe(false);
     expect(result.current.modelChoiceRequest).toBe(0);
 
-    current = inferenceView({ provider: "mag", model: null, model_is_default: false });
+    current = inferenceView({ provider: "custom", model: null, model_is_default: false });
     await act(() => refreshAgentSettings());
     let held = false;
     act(() => {
@@ -102,7 +103,7 @@ describe("agent settings store", () => {
   it("never holds a send for a chat that has a model of its own", async () => {
     const { result } = renderHook(() => useAgentSettings());
     await waitFor(() => expect(result.current.settings).not.toBeNull());
-    current = inferenceView({ provider: "mag", model: null, model_is_default: false });
+    current = inferenceView({ provider: "custom", model: null, model_is_default: false });
     await act(() => refreshAgentSettings());
 
     let held = true;

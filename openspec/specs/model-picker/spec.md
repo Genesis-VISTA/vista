@@ -168,16 +168,6 @@ the picker SHALL keep that model active and SHALL mark it as not listed by the p
 - **WHEN** the researcher's chosen model is no longer in their provider's list
 - **THEN** the picker's label still shows it, marked as not listed by the provider
 
-### Requirement: The default is named
-
-When the researcher has not chosen a model and their provider has a default, the picker's
-label SHALL name it, as "Default (<model>)".
-
-#### Scenario: Fresh install on i2
-
-- **WHEN** a researcher on AmSC i2 has never chosen a model
-- **THEN** the picker reads "Default (claude-sonnet)"
-
 ### Requirement: Sending without a model
 
 When the researcher has not chosen a model and their provider has no default, sending a
@@ -263,3 +253,13 @@ the default.
 - **GIVEN** a campaign launched on provider P's model B
 - **WHEN** the researcher switches to provider Q while the campaign is still running
 - **THEN** the campaign's remaining steps use Q's current default, and the switch is logged
+
+### Requirement: The provider's default is named
+
+When the researcher has not chosen a model and their provider has a default, the picker's
+label SHALL name it, as "Default (<model>)".
+
+#### Scenario: Fresh install on MAG
+
+- **WHEN** a researcher on AmSC MAG has never chosen a model
+- **THEN** the picker reads "Default (claude-sonnet)"

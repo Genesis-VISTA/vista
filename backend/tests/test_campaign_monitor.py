@@ -4,7 +4,8 @@ import uuid
 
 import pytest
 
-from vista_backend.db.schemas import ProjectTable
+from vista_backend.db.db import _retire_i2_choices
+from vista_backend.db.schemas import CampaignRunPublic, ProjectTable
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import local_settings
@@ -486,9 +487,29 @@ async def test_a_run_keeps_its_model_while_settings_stay_on_that_provider(
 
 @pytest.mark.anyio
 async def test_after_a_provider_switch_a_run_follows_the_default(session, monkeypatch):
-    """OLCF's model name means nothing to i2, so the run moves to i2's default."""
-    job = await _launched_on_olcf(session, now_on="i2")
+    """OLCF's model name means nothing to MAG, so the run moves to MAG's default."""
+    job = await _launched_on_olcf(session, now_on="mag")
 
     asked = await _planner_model(session, job, monkeypatch)
 
+    assert [model for _local, model in asked] == [None]
+
+
+@pytest.mark.anyio
+async def test_a_run_recorded_on_i2_loads_and_follows_the_default(session, monkeypatch):
+    """
+    `InferenceProvider` no longer names the retired i2, so a run still recorded
+    on it would fail to load; startup moves it to the default provider.
+    """
+    run, _step, job = await _make_job(session)
+    run.model, run.provider = "openai:claude-sonnet", "i2"
+    session.add(run)
+    await session.flush()
+
+    await session.run_sync(lambda s: _retire_i2_choices(s.connection()))
+    await session.refresh(run)
+
+    loaded = CampaignRunPublic.model_validate(run)
+    assert (loaded.provider, loaded.model) == (None, None)
+    asked = await _planner_model(session, job, monkeypatch)
     assert [model for _local, model in asked] == [None]

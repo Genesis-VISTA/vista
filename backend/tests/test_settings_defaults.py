@@ -42,8 +42,17 @@ def _clean_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     return env
 
 
-def _probe(tmp_path: Path, script: str, extra: dict[str, str] | None = None) -> dict:
-    """Run `script` under a scrubbed environment; it must print one JSON object."""
+def _probe(
+    tmp_path: Path,
+    script: str,
+    extra: dict[str, str] | None = None,
+    *,
+    with_stderr: bool = False,
+) -> dict:
+    """
+    Run `script` under a scrubbed environment; it must print one JSON object.
+    With `with_stderr`, the result also carries the log output as `"stderr"`.
+    """
     workdir = tmp_path / "nested" / "deeper"
     workdir.mkdir(parents=True)
     for parent in [workdir, *workdir.parents]:
@@ -58,7 +67,10 @@ def _probe(tmp_path: Path, script: str, extra: dict[str, str] | None = None) -> 
         encoding="utf-8",
     )
     assert proc.returncode == 0, f"probe failed:\n{proc.stderr}"
-    return json.loads(proc.stdout.strip().splitlines()[-1])
+    result = json.loads(proc.stdout.strip().splitlines()[-1])
+    if with_stderr:
+        result["stderr"] = proc.stderr
+    return result
 
 
 def test_settings_construct_with_empty_environment(tmp_path: Path) -> None:
@@ -96,8 +108,56 @@ print(json.dumps({
 }))
 """,
     )
-    assert "american-science-cloud.org" in result["base_url"]
+    assert result["base_url"] == "https://mag.genesis.americansciencecloud.org/v1"
     assert result["api_key"] is None
+
+
+@pytest.mark.parametrize("name", ["OPENAI_BASE_URL", "VISTA_BACKEND_OPENAI_BASE_URL"])
+def test_a_configured_i2_endpoint_is_ignored(tmp_path: Path, name: str) -> None:
+    """
+    The AmSC i2-core API is deactivated. A `.env` that still names it must
+    land on the default (AmSC MAG), not on "Custom, from configuration" aimed
+    at a dead host, and the log must say which setting to change.
+    """
+    result = _probe(
+        tmp_path,
+        """
+import json
+from vista_backend.agents.inference import resolve_inference_target
+from vista_backend.config import settings
+target = resolve_inference_target()
+print(json.dumps({
+    "base_url": settings.openai_base_url,
+    "ignored": settings.ignored_openai_base_url,
+    "provider": target.provider,
+    "source": target.source,
+}))
+""",
+        extra={**_clean_env(), name: "https://api.i2-core.american-science-cloud.org"},
+        with_stderr=True,
+    )
+    assert result["base_url"] == "https://mag.genesis.americansciencecloud.org/v1"
+    assert result["ignored"] == "https://api.i2-core.american-science-cloud.org"
+    assert (result["provider"], result["source"]) == ("mag", "default")
+    assert "i2-core API has been deactivated" in result["stderr"]
+    assert "OPENAI_BASE_URL" in result["stderr"]
+
+
+def test_another_configured_endpoint_is_kept(tmp_path: Path) -> None:
+    """Only the retired host is ignored; any other endpoint still takes effect."""
+    result = _probe(
+        tmp_path,
+        """
+import json
+from vista_backend.config import settings
+print(json.dumps({
+    "base_url": settings.openai_base_url,
+    "ignored": settings.ignored_openai_base_url,
+}))
+""",
+        extra={**_clean_env(), "OPENAI_BASE_URL": "https://dev.example/v1"},
+    )
+    assert result == {"base_url": "https://dev.example/v1", "ignored": None}
 
 
 def test_built_model_carries_the_configured_base_url(tmp_path: Path) -> None:

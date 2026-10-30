@@ -55,7 +55,7 @@ class InferenceView(BaseModel):
     providers: list[InferenceProviderOption]
     provider: str
     source: Literal["user", "config", "default"]
-    """ The researcher's choice, the installation's configuration, or i2. """
+    """ The researcher's choice, the installation's configuration, or the default provider. """
     base_url: str
     model: str | None
     """ The model in effect, as `provider:name`; `None` when none is. """
@@ -64,6 +64,11 @@ class InferenceView(BaseModel):
     """ Whether the provider in effect has a key, from any source. """
     keys_set: dict[str, bool]
     """ Whether the researcher saved a key for each provider. """
+    config_key_set: bool
+    """
+    Whether the researcher saved a key for an endpoint set in the installation's
+    configuration (`inference_api_key`), which no provider reads.
+    """
 
 
 @router.get("/inference")
@@ -88,6 +93,7 @@ async def get_inference(local: LocalSettingsDep) -> InferenceView:
         keys_set={
             p.id: bool(getattr(local, p.key_field)) for p in PROVIDER_PRESETS.values()
         },
+        config_key_set=bool(local.inference_api_key),
     )
 
 
