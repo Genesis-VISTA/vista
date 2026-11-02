@@ -211,6 +211,7 @@ test("skills: open a skill and close it", async ({ page }) => {
   await card(page, "skills:available");
   await press(page);
   await card(page, "skills:open-skill");
+  await expect(page.locator(".driver-popover")).toContainText("Open salt-analysis to read it.");
   await page.locator('[data-tour="skills:open-skill"]').click();
   await card(page, "skills:detail");
   // Clicking inside the detail keeps the coachmark; Close moves on.

@@ -9,5 +9,8 @@
 /** The seeded project's name. */
 export const HELLO_OLCF_PROJECT_NAME = "hello-olcf";
 
+/** The skill the tour opens to read: one of hello-olcf's hello skills. */
+export const TOUR_SKILL = "hello-frontier";
+
 /** The slug of the seeded knowledge base, "OLCF User Documentation". */
 export const OLCF_DOCS_SLUG = "olcf-docs";

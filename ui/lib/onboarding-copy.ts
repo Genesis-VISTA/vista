@@ -24,6 +24,8 @@ export type CopyContext = {
   hasCredential: boolean;
   /** The provider in effect's display name, e.g. "AmSC MAG". */
   providerName?: string | null;
+  /** The name of the skill the coachmark points at, when it points at one. */
+  skillName?: string | null;
   /** Why the first question failed, when it did. */
   failure?: TourFailure | null;
 };
@@ -63,6 +65,12 @@ export function coachmarkFor(
         context.providerDefault !== null
           ? `Suggested: ${context.providerDefault}. Any model on the list works.`
           : "Any model on the list works.",
+    };
+  }
+  if (key === "skills:open-skill") {
+    return {
+      title: "Read a skill",
+      body: context.skillName ? `Open ${context.skillName} to read it.` : "Open the highlighted skill to read it.",
     };
   }
   if (key === "first-question:send" && context.failure) {
@@ -193,10 +201,6 @@ const COACHMARKS: Record<string, Coachmark> = {
   "skills:available": {
     title: "On this computer",
     body: "Skills you can load into this project.",
-  },
-  "skills:open-skill": {
-    title: "Read a skill",
-    body: "Open the highlighted skill to read it.",
   },
   "skills:detail": {
     title: "A skill's instructions",
