@@ -2,7 +2,9 @@
 
 TODO: one paragraph on what the job does. Part of the `__SKILL__` skill.
 
-Supported clusters: Lux (TODO).
+Supported clusters: Odo, Frontier, Lux (TODO: delete the clusters this job does
+not target: their `job.<cluster>.slurm`, their `setup_<cluster>.sh` and their
+section of `cluster_defaults.json`, and name only the rest here).
 
 Default nodes: 1
 Default time: 0:30:00

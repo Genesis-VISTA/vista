@@ -158,6 +158,23 @@ subsection file's header title is `Page › Section › Subsection`.
   the cluster's likely failure: an expired Globus session (Odo, Frontier), the RSA passcode
   prompt or a missing Lux account (Lux). It tells the agent not to retry until the
   researcher says the connection is made.
+- **Checked against the code (task 3.1).**
+  - `RUN_DIR_Odo`, `RUN_DIR_Frontier` and `RUN_DIR_Lux` are each set by their cluster's
+    dispatcher in `submit_job_mcp.py`. So all three jobs read the input from
+    `RUN_DIR_<Cluster>`.
+  - `VISTA_JOB_DIR` is set on Frontier and Lux, not on Odo. The hello jobs need no shared
+    state, so none of them uses it. The Odo skeleton script does not mention it either.
+  - The IRI setup that precedes an Odo or Frontier script runs `module purge`, so those
+    scripts run `module load rocm` themselves before `rocm-smi`; Lux's does not.
+  - `validate.py` needs a `cluster_defaults.json` section for each `job.<cluster>.slurm`
+    (`{"odo": {}}` is enough) and warns on a section without a script, so a skill filled in
+    for one cluster must delete the other two sections as well as their scripts. It warns
+    on a script that reads `$@`, `$*` or `$1`... without a `case ... =*)` allow-list. The
+    skeleton scripts accept `STEPS=`. The hello scripts take no arguments and refuse any
+    (`$#`), which the validator does not flag. Nothing conflicts with this decision.
+  - Remote directory: every cluster's submit also needs its remote-directory setting, and
+    refuses without it. The hello SKILL.md files name it beside the cluster's other
+    connections.
 - **Why fill the skeleton:** a live hello run is then evidence that the template an
   authored skill starts from actually runs on that cluster.
 - **Tests:** the validator runs over all three hello skills and over the template filled in

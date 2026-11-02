@@ -7,7 +7,8 @@
       "exclusive_node_use": false
     },
     "iri": {
-      "partition": "batch"
+      "partition": "batch",
+      "environment": {}
     }
   }
 }

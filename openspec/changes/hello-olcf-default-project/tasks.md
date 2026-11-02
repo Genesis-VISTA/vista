@@ -12,11 +12,11 @@
 
 ## 3. Job skeleton and hello skills (D6)
 
-- [ ] 3.1 Check that Odo and Frontier jobs see `RUN_DIR_Odo` / `RUN_DIR_Frontier`, and read `validate.py`'s rules on `cluster_defaults.json` entries against job scripts. Record anything that changes D6 in design.md before going on.
-- [ ] 3.2 Add `job.odo.slurm` and `job.frontier.slurm` to `hpc-skill-author/templates/job/`, add `odo` and `frontier` to its `cluster_defaults.json`, and update its README and SKILL.md: delete the untargeted clusters, use the `olcf-docs` KB for software environments. Verify with a test that fills the template per cluster and runs `validate.py` on each, passing.
-- [ ] 3.3 Write `db/skills/hello-{odo,frontier,lux}/`, each with `SKILL.md` and `hpc_jobs/hello/` (that cluster's script and defaults only, `input.txt`, README) as the filled-in skeleton (D6). Verify with a test that `validate.py` passes on all three.
-- [ ] 3.4 Add a dry-run test in `mcp_servers/vista_mcp_server/tests/` that submits `hello-frontier/hello`. Verify that `input.txt` is in the upload, the job is accepted, and a missing Lux account refuses `hello-lux/hello` with the settings message.
-- [ ] 3.5 Remove `hpc_jobs/lux-hello`, and `hpc_jobs/example` unless a grep finds other references. Verify that the MCP tests pass and that `AVAILABLE_JOBS` lists neither.
+- [x] 3.1 Check that Odo and Frontier jobs see `RUN_DIR_Odo` / `RUN_DIR_Frontier`, and read `validate.py`'s rules on `cluster_defaults.json` entries against job scripts. Record anything that changes D6 in design.md before going on.
+- [x] 3.2 Add `job.odo.slurm` and `job.frontier.slurm` to `hpc-skill-author/templates/job/`, add `odo` and `frontier` to its `cluster_defaults.json`, and update its README and SKILL.md: delete the untargeted clusters, use the `olcf-docs` KB for software environments. Verify with a test that fills the template per cluster and runs `validate.py` on each, passing.
+- [x] 3.3 Write `db/skills/hello-{odo,frontier,lux}/`, each with `SKILL.md` and `hpc_jobs/hello/` (that cluster's script and defaults only, `input.txt`, README) as the filled-in skeleton (D6). Verify with a test that `validate.py` passes on all three.
+- [x] 3.4 Add a dry-run test in `mcp_servers/vista_mcp_server/tests/` that submits `hello-frontier/hello`. Verify that `input.txt` is in the upload, the job is accepted, and a missing Lux account refuses `hello-lux/hello` with the settings message.
+- [x] 3.5 Remove `hpc_jobs/lux-hello`, and `hpc_jobs/example` unless a grep finds other references. Verify that the MCP tests pass and that `AVAILABLE_JOBS` lists neither.
 - [ ] 3.6 Live: run each hello skill from the `hello-olcf` project on Odo, Frontier and Lux. Verify that each report shows the node, GPUs, modules and the input checksum. This is a manual step by Sam, outside PR CI.
 
 ## 4. Default project seeding (D4, D5)
