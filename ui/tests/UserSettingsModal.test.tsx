@@ -68,13 +68,18 @@ function collaborationView(
           url: null,
           source: null,
           server_version: null,
+          signed_in: Boolean(status.reachable),
+          sign_in_required: false,
+          // As the backend does: none for a server that signed in without a token.
+          sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
           ...status,
         };
+  const available = Boolean(full?.reachable && full.signed_in);
   return {
     status: full,
     checking: false,
-    available: Boolean(full?.reachable),
-    reason: full?.reachable ? null : (full?.reason ?? "Checking the collaboration server…"),
+    available,
+    reason: available ? null : (full?.reason ?? "Checking the collaboration server…"),
     error,
     refresh: refreshCollaborationMock,
   };
@@ -295,6 +300,98 @@ describe("UserSettingsModal navigation", () => {
 });
 
 describe("UserSettingsModal collaboration", () => {
+  const OBSIDIAN = "https://obsidian.ccs.ornl.gov/vista/api";
+  const GET_ONE = `Get a token from ${OBSIDIAN}/sign-in and paste it under Settings → Collaboration.`;
+
+  it("asks for a token when the server wants one, and saves the pasted one", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: GET_ONE,
+        url: OBSIDIAN,
+        source: "settings",
+        sign_in_required: true,
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: OBSIDIAN }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, sign in");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(GET_ONE);
+    expect(within(section).getByRole("link", { name: "Open the server's sign-in page" })).toHaveAttribute(
+      "href",
+      `${OBSIDIAN}/sign-in`,
+    );
+    await userEvent.type(within(section).getByLabelText("Token"), "eyJ.abc.def");
+    await userEvent.tab();
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "eyJ.abc.def" });
+    // The same server: its last answer stands while the token is checked, and
+    // keeps the field where it is.
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith());
+    expect(refreshCollaborationMock).not.toHaveBeenCalledWith({ forget: true });
+    expect(within(section).getByLabelText("Token")).toHaveValue("");
+  });
+
+  it("shows a saved token, and removes it", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reachable: true, reason: null, url: OBSIDIAN, source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ collaboration_server_url: OBSIDIAN, has_collaboration_token: true }),
+    );
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toHaveAttribute("placeholder", "Saved. Paste a new one to replace it");
+    await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "" });
+  });
+
+  it("asks for a token when the gateway answers with a redirect", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: `The collaboration server at ${OBSIDIAN} redirects to https://login.example.org.`,
+        url: OBSIDIAN,
+        source: "settings",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: OBSIDIAN }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toBeInTheDocument();
+  });
+
+  it("asks for no token over plain http to another machine", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: "VISTA sends its token only over https.",
+        url: "http://collab.example.org",
+        source: "settings",
+        sign_in_required: true,
+        sign_in_url: null,
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://collab.example.org" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+  });
+
+  it("asks for no token from a server that needs none", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reachable: true, reason: null, url: "http://127.0.0.1:8002", source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+  });
+
   it("says no server is set, and why Publish and Import are off", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);

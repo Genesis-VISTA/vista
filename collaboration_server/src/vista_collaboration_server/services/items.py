@@ -22,7 +22,7 @@ from ..db.schemas import (
     ItemVersionTable,
     VersionCreate,
 )
-from .identity import Identity
+from .identity import User
 
 
 class NotFound(Exception):
@@ -45,16 +45,22 @@ class VersionConflict(Exception):
         )
 
 
-async def create_item(
-    session: AsyncSession, data: ItemCreate, identity: Identity
-) -> ItemTable:
+def _publisher(user: User) -> dict:
+    return {
+        "created_by": user.sub,
+        "created_by_name": user.name,
+        "created_by_email": user.email,
+        "created_by_install": user.install_id,
+    }
+
+
+async def create_item(session: AsyncSession, data: ItemCreate, user: User) -> ItemTable:
     """The item and its version 1, committed together."""
     item = ItemTable(
         id=data.id or uuid.uuid4(),
         kind=data.kind,
         name=data.name,
-        created_by=identity.install_id,
-        created_by_name=identity.display_name,
+        **_publisher(user),
         head_version=1,
     )
     session.add(item)
@@ -65,8 +71,7 @@ async def create_item(
             parent_version=None,
             manifest=data.manifest,
             blob_ref=data.blob_ref,
-            created_by=identity.install_id,
-            created_by_name=identity.display_name,
+            **_publisher(user),
         )
     )
     try:
@@ -119,7 +124,7 @@ async def publish(
     session: AsyncSession,
     item_id: uuid.UUID,
     data: VersionCreate,
-    identity: Identity,
+    user: User,
 ) -> ItemVersionTable:
     """
     Add the next version, if `data.parent_version` is still the head.
@@ -145,8 +150,7 @@ async def publish(
         parent_version=parent,
         manifest=data.manifest,
         blob_ref=data.blob_ref,
-        created_by=identity.install_id,
-        created_by_name=identity.display_name,
+        **_publisher(user),
     )
     session.add(row)
     await session.commit()

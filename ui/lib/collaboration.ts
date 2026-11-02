@@ -26,6 +26,12 @@ export type CollaborationStatus = {
   /** The researcher's own address, or the installation's. */
   source: "settings" | "config" | null;
   server_version: string | null;
+  /** The server accepts this installation's token (or, in development, its install id). */
+  signed_in: boolean;
+  /** The server, or a gateway in front of it, refused the token or its absence. */
+  sign_in_required: boolean;
+  /** The server's sign-in page, where the researcher gets a token to paste. */
+  sign_in_url: string | null;
 };
 
 type Snapshot = {
@@ -114,7 +120,7 @@ export function availability(s: Pick<Snapshot, "status" | "error">): {
   available: boolean;
   reason: string | null;
 } {
-  if (s.status?.reachable) return { available: true, reason: null };
+  if (s.status?.reachable && s.status.signed_in) return { available: true, reason: null };
   if (s.status) {
     return { available: false, reason: s.status.reason ?? "The collaboration server is unavailable." };
   }

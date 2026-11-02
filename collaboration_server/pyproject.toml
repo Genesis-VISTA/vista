@@ -10,6 +10,7 @@ dependencies = [
     "sqlmodel>=0.0.38",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20.0",
+    "pyjwt[crypto]>=2.10",
 ]
 
 [project.optional-dependencies]

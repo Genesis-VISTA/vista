@@ -129,10 +129,13 @@ async def collab_server(tmp_path, monkeypatch):
     data_dir = tmp_path / "collaboration-server"
     # The database URL too: a `VISTA_COLLAB_DATABASE_URL` in the environment or
     # a `.env` would otherwise point the test at a developer's real database.
+    # dev-headers: the server believes the install id the backend sends, so
+    # these tests need no sign-in. `test_collaboration_token.py` covers tokens.
     app = create_app(
         CollabSettings(
             data_dir=data_dir,
             database_url=f"sqlite+aiosqlite:///{data_dir / 'collaboration.db'}",
+            auth_mode="dev-headers",
         )
     )
     async with app.router.lifespan_context(app):

@@ -11,6 +11,7 @@
  * first, so these are only reached with a server that answered.
  */
 
+import { refreshCollaborationStatus } from "@/lib/collaboration";
 import type { SkillSummary } from "@/lib/types";
 
 /** What a version says about the skill in it (backend `SkillManifest`). */
@@ -55,6 +56,8 @@ export type SharingCode =
   | "skill_conflict"
   | "knowledge_base_conflict"
   | "collaboration_unavailable"
+  | "collaboration_sign_in_required"
+  | "collaboration_forbidden"
   | "collaboration_refused"
   | "collaboration_error";
 
@@ -87,6 +90,10 @@ export async function refusal(res: Response): Promise<SharingRefusal> {
     // not JSON; fall back to the status
   }
   const detail = body.detail ?? body.error;
+  // The token expired or was refused since the last check: every Publish and
+  // Import control follows, rather than each failing the same way in turn.
+  if (body.code === "collaboration_sign_in_required" || body.code === "collaboration_forbidden")
+    void refreshCollaborationStatus();
   return {
     ok: false,
     status: res.status,

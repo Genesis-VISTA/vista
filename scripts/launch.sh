@@ -91,7 +91,8 @@ export VISTA_BACKEND_URL="http://localhost:8001"
 # tmux pane in an already-running tmux server, or a macOS Terminal window, does
 # not inherit this script's environment. The server's host and port are pinned
 # too, since it also reads `.env` files of its own, which must not move it away
-# from the address the backend is given.
+# from the address the backend is given; and its auth mode, `dev-headers`, so
+# the local server believes the backend's install id and needs no sign-in.
 COLLAB_CMD=''
 COLLAB_URL=''
 BACKEND_ENV=''
@@ -101,7 +102,7 @@ if [[ "$COLLAB" == true ]]; then
   BACKEND_ENV="VISTA_BACKEND_COLLABORATION_SERVER_URL='$COLLAB_URL' "
   COLLAB_CMD="
     cd '$REPO_ROOT/collaboration_server' &&
-    VISTA_COLLAB_HOST=127.0.0.1 VISTA_COLLAB_PORT='$COLLAB_PORT' uv run vista-collaboration-server;
+    VISTA_COLLAB_HOST=127.0.0.1 VISTA_COLLAB_PORT='$COLLAB_PORT' VISTA_COLLAB_AUTH_MODE=dev-headers uv run vista-collaboration-server;
   "
 fi
 

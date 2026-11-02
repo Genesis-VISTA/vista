@@ -43,14 +43,49 @@ class CollabSettings(BaseSettings):
     )
 
     host: str = "127.0.0.1"
-    """
-    Where the server listens. Loopback by default: there is no authentication
-    yet, so anyone who can reach the server can read and write everything on it.
-    """
+    """ Where the server listens. A deployment sets `0.0.0.0`. """
 
     port: int = 8002
 
     log_level: LogLevel = "INFO"
+
+    auth_mode: Literal["oidc", "dev-headers"] = "oidc"
+    """
+    How a caller proves who it is (`services/identity.py`). `oidc`: a Keycloak
+    access token, as `Authorization: Bearer`. `dev-headers`: the
+    `X-Vista-Install-Id` and `X-Vista-Display-Name` headers, believed as sent,
+    for development and tests only; the server refuses to start with it on
+    anything but loopback.
+    """
+
+    oidc_issuer: str = "https://obsidian.ccs.ornl.gov/auth/realms/obsidian"
+    """ The Keycloak realm whose tokens are accepted: their `iss`, and where its keys are. """
+
+    oidc_allowed_azp: list[str] = ["apisix"]
+    """
+    The Keycloak clients a token may have been issued to (its `azp`). `apisix`
+    is the client behind Obsidian's `/token`, which VISTA signs in through.
+    """
+
+    oidc_required_role: str = "apisix/vista"
+    """
+    The client role, as `<client>/<role>`, a token must carry (in its
+    `resource_access`) to be let in: the same role Obsidian's gateway requires,
+    checked again here so that a request that reaches this server some other
+    way gets no further.
+    """
+
+    root_path: str = ""
+    """
+    The path prefix a proxy serves this server under and strips before
+    forwarding (`/vista/api` behind Obsidian), so the docs and `openapi.json`
+    link to the right place.
+    """
+
+    ssl_certfile: ResolvedPath | None = None
+    """ With `ssl_keyfile`, serve HTTPS with this certificate. """
+
+    ssl_keyfile: ResolvedPath | None = None
 
     data_dir: ResolvedPath = Path("../data/collaboration-server")
     """
@@ -69,6 +104,13 @@ class CollabSettings(BaseSettings):
         ),
     ]
     """ SQLAlchemy async database URL. Defaults to SQLite in `data_dir`. """
+
+    sqlite_journal_mode: Literal["WAL", "DELETE"] = "WAL"
+    """
+    SQLite's journal. WAL needs shared memory between connections, which a
+    network filesystem cannot give: a database on NFS (as on Holly) takes
+    `DELETE`, the rollback journal, which is safe there with one server process.
+    """
 
     max_blob_size: ByteSize = ByteSize(2 * 1024**3)
     """ The largest blob `POST /blobs` or `POST /blobs/stream` accepts, in bytes. """
