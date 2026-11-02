@@ -119,8 +119,15 @@ subsection file's header title is `Page › Section › Subsection`.
   for dev seeding through the existing token path.
 - **vista-build-inputs.** `vista-data/olcf-docs/` and `rag_db/` replace `ai-safety`, as
   before.
-- **Prebuilt store from a token.** Corpus acquisition takes the slug as a parameter. When
-  the fetched folder holds a `rag_db/`, it installs that store instead of indexing.
+- **Prebuilt store from a token.** Corpus acquisition (`_acquire_olcf_docs_corpus`) serves
+  `olcf-docs` alone, since AI safety's is removed rather than kept beside it. The folder
+  downloads into `pdfs/` as before. Only once the whole folder is down is its `rag_db/`
+  moved out to `<kb>/rag_db`, so a download cut short leaves no store and the next boot
+  resumes. Nothing is indexed: a token-fetched folder without `rag_db/` is not seeded,
+  with a warning, rather than making a thousand model calls on a developer's first boot.
+- **Seed identity.** `seed_item_id` hashes every document suffix the indexer accepts
+  (outside a top-level `rag_db/`), not only PDFs, so a refreshed Markdown corpus derives a
+  new collaboration item. A PDF-only seed's id is unchanged.
 - **Why:** without the prebuilt store, a dev checkout's first boot would make one LLM call
   per section file (on the order of a thousand) before the project's KB is usable.
 - **Alternative:** dev seeding indexes locally, as it does for AI safety today. It is

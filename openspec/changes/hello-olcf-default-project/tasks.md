@@ -22,8 +22,8 @@
 ## 4. Default project seeding (D4, D5)
 
 - [ ] 4.1 Write `db/system_prompts/hello-olcf.md`: cite OLCF passages with their URL, `fetch_kb_file` when a hit lacks one, offer a hello run on a connected cluster, offer to author a job. Remove `ai-safety-autonomous-labs.md`. Verify that Sam reviews the wording.
-- [ ] 4.2 Replace the AI-safety seeding in `db/seed.py` with hello-olcf: new constants, slug-parameterised corpus acquisition that installs a fetched `rag_db/` instead of indexing (D4), and the project's four skills. Keep the AI-safety ids in `_vista_ships()`. Verify that 4.3's tests pass.
-- [ ] 4.3 Rewrite `backend/tests/test_default_projects_sync.py` and update `test_seed_payload.py` and `test_incompatible_database.py`. Verify these cases pass under the hermetic filter:
+- [x] 4.2 Replace the AI-safety seeding in `db/seed.py` with hello-olcf: new constants, slug-parameterised corpus acquisition that installs a fetched `rag_db/` instead of indexing (D4), and the project's four skills. Keep the AI-safety ids in `_vista_ships()`. Verify that 4.3's tests pass.
+- [x] 4.3 Rewrite `backend/tests/test_default_projects_sync.py` and update `test_seed_payload.py` and `test_incompatible_database.py`. Verify these cases pass under the hermetic filter:
   - a fresh DB has `hello-olcf` with `olcf-docs` and the four skills, and no AI-safety project;
   - a DB holding the AI-safety project keeps it unchanged and gains `hello-olcf`;
   - a deleted AI-safety project is not recreated;

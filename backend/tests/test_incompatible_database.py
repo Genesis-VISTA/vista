@@ -364,3 +364,20 @@ async def test_a_v0_1_4_database_is_refused_and_indexed(start):
     assert all(s["comes_with_vista"] == (s["name"] in bundled) for s in index["skills"])
     # the fixture's 13 skills are all bundled today, with no researcher's own
     assert sum(s["comes_with_vista"] for s in index["skills"]) == 13
+
+
+def test_vista_ships_the_default_project_and_still_the_retired_one():
+    """
+    hello-olcf is what this version seeds; the AI-safety ids stay in the list
+    because databases seeded by earlier versions hold them, and the index must
+    keep telling that copy from a researcher's own work.
+    """
+    _, projects, kbs = db_module._vista_ships()
+    assert {
+        str(seed_module.HELLO_OLCF_PROJECT_ID),
+        str(seed_module.AI_SAFETY_PROJECT_ID),
+    } <= projects
+    assert {
+        str(seed_module.OLCF_DOCS_KB_ID),
+        str(seed_module.AI_SAFETY_KB_ID),
+    } <= kbs
