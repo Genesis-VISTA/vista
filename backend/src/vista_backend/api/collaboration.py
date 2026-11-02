@@ -20,12 +20,23 @@ router = APIRouter(prefix="/collaboration", tags=["collaboration"])
 
 
 @router.get("/status")
-async def get_status(local: LocalSettingsDep) -> collaboration.CollaborationStatus:
+async def get_status(
+    session: SessionDep, local: LocalSettingsDep
+) -> collaboration.CollaborationStatus:
     """
     Whether publishing and importing can work: a server is set and answers. Checked
     on every call, in at most a few seconds; `reason` says why not when they cannot.
+
+    A selected team the server says the researcher is no longer in is cleared,
+    so Private is selected here as it is shown, and new projects, skills and
+    knowledge bases do not join a team nobody can see them in.
     """
-    return await collaboration.status(local)
+    status = await collaboration.status(local)
+    if status.signed_in and local.collaboration_team_id and status.team_id is None:
+        await local_settings.update(
+            session, LocalSettingsUpdate(collaboration_team_id=None)
+        )
+    return status
 
 
 class TeamCreateRequest(BaseModel):

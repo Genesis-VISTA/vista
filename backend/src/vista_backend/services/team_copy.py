@@ -13,7 +13,7 @@ item and joins the team, so a page showing that team lists it. That would
 break a project that uses it and stays behind, since a project uses only its
 own team's skills and knowledge bases; so one used by a project that is not
 being copied is left as it was, and the copy is imported beside it under a
-free name instead.
+free name instead. So is a skill bundled with VISTA, which stays in Private.
 
 A project is copied with everything it uses: each of its skills and knowledge
 bases first, then the project itself, published into the team as a new item
@@ -36,13 +36,18 @@ from ..db.schemas import (
     ProjectTable,
     SkillTable,
 )
-from .collaboration import CollaborationClient, client_for, required_url
+from .collaboration import (
+    CollaborationClient,
+    CollaborationRefused,
+    client_for,
+    required_url,
+)
 from .knowledge_base import get_kb
 from .project import get_project_by_name
 from .project_agent import invalidate_agents
 from .skill_collaboration import reread
 from .skills import get_skill
-from .teams import usable_in
+from .teams import set_team, team_of, usable_in
 
 Kind = Literal["project", "skill", "knowledge-base"]
 How = Literal["copied", "published", "imported"]
@@ -159,6 +164,14 @@ def _require_elsewhere(label: str, current: uuid.UUID | None, team_id: uuid.UUID
         raise HTTPException(status_code=400, detail=f"{label} is in that team already.")
 
 
+def _stays(row: SkillTable | KnowledgeBaseTable) -> bool:
+    """
+    A skill bundled with VISTA keeps its place in Private: it cannot be deleted
+    or re-imported, so the team gets a copy beside it instead.
+    """
+    return isinstance(row, SkillTable) and row.bundled
+
+
 async def _users(
     session: AsyncSession, kind: _Kind, key: str, *, besides: set[uuid.UUID]
 ) -> list[str]:
@@ -189,14 +202,19 @@ async def _place(
     current = (
         row.origin_server == url
         and row.remote_id is not None
-        and row.team_id is not None
+        and team_of(row, url) is not None
         and not row.modified
     )
     if current:
         assert row.remote_id is not None
-        current = (
-            await client.get_item(row.remote_id)
-        ).head_version == row.remote_version
+        try:
+            head = (await client.get_item(row.remote_id)).head_version
+        except CollaborationRefused as e:
+            if e.status_code != 404:
+                raise
+            # Gone, or in a team the researcher has left: published from here.
+            head = None
+        current = head == row.remote_version
     if current:
         assert row.remote_id is not None
         copy = await client.copy_item(row.remote_id, team_id)
@@ -207,7 +225,8 @@ async def _place(
             return CopiedResource(
                 kind=kind.kind, name=key, local_name=name, how="imported"
             )
-        row.remote_id, row.remote_version, row.team_id = copy.id, 1, team_id
+        row.remote_id, row.remote_version = copy.id, 1
+        set_team(row, team_id, url)
         session.add(row)
         await session.commit()
         return CopiedResource(kind=kind.kind, name=key, local_name=key, how="copied")
@@ -218,6 +237,7 @@ async def _place(
         row.remote_id,
         row.remote_version,
         row.team_id,
+        row.team_server,
         row.modified,
     )
 
@@ -228,12 +248,13 @@ async def _place(
             row.remote_id,
             row.remote_version,
             row.team_id,
+            row.team_server,
             row.modified,
         ) = was
         session.add(row)
         await session.commit()
 
-    row.team_id = team_id
+    set_team(row, team_id, url)
     session.add(row)
     await session.commit()
     try:
@@ -259,8 +280,9 @@ async def _copy_one(
     team_id: uuid.UUID,
 ) -> TeamCopyResult:
     row = await kind.get(session, key)
-    _require_elsewhere(f"The {kind.label} {key}", row.team_id, team_id)
-    keep = bool(await _users(session, kind, key, besides=set()))
+    url = required_url(local)
+    _require_elsewhere(f"The {kind.label} {key}", team_of(row, url), team_id)
+    keep = _stays(row) or bool(await _users(session, kind, key, besides=set()))
     async with client_for(local) as client:
         await _require_member(client, team_id)
         copied = await _place(session, local, client, kind, key, team_id, keep=keep)
@@ -296,9 +318,10 @@ async def copy_project(
     from .project_collaboration import publish_project
 
     project = await get_project_by_name(session, name)
-    _require_elsewhere(f"The project {name}", project.team_id, team_id)
+    url = required_url(local)
     # Read now: every copy below commits, expiring the row.
-    project_id, project_team = project.id, project.team_id
+    project_id, project_team = project.id, team_of(project, url)
+    _require_elsewhere(f"The project {name}", project_team, team_id)
     plan: list[tuple[_Kind, str]] = []
     for kind in (SKILL, KNOWLEDGE_BASE):
         for key in dict.fromkeys(kind.uses(project)):
@@ -310,7 +333,7 @@ async def copy_project(
                     detail=f"{name} uses the {kind.label} {key}, which is not on "
                     "this computer. Remove it from the project before copying it.",
                 )
-            if not usable_in(row.team_id, project_team):
+            if not usable_in(team_of(row, url), project_team):
                 raise HTTPException(
                     status_code=400,
                     detail=f"{name} uses the {kind.label} {key}, which is in "
@@ -324,7 +347,10 @@ async def copy_project(
     async with client_for(local) as client:
         await _require_member(client, team_id)
         for kind, key in plan:
-            keep = bool(await _users(session, kind, key, besides={project_id}))
+            row = await kind.get(session, key)
+            keep = _stays(row) or bool(
+                await _users(session, kind, key, besides={project_id})
+            )
             copied.append(
                 await _place(session, local, client, kind, key, team_id, keep=keep)
             )
@@ -335,7 +361,12 @@ async def copy_project(
     project.knowledge_bases = [
         renamed.get(("knowledge-base", k), k) for k in project.knowledge_bases
     ]
-    project.team_id = team_id
+    # A new item in the team, never a version of the one it had: that item is
+    # in the team it came from, and a failed publish below must not leave the
+    # next one landing there. Its fields changed too (the copies' names).
+    set_team(project, team_id, url)
+    project.origin_server = project.remote_id = project.remote_version = None
+    project.modified = True
     session.add(project)
     invalidate_agents(session, project_id=project.id)
     await session.commit()

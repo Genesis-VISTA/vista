@@ -320,5 +320,39 @@ async def test_a_copy_into_the_same_team_is_a_duplicate(client):
     assert len((await client.get("/items")).json()) == 2
 
 
+async def test_a_blob_is_named_only_by_its_uploader_or_who_sees_it(client, other):
+    team = await _team(client)
+    ref = (await client.post("/blobs", files={"file": ("a", b"secret papers")})).json()[
+        "blob_ref"
+    ]
+    body = {"kind": "skill", "name": "x", "manifest": {}, "blob_ref": ref}
+    private = await client.post("/items", json={**body, "team_id": team["id"]})
+    assert private.status_code == 201, private.text
+    # Grace knows the reference but neither uploaded it nor sees a version with it.
+    stolen = await other.post("/items", json={**body, "team_id": PUBLIC})
+    unknown = await other.post(
+        "/items", json={**body, "team_id": PUBLIC, "blob_ref": "0" * 64}
+    )
+    assert stolen.status_code == 422
+    assert stolen.json()["detail"].replace(ref, "") == unknown.json()["detail"].replace(
+        "0" * 64, ""
+    )
+    mine = await _item(other, PUBLIC)
+    over = await other.post(
+        f"/items/{mine['id']}/versions",
+        json={"parent_version": 1, "manifest": {}, "blob_ref": ref},
+    )
+    assert over.status_code == 422
+    # Added to the team, she sees a version naming it, and may name it too.
+    await client.post(
+        f"/teams/{team['id']}/members", json={"sub": str(OTHER_INSTALL_ID)}
+    )
+    allowed = await other.post("/items", json={**body, "team_id": team["id"]})
+    assert allowed.status_code == 201, allowed.text
+    # Uploading the same bytes herself is proof enough too.
+    again = await other.post("/blobs", files={"file": ("a", b"secret papers")})
+    assert again.json()["blob_ref"] == ref
+
+
 def test_the_public_teams_id_is_fixed():
     assert str(PUBLIC_TEAM_ID) == PUBLIC

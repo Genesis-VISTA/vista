@@ -151,7 +151,8 @@ checks it in its compare-and-set. On the backend every project, skill and knowle
 everything VISTA seeds or bundles; `services/teams.py` there). A new one joins the selected
 team (`collaboration_team_id`), or its project's when made for one; an import joins its item's;
 a project uses only its own team's; a private one is not published but copied to a team
-(`services/team_copy.py`, recursively for a project); changing servers makes everything private.
+(`services/team_copy.py`, recursively for a project). A row records its team's server too
+(`team_server`): on another server it is private, until that one is in effect again.
 ```bash
 ./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
 cd collaboration_server && uv run vista-collaboration-server

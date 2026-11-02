@@ -764,7 +764,7 @@ async def test_a_project_import_checks_its_knowledge_bases_are_idle_first(
             "project",
             "salt-lab",
             manifest={
-                "format": 2,
+                "format": 3,
                 "name": "salt-lab",
                 "knowledge_bases": [
                     KnowledgeBaseRef(
@@ -806,7 +806,7 @@ async def test_a_project_import_checks_the_disk_first(
             "project",
             "salt-lab",
             manifest={
-                "format": 2,
+                "format": 3,
                 "name": "salt-lab",
                 "knowledge_bases": [
                     KnowledgeBaseRef(

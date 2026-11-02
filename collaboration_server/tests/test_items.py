@@ -365,7 +365,14 @@ async def test_only_the_servers_own_tables_are_created(app, settings):
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert names == {"item", "item_version", "team", "team_member", "user"}
+    assert names == {
+        "item",
+        "item_version",
+        "team",
+        "team_member",
+        "user",
+        "blob_upload",
+    }
     assert "item" not in SQLModel.metadata.tables
 
 

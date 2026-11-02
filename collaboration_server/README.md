@@ -57,7 +57,9 @@ knowledge bases, and its bundled skills, are private on each installation until 
   signed in can see everyone's name and email there.
 - Members can leave, except the last: a team nobody is in would hold items nobody could reach.
 - An item or team the caller is not in is `404`, the same answer as one that does not exist.
-  Blob uploads are open to anyone signed in; a blob is read only through a version they can see.
+  Blob uploads are open to anyone signed in; a blob is read only through a version they can see,
+  and a version may name only a blob its publisher uploaded or sees in another version
+  (`services/blob_access.py`), since knowing a blob's SHA-256 is no proof of having it.
 
 ## Copying
 

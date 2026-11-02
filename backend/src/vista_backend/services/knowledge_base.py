@@ -20,7 +20,7 @@ from ..db.schemas import (
     is_valid_slug,
 )
 from ..utils import indexer
-from .teams import team_for_new
+from .teams import set_team, team_for_new
 
 
 CURRENT_STORE_FILE = "CURRENT"
@@ -174,7 +174,6 @@ async def create_kb(
         slug=payload.slug,
         name=payload.name,
         description=payload.description,
-        team_id=await team_for_new(session),
         pdfs_dir=str(pdfs_dir),
         rag_db_path=str(rag_db_path),
         shared_with_mcp=False,
@@ -184,6 +183,7 @@ async def create_kb(
         created_at=now,
         updated_at=now,
     )
+    set_team(row, *await team_for_new(session))
     session.add(row)
     await session.flush()
     await session.refresh(row)

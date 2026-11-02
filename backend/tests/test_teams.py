@@ -142,7 +142,11 @@ async def test_users_are_found_to_add(collab_server, session):
     assert [(u["sub"], u["name"]) for u in found] == [(str(BEA), "Bea")]
 
 
-async def test_another_server_makes_everything_here_private(collab_server, session):
+async def test_another_server_makes_everything_here_private_until_back(
+    collab_server, session
+):
+    from vista_backend.services.teams import current_url, team_of
+
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
@@ -151,7 +155,34 @@ async def test_another_server_makes_everything_here_private(collab_server, sessi
         await session.commit()
     await _use_server(session, "http://elsewhere.test:8002")
     assert (await local_settings.get(session)).collaboration_team_id is None
-    assert (await _row(session, SkillTable, name="teamed")).team_id is None
+    row = await _row(session, SkillTable, name="teamed")
+    assert team_of(row, await current_url(session)) is None
+    # Nothing was erased: back on its server, it is in its team again.
+    await _use_server(session)
+    row = await _row(session, SkillTable, name="teamed")
+    assert str(team_of(row, await current_url(session))) == team["id"]
+
+
+async def test_clearing_the_address_back_to_the_same_default_keeps_the_team(
+    collab_server, session, monkeypatch
+):
+    monkeypatch.setattr(settings, "collaboration_server_url", URL)
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        team = await _team(client)
+        await _select(client, team["id"])
+    await _use_server(session, None)
+    assert str((await local_settings.get(session)).collaboration_team_id) == team["id"]
+
+
+async def test_a_selected_team_one_is_no_longer_in_is_cleared(collab_server, session):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        await _select(client, uuid.uuid4())
+        status = (await client.get("/collaboration/status")).json()
+        now = (await client.get("/settings")).json()
+    assert status["team_id"] is None
+    assert now["collaboration_team_id"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +283,7 @@ async def test_an_import_joins_its_items_team(collab_server, session):
             "project",
             "bea-lab",
             team_id=team.id,
-            manifest={"format": 2, "name": "bea-lab"},
+            manifest={"format": 3, "name": "bea-lab"},
         )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/projects/{item.id}/import", json={})
@@ -454,3 +485,87 @@ async def test_a_project_using_what_is_not_here_is_not_copied(collab_server, ses
     assert "absent" in res.json()["detail"]
     async with _bea() as bea:
         assert await bea.list_items() == []
+
+
+async def test_a_resource_of_a_team_one_has_left_is_copied_from_here(
+    collab_server, session
+):
+    await _use_server(session)
+    async with _bea() as bea:
+        await bea.me()
+    with api_client(session) as (client, _):
+        old = await _team(client, "old")
+        new = await _team(client, "new")
+        await client.post(
+            f"/collaboration/teams/{old['id']}/members", json={"sub": str(BEA)}
+        )
+        await _select(client, old["id"])
+        await _skill(client, "density")
+        await session.commit()
+        await client.post("/skills/density/publish", json={})
+        await client.delete(f"/collaboration/teams/{old['id']}/members/me")
+        result = await _copy(client, "skills", "density", new["id"])
+    # The old item is out of reach, so the copy is published from here.
+    assert result["copied"][0]["how"] == "published"
+    assert str((await _row(session, SkillTable, name="density")).team_id) == new["id"]
+
+
+async def test_a_bundled_skill_stays_private_when_its_project_is_copied(
+    collab_server, session
+):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        await _skill(client, "salt-analysis")
+        row = await _row(session, SkillTable, name="salt-analysis")
+        row.bundled = True
+        session.add(row)
+        await session.commit()
+        await _project(client, "lab", skills=["salt-analysis"])
+        team = await _team(client)
+        await session.commit()
+        result = await _copy(client, "projects", "lab", team["id"])
+    assert result["copied"][0] == {
+        "kind": "skill",
+        "name": "salt-analysis",
+        "local_name": "salt-analysis-2",
+        "how": "imported",
+    }
+    assert (await _row(session, SkillTable, name="salt-analysis")).team_id is None
+    assert (await _row(session, ProjectTable, name="lab")).skills == ["salt-analysis-2"]
+
+
+async def test_a_failed_project_copy_is_never_published_to_its_old_team(
+    collab_server, session, monkeypatch
+):
+    from vista_backend.services import project_collaboration
+    from vista_backend.services.collaboration import CollaborationUnavailable
+
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        old = await _team(client, "old")
+        new = await _team(client, "new")
+        await _select(client, old["id"])
+        await _project(client, "lab")
+        await session.commit()
+        await client.post("/projects/lab/publish", json={})
+        publish = project_collaboration.publish_project
+
+        async def down(*args, **kwargs):
+            raise CollaborationUnavailable("The server went away.")
+
+        monkeypatch.setattr(project_collaboration, "publish_project", down)
+        failed = await client.post("/projects/lab/copy", json={"team_id": new["id"]})
+        monkeypatch.setattr(project_collaboration, "publish_project", publish)
+        row = await _row(session, ProjectTable, name="lab")
+        assert (str(row.team_id), row.remote_id, row.modified) == (
+            new["id"],
+            None,
+            True,
+        )
+        again = await client.post("/projects/lab/publish", json={})
+        listed = (await client.get("/collaboration/projects")).json()
+    assert failed.status_code == 503
+    assert again.status_code == 200, again.text
+    # The retry is a new item in the new team; the old team's is as it was.
+    by_team = {p["team_id"]: p["head_version"] for p in listed}
+    assert by_team == {old["id"]: 1, new["id"]: 1}

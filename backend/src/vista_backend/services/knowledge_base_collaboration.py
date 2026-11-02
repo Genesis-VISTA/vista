@@ -72,7 +72,7 @@ from .collaboration import (
     required_url,
     server_url,
 )
-from .teams import require_team
+from .teams import require_team, team_of
 from .knowledge_base import (
     get_kb,
     get_kb_optional,
@@ -504,7 +504,7 @@ async def _publish(
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
         return KnowledgeBasePublishResult(status="unchanged", knowledge_base=public)
-    team_id = require_team(row.team_id, f"{row.name} ({slug})")
+    team_id = require_team(team_of(row, url), f"{row.name} ({slug})")
     before = kb_content(row)
     # The snapshot and the archive are copies of the files and the store, on
     # the disk that holds the database too.
@@ -857,6 +857,7 @@ async def _import(
                 slug=slug,
                 name=manifest.name,
                 team_id=team_id,
+                team_server=url,
                 pdfs_dir="",
                 rag_db_path="",
                 publications=[],

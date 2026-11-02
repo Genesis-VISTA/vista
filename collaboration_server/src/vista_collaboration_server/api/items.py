@@ -15,13 +15,14 @@ from ..db.schemas import (
     VersionCreate,
     VersionPublic,
 )
-from ..services import blobs, items
+from ..services import blob_access, blobs, items
 from ..services.identity import UserDep, get_user
 
 # Every route needs a signed-in user (`services/identity.py`), reads included,
 # and sees only the items in their teams (`services/teams.py`); anything else
 # is 404, as if it did not exist. Writes record who made them. Blobs are
-# uploaded by anyone signed in, and read only through a version they can see.
+# uploaded by anyone signed in, read only through a version they can see, and
+# named in a version only by their uploader or someone who sees one naming them.
 router = APIRouter(tags=["items"], dependencies=[Depends(get_user)])
 
 
@@ -32,8 +33,21 @@ def get_settings(request: Request) -> CollabSettings:
 SettingsDep = A[CollabSettings, Depends(get_settings)]
 
 
-def _require_blob(settings: CollabSettings, blob_ref: str | None) -> None:
-    if blob_ref is not None and not blobs.exists(settings.blobs_dir, blob_ref):
+async def _require_blob(
+    session: SessionDep, settings: CollabSettings, blob_ref: str | None, user
+) -> None:
+    """
+    Refuse a blob that is not stored, or that the caller may not name
+    (`blob_access.may_use`), alike. Ends the read transaction it starts, so a
+    publish after it opens its own with its compare-and-set.
+    """
+    if blob_ref is None:
+        return
+    allowed = blobs.exists(settings.blobs_dir, blob_ref) and await blob_access.may_use(
+        session, blob_ref, user
+    )
+    await session.rollback()
+    if not allowed:
         raise HTTPException(
             status_code=422,
             detail=f"No blob {blob_ref} has been uploaded; upload it first.",
@@ -63,7 +77,7 @@ async def create_item(
     A new item in `team_id`, a team the caller is in, created with its version
     1 from `manifest` and `blob_ref`. `404` for a team they are not in.
     """
-    _require_blob(settings, data.blob_ref)
+    await _require_blob(session, settings, data.blob_ref, user)
     return ItemPublic.model_validate(await items.create_item(session, data, user))
 
 
@@ -110,11 +124,9 @@ async def publish_version(
     Publish the item's next version on top of `parent_version`. `409` with the
     current `head_version` when that is no longer the head.
     """
-    if data.blob_ref is not None and not blobs.exists(
-        settings.blobs_dir, data.blob_ref
-    ):
+    if data.blob_ref is not None:
         await items.get_item(session, item_id, user)  # an unknown item is 404, not 422
-        _require_blob(settings, data.blob_ref)
+        await _require_blob(session, settings, data.blob_ref, user)
     row = await items.publish(session, item_id, data, user)
     return VersionPublic.model_validate(row)
 
@@ -148,17 +160,25 @@ async def get_version_blob(
 
 
 @router.post("/blobs", status_code=201)
-async def upload_blob(file: A[UploadFile, File()], settings: SettingsDep) -> BlobPublic:
+async def upload_blob(
+    file: A[UploadFile, File()],
+    session: SessionDep,
+    user: UserDep,
+    settings: SettingsDep,
+) -> BlobPublic:
     """
     Store a blob, to be named by a version published after it. Returns its
     reference, the SHA-256 of its bytes.
     """
     ref, size = await blobs.store(file, settings.blobs_dir, settings.max_blob_size)
+    await blob_access.record_upload(session, ref, user)
     return BlobPublic(blob_ref=ref, size=size)
 
 
 @router.post("/blobs/stream", status_code=201)
-async def upload_blob_stream(request: Request, settings: SettingsDep) -> BlobPublic:
+async def upload_blob_stream(
+    request: Request, session: SessionDep, user: UserDep, settings: SettingsDep
+) -> BlobPublic:
     """
     Store a blob sent as the raw request body, for one too large for a
     multipart `POST /blobs` (a knowledge base). It is written to disk as it
@@ -167,4 +187,5 @@ async def upload_blob_stream(request: Request, settings: SettingsDep) -> BlobPub
     ref, size = await blobs.store_stream(
         request.stream(), settings.blobs_dir, settings.max_blob_size
     )
+    await blob_access.record_upload(session, ref, user)
     return BlobPublic(blob_ref=ref, size=size)

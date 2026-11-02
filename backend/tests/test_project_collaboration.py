@@ -311,7 +311,7 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         manifest = (await other.get_version(item.id, 1)).manifest
     assert (item.kind, item.name, item.created_by_name) == ("project", "salt", "Ada")
     assert manifest == {
-        "format": 2,
+        "format": 3,
         "name": "salt",
         "description": None,
         "system_prompt": "Use SI units.",
@@ -321,13 +321,11 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         "skills": [
             {
                 "name": "salt-density",
-                "bundled": False,
                 "remote_id": str(skill_id),
                 "version": 1,
             },
             {
                 "name": "salt-analysis",
-                "bundled": False,
                 "remote_id": str(bundled_id),
                 "version": 1,
             },
@@ -530,8 +528,6 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     item_id = await _publish_project_elsewhere(
         skills=[
             SkillRef(name="vllm-lux", remote_id=skill_id, version=1),
-            SkillRef(name="salt-analysis", bundled=True),
-            SkillRef(name="their-own-bundled", bundled=True),
         ],
         knowledge_bases=[
             KnowledgeBaseRef(slug="salt-papers", remote_id=kb_id, version=1)
@@ -545,8 +541,6 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     assert result["status"] == "imported"
     assert [(s["name"], s["status"]) for s in result["skills"]] == [
         ("vllm-lux", "imported"),
-        ("salt-analysis", "unchanged"),
-        ("their-own-bundled", "missing"),
     ]
     assert [(k["slug"], k["status"]) for k in result["knowledge_bases"]] == [
         ("salt-papers-2", "imported"),
@@ -563,9 +557,7 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     ) == (
         "salt-lab",
         "Be careful.",
-        # A bundled skill this VISTA lacks is still named: the next version
-        # must not lose it.
-        ["vllm-lux", "salt-analysis", "their-own-bundled"],
+        ["vllm-lux"],
         ["salt-papers-2"],
         ["*", "!agenthpc_*"],
         40,
@@ -840,64 +832,12 @@ async def test_a_project_that_cannot_be_imported_imports_no_skill(
     assert await _skill_row(session, "vllm-lux") is None
 
 
-async def test_a_bundled_skill_this_vista_lacks_is_published_as_bundled_again(
-    collab_server, session
-):
-    """The import kept its name; a publish from here keeps the reference."""
-    await _use_server(session)
-    item_id = await _publish_project_elsewhere(
-        skills=[SkillRef(name="their-own-bundled", bundled=True)]
-    )
-    with api_client(session) as (client, _):
-        project = (
-            await client.post(f"/collaboration/projects/{item_id}/import", json={})
-        ).json()["project"]
-        await _put(
-            client, session, "salt-lab", {**_body(project), "system_prompt": "Mine."}
-        )
-        res = await client.post("/projects/salt-lab/publish", json={})
-    assert res.status_code == 200, res.text
-    async with _other_install() as other:
-        manifest = (await other.get_version(item_id, 2)).manifest
-    assert manifest["skills"] == [
-        {
-            "name": "their-own-bundled",
-            "bundled": True,
-            "remote_id": None,
-            "version": None,
-        }
-    ]
-    assert manifest["system_prompt"] == "Mine."
-
-
-async def test_a_bundled_skill_shadowed_here_leaves_the_project_modified(
-    collab_server, session
-):
-    """The one reference an import loses, so a publish from here would drop it."""
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        await client.post("/skills", json=_skill("salt-analysis"))  # not bundled
-    item_id = await _publish_project_elsewhere(
-        skills=[SkillRef(name="salt-analysis", bundled=True)]
-    )
-    with api_client(session) as (client, _):
-        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
-    assert res.status_code == 200, res.text
-    assert [(s["name"], s["status"]) for s in res.json()["skills"]] == [
-        ("salt-analysis", "missing")
-    ]
-    assert (res.json()["project"]["skills"], res.json()["project"]["modified"]) == (
-        [],
-        True,
-    )
-
-
 async def test_a_skill_reference_must_be_a_skill_name(collab_server, session):
-    """A bundled name is kept on the project and names a folder: never a path."""
+    """A skill's name is kept on the project and names a folder: never a path."""
     await _use_server(session)
     manifest = _manifest()
     manifest["skills"] = [
-        {"name": "../../outside", "bundled": True, "remote_id": None, "version": None}
+        {"name": "../../outside", "remote_id": str(uuid.uuid4()), "version": 1}
     ]
     async with _other_install() as other:
         item = await other.create_item("project", "salt-lab", manifest=manifest)
@@ -950,7 +890,7 @@ async def test_a_knowledge_base_not_here_stops_the_publish_before_anything_is_se
 async def test_a_knowledge_base_deleted_here_is_carried_from_the_version(
     collab_server, session, tmp_path
 ):
-    """Like a bundled skill this VISTA lacks: the next version must not lose it."""
+    """The next version must not lose it."""
     await _use_server(session)
     async with _other_install() as other:
         kb_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")

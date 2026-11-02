@@ -59,9 +59,10 @@ from .collaboration import (
     VersionConflict,
     client_for,
     list_with_heads,
+    required_url,
     server_url,
 )
-from .teams import require_team
+from .teams import require_team, set_team, team_of
 from .skills import (
     build_skill_row,
     commit_skill_files,
@@ -345,11 +346,11 @@ async def publish_skill(
     retry. A write to the skill while it is published leaves it modified.
     """
     row = await get_skill(session, name)
-    url, _ = server_url(local)
+    url = required_url(local)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
         return row
-    team_id = require_team(row.team_id, name)
+    team_id = require_team(team_of(row, url), name)
     edited_at = row.updated_at
     async with client_for(local) as client, work_dir() as tmp:
         archive = tmp / ARCHIVE_NAME
@@ -494,7 +495,7 @@ async def import_skill(
         if existing is not None:
             if existing.remote_version == number and not existing.modified:
                 if project is not None:
-                    load_into(session, project, existing)
+                    load_into(session, project, existing, url)
                     await session.commit()
                     await session.refresh(existing)
                 return existing, "unchanged"
@@ -528,7 +529,7 @@ async def import_skill(
         row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
         row.origin_server = url
         row.remote_id = item_id
-        row.team_id = item.team_id
+        set_team(row, item.team_id, url)
         status: ImportStatus = "imported"
     else:
         await reread(session, existing)

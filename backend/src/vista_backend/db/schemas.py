@@ -122,6 +122,11 @@ class ProjectSharing(SQLModel):
     everything made with Private selected, or seeded or bundled by VISTA, is.
     Only resources of the same team are used together (`services/teams.py`).
     """
+    team_server: str | None = None
+    """
+    The collaboration server `team_id` is a team on. On another server the
+    row is private, and it is in its team again on this one (`teams.team_of`).
+    """
 
 
 class ProjectPublic(ProjectBase, ProjectSharing):
@@ -318,6 +323,11 @@ class KnowledgeBaseSharing(SQLModel):
     everything made with Private selected, or seeded or bundled by VISTA, is.
     Only resources of the same team are used together (`services/teams.py`).
     """
+    team_server: str | None = None
+    """
+    The collaboration server `team_id` is a team on. On another server the
+    row is private, and it is in its team again on this one (`teams.team_of`).
+    """
 
 
 class KnowledgeBaseCreate(SQLModel):
@@ -442,6 +452,11 @@ class SkillBase(SQLModel):
     copied to (`team_copy`). None is private: on this computer only, as
     everything made with Private selected, or seeded or bundled by VISTA, is.
     Only resources of the same team are used together (`services/teams.py`).
+    """
+    team_server: str | None = None
+    """
+    The collaboration server `team_id` is a team on. On another server the
+    row is private, and it is in its team again on this one (`teams.team_of`).
     """
 
 

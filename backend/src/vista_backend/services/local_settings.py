@@ -56,11 +56,16 @@ async def update(
         "collaboration_server_url" in changes
         and changes["collaboration_server_url"] != row.collaboration_server_url
     ):
-        # The token is the old server's: never send it to the new one. Its
-        # teams are the old server's too, here and on everything in them.
+        # The token is the old address's: never send it to the new one.
         row.collaboration_token = None
-        row.collaboration_team_id = None
-        await _forget_teams(session, changes["collaboration_server_url"])
+        # The selected team is a team on the server in effect, which only
+        # changes when the address does (a blank one falls back to the
+        # installation's). Projects, skills and knowledge bases keep their
+        # teams: each records its team's server (`teams.team_of`).
+        before = row.collaboration_server_url or settings.collaboration_server_url
+        after = changes["collaboration_server_url"] or settings.collaboration_server_url
+        if before != after:
+            row.collaboration_team_id = None
     for key in WRITE_ONLY_TOKENS:
         # Write-only: null keeps the stored token (the client never has it to
         # send back), "" removes it.
@@ -81,24 +86,6 @@ async def update(
 
         invalidate_agents(session)
     return row
-
-
-async def _forget_teams(session: AsyncSession, url: str | None) -> None:
-    """
-    Make private every project, skill and knowledge base not linked to `url`,
-    the new server: their teams are another server's, and mean nothing on it.
-    """
-    from sqlalchemy import update
-    from sqlmodel import col, or_
-
-    from ..db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
-
-    for table in (ProjectTable, SkillTable, KnowledgeBaseTable):
-        stmt = update(table).values(team_id=None)
-        if url:
-            server = col(table.origin_server)
-            stmt = stmt.where(or_(server.is_(None), server != url))
-        await session.exec(stmt)
 
 
 async def selected_team(session: AsyncSession) -> uuid.UUID | None:

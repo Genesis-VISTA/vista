@@ -98,6 +98,19 @@ class UserTable(CollabTable, table=True):
     last_seen: str = Field(default_factory=now_iso)
 
 
+class BlobUploadTable(CollabTable, table=True):
+    """
+    Who uploaded a blob. A blob is named by its SHA-256, so knowing the name is
+    no proof of having the bytes: a version may name only a blob its publisher
+    uploaded, or one in a version they can see (`services/blob_access.py`).
+    """
+
+    __tablename__: str = "blob_upload"
+    blob_ref: str = Field(primary_key=True)
+    sub: str = Field(primary_key=True)
+    uploaded_at: str = Field(default_factory=now_iso)
+
+
 class ItemTable(CollabTable, table=True):
     __tablename__: str = "item"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
