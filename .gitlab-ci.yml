@@ -418,6 +418,15 @@ docs:site:
   script:
     - bash scripts/docs_site/check_site.sh
 
+# The OLCF-docs converter (scripts/olcf_docs): its unit tests, on HTML fixtures with no
+# Sphinx and no network beyond PyPI for the two libraries. The conversion itself and the
+# retrieval gate run only when a maintainer refreshes the corpus, never here.
+docs:olcf-docs:
+  stage: test
+  <<: *python-image
+  script:
+    - uv run --no-project --python 3.14 --with beautifulsoup4 --with markdownify python -I -m unittest discover -s scripts/olcf_docs -p 'test_*.py'
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 ui:lint:
