@@ -567,3 +567,41 @@ def test_the_sandbox_cannot_write_its_skills(tmp_path, monkeypatch):
     volumes = json.loads(sandbox.env["VISTA_DEV_MCP_VOLUMES"])
     assert [str(agent.volume_root), "/mnt", "w"] in volumes
     assert [str(agent.skills_volume_dir), "/mnt/skills", "r"] in volumes
+
+
+class TestStageSkillsInPlace:
+    """
+    The skills folder is mounted into every chat's sandbox of a project, so
+    staging for a new chat must not replace the folder itself.
+    """
+
+    @staticmethod
+    def _skill(root: Path, name: str, text: str) -> Path:
+        folder = root / "src" / name
+        folder.mkdir(parents=True)
+        (folder / "SKILL.md").write_text(text, encoding="utf-8")
+        return folder
+
+    def test_restaging_keeps_the_directory(self, tmp_path):
+        a = self._skill(tmp_path, "a", "a v1")
+        b = self._skill(tmp_path, "b", "b v1")
+        volume = tmp_path / "volume"
+        stage_skills(volume, ["a", "b"], {"a": a, "b": b})
+        inode = os.stat(volume).st_ino
+        assert (volume / "b" / "SKILL.md").read_text(encoding="utf-8") == "b v1"
+
+        (b / "SKILL.md").write_text("b v2", encoding="utf-8")
+        c = self._skill(tmp_path, "c", "c v1")
+        stage_skills(volume, ["b", "c"], {"b": b, "c": c})
+
+        assert os.stat(volume).st_ino == inode
+        assert sorted(p.name for p in volume.iterdir()) == ["b", "c"]
+        assert (volume / "b" / "SKILL.md").read_text(encoding="utf-8") == "b v2"
+        assert (volume / "c" / "SKILL.md").read_text(encoding="utf-8") == "c v1"
+
+    def test_missing_source_is_removed_not_kept(self, tmp_path):
+        a = self._skill(tmp_path, "a", "a v1")
+        volume = tmp_path / "volume"
+        stage_skills(volume, ["a"], {"a": a})
+        stage_skills(volume, ["a", "gone"], {"a": tmp_path / "nope"})
+        assert list(volume.iterdir()) == []
