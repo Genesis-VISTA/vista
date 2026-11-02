@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { jsonBody, relay, TEAM_ID } from "../../../_relay";
+import { jsonBody, relay, TEAM_ID } from "../../../../_relay";
 
 export const runtime = "nodejs";
 

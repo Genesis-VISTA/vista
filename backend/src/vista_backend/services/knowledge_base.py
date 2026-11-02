@@ -183,7 +183,13 @@ async def create_kb(
         created_at=now,
         updated_at=now,
     )
-    set_team(row, *await team_for_new(session))
+    project = None
+    if payload.project is not None:
+        # Imported here: `project` reaches the agents, which reach this module.
+        from .project import get_project_by_name
+
+        project = await get_project_by_name(session, payload.project)
+    set_team(row, *await team_for_new(session, project))
     session.add(row)
     await session.flush()
     await session.refresh(row)

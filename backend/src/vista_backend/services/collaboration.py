@@ -415,11 +415,14 @@ class CollaborationClient:
         kind: str,
         name: str,
         *,
+        team_id: uuid.UUID,
         manifest: dict[str, Any],
         blob_ref: str | None = None,
-        team_id: uuid.UUID = PUBLIC_TEAM_ID,
     ) -> RemoteItem:
-        """A new item in `team_id`, published with its version 1."""
+        """
+        A new item in `team_id`, published with its version 1. Required, as
+        the server's is, so that nothing is made public by leaving it out.
+        """
         body: dict[str, Any] = {
             "kind": kind,
             "name": name,

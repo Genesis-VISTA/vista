@@ -208,7 +208,7 @@ def in_public_team(monkeypatch):
         target.team_id = PUBLIC_TEAM_ID
         target.team_server = url
 
-    async def selected(session):
+    async def selected(session, row=None):
         return PUBLIC_TEAM_ID
 
     monkeypatch.setattr(local_settings, "selected_team", selected)

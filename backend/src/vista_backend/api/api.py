@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -19,6 +19,7 @@ from ..agents.inference import (
 )
 from ..config import settings
 from ..db.db import DatabaseIncompatible, get_engine, init_db
+from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.collaboration import (
     CollaborationError,
@@ -27,7 +28,9 @@ from ..services.collaboration import (
     CollaborationUnauthorized,
     CollaborationUnavailable,
     SharingConflict,
+    server_url,
 )
+from ..services.local_settings import LocalSettingsDep
 from ..services.project_agent import project_agent_pool
 from .agent import router as agent_router
 from .campaign import router as campaign_router
@@ -202,18 +205,26 @@ async def _sharing_conflict(request: Request, exc: SharingConflict) -> JSONRespo
     )
 
 
+async def _server_in_effect(local: LocalSettingsDep) -> None:
+    """
+    For the routes that answer with projects, skills and knowledge bases: each
+    one's team is sent as its team on the server in effect (`TeamSharing`).
+    """
+    server_in_effect.set(server_url(local)[0])
+
+
 app.include_router(agent_router)
 app.include_router(campaign_router)
 app.include_router(debate_router)
 app.include_router(chat_sessions_router)
 app.include_router(chat_runs_router)
-app.include_router(collaboration_router)
+app.include_router(collaboration_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(mcp_router)
-app.include_router(knowledge_bases_router)
+app.include_router(knowledge_bases_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(models_router)
-app.include_router(projects_router)
+app.include_router(projects_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(reports_router)
-app.include_router(skills_router)
+app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(files_router)
 app.include_router(settings_router)
 

@@ -11,6 +11,7 @@ import shutil
 import uuid
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client
@@ -116,6 +117,7 @@ async def _publish_skill_elsewhere(tmp_path, name: str, body: str = "Theirs."):
         item = await client.create_item(
             "skill",
             name,
+            team_id=PUBLIC_TEAM_ID,
             manifest=SkillManifest(
                 name=name, description=f"The {name} skill."
             ).model_dump(),
@@ -157,7 +159,7 @@ def _manifest(name: str = "salt-lab", **fields) -> dict:
 async def _publish_project_elsewhere(name: str = "salt-lab", **fields) -> uuid.UUID:
     async with _other_install() as client:
         item = await client.create_item(
-            "project", name, manifest=_manifest(name, **fields)
+            "project", name, team_id=PUBLIC_TEAM_ID, manifest=_manifest(name, **fields)
         )
     return item.id
 
@@ -586,7 +588,9 @@ async def test_an_import_never_takes_an_id_from_elsewhere(collab_server, session
     here = await seed_project(session, name="salt")
     manifest = {**_manifest("salt-lab"), "id": str(here.id)}
     async with _other_install() as other:
-        item = await other.create_item("project", "salt-lab", manifest=manifest)
+        item = await other.create_item(
+            "project", "salt-lab", team_id=PUBLIC_TEAM_ID, manifest=manifest
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/projects/{item.id}/import", json={})
     assert res.status_code == 200, res.text
@@ -714,7 +718,9 @@ async def test_an_item_that_is_not_a_project_is_not_imported(
     await _use_server(session)
     skill_id = await _publish_skill_elsewhere(tmp_path, "vllm-lux")
     async with _other_install() as other:
-        unreadable = await other.create_item("project", "odd", manifest={"format": 9})
+        unreadable = await other.create_item(
+            "project", "odd", team_id=PUBLIC_TEAM_ID, manifest={"format": 9}
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/projects/{skill_id}/import", json={})
         odd = await client.post(
@@ -840,7 +846,9 @@ async def test_a_skill_reference_must_be_a_skill_name(collab_server, session):
         {"name": "../../outside", "remote_id": str(uuid.uuid4()), "version": 1}
     ]
     async with _other_install() as other:
-        item = await other.create_item("project", "salt-lab", manifest=manifest)
+        item = await other.create_item(
+            "project", "salt-lab", team_id=PUBLIC_TEAM_ID, manifest=manifest
+        )
     with api_client(session) as (client, _):
         listed = (await client.get("/collaboration/projects")).json()
         res = await client.post(f"/collaboration/projects/{item.id}/import", json={})

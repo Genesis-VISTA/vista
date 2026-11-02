@@ -513,6 +513,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
         {createOpen && (
           <CreateKbModal
             existingSlugs={new Set(list.map((kb) => kb.slug))}
+            project={scopedToProject ? activeProject?.name : undefined}
             onCancel={() => setCreateOpen(false)}
             onCreated={handleCreated}
           />
@@ -640,6 +641,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       {createOpen && (
         <CreateKbModal
           existingSlugs={new Set(list.map((kb) => kb.slug))}
+          project={scopedToProject ? activeProject?.name : undefined}
           onCancel={() => setCreateOpen(false)}
           onCreated={handleCreated}
         />
@@ -1773,10 +1775,16 @@ function Field({
 
 function CreateKbModal({
   existingSlugs,
+  project,
   onCancel,
   onCreated,
 }: {
   existingSlugs: Set<string>;
+  /**
+   * The project it is made for, from a project's page: the backend puts it in
+   * that project's team, so the project can then search it.
+   */
+  project?: string;
   onCancel: () => void;
   onCreated: (kb: KnowledgeBase) => void;
 }) {
@@ -1871,6 +1879,7 @@ function CreateKbModal({
           name: name.trim(),
           description: description.trim() || null,
           overwrite,
+          ...(project ? { project } : {}),
         }),
       });
       const createData = await createRes.json();

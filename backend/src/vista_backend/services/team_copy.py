@@ -164,6 +164,29 @@ def _require_elsewhere(label: str, current: uuid.UUID | None, team_id: uuid.UUID
         raise HTTPException(status_code=400, detail=f"{label} is in that team already.")
 
 
+def _link(row: SkillTable | KnowledgeBaseTable) -> tuple:
+    """Where `row` stands with the server and its team, to put back with `_restore_link`."""
+    return (
+        row.origin_server,
+        row.remote_id,
+        row.remote_version,
+        row.team_id,
+        row.team_server,
+        row.modified,
+    )
+
+
+def _restore_link(row: SkillTable | KnowledgeBaseTable, was: tuple) -> None:
+    (
+        row.origin_server,
+        row.remote_id,
+        row.remote_version,
+        row.team_id,
+        row.team_server,
+        row.modified,
+    ) = was
+
+
 def _stays(row: SkillTable | KnowledgeBaseTable) -> bool:
     """
     A skill bundled with VISTA keeps its place in Private: it cannot be deleted
@@ -232,25 +255,11 @@ async def _place(
         return CopiedResource(kind=kind.kind, name=key, local_name=key, how="copied")
 
     # Published from here, as a new item in the team.
-    was = (
-        row.origin_server,
-        row.remote_id,
-        row.remote_version,
-        row.team_id,
-        row.team_server,
-        row.modified,
-    )
+    was = _link(row)
 
     async def restore() -> None:
         await reread(session, row)
-        (
-            row.origin_server,
-            row.remote_id,
-            row.remote_version,
-            row.team_id,
-            row.team_server,
-            row.modified,
-        ) = was
+        _restore_link(row, was)
         session.add(row)
         await session.commit()
 
@@ -308,11 +317,15 @@ async def copy_project(
 ) -> TeamCopyResult:
     """
     Copy project `name` and everything it uses to `team_id`, the project last.
-    Everything it uses must be here and in its team, checked before anything
-    is sent. A skill or knowledge base another project here also uses is
-    imported beside the original, and the project switched to the copy. If
-    the project's own publish then fails, it is left in the team with its
-    copies, to publish again.
+    Everything it uses must be here and in its team (or in `team_id` already,
+    from a copy that stopped part way), checked before anything is sent. A
+    skill or knowledge base another project here also uses is imported beside
+    the original, and the project switched to the copy.
+
+    If copying what it uses fails, what was moved to `team_id` here is put
+    back in the team it was in (its copies stay on the server, unreferenced),
+    so the project is as it was. If the project's own publish fails after
+    that, it is left in the team with its copies, to publish again.
     """
     from .knowledge_base_collaboration import require_idle
     from .project_collaboration import publish_project
@@ -333,7 +346,10 @@ async def copy_project(
                     detail=f"{name} uses the {kind.label} {key}, which is not on "
                     "this computer. Remove it from the project before copying it.",
                 )
-            if not usable_in(team_of(row, url), project_team):
+            team = team_of(row, url)
+            if team == team_id:
+                continue  # moved there by a copy that stopped part way
+            if not usable_in(team, project_team):
                 raise HTTPException(
                     status_code=400,
                     detail=f"{name} uses the {kind.label} {key}, which is in "
@@ -344,16 +360,30 @@ async def copy_project(
             plan.append((kind, key))
 
     copied: list[CopiedResource] = []
+    # What each row moved here was before, to put back if a later one fails.
+    moved: list[tuple[_Kind, str, tuple]] = []
     async with client_for(local) as client:
         await _require_member(client, team_id)
-        for kind, key in plan:
-            row = await kind.get(session, key)
-            keep = _stays(row) or bool(
-                await _users(session, kind, key, besides={project_id})
-            )
-            copied.append(
-                await _place(session, local, client, kind, key, team_id, keep=keep)
-            )
+        try:
+            for kind, key in plan:
+                row = await kind.get(session, key)
+                keep = _stays(row) or bool(
+                    await _users(session, kind, key, besides={project_id})
+                )
+                was = _link(row)
+                result = await _place(
+                    session, local, client, kind, key, team_id, keep=keep
+                )
+                copied.append(result)
+                if result.local_name == key:
+                    moved.append((kind, key, was))
+        except BaseException:
+            for kind, key, was in moved:
+                row = await kind.get(session, key)
+                _restore_link(row, was)
+                session.add(row)
+            await session.commit()
+            raise
 
     renamed = {(c.kind, c.name): c.local_name for c in copied}
     project = await get_project_by_name(session, name)

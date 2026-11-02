@@ -569,3 +569,75 @@ async def test_a_failed_project_copy_is_never_published_to_its_old_team(
     # The retry is a new item in the new team; the old team's is as it was.
     by_team = {p["team_id"]: p["head_version"] for p in listed}
     assert by_team == {old["id"]: 1, new["id"]: 1}
+
+
+async def test_a_project_copy_that_fails_part_way_puts_back_what_moved(
+    collab_server, session, monkeypatch
+):
+    from vista_backend.services import skill_collaboration
+    from vista_backend.services.collaboration import CollaborationUnavailable
+
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        await _skill(client, "first")
+        await _skill(client, "second")
+        await _project(client, "lab", skills=["first", "second"])
+        team = await _team(client)
+        await session.commit()
+        publish = skill_collaboration.publish_skill
+
+        async def second_fails(session, local, name, **kwargs):
+            if name == "second":
+                raise CollaborationUnavailable("The server went away.")
+            return await publish(session, local, name, **kwargs)
+
+        monkeypatch.setattr(skill_collaboration, "publish_skill", second_fails)
+        failed = await client.post("/projects/lab/copy", json={"team_id": team["id"]})
+        first = await _row(session, SkillTable, name="first")
+        assert (first.team_id, first.remote_id) == (None, None)
+        project = await _row(session, ProjectTable, name="lab")
+        assert (project.team_id, project.skills) == (None, ["first", "second"])
+        monkeypatch.setattr(skill_collaboration, "publish_skill", publish)
+        again = await client.post("/projects/lab/copy", json={"team_id": team["id"]})
+    assert failed.status_code == 503
+    assert again.status_code == 200, again.text
+    assert str((await _row(session, ProjectTable, name="lab")).team_id) == team["id"]
+
+
+async def test_a_knowledge_base_made_for_a_project_joins_its_team(
+    collab_server, session
+):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        team = await _team(client)
+        await _select(client, team["id"])
+        await _project(client, "team-lab")
+        await _select(client, None)
+        res = await client.post(
+            "/knowledge-bases",
+            json={"slug": "lab-papers", "name": "Papers", "project": "team-lab"},
+        )
+        attach = await client.put(
+            "/projects/team-lab",
+            json={"name": "team-lab", "knowledge_bases": ["lab-papers"]},
+        )
+    assert res.status_code == 201, res.text
+    assert res.json()["team_id"] == team["id"]
+    assert attach.status_code == 200, attach.text
+
+
+async def test_a_team_on_another_server_is_sent_as_private(collab_server, session):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        team = await _team(client)
+        await _select(client, team["id"])
+        await _skill(client, "teamed")
+        await session.commit()
+    await _use_server(session, "http://elsewhere.test:8002")
+    with api_client(session) as (client, _):
+        elsewhere = (await client.get("/skills")).json()
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        back = (await client.get("/skills")).json()
+    assert [s["team_id"] for s in elsewhere if s["name"] == "teamed"] == [None]
+    assert [s["team_id"] for s in back if s["name"] == "teamed"] == [team["id"]]

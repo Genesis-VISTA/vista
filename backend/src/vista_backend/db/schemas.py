@@ -4,10 +4,17 @@ Data models / schemas
 
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Annotated as A, Any, Literal, Optional
 from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
 from pydantic_ai import UsageLimits
-from pydantic import BaseModel, ConfigDict, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    field_serializer,
+    field_validator,
+)
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
 from ..utils.types import OptionalHttpUrl
@@ -93,7 +100,47 @@ class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
 
-class ProjectSharing(SQLModel):
+_UNSET: Any = object()
+
+server_in_effect: ContextVar[Any] = ContextVar("server_in_effect", default=_UNSET)
+"""
+The collaboration server in effect for the request being answered, set by the
+API (`api.api`) so that `TeamSharing.team_id` is sent as the team there.
+"""
+
+
+class TeamSharing(SQLModel):
+    """Which collaboration team a project, skill or knowledge base is in."""
+
+    team_id: uuid.UUID | None = None
+    """
+    The collaboration team it is in, on the server in effect, and publishes
+    to: the team selected when it was made (`collaboration_team_id`), its
+    project's when made for one, its item's when imported, or the one it was
+    copied to (`team_copy`). None is private: on this computer only, as
+    everything made with Private selected, or seeded or bundled by VISTA, is.
+    Only resources of the same team are used together (`services/teams.py`).
+    """
+    team_server: str | None = None
+    """
+    The collaboration server `team_id` is a team on. On another server the
+    row is private, and it is in its team again on this one (`teams.team_of`).
+    """
+
+    @field_serializer("team_id")
+    def _team_in_effect(self, team_id: uuid.UUID | None) -> uuid.UUID | None:
+        """
+        Sent as its team on the server in effect (`teams.team_of`): a team on
+        another server is None, private, so a client shows what the backend
+        enforces. Unchanged outside a request that set `server_in_effect`.
+        """
+        url = server_in_effect.get()
+        if url is _UNSET or team_id is None:
+            return team_id
+        return team_id if self.team_server == url else None
+
+
+class ProjectSharing(TeamSharing):
     """
     Where a project stands with the collaboration server. Never set through
     `ProjectCreate`: publishing and importing set it, and every write to the
@@ -112,20 +159,6 @@ class ProjectSharing(SQLModel):
     set by every write to them, cleared by a publish or an import. A change to
     a skill it loads is the skill's own `modified`, not this. True for a
     project never published, seeded ones included: all of it is local.
-    """
-    team_id: uuid.UUID | None = None
-    """
-    The collaboration team it is in, on the server in effect, and publishes
-    to: the team selected when it was made (`collaboration_team_id`), its
-    project's when made for one, its item's when imported, or the one it was
-    copied to (`team_copy`). None is private: on this computer only, as
-    everything made with Private selected, or seeded or bundled by VISTA, is.
-    Only resources of the same team are used together (`services/teams.py`).
-    """
-    team_server: str | None = None
-    """
-    The collaboration server `team_id` is a team on. On another server the
-    row is private, and it is in its team again on this one (`teams.team_of`).
     """
 
 
@@ -295,7 +328,7 @@ class KnowledgeBaseBase(SQLModel):
     """ ISO timestamp of the most recent successful indexer run. """
 
 
-class KnowledgeBaseSharing(SQLModel):
+class KnowledgeBaseSharing(TeamSharing):
     """
     Where a knowledge base stands with the collaboration server. Never set
     through `KnowledgeBaseCreate` or `KnowledgeBaseUpdate`: publishing and
@@ -314,20 +347,6 @@ class KnowledgeBaseSharing(SQLModel):
     description and by adding or deleting a PDF, cleared by a publish or an
     import. True for one never published, seeded ones included.
     """
-    team_id: uuid.UUID | None = None
-    """
-    The collaboration team it is in, on the server in effect, and publishes
-    to: the team selected when it was made (`collaboration_team_id`), its
-    project's when made for one, its item's when imported, or the one it was
-    copied to (`team_copy`). None is private: on this computer only, as
-    everything made with Private selected, or seeded or bundled by VISTA, is.
-    Only resources of the same team are used together (`services/teams.py`).
-    """
-    team_server: str | None = None
-    """
-    The collaboration server `team_id` is a team on. On another server the
-    row is private, and it is in its team again on this one (`teams.team_of`).
-    """
 
 
 class KnowledgeBaseCreate(SQLModel):
@@ -341,6 +360,11 @@ class KnowledgeBaseCreate(SQLModel):
     slug: str
     name: str
     description: str | None = None
+    project: str | None = None
+    """
+    The project it is made for, whose team it joins (so the project can use
+    it); without one, it joins the team selected here.
+    """
 
 
 class KnowledgeBaseUpdate(SQLModel):
@@ -401,7 +425,7 @@ class IndexProgress(BaseModel):
 # We need to make skills scoped to a project, only editable by their creator, etc.
 
 
-class SkillBase(SQLModel):
+class SkillBase(TeamSharing):
     name: str
     """
     SKILL.md name. Must be kebab case. Unique
@@ -443,20 +467,6 @@ class SkillBase(SQLModel):
     Changed here since `remote_version`: set by every write to the skill's
     files, cleared by a publish or an import. A skill never published is
     modified from its creation, as everything in it is local.
-    """
-    team_id: uuid.UUID | None = None
-    """
-    The collaboration team it is in, on the server in effect, and publishes
-    to: the team selected when it was made (`collaboration_team_id`), its
-    project's when made for one, its item's when imported, or the one it was
-    copied to (`team_copy`). None is private: on this computer only, as
-    everything made with Private selected, or seeded or bundled by VISTA, is.
-    Only resources of the same team are used together (`services/teams.py`).
-    """
-    team_server: str | None = None
-    """
-    The collaboration server `team_id` is a team on. On another server the
-    row is private, and it is in its team again on this one (`teams.team_of`).
     """
 
 

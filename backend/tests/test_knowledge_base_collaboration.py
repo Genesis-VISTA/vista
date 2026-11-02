@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client
@@ -759,10 +760,13 @@ async def test_a_project_import_checks_its_knowledge_bases_are_idle_first(
         await publish_kb_elsewhere(
             other, tmp_path, "salt-papers", item_id=kb_id, parent=1
         )
-        skill = await other.create_item("skill", "unused", manifest={})
+        skill = await other.create_item(
+            "skill", "unused", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
         project = await other.create_item(
             "project",
             "salt-lab",
+            team_id=PUBLIC_TEAM_ID,
             manifest={
                 "format": 3,
                 "name": "salt-lab",
@@ -805,6 +809,7 @@ async def test_a_project_import_checks_the_disk_first(
         project = await other.create_item(
             "project",
             "salt-lab",
+            team_id=PUBLIC_TEAM_ID,
             manifest={
                 "format": 3,
                 "name": "salt-lab",

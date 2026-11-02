@@ -80,7 +80,8 @@ async def leave_team(
 ) -> None:
     """
     Leave a team. Its projects, skills and knowledge bases here stay, but can no
-    longer be published or updated. Selected here, the public team is selected instead.
+    longer be published or updated (they can be copied to another team).
+    Selected here, Private is selected instead.
     """
     async with collaboration.client_for(local) as client:
         await client.leave_team(team_id)

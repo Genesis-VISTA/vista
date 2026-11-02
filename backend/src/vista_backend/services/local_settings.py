@@ -88,9 +88,14 @@ async def update(
     return row
 
 
-async def selected_team(session: AsyncSession) -> uuid.UUID | None:
-    """The team a new project, skill or knowledge base joins: the one selected here."""
-    return (await get(session)).collaboration_team_id
+async def selected_team(
+    session: AsyncSession, row: LocalSettingsTable | None = None
+) -> uuid.UUID | None:
+    """
+    The team a new project, skill or knowledge base joins: the one selected
+    here. `row` is the settings row, when the caller has read it already.
+    """
+    return (row or await get(session)).collaboration_team_id
 
 
 def to_public(row: LocalSettingsTable) -> LocalSettingsPublic:

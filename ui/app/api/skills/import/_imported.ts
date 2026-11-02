@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { Agent, fetch } from "undici";
-import { backendUrl, backendHeaders } from "../../_backend";
+import { sendBackend } from "../../_relay";
 
 /** A skill row as the backend returns it (`SkillListItem`). */
 export type BackendSkill = {
@@ -87,27 +86,18 @@ export async function postBackend(
   } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
-  let upstream: Awaited<ReturnType<typeof fetch>>;
-  try {
-    upstream = await fetch(backendUrl(path), {
-      // A knowledge base's publish or import answers only when it has all been moved.
-      dispatcher: new Agent({ headersTimeout: 60 * 60 * 1000 }),
-      method: "POST",
-      headers: await backendHeaders({
-        "content-type": "application/json",
-        accept: "application/json",
-      }),
-      body: JSON.stringify(body ?? {}),
-    });
-  } catch {
-    return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
-  }
-  const text = await upstream.text();
+  // A knowledge base's publish, import or copy answers only when it has all been moved.
+  const sent = await sendBackend(path, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+    longWait: true,
+  });
+  if (!sent.ok) return NextResponse.json({ error: "Upstream unavailable" }, { status: 502 });
   let payload: unknown = null;
   try {
-    payload = text ? JSON.parse(text) : null;
+    payload = sent.text ? JSON.parse(sent.text) : null;
   } catch {
-    payload = { error: text };
+    payload = { error: sent.text };
   }
-  return { status: upstream.status, payload };
+  return { status: sent.status, payload };
 }

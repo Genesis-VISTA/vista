@@ -501,6 +501,10 @@ async def _install_staged(
         if not is_name_clash(e):
             raise
         return result("failed", f"Name already in use: {skill.name}", name=skill.name)
+    except HTTPException as e:
+        # Refused for the project (another team's skill), and rolled back:
+        # this one fails, and the rest of the batch goes on.
+        return result("failed", str(e.detail), name=skill.name)
     return result(status, skill=row, name=skill.name)
 
 

@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client, seed_project
@@ -81,6 +82,7 @@ async def _publish_elsewhere(tmp_path, name: str, body: str = "Theirs.") -> uuid
         item = await client.create_item(
             "skill",
             name,
+            team_id=PUBLIC_TEAM_ID,
             manifest=SkillManifest(
                 name=name, description=f"The {name} skill."
             ).model_dump(),
@@ -674,7 +676,9 @@ async def test_an_older_version_can_be_imported(collab_server, session, tmp_path
 async def test_an_item_that_is_not_a_skill_is_not_imported(collab_server, session):
     await _use_server(session)
     async with _other_install() as other:
-        item = await other.create_item("project", "p", manifest={})
+        item = await other.create_item(
+            "project", "p", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/skills/{item.id}/import", json={})
     assert res.status_code == 400

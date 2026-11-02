@@ -1,4 +1,4 @@
-import { relay } from "../_relay";
+import { relay } from "../../_relay";
 
 export const runtime = "nodejs";
 

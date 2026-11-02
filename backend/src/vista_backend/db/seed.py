@@ -624,7 +624,13 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
                     usage_limits=dict(request_limit=50),
                 )
             )
-        elif kb is not None and AI_SAFETY_SLUG not in project.knowledge_bases:
+        elif (
+            kb is not None
+            and AI_SAFETY_SLUG not in project.knowledge_bases
+            # Only while it is private, as seeded: in a team it uses only that
+            # team's, and a copy to one names its own copy of the corpus.
+            and project.team_id is None
+        ):
             existing = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
             assert existing is not None
             # A new list: SQLAlchemy does not see an in-place append to a JSON column.

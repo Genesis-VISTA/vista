@@ -11,7 +11,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from vista_backend.db.schemas import KnowledgeBaseTable
-from vista_backend.services.collaboration import CollaborationClient
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID, CollaborationClient
 from vista_backend.services.knowledge_base_collaboration import (
     KB_KIND,
     KnowledgeBaseManifest,
@@ -161,7 +161,9 @@ async def publish_kb_elsewhere(
     ref = await client.upload_large_blob(archive)
     manifest = kb_manifest(slug, archive, **fields)
     if item_id is None:
-        item = await client.create_item(KB_KIND, slug, manifest=manifest, blob_ref=ref)
+        item = await client.create_item(
+            KB_KIND, slug, team_id=PUBLIC_TEAM_ID, manifest=manifest, blob_ref=ref
+        )
         return item.id
     assert parent is not None
     await client.publish_version(

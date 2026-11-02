@@ -82,12 +82,14 @@ async def team_for_new(
     team selected here.
     """
     from . import local_settings
+    from .collaboration import server_url
 
-    url = await current_url(session)
+    row = await local_settings.get(session)
+    url, _ = server_url(local_settings.to_public(row))
     if project is not None:
         team = team_of(project, url)
     else:
-        team = await local_settings.selected_team(session)
+        team = await local_settings.selected_team(session, row)
     return team, url if team is not None else None
 
 
