@@ -35,7 +35,7 @@
 ## 5. Packaging (D9)
 
 - [x] 5.1 Make `stage_payload`, `PAYLOAD_MEMBERS`, the manifest counts, `build_vector_store` and `check_store_matches_corpus` in `scripts/build_local_package.sh` use `olcf-docs` and every suffix the indexer accepts. Verify that `--check` fails naming `olcf-docs` when it is missing, and fails on a reused store that cites a Markdown file absent from the payload.
-- [ ] 5.2 Point `scripts/smoke_test_package.sh`'s retrieval check at `hello-olcf` / `olcf-docs` with a Frontier GPU question. Verify that a full local default build passes its smoke test.
+- [x] 5.2 Point `scripts/smoke_test_package.sh`'s retrieval check at `hello-olcf` / `olcf-docs` with a Frontier GPU question. Verify that a full local default build passes its smoke test.
 
 ## 6. Onboarding tour (D7)
 
