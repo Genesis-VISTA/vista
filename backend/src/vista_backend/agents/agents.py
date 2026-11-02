@@ -250,16 +250,6 @@ def _add_mode(path: Path, bits: int) -> None:
         os.chmod(path, mode | bits)
 
 
-def _reset_dir(path: Path) -> None:
-    """
-    Empty `path`, creating it if needed. A failed cleanup raises rather than being ignored:
-    whatever it left behind would stay mounted in the sandbox.
-    """
-    if path.exists():
-        shutil.rmtree(path)
-    path.mkdir()
-
-
 def agent_volume_root(project_id: uuid.UUID | str) -> Path:
     """
     The host folder mounted at `/mnt` in the sandbox of `project_id`'s agents.
@@ -268,21 +258,55 @@ def agent_volume_root(project_id: uuid.UUID | str) -> Path:
     return settings.data_dir / "volumes" / str(project_id)
 
 
+def _remove(path: Path) -> None:
+    """Delete a file, symlink or folder. A failure raises: it would stay mounted."""
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
+        shutil.rmtree(path)
+
+
 def stage_skills(
     skills_volume_dir: Path, names: list[str], skill_dirs: dict[str, Path]
 ) -> None:
     """
-    Rebuild a sandbox's skills volume: each of `names` copied from its folder in
-    `skill_dirs` to `<skills_volume_dir>/<name>`, which is how the MCP server
+    Bring a project's skills volume to exactly `names`: each copied from its folder
+    in `skill_dirs` to `<skills_volume_dir>/<name>`, which is how the MCP server
     finds a skill's jobs as `<name>/<job>`. A name without a folder is skipped.
+
+    The volume is shared: every chat of the project has this folder mounted in its
+    sandbox, and a new chat stages it while the others run. So it is synced in
+    place and never deleted or recreated, or each running sandbox would lose its
+    mount. A skill is replaced by building the new copy beside it under a dot name
+    (the MCP server ignores names that do not start with a letter or digit) and
+    renaming it into place, so a sandbox reads the old copy or the new one.
     """
-    _reset_dir(skills_volume_dir)
+    skills_volume_dir.mkdir(parents=True, exist_ok=True)
+    sources: dict[str, Path] = {}
     for name in names:
         src = skill_dirs.get(name)
         if src is None or not src.is_dir():
             logging.warning(f"Skill {name!r} not found at {src}; skipping")
             continue
-        shutil.copytree(src, skills_volume_dir / name, symlinks=True)
+        sources[name] = src
+    for entry in skills_volume_dir.iterdir():
+        # Also clears any dot-named leftover of an interrupted run.
+        if entry.name not in sources:
+            _remove(entry)
+    for name, src in sources.items():
+        target = skills_volume_dir / name
+        fresh = skills_volume_dir / f".new-{name}"
+        old = skills_volume_dir / f".old-{name}"
+        for leftover in (fresh, old):
+            if leftover.exists() or leftover.is_symlink():
+                _remove(leftover)
+        shutil.copytree(src, fresh, symlinks=True)
+        _make_readable_by_others(fresh)
+        if target.exists() or target.is_symlink():
+            target.rename(old)
+        fresh.rename(target)
+        if old.exists() or old.is_symlink():
+            _remove(old)
     _make_readable_by_others(skills_volume_dir)
 
 
