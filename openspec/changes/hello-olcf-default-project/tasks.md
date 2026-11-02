@@ -46,6 +46,6 @@
 
 ## 7. Docs and verification
 
-- [ ] 7.1 Update `docs/project-onboarding.md`, `docs/building-packages.md`, `docs/validation-lane.md` and `docs/releasing.md`. In `releasing.md`, rewrite "Updating them" around the converter and `check_retrieval.py`. Verify that `./scripts/ci-local.sh docs` passes.
-- [ ] 7.2 Run `./scripts/ci-local.sh` and `openspec validate hello-olcf-default-project --strict`. Verify that both pass.
+- [x] 7.1 Update `docs/project-onboarding.md`, `docs/building-packages.md`, `docs/validation-lane.md` and `docs/releasing.md`. In `releasing.md`, rewrite "Updating them" around the converter and `check_retrieval.py`. Verify that `./scripts/ci-local.sh docs` passes.
+- [x] 7.2 Run `./scripts/ci-local.sh` and `openspec validate hello-olcf-default-project --strict`. Verify that both pass.
 - [ ] 7.3 Live: on a fresh state directory, take the tour through the starter question. Verify that the answer cites `olcf-docs` passages with docs.olcf.ornl.gov URLs. This is a manual step by Sam, outside PR CI.

@@ -78,7 +78,7 @@ Common fields:
 | `output_tokens_limit`| Max output tokens per turn.                              | unlimited      |
 | `total_tokens_limit` | Combined input+output cap per turn.                      | unlimited      |
 
-The default projects use `{"request_limit": 50}` (ai-safety-autonomous-labs),
+The default projects use `{"request_limit": 50}` (hello-olcf),
 `{"request_limit": 100}` (molten-salt) and `{"request_limit": 600}`
 (alloy-design, long agentic loops on HPC). Empty `{}` falls back to engine
 defaults.
@@ -95,12 +95,22 @@ UUID so they can be recognised across restarts.
 
 **Always seeded**
 
-- **ai-safety-autonomous-labs** — AI Safety in Autonomous Labs. Its system
-  prompt frames a small literature corpus on the safety and security of
-  autonomous labs and LLM agents. It has no mandated skills, allows every tool
-  except `agenthpc_*`, and has `request_limit` 50. It comes with the
-  `ai-safety` knowledge base ("AI Safety Papers"), built from vista-data's
-  `ai-safety/` folder.
+- **hello-olcf** — A first project for OLCF users. Its system prompt has the
+  agent answer from the OLCF documentation, cite each passage with its
+  docs.olcf.ornl.gov URL, and offer a hello run on a connected cluster. It
+  loads the skills `hello-odo`, `hello-frontier`, `hello-lux` and
+  `hpc-skill-author`, allows every tool except `agenthpc_*`, and has
+  `request_limit` 50. It comes with the `olcf-docs` knowledge base ("OLCF User
+  Documentation"): the `olcf/olcf-user-docs` pages converted to Markdown, one
+  file per section, from vista-data's `olcf-docs/` folder.
+
+  The first-boot tour (off with `VISTA_BACKEND_ONBOARDING_TOUR=false`) opens
+  `hello-olcf` and its knowledge base, reads `hello-frontier`, and ends on a
+  starter question. The UI finds them by the names in `ui/lib/default-project.ts`,
+  which a backend test keeps equal to the seed's constants.
+
+  Earlier versions seeded `ai-safety-autonomous-labs` here instead. An install
+  that has it keeps it, unchanged, and it is never restored if deleted.
 
 **Science projects, off by default**
 
@@ -118,24 +128,27 @@ setting). Every other bundled skill is registered either way.
 
 - **First run, empty database** (`seed_db`): the science projects if enabled,
   and the bundled skills.
-- **Every startup** (`sync_default_projects`): the AI-safety project and its
+- **Every startup** (`sync_default_projects`): the hello-olcf project and its
   knowledge base. This is what brings the project to a database that already
   exists. It inserts the project and the knowledge base if either is missing,
-  and appends the `ai-safety` slug to the project's knowledge bases when the
+  and appends the `olcf-docs` slug to the project's knowledge bases when the
   knowledge base exists and is not attached. It overwrites nothing else and
   removes nothing.
 
 The science projects are never added to a database that already has projects,
 even with the setting on.
 
-### Where the AI-safety corpus comes from
+### Where the OLCF docs corpus comes from
 
-With `VISTA_DATA_TOKEN` set, the first startup downloads `ai-safety/` from
-vista-data and indexes it (about a minute, with citations when an inference key
-is configured). If vista-data cannot be reached, startup still completes: the
-project is seeded without the knowledge base, a warning names the missing
-corpus, and the next startup tries again. With neither a token nor a bundled
-payload the project exists but has no literature search.
+With `VISTA_DATA_TOKEN` set, the first startup downloads `olcf-docs/` from
+vista-data, Markdown and its prebuilt `rag_db/` together, and installs the
+store; it indexes nothing, since that is one model call per file. A folder
+without `rag_db/` is not seeded, with a warning. If vista-data cannot be
+reached, startup still completes: the project is seeded without the knowledge
+base, a warning names the missing corpus, and the next startup tries again. With
+neither a token nor a bundled payload the project exists but has no
+documentation search. The corpus is refreshed by a maintainer, from
+`docs/releasing.md` ("Updating them").
 
 A prebuilt package ships the corpus already indexed, and its first-run setup
 never indexes; an absent or empty bundled index fails setup naming the corpus.
@@ -144,7 +157,7 @@ never indexes; an absent or empty bundled index fails setup naming the corpus.
 
 Editing a default project from the UI is safe: the next startup leaves your
 changes alone, and a knowledge base you attach stays attached. **Deleting
-`ai-safety-autonomous-labs` brings it back on the next startup**, with its
+`hello-olcf` brings it back on the next startup**, with its
 default settings, because nothing records that it was deleted. The science
 projects are only created on first run, so deleting them is permanent.
 
@@ -316,13 +329,13 @@ a different one or delete the existing project first.
 `UsageLimits`. Run `python -c "from pydantic_ai import UsageLimits; help(UsageLimits)"`
 to see the accepted fields.
 
-**Deleted `ai-safety-autonomous-labs`, restarted, it is back.** — It is a
+**Deleted `hello-olcf`, restarted, it is back.** — It is a
 default that is synced on every boot, matched by UUID. Edits to it are kept;
 only a missing project is recreated. See
 [Editing and deleting defaults](#editing-and-deleting-defaults).
 
-**`ai-safety-autonomous-labs` has no literature search.** — Its `ai-safety`
-knowledge base could not be obtained: look for an "AI-safety corpus
+**`hello-olcf` has no documentation search.** — Its `olcf-docs`
+knowledge base could not be obtained: look for an "OLCF docs corpus
 unavailable" warning in the backend log. Set `VISTA_DATA_TOKEN` (or use a
 package built with its payload) and restart.
 

@@ -44,8 +44,8 @@ already exported in your environment wins over the file.
 
 | Variable                                                                          | Needed for                                                                                                    | Skip it with                                                     |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `VISTA_DATA_TOKEN`                                                                | Fetching the AI-safety corpus (and with `--science-projects`, the molten-salt corpus and MSTDB) from `v28/vista-data` on code.ornl.gov | `--payload DIR`, an already-unpacked `vista-data` tree           |
-| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per paper for title, authors, journal, year, and DOI | `--vector-store DIR` (and `--science-projects-vector-store DIR`) to reuse built stores, or `--without-citations` |
+| `VISTA_DATA_TOKEN`                                                                | Fetching the OLCF docs corpus (and with `--science-projects`, the molten-salt corpus and MSTDB) from `v28/vista-data` on code.ornl.gov | `--payload DIR`, an already-unpacked `vista-data` tree           |
+| `OPENAI_API_KEY` (with `OPENAI_BASE_URL` and `VISTA_BACKEND_MODEL`), or `AZURE_OPENAI_*` | Citation metadata in the vector store. One model call per file for title, authors, journal, year, and DOI (for the OLCF docs, a description of each section file) | `--vector-store DIR` (and `--science-projects-vector-store DIR`) to reuse built stores, or `--without-citations` |
 | `VISTA_VERSION`                                                                   | Overriding the commit-derived version stamp                                                                   | Optional; omit it                                                |
 
 The preflight treats a missing citation credential as an error, not a
@@ -76,7 +76,7 @@ the manifest along with the runtime versions and payload inventory. Budget
 about 7 GB in the output directory, the staging tree plus the archive, for a
 ~2 GB result. The build finishes by unpacking the archive somewhere else and
 running the launcher against it, so a green finish means the artifact has
-been started and queried, not just assembled; a failed smoke test fails the
+been started and queried (a Frontier GPU question put to `hello-olcf`'s `olcf-docs`), not just assembled; a failed smoke test fails the
 build.
 
 Cross-compiling is not supported. The package carries a platform-specific
@@ -88,10 +88,10 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | Flag                             | Effect                                                                                                                    |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `--check`                        | Run the preflight and exit; builds nothing                                                                                |
-| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`. It must hold `ai-safety/`, and with `--science-projects` also `molten-salt-papers/` and `mstdb/` |
+| `--payload DIR`                  | Use an unpacked `vista-data` tree instead of fetching it with `VISTA_DATA_TOKEN`. It must hold `olcf-docs/`, and with `--science-projects` also `molten-salt-papers/` and `mstdb/` |
 | `--output-dir DIR`               | Archive destination (default `dist/`)                                                                                     |
 | `--archive-format gz\|zstd\|zip\|none` | Defaults to `gz` on unix, `zip` on Windows                                                                          |
-| `--vector-store DIR`             | Optional. Reuse an already-built **AI-safety** Chroma store instead of indexing that corpus again. Only for skipping re-embedding, and it makes no model calls; omit it and the build indexes the corpus itself |
+| `--vector-store DIR`             | Optional. Reuse an already-built **olcf-docs** Chroma store instead of indexing that corpus again. Only for skipping re-embedding, and it makes no model calls; omit it and the build indexes the corpus itself |
 | `--science-projects`             | Also pack the molten-salt corpus and its index, MSTDB and the `forge-tune` CSV, so the package seeds the `molten-salt` and `alloy-design` projects. Also enabled by `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` |
 | `--science-projects-vector-store DIR` | Optional, and only with `--science-projects`. Reuse an already-built **molten-salt** Chroma store instead of indexing that corpus again |
 | `--without-citations`            | Index the corpus but skip the per-paper metadata calls; recorded in the manifest                                          |
@@ -100,7 +100,7 @@ interpreter and compiled libraries, and the launcher refuses to run where
 | `--verify-without-sandbox`       | For a build host that cannot run the sandbox, such as a hosted macOS CI runner. The smoke test still runs, but every check that needs the sandbox, retrieval included, is reported as skipped rather than passed, and the build says the package was verified without it. Run the full smoke test on a real machine before shipping such a package |
 | `--keep-staging`                 | Leave the staging tree in place for inspection                                                                            |
 
-A default package carries only the AI-safety corpus and its index. The
+A default package carries only the `olcf-docs` corpus (Markdown, one file per docs section) and its index, and the manifest's `payload.corpus.documents` counts those files. The
 molten-salt corpus, MSTDB and the `forge-tune` CSV are packed only with
 `--science-projects`, and a default package contains none of them.
 
@@ -109,7 +109,7 @@ A typical rebuild, once you have a corpus clone and a vector store worth reusing
 ```bash
 ./scripts/build_local_package.sh \
   --payload ~/.vista-build/vista-data \
-  --vector-store ~/.vista-build/ai-safety-rag_db
+  --vector-store ~/.vista-build/olcf-docs-rag_db
 ```
 
 A package with the science projects, reusing both stores:
@@ -117,7 +117,7 @@ A package with the science projects, reusing both stores:
 ```bash
 ./scripts/build_local_package.sh --science-projects \
   --payload ~/.vista-build/vista-data \
-  --vector-store ~/.vista-build/ai-safety-rag_db \
+  --vector-store ~/.vista-build/olcf-docs-rag_db \
   --science-projects-vector-store ~/.vista-build/rag_db
 ```
 
@@ -137,7 +137,7 @@ double-clicking; `vista.ps1` is not meant to be run directly.
 
 ```bash
 ./scripts/build_local_package.sh --check
-./scripts/build_local_package.sh --vector-store data/knowledge-bases/ai-safety/rag_db
+./scripts/build_local_package.sh --vector-store data/knowledge-bases/olcf-docs/rag_db
 ```
 
 The sandbox image is built with Docker Desktop or Podman Desktop; start its
