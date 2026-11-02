@@ -61,12 +61,26 @@ Markdown (markdownify). The script declares its dependencies inline (PEP 723) an
 The split-and-write step is a pure function from a page's HTML to its section files. That
 is what the unit tests exercise, with HTML fixtures and no Sphinx.
 
+- **Requirements.** `olcf-user-docs` has no `requirements.txt`. The converter uses one when
+  it exists, and otherwise reads the pinned `pip3 install ...` line from the checkout's
+  `contributing/index.rst`, so the pins are never repeated here.
+- **Top-level sections.** Sphinx wraps most pages in one outer `<section>` holding the
+  `<h1>`, and its child sections are the top-level ones. A page with several `<h1>`
+  sections and no outer one (`accounts/accounts_and_projects`,
+  `training/olcf_gpu_hackathons`) takes the body's own sections, and its title from
+  `<title>`.
+
 ### 2. File names carry the path; headers carry the URL
 
 - **Names.**
   - A section file is named `<page path with / as __>__<section id>.md`, for example
     `systems__frontier_user_guide__running-jobs.md`.
-  - The content before the first section becomes `<page path with / as __>.md`.
+  - The content before the first section becomes `<page path with / as __>.md`, written
+    only when it holds text besides the page's notices. The notices are in every section
+    file's header anyway.
+  - Sections Sphinx gives no anchor of their own, such as the date-titled entries under
+    "System Updates", carry its generated ids (`id18`). Those are the anchors the site
+    serves, so their URLs still resolve.
   - The converter refuses a source path that already contains `__`, so names cannot
     collide. This also fixes the collisions between the repo's many `index.rst` files under
     the basename keying.
@@ -95,7 +109,8 @@ is what the unit tests exercise, with HTML fixtures and no Sphinx.
 A top-level section over 2,000 words is written as one file per subsection, and any text
 before its first subsection becomes a file named for the section itself. 2,000 words is
 the description window. Below it, the description covers the whole file. Deeper nesting is
-not split further. The Frontier guide's "Running Jobs" section is the main case.
+not split further. The Frontier guide's "Running Jobs" section is the main case. A
+subsection file's header title is `Page › Section › Subsection`.
 
 ### 4. Where the corpus lives
 
@@ -185,6 +200,9 @@ isn't in the repo.
 - [vista-data grows by a prebuilt store] → It is a one-time commit of tens of MB, replaced
   only on a refresh.
 - [Docs redistribution permission] → Sam is asking OLCF separately. Not a gate.
+- [Frontier's "Known Issues" table is generated from JIRA for the live site
+  (`.. raw:: html :file: issues_table.html`) and is not in the repository] → Accepted: the
+  section converts without its table, and Sphinx's warning about it is reported.
 
 ## Migration Plan
 
@@ -199,7 +217,10 @@ isn't in the repo.
 
 ## Open Questions
 
-- The section-file count and total store size after the first real conversion. It only
-  affects the numbers in the docs.
+- ~~The section-file count and total store size after the first real conversion.~~
+  Answered by the first refresh, of `olcf/olcf-user-docs` at `d86ce4ccd6ef7861b16ee87c821217a6ab0eeb1d`:
+  144 pages make 790 section files (2.2 MB of Markdown), indexed into 1,152 chunks and a
+  33 MB store. Descriptions were written by OLCF Inference's `gpt-oss-120b`, about 1.3 s
+  per file (17 minutes in all), and `check_retrieval.py` passed 22 of 22.
 - Whether `hpc_jobs/example` has references beyond the hello case. Removal follows what a
   grep finds.

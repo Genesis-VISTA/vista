@@ -7,7 +7,7 @@
 
 ## 2. Corpus refresh (Sam, manual, outside PR CI)
 
-- [ ] 2.1 Convert `olcf/olcf-user-docs` at a chosen commit (1.2), index the output into a store with citations on, and run `check_retrieval.py` against it. Verify that all questions pass, and record the file count and store size in design.md's Open Questions.
+- [x] 2.1 Convert `olcf/olcf-user-docs` at a chosen commit (1.2), index the output into a store with citations on, and run `check_retrieval.py` against it. Verify that all questions pass, and record the file count and store size in design.md's Open Questions.
 - [ ] 2.2 Commit `olcf-docs/` (Markdown, `SOURCE`, `rag_db/`) to vista-data. In `vista-build-inputs`, replace `vista-data/ai-safety` and `rag_db` with `vista-data/olcf-docs` and the new store, then bump `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`. Verify with `./scripts/build_local_package.sh --check --payload <inputs>/vista-data --vector-store <inputs>/rag_db`.
 
 ## 3. Job skeleton and hello skills (D6)
