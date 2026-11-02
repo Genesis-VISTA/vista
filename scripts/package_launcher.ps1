@@ -357,7 +357,7 @@ $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 # The parts are the members payload\parts.txt lists, one per corpus, rather than
 # the tar's top-level folders: an upgraded state directory already has
 # vista-data and knowledge-bases, and a corpus a newer package adds
-# (vista-data/ai-safety) must still be installed. An installed member is never
+# (vista-data/olcf-docs) must still be installed. An installed member is never
 # replaced or removed.
 #
 # A part counts as installed only once its extraction finished. The parts being

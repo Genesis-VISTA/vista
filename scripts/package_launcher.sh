@@ -416,7 +416,7 @@ FIRST_RUN=false
 # The parts are the members `payload/parts.txt` lists, one per corpus, rather
 # than the tar's top-level folders: an upgraded state directory already has
 # `vista-data/` and `knowledge-bases/`, and a corpus a newer package adds
-# (`vista-data/ai-safety`) must still be installed. An installed member is never
+# (`vista-data/olcf-docs`) must still be installed. An installed member is never
 # replaced or removed.
 #
 # It ships as one tar rather than as folders because some corpus file names

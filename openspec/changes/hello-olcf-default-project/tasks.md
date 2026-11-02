@@ -8,7 +8,7 @@
 ## 2. Corpus refresh (Sam, manual, outside PR CI)
 
 - [x] 2.1 Convert `olcf/olcf-user-docs` at a chosen commit (1.2), index the output into a store with citations on, and run `check_retrieval.py` against it. Verify that all questions pass, and record the file count and store size in design.md's Open Questions.
-- [ ] 2.2 Commit `olcf-docs/` (Markdown, `SOURCE`, `rag_db/`) to vista-data. In `vista-build-inputs`, replace `vista-data/ai-safety` and `rag_db` with `vista-data/olcf-docs` and the new store, then bump `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`. Verify with `./scripts/build_local_package.sh --check --payload <inputs>/vista-data --vector-store <inputs>/rag_db`.
+- [x] 2.2 Commit `olcf-docs/` (Markdown, `SOURCE`, `rag_db/`) to vista-data. In `vista-build-inputs`, replace `vista-data/ai-safety` and `rag_db` with `vista-data/olcf-docs` and the new store, then bump `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env`. Verify with `./scripts/build_local_package.sh --check --payload <inputs>/vista-data --vector-store <inputs>/rag_db`.
 
 ## 3. Job skeleton and hello skills (D6)
 
@@ -34,7 +34,7 @@
 
 ## 5. Packaging (D9)
 
-- [ ] 5.1 Make `stage_payload`, `PAYLOAD_MEMBERS`, the manifest counts, `build_vector_store` and `check_store_matches_corpus` in `scripts/build_local_package.sh` use `olcf-docs` and every suffix the indexer accepts. Verify that `--check` fails naming `olcf-docs` when it is missing, and fails on a reused store that cites a Markdown file absent from the payload.
+- [x] 5.1 Make `stage_payload`, `PAYLOAD_MEMBERS`, the manifest counts, `build_vector_store` and `check_store_matches_corpus` in `scripts/build_local_package.sh` use `olcf-docs` and every suffix the indexer accepts. Verify that `--check` fails naming `olcf-docs` when it is missing, and fails on a reused store that cites a Markdown file absent from the payload.
 - [ ] 5.2 Point `scripts/smoke_test_package.sh`'s retrieval check at `hello-olcf` / `olcf-docs` with a Frontier GPU question. Verify that a full local default build passes its smoke test.
 
 ## 6. Onboarding tour (D7)
