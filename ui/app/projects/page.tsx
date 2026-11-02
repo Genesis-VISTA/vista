@@ -24,6 +24,7 @@ import type { SharingRefusal } from "@/lib/skill-sharing";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 import { PublishConflictModal } from "@/components/PublishConflictModal";
 import { ProjectImportModal } from "@/components/ProjectImportModal";
+import { HELLO_OLCF_PROJECT_NAME } from "@/lib/default-project";
 import {
   type Project,
   type ProjectFields,
@@ -63,9 +64,9 @@ function ProjectsPageContent() {
   const { projects, loading, error, refresh } = useProjects();
   const activeProject = useActiveProject();
   const activeName = activeProject?.name ?? null;
-  // The tour's project: the seeded AI Safety one, else whichever comes first.
+  // The tour's project: the seeded hello-olcf one, else whichever comes first.
   const tourProjectName =
-    (projects.find((p) => p.name === "ai-safety-autonomous-labs") ?? projects[0])?.name ?? null;
+    (projects.find((p) => p.name === HELLO_OLCF_PROJECT_NAME) ?? projects[0])?.name ?? null;
   const [skillCatalog, setSkillCatalog] = useState<SkillSummary[]>([]);
   const [kbCatalog, setKbCatalog] = useState<KnowledgeBaseSummary[]>([]);
   // The NavRail's "+ New project" link routes here with `?new=1` to auto-open

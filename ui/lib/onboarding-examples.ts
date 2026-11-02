@@ -18,41 +18,42 @@ export type ExampleFile = {
   opened?: TourEvent;
 };
 
-const REPORT = `# Risk summary
+const REPORT = `# Hello report
 
-Autonomous labs and LLM agents share a short list of risks. This is an example report: the
-agent writes reports like it to the project's outputs.
+The same hello job ran on Odo, Frontier and Lux. This is an example report: the agent writes
+reports like it to the project's outputs.
 
-## Shared risks
+## The three clusters
 
-| Risk | Where it shows up | Proposed mitigation |
-| --- | --- | --- |
-| Prompt injection | Documents and tool output the agent reads | Treat retrieved text as data |
-| Excess agency | Tools that act on instruments or clusters | Approval before irreversible actions |
-| Data leakage | Credentials and unpublished results in prompts | Scoped tokens, no secrets in context |
+| Cluster | Node | GPUs seen | ROCm module | Runtime | Checksum match |
+| --- | --- | --- | --- | --- | --- |
+| Odo | odo03 | 8 (MI250X GCDs) | rocm/6.2.4 | under 1 s | yes |
+| Frontier | frontier08454 | 8 (MI250X GCDs) | rocm/6.2.4 | 1 s | yes |
+| Lux | lux005 | 1 (MI355X) | rocm/7.2.4 | 1 s | yes |
 
 ## Next steps
 
-- Rank the risks for your own workflow.
-- Ask the agent to cite the papers behind each mitigation.
+- Ask the agent to adapt a hello skill to your own job.
+- Ask it to cite the OLCF docs behind the queue and module choices.
 `;
 
-const RISK_CSV = `risk,likelihood,impact
-prompt injection,0.7,0.6
-excess agency,0.4,0.9
-data leakage,0.5,0.8
+const CLUSTERS_CSV = `cluster,scheduler,gpu
+odo,slurm,MI250X
+frontier,slurm,MI250X
+lux,slurm,MI355X
 `;
 
 /** A small bar chart. Named colours on a white plate, so it reads in both themes. */
 const CHART_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200" font-family="sans-serif" font-size="12">
 <rect width="360" height="200" fill="white"/>
-<text x="20" y="24" font-size="14" font-weight="bold" fill="black">Example: risk scores</text>
-<g fill="black"><text x="20" y="70">Prompt injection</text><text x="20" y="110">Excess agency</text><text x="20" y="150">Data leakage</text></g>
-<rect x="130" y="56" width="168" height="20" fill="steelblue"/>
-<rect x="130" y="96" width="198" height="20" fill="firebrick"/>
-<rect x="130" y="136" width="154" height="20" fill="darkorange"/>
-<line x1="130" y1="44" x2="130" y2="170" stroke="dimgray"/>
-<text x="130" y="188" fill="dimgray">Score, 0 to 1</text>
+<text x="20" y="24" font-size="14" font-weight="bold" fill="black">Example: GPUs seen per cluster</text>
+<g fill="black"><text x="20" y="70">Odo</text><text x="20" y="110">Frontier</text><text x="20" y="150">Lux</text></g>
+<rect x="90" y="56" width="200" height="20" fill="steelblue"/>
+<rect x="90" y="96" width="200" height="20" fill="steelblue"/>
+<rect x="90" y="136" width="25" height="20" fill="steelblue"/>
+<g fill="black"><text x="296" y="70">8</text><text x="296" y="110">8</text><text x="121" y="150">1</text></g>
+<line x1="90" y1="44" x2="90" y2="170" stroke="dimgray"/>
+<text x="90" y="188" fill="dimgray">GPUs visible to the job</text>
 </svg>`;
 
 function dataUrl(mime: string, text: string): string {
@@ -71,9 +72,9 @@ function example(kind: FileKind, name: string, mime: string, text: string, opene
 }
 
 export const EXAMPLE_FILES: readonly ExampleFile[] = [
-  example("outputs", "summary.md", "text/markdown", REPORT, "example-md-opened"),
-  example("outputs", "risk-scores.svg", "image/svg+xml", CHART_SVG, "example-image-opened"),
-  example("uploads", "risks.csv", "text/csv", RISK_CSV),
+  example("outputs", "hello-report.md", "text/markdown", REPORT, "example-md-opened"),
+  example("outputs", "gpus-per-cluster.svg", "image/svg+xml", CHART_SVG, "example-image-opened"),
+  example("uploads", "clusters.csv", "text/csv", CLUSTERS_CSV),
 ];
 
 /** The example at `kind` and `path`, if there is one. */

@@ -39,10 +39,10 @@
 
 ## 6. Onboarding tour (D7)
 
-- [ ] 6.1 Add `ui/lib/default-project.ts` (project name, KB slug), use it in `ui/app/projects/page.tsx` and `ui/app/knowledge-bases/explorer.tsx`, and add a backend test that it matches the seed constants. Verify that the test fails when either side is renamed.
-- [ ] 6.2 Rewrite `ui/lib/onboarding-copy.ts`: project card and open, the KB steps ("OLCF User Documentation", "its documents"), the skills step naming the skill it points at, the starter question from the onboarding-tour delta, and the first-question wording. Verify with `ui/tests/onboarding.test.ts`.
-- [ ] 6.3 Replace `ui/lib/onboarding-examples.ts` with a hello run's outputs: a markdown report comparing the three clusters, a chart image and the CSV input, keeping the step's shape. Update the copy naming them. Verify with `ui/e2e-hermetic/onboarding.spec.ts`.
-- [ ] 6.4 Update `ui/e2e/smoke.spec.ts` to look for the `hello-olcf` card. Verify with `cd ui && npm run lint`.
+- [x] 6.1 Add `ui/lib/default-project.ts` (project name, KB slug), use it in `ui/app/projects/page.tsx` and `ui/app/knowledge-bases/explorer.tsx`, and add a backend test that it matches the seed constants. Verify that the test fails when either side is renamed.
+- [x] 6.2 Rewrite `ui/lib/onboarding-copy.ts`: project card and open, the KB steps ("OLCF User Documentation", "its documents"), the skills step naming the skill it points at, the starter question from the onboarding-tour delta, and the first-question wording. Verify with `ui/tests/onboarding.test.ts`.
+- [x] 6.3 Replace `ui/lib/onboarding-examples.ts` with a hello run's outputs: a markdown report comparing the three clusters, a chart image and the CSV input, keeping the step's shape. Update the copy naming them. Verify with `ui/e2e-hermetic/onboarding.spec.ts`.
+- [x] 6.4 Update `ui/e2e/smoke.spec.ts` to look for the `hello-olcf` card. Verify with `cd ui && npm run lint`.
 
 ## 7. Docs and verification
 
