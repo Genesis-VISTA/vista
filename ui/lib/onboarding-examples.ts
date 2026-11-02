@@ -18,42 +18,47 @@ export type ExampleFile = {
   opened?: TourEvent;
 };
 
-const REPORT = `# Hello report
+const REPORT = `# Sweep report
 
-The same hello job ran on Odo, Frontier and Lux. This is an example report: the agent writes
-reports like it to the project's outputs.
+This is an example. The agent writes reports like it to the project's outputs, here a
+made-up parameter sweep.
 
-## The three clusters
+## Runs
 
-| Cluster | Node | GPUs seen | ROCm module | Runtime | Checksum match |
-| --- | --- | --- | --- | --- | --- |
-| Odo | odo03 | 8 (MI250X GCDs) | rocm/6.2.4 | under 1 s | yes |
-| Frontier | frontier08454 | 8 (MI250X GCDs) | rocm/6.2.4 | 1 s | yes |
-| Lux | lux005 | 1 (MI355X) | rocm/7.2.4 | 1 s | yes |
+| Run | Input value | Result | Runtime |
+| --- | --- | --- | --- |
+| 1 | 0.1 | 2.0 | 10 s |
+| 2 | 0.2 | 3.5 | 11 s |
+| 3 | 0.3 | 4.1 | 10 s |
+| 4 | 0.4 | 3.2 | 12 s |
+| 5 | 0.5 | 1.8 | 11 s |
 
 ## Next steps
 
-- Ask the agent to adapt a hello skill to your own job.
-- Ask it to cite the OLCF docs behind the queue and module choices.
+- Ask the agent to rerun the sweep with a finer step.
+- Ask it to explain which input value gave the best result.
 `;
 
-const CLUSTERS_CSV = `cluster,scheduler,gpu
-odo,slurm,MI250X
-frontier,slurm,MI250X
-lux,slurm,MI355X
+const SWEEP_CSV = `run,input_value
+1,0.1
+2,0.2
+3,0.3
+4,0.4
+5,0.5
 `;
 
 /** A small bar chart. Named colours on a white plate, so it reads in both themes. */
 const CHART_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200" font-family="sans-serif" font-size="12">
 <rect width="360" height="200" fill="white"/>
-<text x="20" y="24" font-size="14" font-weight="bold" fill="black">Example: GPUs seen per cluster</text>
-<g fill="black"><text x="20" y="70">Odo</text><text x="20" y="110">Frontier</text><text x="20" y="150">Lux</text></g>
-<rect x="90" y="56" width="200" height="20" fill="steelblue"/>
-<rect x="90" y="96" width="200" height="20" fill="steelblue"/>
-<rect x="90" y="136" width="25" height="20" fill="steelblue"/>
-<g fill="black"><text x="296" y="70">8</text><text x="296" y="110">8</text><text x="121" y="150">1</text></g>
-<line x1="90" y1="44" x2="90" y2="170" stroke="dimgray"/>
-<text x="90" y="188" fill="dimgray">GPUs visible to the job</text>
+<text x="20" y="24" font-size="14" font-weight="bold" fill="black">Example: result per run</text>
+<line x1="40" y1="160" x2="340" y2="160" stroke="dimgray"/>
+<rect x="55" y="96" width="36" height="64" fill="steelblue"/>
+<rect x="115" y="48" width="36" height="112" fill="steelblue"/>
+<rect x="175" y="29" width="36" height="131" fill="steelblue"/>
+<rect x="235" y="58" width="36" height="102" fill="steelblue"/>
+<rect x="295" y="102" width="36" height="58" fill="steelblue"/>
+<g fill="black" text-anchor="middle"><text x="73" y="178">1</text><text x="133" y="178">2</text><text x="193" y="178">3</text><text x="253" y="178">4</text><text x="313" y="178">5</text></g>
+<text x="40" y="194" fill="dimgray">Run</text>
 </svg>`;
 
 function dataUrl(mime: string, text: string): string {
@@ -72,9 +77,9 @@ function example(kind: FileKind, name: string, mime: string, text: string, opene
 }
 
 export const EXAMPLE_FILES: readonly ExampleFile[] = [
-  example("outputs", "hello-report.md", "text/markdown", REPORT, "example-md-opened"),
-  example("outputs", "gpus-per-cluster.svg", "image/svg+xml", CHART_SVG, "example-image-opened"),
-  example("uploads", "clusters.csv", "text/csv", CLUSTERS_CSV),
+  example("outputs", "sweep-report.md", "text/markdown", REPORT, "example-md-opened"),
+  example("outputs", "sweep-results.svg", "image/svg+xml", CHART_SVG, "example-image-opened"),
+  example("uploads", "sweep-inputs.csv", "text/csv", SWEEP_CSV),
 ];
 
 /** The example at `kind` and `path`, if there is one. */

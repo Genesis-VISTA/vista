@@ -194,6 +194,10 @@ The UI can't import Python, so `ui/lib/default-project.ts` exports the project n
 A backend test reads that file and asserts it matches the seed constants. A rename then
 fails CI instead of silently breaking the tour.
 
+The files step's example report, chart and CSV are synthetic and name no cluster or
+hardware. Real hello-run figures were tried first, but a job's view is not the machine's
+(Lux's hello job is allocated one of a node's eight GPUs), and hardware figures go stale.
+
 ### 8. Measurable retrieval gate
 
 `scripts/olcf_docs/check_retrieval.py <rag_db>` runs about 20 questions from

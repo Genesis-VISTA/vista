@@ -245,7 +245,7 @@ test("files: the example image and report", async ({ page }) => {
   await card(page, "files:open-report");
   await page.locator('[data-tour="files:open-report"]').click();
   await card(page, "files:review", "files:preview");
-  await expect(page.getByRole("heading", { name: "Hello report" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sweep report" })).toBeVisible();
   await press(page);
   await card(page, "hpc:resources");
 });

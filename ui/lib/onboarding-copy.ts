@@ -225,15 +225,15 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "files:outputs": {
     title: "Outputs",
-    body: "What the agent writes. These are examples for the tour: a hello run's report and chart.",
+    body: "What the agent writes. These are examples for the tour: an example report and chart.",
   },
   "files:uploads": {
     title: "Uploads",
-    body: "What you give the agent, by Upload or drag and drop. clusters.csv is an example.",
+    body: "What you give the agent, by Upload or drag and drop. sweep-inputs.csv is an example.",
   },
   "files:open-chart": {
     title: "Preview a chart",
-    body: "Open gpus-per-cluster.svg.",
+    body: "Open sweep-results.svg.",
   },
   "files:chart-preview": {
     title: "Image preview",
@@ -241,7 +241,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "files:open-report": {
     title: "Preview a report",
-    body: "Now open hello-report.md.",
+    body: "Now open sweep-report.md.",
   },
   "files:review": {
     title: "Report preview",
