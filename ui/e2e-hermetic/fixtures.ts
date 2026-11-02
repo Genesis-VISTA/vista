@@ -232,6 +232,9 @@ export const COLLABORATION_STATUS = {
   signed_in: false,
   sign_in_required: false,
   sign_in_url: null,
+  user: null,
+  teams: [],
+  team_id: null,
 };
 
 export const ROUTES: Record<string, unknown> = {

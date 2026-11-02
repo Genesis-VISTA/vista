@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useCollaboration } from "@/lib/collaboration";
+import { emptyTeamNote, useCollaboration, useTeams } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamSwitcher";
 import { importAction } from "@/lib/skill-sharing";
 import {
   formatSize,
@@ -29,6 +30,7 @@ export function KnowledgeBaseImportModal({
   onImported: (result: KnowledgeBaseImported) => void;
 }) {
   const collab = useCollaboration();
+  const teams = useTeams();
   const [kbs, setKbs] = useState<RemoteKnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,6 +95,9 @@ export function KnowledgeBaseImportModal({
     else void runImport(kb);
   }
 
+  // Only the selected team's: Private has nothing on the server.
+  const shownKbs = kbs.filter((kb) => teams.show(kb.team_id));
+
   const renameError = renaming ? slugError(renaming.slug.trim()) : null;
 
   return (
@@ -126,20 +131,23 @@ export function KnowledgeBaseImportModal({
                   {error}
                 </div>
               )}
-              {loading && kbs.length === 0 && <div className="hub-count">Loading…</div>}
-              {!loading && kbs.length === 0 && !error && (
+              {loading && shownKbs.length === 0 && <div className="hub-count">Loading…</div>}
+              {!loading && shownKbs.length === 0 && !error && (
                 <div className="hub-empty">
-                  No knowledge bases have been published yet. Publish one from its page.
+                  {kbs.length > 0 ? emptyTeamNote(teams, "knowledge bases") : "No knowledge bases have been published yet. Publish one from its page."}
                 </div>
               )}
-              {kbs.map((kb) => {
+              {shownKbs.map((kb) => {
                 const action = importAction(kb);
                 const busy = busyId === kb.id;
                 const manifest = kb.manifest;
                 return (
                   <div key={kb.id} className="hub-card" data-testid="remote-knowledge-base">
                     <div className="hub-card-head">
-                      <div className="hub-card-name">{manifest?.name ?? kb.name}</div>
+                      <div className="hub-card-name">
+                        {manifest?.name ?? kb.name}
+                        <TeamBadge teamId={kb.team_id} />
+                      </div>
                       <button
                         type="button"
                         className={`hub-card-action${action.kind === "current" ? " loaded" : ""}`}

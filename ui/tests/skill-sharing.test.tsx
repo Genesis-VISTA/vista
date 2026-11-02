@@ -22,7 +22,7 @@ import type { SkillSummary } from "@/lib/types";
 
 const { project } = vi.hoisted(() => ({
   project: {
-    current: null as null | { id: string; name: string; skills: string[] },
+    current: null as null | { id: string; name: string; teamId?: string | null; skills: string[] },
   },
 }));
 vi.mock("@/lib/projects", () => ({
@@ -52,6 +52,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     signed_in: true,
     sign_in_required: false,
     sign_in_url: null,
+    user: null,
+    teams: [],
+    team_id: null,
     ...overrides,
   };
 }
@@ -59,6 +62,7 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
 function remote(overrides: Partial<RemoteSkill> = {}): RemoteSkill {
   return {
     id: "11111111-1111-4111-8111-111111111111",
+    team_id: "00000000-0000-4000-8000-000000000000",
     name: "vllm-lux",
     head_version: 1,
     created_by_name: "Bea",
@@ -90,6 +94,8 @@ function local(overrides: Partial<SkillSummary> = {}): SkillSummary {
     remoteId: null,
     remoteVersion: null,
     modified: true,
+    // In the public team: a private one is copied to a team, not published.
+    teamId: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };
 }
@@ -107,7 +113,7 @@ const fetchMock = vi.fn();
 
 beforeEach(() => {
   resetCollaborationForTests();
-  project.current = { id: "p1", name: "molten-salt", skills: [] };
+  project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: [] };
   routes = { "GET /api/collaboration/status": () => json(status()) };
   fetchMock.mockReset();
   fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -138,6 +144,8 @@ describe("sharingLabel", () => {
     expect(sharingLabel(published, SERVER)).toBe("Version 2");
     expect(sharingLabel({ ...published, modified: true }, SERVER)).toBe("Changed here since version 2");
     expect(sharingLabel(published, SERVER, 3)).toBe("Version 3 available (this is version 2)");
+    // Bundled, and copied to a team: its team's copy, at a version like any other.
+    expect(sharingLabel({ ...published, bundled: true }, SERVER)).toBe("Version 2");
     expect(sharingLabel(published, "http://other:8002")).toBe(
       "Published on another collaboration server",
     );
@@ -261,7 +269,7 @@ describe("the Skill Hub", () => {
 describe("the Skills page", () => {
   it("offers the three choices when the server's head has moved on", async () => {
     const mine = local({ originServer: SERVER, remoteId: remote().id, remoteVersion: 1, modified: true });
-    project.current = { id: "p1", name: "molten-salt", skills: ["salt-density"] };
+    project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: ["salt-density"] };
     routes["GET /api/skills"] = () => json([mine]);
     // Only the head versions: the page shows no manifests.
     routes["GET /api/collaboration/skills?manifests=false"] = () =>
@@ -297,14 +305,17 @@ describe("the Skills page", () => {
   it("keeps Publish off without a server, with the reason", async () => {
     const reason = "The collaboration server at http://127.0.0.1:8002 is not answering.";
     routes["GET /api/collaboration/status"] = () => json(status({ reachable: false, reason }));
-    project.current = { id: "p1", name: "molten-salt", skills: [] };
+    project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: [] };
     routes["GET /api/skills"] = () => json([local(), local({ slug: "salt-analysis", name: "salt-analysis", bundled: true })]);
     render(<SkillsPage />);
-    const publish = await screen.findByRole("button", { name: "Publish" });
-    await waitFor(() => expect(publish).toHaveAttribute("title", reason));
-    expect(publish).toBeDisabled();
-    // A bundled skill is never published, but can be loaded.
-    expect(screen.getAllByRole("button", { name: "Publish" })).toHaveLength(1);
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: "Publish" })).toHaveLength(2),
+    );
+    // A bundled skill in a team publishes like any other.
+    for (const publish of screen.getAllByRole("button", { name: "Publish" })) {
+      await waitFor(() => expect(publish).toHaveAttribute("title", reason));
+      expect(publish).toBeDisabled();
+    }
     expect(screen.getAllByRole("button", { name: "Load" })).toHaveLength(2);
     // Nor deleted: it ships with VISTA.
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);

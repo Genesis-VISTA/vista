@@ -6,6 +6,7 @@ inference keys, cluster credentials, repository tokens, the research profile —
 lives on `LocalSettingsTable`, made at startup by `ensure`.
 """
 
+import uuid
 from typing import Annotated as A
 
 from fastapi import Depends
@@ -50,12 +51,21 @@ async def update(
 ) -> LocalSettingsTable:
     row = await get(session)
     changes = updates.model_dump(exclude_unset=True)
+    changed = set(changes)
     if (
         "collaboration_server_url" in changes
         and changes["collaboration_server_url"] != row.collaboration_server_url
     ):
-        # The token is the old server's: never send it to the new one.
+        # The token is the old address's: never send it to the new one.
         row.collaboration_token = None
+        # The selected team is a team on the server in effect, which only
+        # changes when the address does (a blank one falls back to the
+        # installation's). Projects, skills and knowledge bases keep their
+        # teams: each records its team's server (`teams.team_of`).
+        before = row.collaboration_server_url or settings.collaboration_server_url
+        after = changes["collaboration_server_url"] or settings.collaboration_server_url
+        if before != after:
+            row.collaboration_team_id = None
     for key in WRITE_ONLY_TOKENS:
         # Write-only: null keeps the stored token (the client never has it to
         # send back), "" removes it.
@@ -68,12 +78,24 @@ async def update(
     session.add(row)
     await session.flush()
     await session.refresh(row)
-    # Every agent was built from these settings. Imported here because the
-    # agent pool reads this module to build an agent.
-    from .project_agent import invalidate_agents
+    if changed - {"collaboration_team_id"}:
+        # Every agent was built from these settings (the team is not one they
+        # read). Imported here because the agent pool reads this module to
+        # build an agent.
+        from .project_agent import invalidate_agents
 
-    invalidate_agents(session)
+        invalidate_agents(session)
     return row
+
+
+async def selected_team(
+    session: AsyncSession, row: LocalSettingsTable | None = None
+) -> uuid.UUID | None:
+    """
+    The team a new project, skill or knowledge base joins: the one selected
+    here. `row` is the settings row, when the caller has read it already.
+    """
+    return (row or await get(session)).collaboration_team_id
 
 
 def to_public(row: LocalSettingsTable) -> LocalSettingsPublic:

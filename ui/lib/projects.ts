@@ -26,6 +26,13 @@ export interface ProjectSharing {
   remoteVersion: number | null;
   /** Changed here since `remoteVersion` (always true for one never published). */
   modified: boolean;
+  /**
+   * Its collaboration team; null when private (on this computer only). Set
+   * when it is made (the team selected then), imported (its item's) or copied
+   * to a team, never by a save. It uses only skills and knowledge bases of
+   * exactly this team.
+   */
+  teamId?: string | null;
 }
 
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
@@ -87,6 +94,7 @@ export function fromPublic(p: ProjectPublic): Project {
     remoteId: p.remote_id ?? null,
     remoteVersion: p.remote_version ?? null,
     modified: p.modified ?? true,
+    teamId: p.team_id ?? null,
   };
 }
 

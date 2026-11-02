@@ -13,8 +13,9 @@ names itself with two headers, its install id and its researcher's display
 name, and is believed. That is no security at all, which is why the server
 will only listen on loopback with it.
 
-Either way a route gets a `User`. Every signed-in user may read and write
-everything; who may change what is decided later, from `User.sub`.
+Either way a route gets a `User`, and the server records them (`users.py`), so
+that a team's members can find them and add them. What they may see and change
+is their teams' business (`teams.py`).
 """
 
 import uuid
@@ -27,6 +28,7 @@ from fastapi import Depends, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..config import CollabSettings
+from . import users
 
 INSTALL_ID_HEADER = "X-Vista-Install-Id"
 DISPLAY_NAME_HEADER = "X-Vista-Display-Name"
@@ -153,7 +155,9 @@ async def get_user(
         if install is None:
             raise _unauthorized(f"Send {INSTALL_ID_HEADER} to use this server.")
         name = unquote(display_name).strip() if display_name else ""
-        return User(sub=str(install), email=None, name=name or None, install_id=install)
+        user = User(sub=str(install), email=None, name=name or None, install_id=install)
+        await users.record(request.app, user)
+        return user
 
     token = bearer_token(authorization)
     if token is None:
@@ -169,12 +173,14 @@ async def get_user(
         install = _install_id(install_id)
     except HTTPException:
         install = None
-    return User(
+    user = User(
         sub=str(claims["sub"]),
         email=claims.get("email"),
         name=claims.get("name") or claims.get("preferred_username"),
         install_id=install,
     )
+    await users.record(request.app, user)
+    return user
 
 
 UserDep = A[User, Depends(get_user)]

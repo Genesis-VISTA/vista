@@ -11,6 +11,7 @@ import shutil
 import uuid
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client
@@ -37,7 +38,7 @@ from vista_backend.services.project_collaboration import (
 )
 from vista_backend.services.skill_collaboration import SkillManifest, pack_skill
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("in_public_team")]
 
 URL = "http://collab.test:8002"
 
@@ -116,6 +117,7 @@ async def _publish_skill_elsewhere(tmp_path, name: str, body: str = "Theirs."):
         item = await client.create_item(
             "skill",
             name,
+            team_id=PUBLIC_TEAM_ID,
             manifest=SkillManifest(
                 name=name, description=f"The {name} skill."
             ).model_dump(),
@@ -157,7 +159,7 @@ def _manifest(name: str = "salt-lab", **fields) -> dict:
 async def _publish_project_elsewhere(name: str = "salt-lab", **fields) -> uuid.UUID:
     async with _other_install() as client:
         item = await client.create_item(
-            "project", name, manifest=_manifest(name, **fields)
+            "project", name, team_id=PUBLIC_TEAM_ID, manifest=_manifest(name, **fields)
         )
     return item.id
 
@@ -289,7 +291,7 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         result["status"],
         result["skills_published"],
         result["knowledge_bases_published"],
-    ) == ("published", ["salt-density"], ["salt-papers"])
+    ) == ("published", ["salt-density", "salt-analysis"], ["salt-papers"])
     published = result["project"]
     assert published["id"] == str(project.id)
     assert (
@@ -301,6 +303,8 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
     skill = await _skill_row(session, "salt-density")
     assert (skill.remote_version, skill.modified) == (1, False)
     skill_id = skill.remote_id
+    # Bundled with VISTA, and published like any other: the team's copy of it.
+    bundled_id = (await _skill_row(session, "salt-analysis")).remote_id
     kb = await _kb_row(session, "salt-papers")
     assert (kb.remote_version, kb.modified) == (1, False)
     kb_id = kb.remote_id
@@ -309,7 +313,7 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         manifest = (await other.get_version(item.id, 1)).manifest
     assert (item.kind, item.name, item.created_by_name) == ("project", "salt", "Ada")
     assert manifest == {
-        "format": 2,
+        "format": 3,
         "name": "salt",
         "description": None,
         "system_prompt": "Use SI units.",
@@ -319,15 +323,13 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         "skills": [
             {
                 "name": "salt-density",
-                "bundled": False,
                 "remote_id": str(skill_id),
                 "version": 1,
             },
             {
                 "name": "salt-analysis",
-                "bundled": True,
-                "remote_id": None,
-                "version": None,
+                "remote_id": str(bundled_id),
+                "version": 1,
             },
         ],
         "knowledge_bases": [
@@ -528,8 +530,6 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     item_id = await _publish_project_elsewhere(
         skills=[
             SkillRef(name="vllm-lux", remote_id=skill_id, version=1),
-            SkillRef(name="salt-analysis", bundled=True),
-            SkillRef(name="their-own-bundled", bundled=True),
         ],
         knowledge_bases=[
             KnowledgeBaseRef(slug="salt-papers", remote_id=kb_id, version=1)
@@ -543,8 +543,6 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     assert result["status"] == "imported"
     assert [(s["name"], s["status"]) for s in result["skills"]] == [
         ("vllm-lux", "imported"),
-        ("salt-analysis", "unchanged"),
-        ("their-own-bundled", "missing"),
     ]
     assert [(k["slug"], k["status"]) for k in result["knowledge_bases"]] == [
         ("salt-papers-2", "imported"),
@@ -561,9 +559,7 @@ async def test_importing_a_project_imports_its_skills(collab_server, session, tm
     ) == (
         "salt-lab",
         "Be careful.",
-        # A bundled skill this VISTA lacks is still named: the next version
-        # must not lose it.
-        ["vllm-lux", "salt-analysis", "their-own-bundled"],
+        ["vllm-lux"],
         ["salt-papers-2"],
         ["*", "!agenthpc_*"],
         40,
@@ -592,7 +588,9 @@ async def test_an_import_never_takes_an_id_from_elsewhere(collab_server, session
     here = await seed_project(session, name="salt")
     manifest = {**_manifest("salt-lab"), "id": str(here.id)}
     async with _other_install() as other:
-        item = await other.create_item("project", "salt-lab", manifest=manifest)
+        item = await other.create_item(
+            "project", "salt-lab", team_id=PUBLIC_TEAM_ID, manifest=manifest
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/projects/{item.id}/import", json={})
     assert res.status_code == 200, res.text
@@ -720,7 +718,9 @@ async def test_an_item_that_is_not_a_project_is_not_imported(
     await _use_server(session)
     skill_id = await _publish_skill_elsewhere(tmp_path, "vllm-lux")
     async with _other_install() as other:
-        unreadable = await other.create_item("project", "odd", manifest={"format": 9})
+        unreadable = await other.create_item(
+            "project", "odd", team_id=PUBLIC_TEAM_ID, manifest={"format": 9}
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/projects/{skill_id}/import", json={})
         odd = await client.post(
@@ -838,67 +838,17 @@ async def test_a_project_that_cannot_be_imported_imports_no_skill(
     assert await _skill_row(session, "vllm-lux") is None
 
 
-async def test_a_bundled_skill_this_vista_lacks_is_published_as_bundled_again(
-    collab_server, session
-):
-    """The import kept its name; a publish from here keeps the reference."""
-    await _use_server(session)
-    item_id = await _publish_project_elsewhere(
-        skills=[SkillRef(name="their-own-bundled", bundled=True)]
-    )
-    with api_client(session) as (client, _):
-        project = (
-            await client.post(f"/collaboration/projects/{item_id}/import", json={})
-        ).json()["project"]
-        await _put(
-            client, session, "salt-lab", {**_body(project), "system_prompt": "Mine."}
-        )
-        res = await client.post("/projects/salt-lab/publish", json={})
-    assert res.status_code == 200, res.text
-    async with _other_install() as other:
-        manifest = (await other.get_version(item_id, 2)).manifest
-    assert manifest["skills"] == [
-        {
-            "name": "their-own-bundled",
-            "bundled": True,
-            "remote_id": None,
-            "version": None,
-        }
-    ]
-    assert manifest["system_prompt"] == "Mine."
-
-
-async def test_a_bundled_skill_shadowed_here_leaves_the_project_modified(
-    collab_server, session
-):
-    """The one reference an import loses, so a publish from here would drop it."""
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        await client.post("/skills", json=_skill("salt-analysis"))  # not bundled
-    item_id = await _publish_project_elsewhere(
-        skills=[SkillRef(name="salt-analysis", bundled=True)]
-    )
-    with api_client(session) as (client, _):
-        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
-    assert res.status_code == 200, res.text
-    assert [(s["name"], s["status"]) for s in res.json()["skills"]] == [
-        ("salt-analysis", "missing")
-    ]
-    assert (res.json()["project"]["skills"], res.json()["project"]["modified"]) == (
-        [],
-        True,
-    )
-
-
 async def test_a_skill_reference_must_be_a_skill_name(collab_server, session):
-    """A bundled name is kept on the project and names a folder: never a path."""
+    """A skill's name is kept on the project and names a folder: never a path."""
     await _use_server(session)
     manifest = _manifest()
     manifest["skills"] = [
-        {"name": "../../outside", "bundled": True, "remote_id": None, "version": None}
+        {"name": "../../outside", "remote_id": str(uuid.uuid4()), "version": 1}
     ]
     async with _other_install() as other:
-        item = await other.create_item("project", "salt-lab", manifest=manifest)
+        item = await other.create_item(
+            "project", "salt-lab", team_id=PUBLIC_TEAM_ID, manifest=manifest
+        )
     with api_client(session) as (client, _):
         listed = (await client.get("/collaboration/projects")).json()
         res = await client.post(f"/collaboration/projects/{item.id}/import", json={})
@@ -948,7 +898,7 @@ async def test_a_knowledge_base_not_here_stops_the_publish_before_anything_is_se
 async def test_a_knowledge_base_deleted_here_is_carried_from_the_version(
     collab_server, session, tmp_path
 ):
-    """Like a bundled skill this VISTA lacks: the next version must not lose it."""
+    """The next version must not lose it."""
     await _use_server(session)
     async with _other_install() as other:
         kb_id = await publish_kb_elsewhere(other, tmp_path, "salt-papers")
@@ -1049,7 +999,8 @@ async def test_a_project_import_fetches_each_knowledge_base_version_once(
         res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
     assert res.status_code == 200, res.text
     assert [k["status"] for k in res.json()["knowledge_bases"]] == ["imported"]
-    assert [kind for kind, i in calls if i == kb_id] == ["version"]
+    # The version once; the item only for the team the copy here joins.
+    assert [kind for kind, i in calls if i == kb_id] == ["version", "item"]
 
 
 async def test_a_newer_copy_of_a_knowledge_base_is_kept(
@@ -1101,49 +1052,6 @@ async def test_an_older_copy_of_a_knowledge_base_is_updated(
     assert (outcome["slug"], outcome["status"]) == ("salt-papers", "updated")
     assert res.json()["project"]["knowledge_bases"] == ["salt-papers"]
     assert (await _kb_row(session, "salt-papers")).remote_version == 2
-
-
-async def test_a_seeded_knowledge_base_is_the_copy_here_not_a_duplicate(
-    collab_server, session
-):
-    from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
-    from vista_backend.services.knowledge_base_collaboration import KB_KIND
-
-    await _use_server(session)
-    kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
-    make_kb(kb_dir)
-    seed = seed_item_id(
-        MOLTEN_SALT_KB_ID, "The molten-salt-papers papers", None, kb_dir / "pdfs"
-    )
-    session.add(
-        kb_row(
-            kb_dir,
-            "molten-salt-papers",
-            id=MOLTEN_SALT_KB_ID,
-            modified=False,
-            seed_item=seed,
-        )
-    )
-    await session.commit()
-    # Another installation, which seeded the same corpus, published a project on it.
-    async with _other_install() as other:
-        await other.create_item(
-            KB_KIND, "molten-salt-papers", manifest={}, item_id=seed
-        )
-    item_id = await _publish_project_elsewhere(
-        knowledge_bases=[
-            KnowledgeBaseRef(slug="molten-salt-papers", remote_id=seed, version=1)
-        ]
-    )
-    with api_client(session) as (client, _):
-        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
-    assert res.status_code == 200, res.text
-    [outcome] = res.json()["knowledge_bases"]
-    assert (outcome["slug"], outcome["status"]) == ("molten-salt-papers", "unchanged")
-    assert res.json()["project"]["knowledge_bases"] == ["molten-salt-papers"]
-    kb = await _kb_row(session, "molten-salt-papers")
-    assert (kb.remote_id, kb.remote_version, kb.modified) == (seed, 1, False)
-    assert list(kb_dir.glob("store-*")) == []
 
 
 async def test_a_knowledge_base_that_needs_a_choice_stops_the_import(

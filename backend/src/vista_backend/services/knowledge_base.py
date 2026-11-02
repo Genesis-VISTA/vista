@@ -20,6 +20,7 @@ from ..db.schemas import (
     is_valid_slug,
 )
 from ..utils import indexer
+from .teams import set_team, team_for_new
 
 
 CURRENT_STORE_FILE = "CURRENT"
@@ -182,6 +183,13 @@ async def create_kb(
         created_at=now,
         updated_at=now,
     )
+    project = None
+    if payload.project is not None:
+        # Imported here: `project` reaches the agents, which reach this module.
+        from .project import get_project_by_name
+
+        project = await get_project_by_name(session, payload.project)
+    set_team(row, *await team_for_new(session, project))
     session.add(row)
     await session.flush()
     await session.refresh(row)

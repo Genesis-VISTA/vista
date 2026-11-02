@@ -33,6 +33,8 @@ export type KnowledgeBaseManifest = {
 /** A knowledge base on the collaboration server (backend `RemoteKnowledgeBase`). */
 export type RemoteKnowledgeBase = {
   id: string;
+  /** The team it is in on the server, the public team's id included. */
+  team_id: string;
   /** The publisher's slug. */
   name: string;
   head_version: number;

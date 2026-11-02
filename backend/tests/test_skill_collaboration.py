@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client, seed_project
@@ -27,7 +28,7 @@ from vista_backend.services.skill_collaboration import (
     unpack_skill,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("in_public_team")]
 
 URL = "http://collab.test:8002"
 
@@ -81,6 +82,7 @@ async def _publish_elsewhere(tmp_path, name: str, body: str = "Theirs.") -> uuid
         item = await client.create_item(
             "skill",
             name,
+            team_id=PUBLIC_TEAM_ID,
             manifest=SkillManifest(
                 name=name, description=f"The {name} skill."
             ).model_dump(),
@@ -404,9 +406,14 @@ async def test_an_edit_made_while_publishing_stays_modified(
     assert (res.json()["remote_version"], res.json()["modified"]) == (1, True)
 
 
-async def test_a_bundled_skill_is_neither_published_nor_deleted(collab_server, session):
-    """Some bundled skills' data is fetched only by the first seeding, so a
-    deleted one would never come back."""
+async def test_a_bundled_skill_is_published_like_any_other_but_not_deleted(
+    collab_server, session
+):
+    """
+    A bundled skill is the team's copy of it once published. Some bundled
+    skills' data is fetched only by the first seeding, so a deleted one would
+    never come back.
+    """
     await _use_server(session)
     with api_client(session) as (client, _):
         await client.post("/skills", json=SKILL)
@@ -416,8 +423,8 @@ async def test_a_bundled_skill_is_neither_published_nor_deleted(collab_server, s
         await session.commit()
         res = await client.post("/skills/salt-density/publish", json={})
         deleted = await client.delete("/skills/salt-density")
-    assert res.status_code == 409
-    assert "bundled" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    assert res.json()["remote_version"] == 1
     assert deleted.status_code == 409
     assert await _row(session, "salt-density") is not None
 
@@ -669,7 +676,9 @@ async def test_an_older_version_can_be_imported(collab_server, session, tmp_path
 async def test_an_item_that_is_not_a_skill_is_not_imported(collab_server, session):
     await _use_server(session)
     async with _other_install() as other:
-        item = await other.create_item("project", "p", manifest={})
+        item = await other.create_item(
+            "project", "p", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
     with api_client(session) as (client, _):
         res = await client.post(f"/collaboration/skills/{item.id}/import", json={})
     assert res.status_code == 400

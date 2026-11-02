@@ -8,6 +8,7 @@ import uuid
 
 import httpx
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from pydantic import ValidationError
 
 from harness.api import api_client
@@ -148,6 +149,9 @@ async def test_the_status_route_without_a_server(session):
         "signed_in": False,
         "sign_in_required": False,
         "sign_in_url": None,
+        "user": None,
+        "teams": [],
+        "team_id": None,
     }
 
 
@@ -279,7 +283,7 @@ async def test_a_publish_is_never_turned_into_a_get_by_a_redirect(
     local = await _set_url(session, URL)
     async with collaboration.client_for(local) as client:
         with pytest.raises(CollaborationUnavailable, match="redirects to"):
-            await client.create_item("skill", "x", manifest={})
+            await client.create_item("skill", "x", team_id=PUBLIC_TEAM_ID, manifest={})
         with pytest.raises(CollaborationUnavailable, match="redirects to"):
             await client.download_blob(
                 uuid.uuid4(), 1, tmp_path / "d", blob_ref="0" * 64
@@ -301,7 +305,11 @@ async def test_publish_and_import_round_trip(collab_server, session, tmp_path):
     async with collaboration.client_for(local) as client:
         ref = await client.upload_blob(archive)
         item = await client.create_item(
-            "skill", "salt-analysis", manifest={"name": "salt-analysis"}, blob_ref=ref
+            "skill",
+            "salt-analysis",
+            team_id=PUBLIC_TEAM_ID,
+            manifest={"name": "salt-analysis"},
+            blob_ref=ref,
         )
         assert item.created_by == str(local.install_id)
         assert item.created_by_name == "Ångström 安"
@@ -338,7 +346,9 @@ async def test_a_download_must_be_the_version_published(
     archive.write_bytes(b"the bytes published")
     async with collaboration.client_for(local) as client:
         ref = await client.upload_blob(archive)
-        item = await client.create_item("skill", "x", manifest={}, blob_ref=ref)
+        item = await client.create_item(
+            "skill", "x", team_id=PUBLIC_TEAM_ID, manifest={}, blob_ref=ref
+        )
         dest = tmp_path / "imported" / "skill.tar.gz"
         with pytest.raises(CollaborationError, match="does not match"):
             await client.download_blob(item.id, 1, dest, blob_ref="0" * 64)
@@ -356,7 +366,7 @@ async def test_a_large_blob_is_streamed_up(
     async with collaboration.client_for(local) as client:
         ref = await client.upload_large_blob(archive)
         item = await client.create_item(
-            "knowledge-base", "x", manifest={}, blob_ref=ref
+            "knowledge-base", "x", team_id=PUBLIC_TEAM_ID, manifest={}, blob_ref=ref
         )
         dest = tmp_path / "back.tar"
         await client.download_blob(item.id, 1, dest, blob_ref=ref)
@@ -369,8 +379,12 @@ async def test_client_refusals_are_named(collab_server, session, tmp_path):
         with pytest.raises(CollaborationError, match="404"):
             await client.get_item(uuid.uuid4())
         with pytest.raises(CollaborationRefused, match="422.*No blob"):
-            await client.create_item("skill", "x", manifest={}, blob_ref="0" * 64)
-        item = await client.create_item("skill", "x", manifest={})
+            await client.create_item(
+                "skill", "x", team_id=PUBLIC_TEAM_ID, manifest={}, blob_ref="0" * 64
+            )
+        item = await client.create_item(
+            "skill", "x", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
         dest = tmp_path / "none"
         with pytest.raises(CollaborationError, match="no blob"):
             await client.download_blob(item.id, 1, dest, blob_ref="0" * 64)
@@ -402,7 +416,7 @@ async def test_an_answer_the_client_cannot_read_is_a_collaboration_error(
             client.list_items(),
             client.get_item(uuid.uuid4()),
             client.upload_blob(blob),
-            client.create_item("skill", "x", manifest={}),
+            client.create_item("skill", "x", team_id=PUBLIC_TEAM_ID, manifest={}),
         ):
             with pytest.raises(CollaborationError, match="does not understand"):
                 await call
@@ -421,7 +435,9 @@ async def test_a_validation_error_names_what_was_wrong(collab_server, session):
     local = await _set_url(session, URL)
     async with collaboration.client_for(local) as client:
         with pytest.raises(CollaborationRefused, match="422.*String should match"):
-            await client.create_item("Not A Kind", "x", manifest={})
+            await client.create_item(
+                "Not A Kind", "x", team_id=PUBLIC_TEAM_ID, manifest={}
+            )
 
 
 async def test_a_failed_download_by_conflict_is_a_conflict(
@@ -449,7 +465,9 @@ async def test_local_file_errors_are_collaboration_errors(
     async with collaboration.client_for(local) as client:
         with pytest.raises(CollaborationError, match="Could not read"):
             await client.upload_blob(tmp_path / "missing.tar.gz")
-        item = await client.create_item("skill", "x", manifest={})
+        item = await client.create_item(
+            "skill", "x", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
         with pytest.raises(CollaborationError, match="Could not write"):
             await client.download_blob(
                 item.id, 1, blocker / "inside" / "d", blob_ref="0" * 64

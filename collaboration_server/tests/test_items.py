@@ -13,7 +13,7 @@ from vista_collaboration_server.api.app import _is_loopback, create_app
 from vista_collaboration_server.config import CollabSettings
 from vista_collaboration_server.services.identity import DISPLAY_NAME_HEADER
 
-from conftest import INSTALL_ID, OTHER_INSTALL_ID, headers
+from conftest import INSTALL_ID, OTHER_INSTALL_ID, PUBLIC, headers
 
 pytestmark = pytest.mark.anyio
 
@@ -26,6 +26,7 @@ async def _create(
         json={
             "kind": kind,
             "name": name,
+            "team_id": PUBLIC,
             "manifest": {"v": 1} if manifest is None else manifest,
             "blob_ref": blob_ref,
         },
@@ -102,19 +103,18 @@ async def test_an_item_is_created_with_its_first_version(client):
     assert versions[0]["created_by"] == str(INSTALL_ID)
 
 
-async def test_an_item_can_be_created_with_an_id_of_the_clients(client, anon):
-    chosen = uuid.uuid4()
-    body = {"id": str(chosen), "kind": "knowledge-base", "name": "kb", "manifest": {}}
+async def test_the_server_chooses_an_items_id(client):
+    chosen = str(uuid.uuid4())
+    body = {
+        "id": chosen,
+        "kind": "skill",
+        "name": "x",
+        "team_id": PUBLIC,
+        "manifest": {},
+    }
     res = await client.post("/items", json=body)
     assert res.status_code == 201, res.text
-    assert res.json()["id"] == str(chosen)
-    again = await client.post("/items", json={**body, "manifest": {"n": 2}})
-    assert again.status_code == 409
-    # The first is untouched, and the server still works after the refusal.
-    versions = (await client.get(f"/items/{chosen}/versions")).json()
-    assert [v["manifest"] for v in versions] == [{}]
-    assert len((await client.get("/items")).json()) == 1
-    await _item(client)
+    assert res.json()["id"] != chosen
 
 
 async def test_list_items_filters_by_kind(client):
@@ -131,9 +131,10 @@ async def test_list_items_filters_by_kind(client):
 @pytest.mark.parametrize(
     "body",
     [
-        {"kind": "Skill", "name": "x", "manifest": {}},
-        {"kind": "skill", "name": "   ", "manifest": {}},
-        {"kind": "", "name": "x", "manifest": {}},
+        {"kind": "Skill", "name": "x", "team_id": PUBLIC, "manifest": {}},
+        {"kind": "skill", "name": "   ", "team_id": PUBLIC, "manifest": {}},
+        {"kind": "", "name": "x", "team_id": PUBLIC, "manifest": {}},
+        {"kind": "skill", "name": "x", "manifest": {}},
         {"kind": "skill", "name": "x"},
     ],
 )
@@ -313,7 +314,7 @@ async def test_reads_need_an_install_id_too(client, anon):
 async def test_an_install_id_that_is_not_a_uuid_is_400(anon):
     res = await anon.post(
         "/items",
-        json={"kind": "skill", "name": "x", "manifest": {}},
+        json={"kind": "skill", "name": "x", "team_id": PUBLIC, "manifest": {}},
         headers={"X-Vista-Install-Id": "me"},
     )
     assert res.status_code == 400
@@ -364,7 +365,14 @@ async def test_only_the_servers_own_tables_are_created(app, settings):
             r[0]
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert names == {"item", "item_version"}
+    assert names == {
+        "item",
+        "item_version",
+        "team",
+        "team_member",
+        "user",
+        "blob_upload",
+    }
     assert "item" not in SQLModel.metadata.tables
 
 

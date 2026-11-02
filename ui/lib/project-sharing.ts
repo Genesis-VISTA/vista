@@ -46,6 +46,8 @@ export type ProjectManifest = {
 /** A project on the collaboration server (backend `RemoteProject`). */
 export type RemoteProject = {
   id: string;
+  /** The team it is in on the server, the public team's id included. */
+  team_id: string;
   name: string;
   head_version: number;
   created_by_name: string | null;

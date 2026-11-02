@@ -46,6 +46,8 @@ export type SkillSharing = {
   remoteVersion?: number | null;
   /** Changed here since `remoteVersion` (or never published). */
   modified?: boolean;
+  /** Its collaboration team; null when private (on this computer only). */
+  teamId?: string | null;
 };
 
 export type SkillDetail = {
@@ -212,6 +214,8 @@ export type KnowledgeBase = {
   remote_version?: number | null;
   /** Changed here since `remote_version` (true for one never published). */
   modified?: boolean;
+  /** Its collaboration team; null when private (on this computer only). */
+  team_id?: string | null;
 };
 
 /** Trimmed shape returned by `GET /api/knowledge-bases`. */

@@ -46,6 +46,13 @@ def main() -> None:
         blob = step("POST /blobs/stream", http.post("/blobs/stream", content=body))
         assert blob["blob_ref"] == hashlib.sha256(body).hexdigest()
 
+        # A team of the tester's own, so smoke tests stay out of the public team.
+        team_name = f"smoke-test-{me['sub'][:8]}"
+        team = next((t for t in me["teams"] if t["name"] == team_name), None)
+        if team is None:
+            team = step("POST /teams", http.post("/teams", json={"name": team_name}))
+        print(f"     publishing to team {team['name']} ({team['id']})")
+
         item = step(
             "POST /items",
             http.post(
@@ -53,6 +60,7 @@ def main() -> None:
                 json={
                     "kind": "smoke-test",
                     "name": f"smoke test by {me['name'] or me['sub']}",
+                    "team_id": team["id"],
                     "manifest": {"at": time.time()},
                     "blob_ref": blob["blob_ref"],
                 },

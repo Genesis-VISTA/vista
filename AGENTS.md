@@ -141,8 +141,18 @@ A generic item/version API, deployed on the Holly testbed behind Obsidian's gate
 README's Deployment section). Authentication is `services/identity.py`, the one place it
 lives: `auth_mode=oidc` (the default) verifies a Keycloak token itself, as well as the gateway;
 `dev-headers` trusts `X-Vista-Install-Id` / `X-Vista-Display-Name` and only listens on loopback.
-Every signed-in user can read and write everything for now; routes get a `User` (`sub`, `email`,
-`name`) for access control to be decided from later.
+Access is by team (`services/teams.py`): every item is in one team, and a team's items are
+`404` to anyone not in it. Everyone is in the public team, which has no member rows and starts
+empty; the server holds no seeds. The server chooses every item's id, and copies an item into
+another team as a new one sharing its blob (`POST /items/{id}/copy`). Every item query filters
+through `teams.visible_teams`, as a condition rather than a set read first, so a publish
+checks it in its compare-and-set. On the backend every project, skill and knowledge base has a
+`team_id`, None being private (this computer only: everything made with Private selected, and
+everything VISTA seeds or bundles; `services/teams.py` there). A new one joins the selected
+team (`collaboration_team_id`), or its project's when made for one; an import joins its item's;
+a project uses only its own team's; a private one is not published but copied to a team
+(`services/team_copy.py`, recursively for a project). A row records its team's server too
+(`team_server`): on another server it is private, until that one is in effect again.
 ```bash
 ./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
 cd collaboration_server && uv run vista-collaboration-server

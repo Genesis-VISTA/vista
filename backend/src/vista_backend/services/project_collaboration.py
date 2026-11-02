@@ -5,9 +5,9 @@ listing the server's, and importing one with the skill versions it names.
 A project is an item of kind `project` whose versions have a manifest and no
 blob. The manifest is built field by field from `ProjectPublic` (never by
 serializing the table row, which carries ids and collaboration state), and
-names each skill the project loads by reference: an item and version on the
-same server, or `bundled` for a skill every installation ships with. Each
-knowledge base it searches is a reference too, an item and version.
+names each skill the project loads, and each knowledge base it searches, by
+reference: an item and version on the same server, in the project's team. A
+skill bundled with VISTA is no exception: it is published as the team's copy.
 
 Publishing publishes every skill and knowledge base the project uses that is not
 on the server in effect or has changed since (`skill_collaboration.publish_skill`,
@@ -23,7 +23,7 @@ import uuid
 from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -76,12 +76,15 @@ from .skill_collaboration import (
     reread,
 )
 from .skills import get_skill, get_skill_optional
+from .teams import check_references, require_team, set_team, team_of
+
 
 PROJECT_KIND = "project"
-MANIFEST_FORMAT = 2
+MANIFEST_FORMAT = 3
 """
 Bumped when a project manifest changes meaning; another format is not imported.
 2: knowledge bases are references (`KnowledgeBaseRef`), not slugs.
+3: every skill is an item and version; none is named as bundled.
 """
 
 
@@ -113,28 +116,16 @@ class ProjectConflict(SharingConflict):
 
 
 class SkillRef(BaseModel):
-    """
-    A skill a published project loads: a version of a `skill` item on the same
-    server, or a skill bundled with VISTA, by name.
-    """
+    """A skill a published project loads: a version of a `skill` item on the same server."""
 
     name: Annotated[str, Field(pattern=SKILL_NAME_PATTERN)]
     """
-    Its name in the publisher's project: for a bundled skill, which one; for
-    any other, only a label, as the item and version say which. A skill name,
-    so never a path: a project may keep it, and it names a folder.
+    Its name in the publisher's project: only a label, as the item and version
+    say which. A skill name, so never a path: a project may keep it, and it
+    names a folder.
     """
-    bundled: bool = False
-    remote_id: uuid.UUID | None = None
-    version: int | None = Field(default=None, ge=1)
-
-    @model_validator(mode="after")
-    def _one_kind(self) -> "SkillRef":
-        if self.bundled != (self.remote_id is None or self.version is None):
-            raise ValueError(
-                "a skill reference is either bundled or an item and version"
-            )
-        return self
+    remote_id: uuid.UUID
+    version: int = Field(ge=1)
 
 
 class KnowledgeBaseRef(BaseModel):
@@ -168,6 +159,8 @@ class RemoteProject(BaseModel):
     """A project on the collaboration server, as the import list shows it."""
 
     id: uuid.UUID
+    team_id: uuid.UUID
+    """ The team it is in on the server. """
     name: str
     head_version: int
     created_by_name: str | None
@@ -196,7 +189,7 @@ class ProjectPublishResult(BaseModel):
 
 
 ImportStatus = Literal["imported", "updated", "unchanged"]
-SkillOutcomeStatus = Literal["imported", "updated", "unchanged", "kept", "missing"]
+SkillOutcomeStatus = Literal["imported", "updated", "unchanged", "kept"]
 
 
 class SkillOutcome(BaseModel):
@@ -206,10 +199,8 @@ class SkillOutcome(BaseModel):
     """ The skill's name here, or the publisher's name for one left out. """
     status: SkillOutcomeStatus
     """
-    `unchanged`: the version (or bundled skill) was here already. `kept`: a
-    copy here at another version, or with changes of its own, was used as it is.
-    `missing`: a bundled skill this VISTA does not have; `detail` says whether
-    the project still names it.
+    `unchanged`: the version was here already. `kept`: a copy here at another
+    version, or with changes of its own, was used as it is.
     """
     detail: str | None = None
 
@@ -271,7 +262,13 @@ async def list_remote_projects(
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, PROJECT_KIND, heads=manifests)
     rows = list((await session.exec(select(ProjectTable))).all())
-    linked = {r.remote_id: r for r in rows if r.remote_id and r.origin_server == url}
+    linked = {
+        r.remote_id: LocalCopy(
+            name=r.name, remote_version=r.remote_version, modified=r.modified
+        )
+        for r in rows
+        if r.remote_id and r.origin_server == url
+    }
     names = {r.name for r in rows}
     listed = []
     for item, fetched in listed_items:
@@ -279,6 +276,7 @@ async def list_remote_projects(
         listed.append(
             RemoteProject(
                 id=item.id,
+                team_id=item.team_id,
                 name=item.name,
                 head_version=item.head_version,
                 created_by_name=item.created_by_name,
@@ -286,13 +284,7 @@ async def list_remote_projects(
                 published_by_name=fetched.created_by_name if fetched else None,
                 published_at=fetched.created_at if fetched else None,
                 manifest=_project_manifest(fetched) if fetched else None,
-                local=LocalCopy(
-                    name=copy.name,
-                    remote_version=copy.remote_version,
-                    modified=copy.modified,
-                )
-                if copy
-                else None,
+                local=copy,
                 name_taken=copy is None and item.name in names,
             )
         )
@@ -309,21 +301,15 @@ async def _publish_skills(
     local: LocalSettingsPublic,
     project: str,
     names: list[str],
-    carried: set[str],
 ) -> tuple[list[SkillRef], list[str]]:
     """
     A reference to each skill in `names`, publishing first each one that is not
     on the server in effect or has changed since. Returns the references and
-    the names published.
-
-    `carried` are the names the version built on referenced as bundled: one
-    that is not here (bundled with another VISTA, and kept by the import) is
-    referenced as bundled again. Any other skill that is not here, or one that
-    needs the researcher's choice, stops the project's publish before it is
-    sent.
+    the names published. A skill that is not here, or one that needs the
+    researcher's choice, stops the project's publish before it is sent.
     """
     here = {name: await get_skill_optional(session, name) is not None for name in names}
-    absent = [name for name in names if not here[name] and name not in carried]
+    absent = [name for name in names if not here[name]]
     if absent:
         raise HTTPException(
             status_code=400,
@@ -334,14 +320,10 @@ async def _publish_skills(
     refs: list[SkillRef] = []
     published: list[str] = []
     for name in names:
-        if not here[name]:
-            refs.append(SkillRef(name=name, bundled=True))
-            continue
         # Read in the loop: each publish ends the transaction, expiring rows.
+        # A skill bundled with VISTA is published like any other: it is the
+        # project's team's copy of it.
         row = await get_skill(session, name)
-        if row.bundled:
-            refs.append(SkillRef(name=name, bundled=True))
-            continue
         was = (row.origin_server, row.remote_id, row.remote_version)
         try:
             row = await publish_skill(session, local, name)
@@ -460,14 +442,10 @@ def _blank_to_none(value: Any) -> Any:
 
 def _references(manifest: ProjectManifest) -> list[tuple[Any, ...]]:
     """
-    Which skills a manifest loads, and which knowledge bases it searches: a
-    bundled skill by name, anything else by item and version (its name is a
-    label, which an import may have changed here).
+    Which skills a manifest loads, and which knowledge bases it searches, by
+    item and version (a name is a label, which an import may have changed here).
     """
-    return [
-        ("bundled", ref.name) if ref.bundled else (ref.remote_id, ref.version)
-        for ref in manifest.skills
-    ] + [
+    return [("skill", ref.remote_id, ref.version) for ref in manifest.skills] + [
         ("knowledge-base", ref.remote_id, ref.version)
         for ref in manifest.knowledge_bases
     ]
@@ -487,7 +465,8 @@ def _stale(
 
 def _gone(name: str, url: str) -> ProjectConflict:
     return ProjectConflict(
-        f"{name} is no longer on the collaboration server at {url}; publish it "
+        f"{name} is no longer on the collaboration server at {url}, or is in a "
+        "team you are no longer in; publish it "
         "as a new project.",
         "remote_missing",
     )
@@ -522,6 +501,10 @@ async def publish_project(
     public = ProjectPublic.model_validate(row)
     before = project_content(row)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
+    team_id = require_team(team_of(row, url), name)
+    await check_references(
+        session, name, team_id, public.skills, public.knowledge_bases
+    )
 
     async with client_for(local) as client:
         parent: int | None = None
@@ -543,12 +526,11 @@ async def publish_project(
             if head != parent:
                 raise _stale(name, parent, head, public.remote_version)
 
-        carried = {ref.name for ref in base.skills if ref.bundled} if base else set()
         carried_kbs = {ref.slug: ref for ref in base.knowledge_bases} if base else {}
         slugs = list(dict.fromkeys(public.knowledge_bases))
         await _check_knowledge_bases(session, name, slugs, carried_kbs)
         refs, published = await _publish_skills(
-            session, local, name, list(dict.fromkeys(public.skills)), carried
+            session, local, name, list(dict.fromkeys(public.skills))
         )
         kb_refs, kbs_published = await _publish_knowledge_bases(
             session, local, name, slugs, carried_kbs
@@ -579,7 +561,9 @@ async def publish_project(
                 raise _gone(name, url) from e
             remote_id, remote_version = public.remote_id, version.version
         else:
-            item = await client.create_item(PROJECT_KIND, name, manifest=manifest)
+            item = await client.create_item(
+                PROJECT_KIND, name, team_id=team_id, manifest=manifest
+            )
             remote_id, remote_version = item.id, item.head_version
 
     await reread(session, row)
@@ -629,56 +613,20 @@ async def _import_skills(
     url: str,
     project: str,
     refs: list[SkillRef],
-) -> tuple[list[str], list[SkillOutcome], bool]:
+) -> tuple[list[str], list[SkillOutcome]]:
     """
     Make each referenced skill available here, importing the versions that are
-    not; returns the names the project loads, what was done about each, and
-    whether the project here then lost a reference the version has (`diverged`).
+    not; returns the names the project loads, and what was done about each.
 
     A copy here of the same item is updated to the referenced version when it is
     older and unchanged here; a newer copy, or one with changes of its own, is
     kept as it is and said so, and the project loads it: like a skill edited
     after its project was published, that is the skill's own state, not the
-    project's. A bundled skill this VISTA does not have keeps
-    its name in the project, unless a different skill here has that name. A
-    skill's own conflict stops the import as `skill_conflict`.
+    project's. A skill's own conflict stops the import as `skill_conflict`.
     """
     names: list[str] = []
     outcomes: list[SkillOutcome] = []
-    # Only a reference the project here loses: kept copies are references too,
-    # to the versions here, which a publish from here publishes first.
-    diverged = False
     for ref in refs:
-        if ref.bundled:
-            row = await get_skill_optional(session, ref.name)
-            if row is not None and row.bundled:
-                names.append(row.name)
-                outcomes.append(SkillOutcome(name=row.name, status="unchanged"))
-            elif row is None:
-                # Kept: dropping it would drop it from the next version too.
-                names.append(ref.name)
-                outcomes.append(
-                    SkillOutcome(
-                        name=ref.name,
-                        status="missing",
-                        detail="Bundled with the publisher's VISTA, not this one. "
-                        "The project still names it, and loads it once a skill of "
-                        "that name is here.",
-                    )
-                )
-            else:
-                diverged = True
-                outcomes.append(
-                    SkillOutcome(
-                        name=ref.name,
-                        status="missing",
-                        detail="Bundled with the publisher's VISTA, not this one, "
-                        "and a different skill here has its name, so the project "
-                        "does not load it.",
-                    )
-                )
-            continue
-        assert ref.remote_id is not None and ref.version is not None
         copy = await linked_skill(session, url, ref.remote_id)
         try:
             if copy is None:
@@ -715,7 +663,7 @@ async def _import_skills(
             raise _skill_blocked(project, ref, e) from e
         names.append(outcome.name)
         outcomes.append(outcome)
-    return list(dict.fromkeys(names)), outcomes, diverged
+    return list(dict.fromkeys(names)), outcomes
 
 
 async def _free_slug(session: AsyncSession, base: str) -> str:
@@ -924,9 +872,7 @@ async def import_project(
     any skill is imported.
 
     The project's fields are checked before any skill is imported too, and so
-    is every knowledge base it would download (`_plan_knowledge_bases`). A
-    project that ends up differing from the version, because a bundled skill
-    here shadows one it names, is marked modified.
+    is every knowledge base it would download (`_plan_knowledge_bases`).
 
     Its Hypothesis Lab is set up as a save would, but a forum that cannot be
     reached does not fail the import: the reason is in `forum_error`.
@@ -987,9 +933,7 @@ async def import_project(
     kb_plans, kb_fetched = await _plan_knowledge_bases(
         session, local, url, name, kb_refs
     )
-    skills, outcomes, diverged = await _import_skills(
-        session, local, url, name, manifest.skills
-    )
+    skills, outcomes = await _import_skills(session, local, url, name, manifest.skills)
     fields.skills = skills
     fields.knowledge_bases, kb_outcomes = await _import_knowledge_bases(
         session, local, url, name, kb_refs, kb_plans, kb_fetched
@@ -1005,6 +949,7 @@ async def import_project(
         row = ProjectTable.model_validate(fields)
         row.origin_server = url
         row.remote_id = item_id
+        set_team(row, item.team_id, url)
         status: ImportStatus = "imported"
     else:
         await reread(session, existing)
@@ -1016,7 +961,7 @@ async def import_project(
         invalidate_agents(session, project_id=row.id)
         status = "updated"
     row.remote_version = number
-    row.modified = diverged
+    row.modified = False
     session.add(row)
     await session.commit()
     await session.refresh(row)

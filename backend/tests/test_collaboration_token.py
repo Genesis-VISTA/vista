@@ -7,6 +7,7 @@ gateway, with a stand-in Keycloak (`vista_collaboration_server.testing`).
 
 import httpx
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 
 from harness.api import api_client
 from vista_backend.db.schemas import LocalSettingsUpdate
@@ -65,7 +66,9 @@ async def test_a_pasted_token_signs_in_and_publishes(oidc_server, session):
     assert status.reachable and status.signed_in and status.reason is None
 
     async with collaboration.client_for(local) as client:
-        item = await client.create_item("skill", "salt", manifest={"v": 1})
+        item = await client.create_item(
+            "skill", "salt", team_id=PUBLIC_TEAM_ID, manifest={"v": 1}
+        )
     assert item.created_by == "a5b1c0de-0000-4000-8000-000000000001"
     assert item.created_by_name == "Ada Lovelace"
 

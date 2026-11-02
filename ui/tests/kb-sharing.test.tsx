@@ -48,6 +48,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     signed_in: true,
     sign_in_required: false,
     sign_in_url: null,
+    user: null,
+    teams: [],
+    team_id: null,
     ...overrides,
   };
 }
@@ -71,6 +74,8 @@ function kb(overrides: Partial<KnowledgeBase> = {}): KnowledgeBase {
     remote_id: null,
     remote_version: null,
     modified: true,
+    // In the public team: a private one is copied to a team, not published.
+    team_id: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };
 }
@@ -78,6 +83,7 @@ function kb(overrides: Partial<KnowledgeBase> = {}): KnowledgeBase {
 function remote(overrides: Partial<RemoteKnowledgeBase> = {}): RemoteKnowledgeBase {
   return {
     id: ITEM,
+    team_id: "00000000-0000-4000-8000-000000000000",
     name: "nobel-papers",
     head_version: 1,
     created_by_name: "Bea",

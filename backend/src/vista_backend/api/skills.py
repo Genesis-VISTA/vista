@@ -13,6 +13,7 @@ from ..db.schemas import ProjectTable, SkillPublic, SkillTable, SkillUpdate
 from ..services import project as project_service
 from ..services import skill_collaboration
 from ..services import skills as skills_service
+from ..services import team_copy
 from ..services.local_settings import LocalSettingsDep
 
 
@@ -335,6 +336,24 @@ async def publish_skill(
         session, local, name, on_top_of=body.on_top_of, as_new=body.as_new
     )
     return list_item(skill)
+
+
+class TeamCopyRequest(BaseModel):
+    """Body for `POST /…/copy`: the team to copy to."""
+
+    team_id: uuid.UUID
+
+
+@router.post("/skills/{name}/copy")
+async def copy_skill(
+    name: str, body: TeamCopyRequest, session: SessionDep, local: LocalSettingsDep
+) -> team_copy.TeamCopyResult:
+    """
+    Copy the skill to a team on the collaboration server (`team_copy`). Private,
+    it is published there; in another team, copied. Used by a project here, the
+    copy is imported beside it under a free name.
+    """
+    return await team_copy.copy_skill(session, local, name, body.team_id)
 
 
 @router.delete("/skills/{name}", status_code=204)

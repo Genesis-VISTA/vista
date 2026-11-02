@@ -10,6 +10,9 @@ from vista_collaboration_server.services.identity import (
     INSTALL_ID_HEADER,
 )
 
+PUBLIC = "00000000-0000-4000-8000-000000000000"
+""" The public team's id (`schemas.PUBLIC_TEAM_ID`), as a request names it. """
+
 INSTALL_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 OTHER_INSTALL_ID = uuid.UUID("00000000-0000-4000-8000-000000000002")
 
