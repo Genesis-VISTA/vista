@@ -9,7 +9,9 @@ from ..services import (
     project as project_service,
     project_collaboration,
 )
+from ..services import team_copy
 from ..services.local_settings import LocalSettingsDep
+from .skills import TeamCopyRequest
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -81,6 +83,21 @@ class ProjectPublishRequest(BaseModel):
     """
     as_new: bool = False
     """ Publish as a new project on the server, not as a version of its own. """
+
+
+@router.post("/{project_name}/copy")
+async def copy_project(
+    project_name: str,
+    body: TeamCopyRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> team_copy.TeamCopyResult:
+    """
+    Copy the project, and every skill and knowledge base it uses, to a team on
+    the collaboration server (`team_copy`). One another project here also uses
+    is imported beside the original, and this project switched to the copy.
+    """
+    return await team_copy.copy_project(session, local, project_name, body.team_id)
 
 
 @router.post("/{project_name}/publish")

@@ -225,13 +225,23 @@ Set the server's address in **Settings → Collaboration**; without one that
 answers, the Skill Hub and every Publish button say why and do nothing. (For
 development, `./launch.sh logs --collab` starts a local server.)
 
+**Teams.** Everything on the server belongs to a team, and only its members see
+it. Everyone is in the **public** team; anyone can create a team and add people
+who have signed in to the server. Here, a skill is either **Private** (on this
+computer only, as everything VISTA bundles or seeds starts out) or in a team.
+The team switcher shows one at a time: Private, or a team. A new skill joins the
+selected one (or, made for a project, the project's), and a project loads only
+skills of its own team. **Copy to team** puts a private skill in a team, or a
+team's skill in another, leaving the original where it is; one a project here
+still uses is copied beside it under a new name.
+
 **Publishing.** On `/skills`, a skill's card says where it stands — *Not
 published*, *Version 3*, *Changed here since version 3*, *Version 4 available* —
 and **Publish** (or **Publish changes**) sends its folder, as an archive, with a
-manifest read from its SKILL.md. The first publish asks you to confirm, since
-anyone who can reach the server can see and import it; there is no unpublish,
-but you can publish newer versions. Skills bundled with VISTA are never
-published: every installation has them already.
+manifest read from its SKILL.md, as its team's next version; a private skill is
+copied to a team instead. Everyone in its team (for the public team, everyone)
+can see and import it; there is no unpublish, but you can publish newer
+versions. A skill bundled with VISTA is copied to a team like any other.
 
 The server numbers versions 1, 2, 3… and accepts a publish only on top of its
 newest one. If someone published since your copy's version, the publish is

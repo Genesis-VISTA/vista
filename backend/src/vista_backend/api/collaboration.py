@@ -5,8 +5,10 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from ..db.db import SessionDep
+from ..db.schemas import LocalSettingsUpdate
 from ..services import (
     collaboration,
+    local_settings,
     knowledge_base_collaboration,
     project_collaboration,
     skill_collaboration,
@@ -18,12 +20,84 @@ router = APIRouter(prefix="/collaboration", tags=["collaboration"])
 
 
 @router.get("/status")
-async def get_status(local: LocalSettingsDep) -> collaboration.CollaborationStatus:
+async def get_status(
+    session: SessionDep, local: LocalSettingsDep
+) -> collaboration.CollaborationStatus:
     """
     Whether publishing and importing can work: a server is set and answers. Checked
     on every call, in at most a few seconds; `reason` says why not when they cannot.
+
+    A selected team the server says the researcher is no longer in is cleared,
+    so Private is selected here as it is shown, and new projects, skills and
+    knowledge bases do not join a team nobody can see them in.
     """
-    return await collaboration.status(local)
+    status = await collaboration.status(local)
+    if status.signed_in and local.collaboration_team_id and status.team_id is None:
+        await local_settings.update(
+            session, LocalSettingsUpdate(collaboration_team_id=None)
+        )
+    return status
+
+
+class TeamCreateRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class MemberCreateRequest(BaseModel):
+    sub: str = Field(min_length=1)
+    """ Someone who has signed in to the server (`GET /collaboration/users`). """
+
+
+@router.post("/teams", status_code=201)
+async def create_team(
+    body: TeamCreateRequest, local: LocalSettingsDep
+) -> collaboration.RemoteTeam:
+    """A new team on the server, with this researcher as its first member."""
+    async with collaboration.client_for(local) as client:
+        return await client.create_team(body.name.strip())
+
+
+@router.get("/teams/{team_id}/members")
+async def list_members(
+    team_id: uuid.UUID, local: LocalSettingsDep
+) -> list[collaboration.RemoteMember]:
+    async with collaboration.client_for(local) as client:
+        return await client.list_members(team_id)
+
+
+@router.post("/teams/{team_id}/members", status_code=201)
+async def add_member(
+    team_id: uuid.UUID, body: MemberCreateRequest, local: LocalSettingsDep
+) -> collaboration.RemoteMember:
+    """Add someone who has signed in to the server to a team this researcher is in."""
+    async with collaboration.client_for(local) as client:
+        return await client.add_member(team_id, body.sub)
+
+
+@router.delete("/teams/{team_id}/members/me", status_code=204)
+async def leave_team(
+    team_id: uuid.UUID, session: SessionDep, local: LocalSettingsDep
+) -> None:
+    """
+    Leave a team. Its projects, skills and knowledge bases here stay, but can no
+    longer be published or updated (they can be copied to another team).
+    Selected here, Private is selected instead.
+    """
+    async with collaboration.client_for(local) as client:
+        await client.leave_team(team_id)
+    if local.collaboration_team_id == team_id:
+        await local_settings.update(
+            session, LocalSettingsUpdate(collaboration_team_id=None)
+        )
+
+
+@router.get("/users")
+async def search_users(
+    local: LocalSettingsDep, q: str | None = None
+) -> list[collaboration.RemoteUser]:
+    """Everyone who has signed in to the server whose name or email holds `q`: who can be added to a team."""
+    async with collaboration.client_for(local) as client:
+        return await client.search_users(q)
 
 
 @router.get("/skills")

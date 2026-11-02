@@ -32,6 +32,8 @@ export type SkillManifest = {
 /** A skill on the collaboration server (backend `RemoteSkill`). */
 export type RemoteSkill = {
   id: string;
+  /** The team it is in on the server, the public team's id included. */
+  team_id: string;
   name: string;
   head_version: number;
   created_by_name: string | null;
@@ -198,8 +200,7 @@ export function sharingLabel(
   serverUrl: string | null,
   head?: number | null,
 ): string {
-  if (skill.bundled) return "Bundled with VISTA";
-  if (!skill.remoteId) return "Not published";
+  if (!skill.remoteId) return skill.bundled ? "Bundled with VISTA" : "Not published";
   if (serverUrl !== null && skill.originServer !== serverUrl) {
     return "Published on another collaboration server";
   }

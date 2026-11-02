@@ -72,6 +72,9 @@ function collaborationView(
           sign_in_required: false,
           // As the backend does: none for a server that signed in without a token.
           sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
+          user: null,
+          teams: [],
+          team_id: null,
           ...status,
         };
   const available = Boolean(full?.reachable && full.signed_in);

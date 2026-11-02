@@ -1,4 +1,3 @@
-import json
 import logging
 import shutil
 import uuid
@@ -328,36 +327,12 @@ async def _science_enabled(client) -> bool:
 
 
 MOLTEN_SALT_KB_ID = uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b")
-SEED_ITEM_NAMESPACE = uuid.UUID("0f6c1f4e-5d2a-4b8e-9c3d-7a1e2b4c6d8f")
-""" The namespace of `seed_item_id`'s ids. Never changed: it would orphan every published seed. """
-
-
-def seed_item_id(
-    kb_id: uuid.UUID, name: str, description: str | None, pdfs_dir: Path
-) -> uuid.UUID:
-    """
-    The collaboration item a seeded knowledge base is, on any server.
-
-    Every installation seeds the same corpus under the same fixed id, so the
-    item's id is derived from that id and what was seeded (name, description,
-    and the PDFs by path and size), the same everywhere. The first to publish
-    the seed creates the item under that id; every other installation's seed
-    is linked to it, uploading and downloading nothing. A corpus that changed
-    between releases derives another.
-    """
-    pdfs = sorted(
-        (path.relative_to(pdfs_dir).as_posix(), path.stat().st_size)
-        for path in pdfs_dir.rglob("*")
-        if path.suffix.lower() == ".pdf" and path.is_file() and not path.is_symlink()
-    )
-    key = json.dumps([str(kb_id), name, description, pdfs])
-    return uuid.uuid5(SEED_ITEM_NAMESPACE, key)
 
 
 def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTable:
     """
-    A seeded knowledge base's row, unchanged since seeding, its `seed_item` set.
-    Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
+    A seeded knowledge base's row: private, like everything seeded, until it
+    is copied to a team. Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
     an import, kept by a deletion that could not remove its store, or by a
     database deleted without its data) must not name another store instead,
     as the MCP server prefers the one it names.
@@ -371,10 +346,6 @@ def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTa
         shared_with_mcp=True,
         publications=[],
         build_status="ready",
-        modified=False,
-        seed_item=seed_item_id(
-            kb_id, fields["name"], fields.get("description"), pdfs_dir
-        ),
         **fields,
     )
 
@@ -653,7 +624,13 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
                     usage_limits=dict(request_limit=50),
                 )
             )
-        elif kb is not None and AI_SAFETY_SLUG not in project.knowledge_bases:
+        elif (
+            kb is not None
+            and AI_SAFETY_SLUG not in project.knowledge_bases
+            # Only while it is private, as seeded: in a team it uses only that
+            # team's, and a copy to one names its own copy of the corpus.
+            and project.team_id is None
+        ):
             existing = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
             assert existing is not None
             # A new list: SQLAlchemy does not see an in-place append to a JSON column.

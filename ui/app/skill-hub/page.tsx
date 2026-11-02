@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { refreshProjects, useActiveProject } from "@/lib/projects";
 import { setSkillLoaded } from "@/lib/loaded-skills";
-import { useCollaboration } from "@/lib/collaboration";
+import { emptyTeamNote, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
 import {
   importAction,
   importRemoteSkill,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/skill-sharing";
 import { AppTopBar } from "@/components/AppTopBar";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
+import { TeamBadge } from "@/components/TeamSwitcher";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
 
 const TAG_FILTERS = [
@@ -35,11 +36,13 @@ function tagsOf(skill: RemoteSkill): string[] {
 /**
  * The Skill Hub: the skills published to the collaboration server, to import
  * into this computer (and load into the active project). Without a server that
- * answers, the page says why and lists nothing.
+ * answers, the page says why and lists nothing. It lists the selected team's
+ * skills alone; with Private selected, there are none.
  */
 export default function SkillHubPage() {
   const activeProject = useActiveProject();
   const collab = useCollaboration();
+  const teams = useTeams();
   const [skills, setSkills] = useState<RemoteSkill[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -79,19 +82,27 @@ export default function SkillHubPage() {
   ) {
     setBusyId(skill.id);
     setNotice(null);
+    // Loaded into the active project only when the project can use it: a
+    // project uses only skills of exactly its own team.
+    const loadInto =
+      activeProject && usableInProject(skill.team_id, activeProject.teamId) ? activeProject : null;
     try {
       const result = await importRemoteSkill(skill.id, {
         ...opts,
-        project: activeProject?.name ?? null,
+        project: loadInto?.name ?? null,
       });
       if (result.ok) {
-        const where = activeProject ? ` and loaded it into ${activeProject.name}` : "";
+        const where = loadInto
+          ? ` and loaded it into ${loadInto.name}`
+          : activeProject
+            ? ` (not loaded into ${activeProject.name}, which is in another team)`
+            : "";
         setNotice(
           result.status === "unchanged"
             ? `${result.skill.slug} is already here${where}.`
             : `Imported ${result.skill.slug} version ${result.skill.remoteVersion}${where}.`,
         );
-        if (activeProject) void refreshProjects();
+        if (loadInto) void refreshProjects();
         await refresh();
         return;
       }
@@ -128,6 +139,7 @@ export default function SkillHubPage() {
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     let list = skills.filter((skill) => {
+      if (!teams.show(skill.team_id)) return false;
       if (activeTag !== "All" && !tagsOf(skill).includes(activeTag)) return false;
       if (!term) return true;
       return (
@@ -145,7 +157,7 @@ export default function SkillHubPage() {
       );
     }
     return list;
-  }, [skills, search, activeTag, sort]);
+  }, [skills, search, activeTag, sort, teams]);
 
   return (
     <div className="app-page">
@@ -215,7 +227,9 @@ export default function SkillHubPage() {
                   <div className="hub-empty">
                     {skills.length === 0 && !loading
                       ? "No skills have been published yet. Publish one from the Skills page."
-                      : "No skills match your filters."}
+                      : !skills.some((skill) => teams.show(skill.team_id))
+                        ? emptyTeamNote(teams, "skills")
+                        : "No skills match your filters."}
                   </div>
                 ) : (
                   visible.map((skill) => {
@@ -223,6 +237,7 @@ export default function SkillHubPage() {
                     const busy = busyId === skill.id;
                     const local = skill.local;
                     const isLoaded = local ? loadedSlugs.has(local.name) : false;
+                    const usable = usableInProject(skill.team_id, activeProject?.teamId);
                     return (
                       <div
                         key={skill.id}
@@ -241,14 +256,21 @@ export default function SkillHubPage() {
                           <div className="hub-card-name">
                             {skill.name}
                             <HpcJobsBadge jobs={skill.manifest?.hpc_jobs} />
+                            <TeamBadge teamId={skill.team_id} />
                           </div>
                           <div style={{ display: "flex", gap: 6 }}>
                             {local && (
                               <button
                                 type="button"
                                 className={`hub-card-action${isLoaded ? " loaded" : ""}`}
-                                disabled={!activeProject}
-                                title={activeProject ? undefined : "Open a project to load skills into it"}
+                                disabled={!activeProject || (!usable && !isLoaded)}
+                                title={
+                                  !activeProject
+                                    ? "Open a project to load skills into it"
+                                    : !usable && !isLoaded
+                                      ? `In another team than ${activeProject.name}, which uses only its own team's skills`
+                                      : undefined
+                                }
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   void toggleLoaded(local.name);

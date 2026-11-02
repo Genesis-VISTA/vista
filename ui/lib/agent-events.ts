@@ -194,6 +194,8 @@ export type ProjectPublic = {
   remote_version?: number | null;
   /** Its own fields changed here since `remote_version`. */
   modified?: boolean;
+  /** Its collaboration team; null when private (on this computer only). */
+  team_id?: string | null;
 };
 
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */

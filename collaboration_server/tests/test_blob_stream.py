@@ -6,6 +6,8 @@ import pytest
 
 from vista_collaboration_server.services import blobs
 
+from conftest import PUBLIC
+
 pytestmark = pytest.mark.anyio
 
 
@@ -35,6 +37,7 @@ async def test_a_streamed_body_is_one_blob(client, settings):
         json={
             "kind": "knowledge-base",
             "name": "salt",
+            "team_id": PUBLIC,
             "manifest": {},
             "blob_ref": ref,
         },

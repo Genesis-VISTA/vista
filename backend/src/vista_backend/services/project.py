@@ -7,6 +7,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import ProjectCreate, ProjectTable
 from .project_agent import invalidate_agents
+from .teams import check_references, current_url, set_team, team_for_new, team_of
 
 
 def project_content(project: ProjectTable) -> dict[str, Any]:
@@ -41,6 +42,11 @@ async def get_project_by_name(session: AsyncSession, name: str) -> ProjectTable:
 async def create_project(session: AsyncSession, payload: ProjectCreate) -> ProjectTable:
     # `modified` by default: never published, so all of it is local.
     new = ProjectTable.model_validate(payload)
+    team, url = await team_for_new(session)
+    set_team(new, team, url)
+    await check_references(
+        session, payload.name, team, payload.skills, payload.knowledge_bases
+    )
     session.add(new)
     try:
         await session.flush()
@@ -57,6 +63,14 @@ async def update_project(
     session: AsyncSession, name: str, updates: ProjectCreate
 ) -> ProjectTable:
     project = await get_project_by_name(session, name)
+    # Only what it gains: what it used already was checked when it was added.
+    await check_references(
+        session,
+        name,
+        team_of(project, await current_url(session)),
+        [s for s in updates.skills if s not in project.skills],
+        [k for k in updates.knowledge_bases if k not in project.knowledge_bases],
+    )
     before = project_content(project)
     for key, value in updates.model_dump().items():
         setattr(project, key, value)

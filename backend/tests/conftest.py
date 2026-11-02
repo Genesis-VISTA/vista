@@ -179,3 +179,42 @@ def client(tmp_path, fake_forum):
     return fake_forum.FakeForumClient(
         ForumSettings(enabled=True, repo_root=tmp_path / "forum", timeout=30.0)
     )
+
+
+@pytest.fixture
+def in_public_team(monkeypatch):
+    """
+    For tests of publishing and importing, where the team is beside the point:
+    every project, skill and knowledge base inserted with no team is put in the
+    public team on the server set in Settings then, as if the researcher had
+    selected it. Without it they are private, and not published.
+    """
+    from sqlalchemy import event, text
+
+    from vista_backend.config import settings
+    from vista_backend.db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
+    from vista_backend.services import local_settings
+    from vista_backend.services.collaboration import PUBLIC_TEAM_ID
+
+    def public(mapper, connection, target) -> None:
+        if target.team_id is not None:
+            return
+        url = (
+            connection.execute(
+                text("SELECT collaboration_server_url FROM local_settings")
+            ).scalar()
+            or settings.collaboration_server_url
+        )
+        target.team_id = PUBLIC_TEAM_ID
+        target.team_server = url
+
+    async def selected(session, row=None):
+        return PUBLIC_TEAM_ID
+
+    monkeypatch.setattr(local_settings, "selected_team", selected)
+    tables = (ProjectTable, SkillTable, KnowledgeBaseTable)
+    for table in tables:
+        event.listen(table, "before_insert", public)
+    yield
+    for table in tables:
+        event.remove(table, "before_insert", public)

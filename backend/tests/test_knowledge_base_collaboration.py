@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
 from harness import api_client
@@ -31,13 +32,11 @@ from harness.knowledge_bases import (
     write_pdf,
 )
 from vista_backend.config import settings
-from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
 from vista_backend.db.schemas import KnowledgeBaseTable, LocalSettingsUpdate
 from vista_backend.services import local_settings
 from vista_backend.services.collaboration import CollaborationClient
 from vista_backend.services.knowledge_base import CURRENT_STORE_FILE, read_current
 from vista_backend.services.knowledge_base_collaboration import (
-    KB_KIND,
     ArchiveError,
     incompatibility,
     pack_knowledge_base,
@@ -46,7 +45,11 @@ from vista_backend.services.knowledge_base_collaboration import (
 from vista_backend.utils import indexer
 from vista_backend.utils.indexer import StoreFormat
 
-pytestmark = [pytest.mark.anyio, pytest.mark.integration]
+pytestmark = [
+    pytest.mark.anyio,
+    pytest.mark.integration,
+    pytest.mark.usefixtures("in_public_team"),
+]
 
 URL = "http://collab.test:8002"
 
@@ -757,12 +760,15 @@ async def test_a_project_import_checks_its_knowledge_bases_are_idle_first(
         await publish_kb_elsewhere(
             other, tmp_path, "salt-papers", item_id=kb_id, parent=1
         )
-        skill = await other.create_item("skill", "unused", manifest={})
+        skill = await other.create_item(
+            "skill", "unused", team_id=PUBLIC_TEAM_ID, manifest={}
+        )
         project = await other.create_item(
             "project",
             "salt-lab",
+            team_id=PUBLIC_TEAM_ID,
             manifest={
-                "format": 2,
+                "format": 3,
                 "name": "salt-lab",
                 "knowledge_bases": [
                     KnowledgeBaseRef(
@@ -803,8 +809,9 @@ async def test_a_project_import_checks_the_disk_first(
         project = await other.create_item(
             "project",
             "salt-lab",
+            team_id=PUBLIC_TEAM_ID,
             manifest={
-                "format": 2,
+                "format": 3,
                 "name": "salt-lab",
                 "knowledge_bases": [
                     KnowledgeBaseRef(
@@ -990,164 +997,3 @@ async def test_a_new_import_leaves_untracked_data_in_its_folder(
     assert Path(res.json()["knowledge_base"]["rag_db_path"]).parent.name.startswith(
         "store-"
     )
-
-
-# ---------------------------------------------------------------------------
-# Seeded knowledge bases: one item on the server, however many installations
-# ---------------------------------------------------------------------------
-
-SEED = "molten-salt-papers"
-
-
-async def _seed_seeded(session) -> KnowledgeBaseTable:
-    """The molten-salt seed as every installation seeds it: unchanged, never published."""
-    kb_dir = settings.knowledge_bases_dir / SEED
-    make_kb(kb_dir)
-    row = kb_row(kb_dir, SEED, id=MOLTEN_SALT_KB_ID, modified=False)
-    row.seed_item = seed_item_id(row.id, row.name, row.description, kb_dir / "pdfs")
-    session.add(row)
-    await session.commit()
-    got = await _kb(session, SEED)
-    assert got is not None
-    return got
-
-
-async def _forget_publishing(session) -> None:
-    """Make this installation one that never published or imported the seed."""
-    row = await _kb(session, SEED)
-    assert row is not None
-    row.origin_server = row.remote_id = row.remote_version = None
-    session.add(row)
-    await session.commit()
-
-
-async def test_the_first_to_publish_a_seed_creates_its_item(collab_server, session):
-    await _use_server(session)
-    seed = (await _seed_seeded(session)).seed_item
-    assert seed is not None
-    with api_client(session) as (client, _):
-        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-    assert res.status_code == 200, res.text
-    assert res.json()["status"] == "published"
-    assert res.json()["knowledge_base"]["remote_id"] == str(seed)
-    async with _other_install() as other:
-        assert (await other.get_item(seed)).name == SEED
-
-
-async def test_a_seed_published_elsewhere_is_linked_without_uploading(
-    collab_server, session
-):
-    await _use_server(session)
-    seed = (await _seed_seeded(session)).seed_item
-    assert seed is not None
-    async with _other_install() as other:
-        await other.create_item(KB_KIND, SEED, manifest={}, item_id=seed)
-    with api_client(session) as (client, _):
-        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-    assert res.status_code == 200, res.text
-    kb = res.json()["knowledge_base"]
-    assert res.json()["status"] == "unchanged"
-    assert (kb["origin_server"], kb["remote_id"], kb["remote_version"]) == (
-        URL,
-        str(seed),
-        1,
-    )
-    assert kb["modified"] is False
-    async with _other_install() as other:
-        assert [v.version for v in await other.list_versions(seed)] == [1]
-        assert len(await other.list_items(KB_KIND)) == 1
-
-
-async def test_a_seed_published_elsewhere_while_packing_is_linked(
-    collab_server, session, monkeypatch
-):
-    """Both installations found no item; the second to create it links the first's."""
-    await _use_server(session)
-    seed = (await _seed_seeded(session)).seed_item
-    assert seed is not None
-    upload = CollaborationClient.upload_large_blob
-
-    async def published_meanwhile(self, *args, **kwargs):
-        async with _other_install() as other:
-            await other.create_item(KB_KIND, SEED, manifest={}, item_id=seed)
-        return await upload(self, *args, **kwargs)
-
-    monkeypatch.setattr(CollaborationClient, "upload_large_blob", published_meanwhile)
-    with api_client(session) as (client, _):
-        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-    assert res.status_code == 200, res.text
-    kb = res.json()["knowledge_base"]
-    assert (kb["remote_id"], kb["remote_version"], kb["modified"]) == (
-        str(seed),
-        1,
-        False,
-    )
-    async with _other_install() as other:
-        assert len(await other.list_items(KB_KIND)) == 1
-
-
-async def test_importing_a_seed_links_the_copy_here_without_downloading(
-    collab_server, session
-):
-    await _use_server(session)
-    await _seed_seeded(session)
-    with api_client(session) as (client, _):
-        published = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-    seed = published.json()["knowledge_base"]["remote_id"]
-    await _forget_publishing(session)
-    with api_client(session) as (client, _):
-        listed = (await client.get("/collaboration/knowledge-bases")).json()
-        res = await client.post(
-            f"/collaboration/knowledge-bases/{seed}/import", json={}
-        )
-    (entry,) = listed
-    assert entry["local"] == {"name": SEED, "remote_version": 1, "modified": False}
-    assert entry["name_taken"] is False
-    assert res.status_code == 200, res.text
-    assert res.json()["status"] == "unchanged"
-    kb = res.json()["knowledge_base"]
-    assert (kb["slug"], kb["remote_id"], kb["modified"]) == (SEED, seed, False)
-    # Nothing was unpacked: the seed's own store is the one searched.
-    kb_dir = settings.knowledge_bases_dir / SEED
-    assert not (kb_dir / CURRENT_STORE_FILE).exists()
-    assert list(kb_dir.glob("store-*")) == []
-
-
-@pytest.mark.parametrize("linked_first", [True, False])
-async def test_a_changed_seed_is_published_as_an_item_of_its_own(
-    collab_server, session, linked_first
-):
-    await _use_server(session)
-    seed = (await _seed_seeded(session)).seed_item
-    with api_client(session) as (client, _):
-        if linked_first:
-            await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-        await client.put(f"/knowledge-bases/{SEED}", json={"name": "Mine"})
-        res = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-        again = await client.put(f"/knowledge-bases/{SEED}", json={"name": "Mine 2"})
-        next_one = await client.post(f"/knowledge-bases/{SEED}/publish", json={})
-    assert again.status_code == 200, again.text
-    assert res.status_code == 200, res.text
-    kb = res.json()["knowledge_base"]
-    assert res.json()["status"] == "published"
-    assert kb["remote_id"] != str(seed)
-    assert kb["remote_version"] == 1
-    # Linked to its own item from then on: the next change is its version 2.
-    assert next_one.json()["knowledge_base"]["remote_id"] == kb["remote_id"]
-    assert next_one.json()["knowledge_base"]["remote_version"] == 2
-    async with _other_install() as other:
-        if linked_first:
-            assert [v.version for v in await other.list_versions(seed)] == [1]
-        else:
-            assert seed not in {i.id for i in await other.list_items(KB_KIND)}
-
-
-def test_a_seed_item_is_derived_from_what_was_seeded(tmp_path):
-    pdfs = tmp_path / "pdfs"
-    write_pdf(pdfs / "a.pdf")
-    seed = seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs)
-    assert seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs) == seed
-    assert seed_item_id(uuid.uuid4(), "Papers", None, pdfs) != seed
-    assert seed_item_id(MOLTEN_SALT_KB_ID, "Other", None, pdfs) != seed
-    write_pdf(pdfs / "b.pdf")
-    assert seed_item_id(MOLTEN_SALT_KB_ID, "Papers", None, pdfs) != seed
