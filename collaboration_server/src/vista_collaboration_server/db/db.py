@@ -8,7 +8,13 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from .schemas import CollabTable
+from .schemas import (
+    PUBLIC_TEAM_ID,
+    PUBLIC_TEAM_NAME,
+    SERVER_CREATOR,
+    CollabTable,
+    TeamTable,
+)
 
 
 def make_engine(
@@ -38,9 +44,23 @@ def make_engine(
 
 
 async def init_db(engine: AsyncEngine) -> None:
-    """Create this server's tables (and only those). Run once at startup."""
+    """
+    Create this server's tables (and only those), and the public team if it is
+    not there. Run once at startup.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(CollabTable.metadata.create_all)
+    async with AsyncSession(engine) as session:
+        if await session.get(TeamTable, PUBLIC_TEAM_ID) is None:
+            session.add(
+                TeamTable(
+                    id=PUBLIC_TEAM_ID,
+                    name=PUBLIC_TEAM_NAME,
+                    created_by=SERVER_CREATOR,
+                    created_by_name="VISTA",
+                )
+            )
+            await session.commit()
 
 
 async def _get_session(request: Request) -> AsyncIterator[AsyncSession]:

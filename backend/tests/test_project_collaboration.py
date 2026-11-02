@@ -37,7 +37,7 @@ from vista_backend.services.project_collaboration import (
 )
 from vista_backend.services.skill_collaboration import SkillManifest, pack_skill
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("in_public_team")]
 
 URL = "http://collab.test:8002"
 
@@ -289,7 +289,7 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
         result["status"],
         result["skills_published"],
         result["knowledge_bases_published"],
-    ) == ("published", ["salt-density"], ["salt-papers"])
+    ) == ("published", ["salt-density", "salt-analysis"], ["salt-papers"])
     published = result["project"]
     assert published["id"] == str(project.id)
     assert (
@@ -301,6 +301,8 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
     skill = await _skill_row(session, "salt-density")
     assert (skill.remote_version, skill.modified) == (1, False)
     skill_id = skill.remote_id
+    # Bundled with VISTA, and published like any other: the team's copy of it.
+    bundled_id = (await _skill_row(session, "salt-analysis")).remote_id
     kb = await _kb_row(session, "salt-papers")
     assert (kb.remote_version, kb.modified) == (1, False)
     kb_id = kb.remote_id
@@ -325,9 +327,9 @@ async def test_publishing_a_project_publishes_its_skills_first(collab_server, se
             },
             {
                 "name": "salt-analysis",
-                "bundled": True,
-                "remote_id": None,
-                "version": None,
+                "bundled": False,
+                "remote_id": str(bundled_id),
+                "version": 1,
             },
         ],
         "knowledge_bases": [
@@ -1049,7 +1051,8 @@ async def test_a_project_import_fetches_each_knowledge_base_version_once(
         res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
     assert res.status_code == 200, res.text
     assert [k["status"] for k in res.json()["knowledge_bases"]] == ["imported"]
-    assert [kind for kind, i in calls if i == kb_id] == ["version"]
+    # The version once; the item only for the team the copy here joins.
+    assert [kind for kind, i in calls if i == kb_id] == ["version", "item"]
 
 
 async def test_a_newer_copy_of_a_knowledge_base_is_kept(
@@ -1101,49 +1104,6 @@ async def test_an_older_copy_of_a_knowledge_base_is_updated(
     assert (outcome["slug"], outcome["status"]) == ("salt-papers", "updated")
     assert res.json()["project"]["knowledge_bases"] == ["salt-papers"]
     assert (await _kb_row(session, "salt-papers")).remote_version == 2
-
-
-async def test_a_seeded_knowledge_base_is_the_copy_here_not_a_duplicate(
-    collab_server, session
-):
-    from vista_backend.db.seed import MOLTEN_SALT_KB_ID, seed_item_id
-    from vista_backend.services.knowledge_base_collaboration import KB_KIND
-
-    await _use_server(session)
-    kb_dir = settings.knowledge_bases_dir / "molten-salt-papers"
-    make_kb(kb_dir)
-    seed = seed_item_id(
-        MOLTEN_SALT_KB_ID, "The molten-salt-papers papers", None, kb_dir / "pdfs"
-    )
-    session.add(
-        kb_row(
-            kb_dir,
-            "molten-salt-papers",
-            id=MOLTEN_SALT_KB_ID,
-            modified=False,
-            seed_item=seed,
-        )
-    )
-    await session.commit()
-    # Another installation, which seeded the same corpus, published a project on it.
-    async with _other_install() as other:
-        await other.create_item(
-            KB_KIND, "molten-salt-papers", manifest={}, item_id=seed
-        )
-    item_id = await _publish_project_elsewhere(
-        knowledge_bases=[
-            KnowledgeBaseRef(slug="molten-salt-papers", remote_id=seed, version=1)
-        ]
-    )
-    with api_client(session) as (client, _):
-        res = await client.post(f"/collaboration/projects/{item_id}/import", json={})
-    assert res.status_code == 200, res.text
-    [outcome] = res.json()["knowledge_bases"]
-    assert (outcome["slug"], outcome["status"]) == ("molten-salt-papers", "unchanged")
-    assert res.json()["project"]["knowledge_bases"] == ["molten-salt-papers"]
-    kb = await _kb_row(session, "molten-salt-papers")
-    assert (kb.remote_id, kb.remote_version, kb.modified) == (seed, 1, False)
-    assert list(kb_dir.glob("store-*")) == []
 
 
 async def test_a_knowledge_base_that_needs_a_choice_stops_the_import(

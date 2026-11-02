@@ -12,11 +12,15 @@ from fastapi.responses import JSONResponse
 from .. import API_VERSION
 from ..config import CollabSettings
 from ..db.db import init_db, make_engine
-from ..db.schemas import ServerVersion, UserPublic
+from ..db.db import SessionDep
+from ..db.schemas import MePublic, ServerVersion
+from ..services import teams
+from ..services.errors import Conflict, Invalid, NotFound
 from ..services.identity import TokenVerifier, UserDep
-from ..services.items import ItemExists, NotFound, VersionConflict
+from ..services.items import VersionConflict
 from .items import router as items_router
 from .sign_in import router as sign_in_router
+from .teams import router as teams_router
 
 log = logging.getLogger("vista.collaboration")
 
@@ -61,14 +65,16 @@ def create_app(
     )
     app.state.settings = settings
     app.state.verifier = verifier or TokenVerifier(settings)
+    app.state.users_seen = {}
 
-    @app.exception_handler(NotFound)
-    async def _not_found(request: Request, exc: NotFound) -> JSONResponse:
-        return JSONResponse(status_code=404, content={"detail": str(exc)})
+    for error, status in ((NotFound, 404), (Conflict, 409), (Invalid, 400)):
 
-    @app.exception_handler(ItemExists)
-    async def _exists(request: Request, exc: ItemExists) -> JSONResponse:
-        return JSONResponse(status_code=409, content={"detail": str(exc)})
+        async def _refused(
+            request: Request, exc: Exception, status=status
+        ) -> JSONResponse:
+            return JSONResponse(status_code=status, content={"detail": str(exc)})
+
+        app.add_exception_handler(error, _refused)
 
     @app.exception_handler(VersionConflict)
     async def _conflict(request: Request, exc: VersionConflict) -> JSONResponse:
@@ -87,11 +93,20 @@ def create_app(
         return ServerVersion(server_version=_server_version(), api_version=API_VERSION)
 
     @app.get("/me", tags=["meta"])
-    async def get_me(user: UserDep) -> UserPublic:
-        """Who this server takes the caller to be: how a backend checks it is signed in."""
-        return UserPublic(sub=user.sub, email=user.email, name=user.name)
+    async def get_me(user: UserDep, session: SessionDep) -> MePublic:
+        """
+        Who this server takes the caller to be, and the teams they are in: how
+        a backend checks it is signed in.
+        """
+        return MePublic(
+            sub=user.sub,
+            email=user.email,
+            name=user.name,
+            teams=[teams.team_public(t) for t in await teams.list_teams(session, user)],
+        )
 
     app.include_router(items_router)
+    app.include_router(teams_router)
     app.include_router(sign_in_router)
     return app
 

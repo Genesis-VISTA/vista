@@ -9,6 +9,14 @@ reason, from `status`, for the interface to show. Nothing in this module raises
 out of `status`; the client's methods raise `CollaborationError` and nothing
 else, for the code that publishes or imports to report.
 
+Everything on the server belongs to a team, and a researcher sees only their
+teams' items: the public team, which everyone is in, and any they create or
+are added to. Here, a project, skill or knowledge base is either private (on
+this computer only, `team_id` None) or in a team on the server in effect.
+The team selected here (`collaboration_team_id`, None for Private) is where a
+new one goes; each publishes to its own team, and reaches another by being
+copied (`team_copy`).
+
 Requests carry the researcher's token, pasted into Settings from the server's
 `/sign-in` page, as `Authorization: Bearer` (only over https, or to this
 machine), and the installation's id and display name as headers. A deployed
@@ -34,11 +42,14 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 from ..config import settings
 from ..db.schemas import LocalSettingsPublic
 
-API_VERSION = 2
+API_VERSION = 3
 """
 The collaboration server API this backend speaks. A server reporting another is
 refused by name, rather than half-understood.
 """
+
+PUBLIC_TEAM_ID = uuid.UUID("00000000-0000-4000-8000-000000000000")
+""" The public team's id, the same on every server (the server's `schemas.PUBLIC_TEAM_ID`). """
 
 INSTALL_ID_HEADER = "X-Vista-Install-Id"
 DISPLAY_NAME_HEADER = "X-Vista-Display-Name"
@@ -135,6 +146,15 @@ class CollaborationStatus(BaseModel):
     where it is never sent, or a server that signed this installation in
     without one.
     """
+    user: "RemoteUser | None" = None
+    """ Who the server takes this installation to be, when signed in. """
+    teams: list["RemoteTeam"] = []
+    """ The teams the researcher is in, the public team first, when signed in. """
+    team_id: uuid.UUID | None = None
+    """
+    The team selected here (`collaboration_team_id`), when it is one of
+    `teams`; None for Private, or a team they are no longer in.
+    """
 
 
 class ServerInfo(BaseModel):
@@ -148,10 +168,35 @@ class RemoteUser(BaseModel):
     name: str | None
 
 
+class RemoteTeam(BaseModel):
+    id: uuid.UUID
+    name: str
+    public: bool
+    created_by: str
+    created_by_name: str | None
+    created_at: str
+
+
+class RemoteMember(RemoteUser):
+    added_by: str
+    added_at: str
+
+
+class RemoteMe(RemoteUser):
+    teams: list[RemoteTeam]
+
+
+CollaborationStatus.model_rebuild()  # it names the models above
+
+
 class RemoteItem(BaseModel):
     id: uuid.UUID
     kind: str
     name: str
+    team_id: uuid.UUID
+    copied_from: uuid.UUID | None = None
+    """ The item this one was copied from, if any. """
+    copied_from_version: int | None = None
     created_by: str
     created_by_name: str | None
     head_version: int
@@ -356,11 +401,12 @@ class CollaborationClient:
             )
         return info
 
-    async def me(self) -> RemoteUser:
-        """Who the server takes this installation to be."""
-        return await self._call(RemoteUser, "GET", "/me")
+    async def me(self) -> RemoteMe:
+        """Who the server takes this installation to be, and their teams."""
+        return await self._call(RemoteMe, "GET", "/me")
 
     async def list_items(self, kind: str | None = None) -> list[RemoteItem]:
+        """Every item, of `kind` if given, in the researcher's teams."""
         params = {"kind": kind} if kind else None
         return await self._call(list[RemoteItem], "GET", "/items", params=params)
 
@@ -371,21 +417,49 @@ class CollaborationClient:
         *,
         manifest: dict[str, Any],
         blob_ref: str | None = None,
-        item_id: uuid.UUID | None = None,
+        team_id: uuid.UUID = PUBLIC_TEAM_ID,
     ) -> RemoteItem:
-        """
-        A new item, published with its version 1. `item_id` chooses its id;
-        one an item has already is `CollaborationRefused` (409).
-        """
+        """A new item in `team_id`, published with its version 1."""
         body: dict[str, Any] = {
             "kind": kind,
             "name": name,
+            "team_id": str(team_id),
             "manifest": manifest,
             "blob_ref": blob_ref,
         }
-        if item_id is not None:
-            body["id"] = str(item_id)
         return await self._call(RemoteItem, "POST", "/items", json=body)
+
+    async def copy_item(
+        self, item_id: uuid.UUID, team_id: uuid.UUID, *, name: str | None = None
+    ) -> RemoteItem:
+        """
+        A new item in `team_id` whose version 1 is `item_id`'s newest, sharing
+        its blob: nothing is uploaded. The original is left as it is.
+        """
+        body: dict[str, Any] = {"team_id": str(team_id)}
+        if name is not None:
+            body["name"] = name
+        return await self._call(RemoteItem, "POST", f"/items/{item_id}/copy", json=body)
+
+    async def create_team(self, name: str) -> RemoteTeam:
+        return await self._call(RemoteTeam, "POST", "/teams", json={"name": name})
+
+    async def list_members(self, team_id: uuid.UUID) -> list[RemoteMember]:
+        return await self._call(list[RemoteMember], "GET", f"/teams/{team_id}/members")
+
+    async def add_member(self, team_id: uuid.UUID, sub: str) -> RemoteMember:
+        return await self._call(
+            RemoteMember, "POST", f"/teams/{team_id}/members", json={"sub": sub}
+        )
+
+    async def leave_team(self, team_id: uuid.UUID) -> None:
+        await self._request("DELETE", f"/teams/{team_id}/members/me")
+
+    async def search_users(self, q: str | None, limit: int = 20) -> list[RemoteUser]:
+        params: dict[str, Any] = {"limit": limit}
+        if q:
+            params["q"] = q
+        return await self._call(list[RemoteUser], "GET", "/users", params=params)
 
     async def get_item(self, item_id: uuid.UUID) -> RemoteItem:
         return await self._call(RemoteItem, "GET", f"/items/{item_id}")
@@ -638,7 +712,7 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
             info = await client.version()
             status.reachable = True
             status.server_version = info.server_version
-            await client.me()
+            me = await client.me()
     except CollaborationUnauthorized as error:
         status.sign_in_required = True
         status.reason = str(error)
@@ -647,6 +721,10 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
         status.reason = str(error)
         return status
     status.signed_in = True
+    status.user = RemoteUser(sub=me.sub, email=me.email, name=me.name)
+    status.teams = me.teams
+    if any(t.id == local.collaboration_team_id for t in me.teams):
+        status.team_id = local.collaboration_team_id
     if not local.collaboration_token:
         # A dev-headers server, which takes no token and has no page.
         status.sign_in_url = None

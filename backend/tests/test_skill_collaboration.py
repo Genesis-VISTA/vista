@@ -27,7 +27,7 @@ from vista_backend.services.skill_collaboration import (
     unpack_skill,
 )
 
-pytestmark = pytest.mark.anyio
+pytestmark = [pytest.mark.anyio, pytest.mark.usefixtures("in_public_team")]
 
 URL = "http://collab.test:8002"
 
@@ -404,9 +404,14 @@ async def test_an_edit_made_while_publishing_stays_modified(
     assert (res.json()["remote_version"], res.json()["modified"]) == (1, True)
 
 
-async def test_a_bundled_skill_is_neither_published_nor_deleted(collab_server, session):
-    """Some bundled skills' data is fetched only by the first seeding, so a
-    deleted one would never come back."""
+async def test_a_bundled_skill_is_published_like_any_other_but_not_deleted(
+    collab_server, session
+):
+    """
+    A bundled skill is the team's copy of it once published. Some bundled
+    skills' data is fetched only by the first seeding, so a deleted one would
+    never come back.
+    """
     await _use_server(session)
     with api_client(session) as (client, _):
         await client.post("/skills", json=SKILL)
@@ -416,8 +421,8 @@ async def test_a_bundled_skill_is_neither_published_nor_deleted(collab_server, s
         await session.commit()
         res = await client.post("/skills/salt-density/publish", json={})
         deleted = await client.delete("/skills/salt-density")
-    assert res.status_code == 409
-    assert "bundled" in res.json()["detail"]
+    assert res.status_code == 200, res.text
+    assert res.json()["remote_version"] == 1
     assert deleted.status_code == 409
     assert await _row(session, "salt-density") is not None
 

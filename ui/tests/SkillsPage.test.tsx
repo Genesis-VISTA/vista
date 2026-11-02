@@ -24,9 +24,15 @@ vi.mock("@/lib/projects", () => ({
   updateProject,
   toCreate: (p: unknown) => p,
 }));
-vi.mock("@/lib/collaboration", () => ({
-  useCollaboration: () => ({ available: false, reason: "off", status: null }),
-}));
+vi.mock("@/lib/collaboration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/collaboration")>();
+  return {
+    ...actual,
+    useCollaboration: () => ({ available: false, reason: "off", status: null }),
+    // No server, so no teams: nothing is filtered.
+    useTeams: () => actual.teamsView({ status: null, error: null }),
+  };
+});
 vi.mock("@/components/AppTopBar", () => ({
   AppTopBar: ({ actions }: { actions?: React.ReactNode }) => <div>{actions}</div>,
 }));

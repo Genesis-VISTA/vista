@@ -76,6 +76,8 @@ from .skill_collaboration import (
     reread,
 )
 from .skills import get_skill, get_skill_optional
+from .teams import check_references, require_team
+
 
 PROJECT_KIND = "project"
 MANIFEST_FORMAT = 2
@@ -168,6 +170,8 @@ class RemoteProject(BaseModel):
     """A project on the collaboration server, as the import list shows it."""
 
     id: uuid.UUID
+    team_id: uuid.UUID
+    """ The team it is in on the server. """
     name: str
     head_version: int
     created_by_name: str | None
@@ -271,7 +275,13 @@ async def list_remote_projects(
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, PROJECT_KIND, heads=manifests)
     rows = list((await session.exec(select(ProjectTable))).all())
-    linked = {r.remote_id: r for r in rows if r.remote_id and r.origin_server == url}
+    linked = {
+        r.remote_id: LocalCopy(
+            name=r.name, remote_version=r.remote_version, modified=r.modified
+        )
+        for r in rows
+        if r.remote_id and r.origin_server == url
+    }
     names = {r.name for r in rows}
     listed = []
     for item, fetched in listed_items:
@@ -279,6 +289,7 @@ async def list_remote_projects(
         listed.append(
             RemoteProject(
                 id=item.id,
+                team_id=item.team_id,
                 name=item.name,
                 head_version=item.head_version,
                 created_by_name=item.created_by_name,
@@ -286,13 +297,7 @@ async def list_remote_projects(
                 published_by_name=fetched.created_by_name if fetched else None,
                 published_at=fetched.created_at if fetched else None,
                 manifest=_project_manifest(fetched) if fetched else None,
-                local=LocalCopy(
-                    name=copy.name,
-                    remote_version=copy.remote_version,
-                    modified=copy.modified,
-                )
-                if copy
-                else None,
+                local=copy,
                 name_taken=copy is None and item.name in names,
             )
         )
@@ -338,10 +343,9 @@ async def _publish_skills(
             refs.append(SkillRef(name=name, bundled=True))
             continue
         # Read in the loop: each publish ends the transaction, expiring rows.
+        # A skill bundled with VISTA is published like any other: it is the
+        # project's team's copy of it.
         row = await get_skill(session, name)
-        if row.bundled:
-            refs.append(SkillRef(name=name, bundled=True))
-            continue
         was = (row.origin_server, row.remote_id, row.remote_version)
         try:
             row = await publish_skill(session, local, name)
@@ -487,7 +491,8 @@ def _stale(
 
 def _gone(name: str, url: str) -> ProjectConflict:
     return ProjectConflict(
-        f"{name} is no longer on the collaboration server at {url}; publish it "
+        f"{name} is no longer on the collaboration server at {url}, or is in a "
+        "team you are no longer in; publish it "
         "as a new project.",
         "remote_missing",
     )
@@ -522,6 +527,10 @@ async def publish_project(
     public = ProjectPublic.model_validate(row)
     before = project_content(row)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
+    team_id = require_team(public.team_id, name)
+    await check_references(
+        session, name, public.team_id, public.skills, public.knowledge_bases
+    )
 
     async with client_for(local) as client:
         parent: int | None = None
@@ -579,7 +588,9 @@ async def publish_project(
                 raise _gone(name, url) from e
             remote_id, remote_version = public.remote_id, version.version
         else:
-            item = await client.create_item(PROJECT_KIND, name, manifest=manifest)
+            item = await client.create_item(
+                PROJECT_KIND, name, team_id=team_id, manifest=manifest
+            )
             remote_id, remote_version = item.id, item.head_version
 
     await reread(session, row)
@@ -1005,6 +1016,7 @@ async def import_project(
         row = ProjectTable.model_validate(fields)
         row.origin_server = url
         row.remote_id = item_id
+        row.team_id = item.team_id
         status: ImportStatus = "imported"
     else:
         await reread(session, existing)

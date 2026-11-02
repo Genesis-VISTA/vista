@@ -11,7 +11,7 @@ from vista_collaboration_server.services.identity import (
 )
 from vista_collaboration_server.testing import FakeIssuer
 
-from conftest import INSTALL_ID
+from conftest import INSTALL_ID, PUBLIC
 
 pytestmark = pytest.mark.anyio
 
@@ -50,7 +50,7 @@ def bearer(token: str) -> dict:
 async def _create(http, headers):
     return await http.post(
         "/items",
-        json={"kind": "skill", "name": "salt", "manifest": {"v": 1}},
+        json={"kind": "skill", "name": "salt", "team_id": PUBLIC, "manifest": {"v": 1}},
         headers=headers,
     )
 
@@ -63,7 +63,13 @@ async def _create(http, headers):
 async def test_a_valid_token_is_the_user(http, issuer):
     res = await http.get("/me", headers=bearer(issuer.token()))
     assert res.status_code == 200, res.text
-    assert res.json() == {"sub": SUB, "email": "ada@ornl.gov", "name": "Ada Lovelace"}
+    me = res.json()
+    assert {k: me[k] for k in ("sub", "email", "name")} == {
+        "sub": SUB,
+        "email": "ada@ornl.gov",
+        "name": "Ada Lovelace",
+    }
+    assert [t["id"] for t in me["teams"]] == [PUBLIC]
 
 
 async def test_the_name_falls_back_to_the_username(http, issuer):

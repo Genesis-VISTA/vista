@@ -72,6 +72,7 @@ from .collaboration import (
     required_url,
     server_url,
 )
+from .teams import require_team
 from .knowledge_base import (
     get_kb,
     get_kb_optional,
@@ -156,6 +157,8 @@ class RemoteKnowledgeBase(BaseModel):
     """A knowledge base on the collaboration server, as the import list shows it."""
 
     id: uuid.UUID
+    team_id: uuid.UUID
+    """ The team it is in on the server. """
     name: str
     """ The item's name: the publisher's slug. """
     head_version: int
@@ -238,54 +241,11 @@ def _version(text: str) -> tuple[int, int, int] | None:
     return major, minor, patch
 
 
-def is_unchanged_seed(row: KnowledgeBaseTable) -> bool:
-    """
-    `row` is a seeded knowledge base as VISTA seeded it, so its `seed_item`:
-    unchanged since, and published as nothing else.
-    """
-    return (
-        row.seed_item is not None
-        and not row.modified
-        and row.remote_id in (None, row.seed_item)
-        and row.remote_version in (None, 1)
-    )
-
-
-async def _seed_matching(
-    session: AsyncSession, item_id: uuid.UUID
-) -> KnowledgeBaseTable | None:
-    """The unchanged seeded knowledge base here that is item `item_id`, if any."""
-    rows = (
-        await session.exec(
-            select(KnowledgeBaseTable).where(KnowledgeBaseTable.seed_item == item_id)
-        )
-    ).all()
-    return next((row for row in rows if is_unchanged_seed(row)), None)
-
-
-async def _link_seed(
-    session: AsyncSession, row: KnowledgeBaseTable, url: str, item_id: uuid.UUID
-) -> KnowledgeBaseTable:
-    """Record that seeded `row` is version 1 of `item_id` on `url`, unchanged."""
-    row.origin_server = url
-    row.remote_id = item_id
-    row.remote_version = 1
-    row.modified = False
-    session.add(row)
-    await session.commit()
-    await session.refresh(row)
-    return row
-
-
 async def linked_knowledge_base(
     session: AsyncSession, url: str | None, item_id: uuid.UUID
 ) -> KnowledgeBaseTable | None:
-    """
-    The knowledge base here published as, or imported from, item `item_id` on
-    `url`. An unchanged seeded one that is that item (`seed_item`) is linked
-    to it now, and is the one.
-    """
-    row = (
+    """The knowledge base here published as, or imported from, item `item_id` on `url`."""
+    return (
         await session.exec(
             select(KnowledgeBaseTable).where(
                 KnowledgeBaseTable.origin_server == url,
@@ -293,11 +253,6 @@ async def linked_knowledge_base(
             )
         )
     ).first()
-    if row is None and url is not None:
-        seed = await _seed_matching(session, item_id)
-        if seed is not None:
-            row = await _link_seed(session, seed, url, item_id)
-    return row
 
 
 def require_idle(kb: KnowledgeBaseTable, doing: str) -> None:
@@ -468,12 +423,6 @@ async def list_remote_knowledge_bases(
         for r in rows
         if r.remote_id and r.origin_server == url
     }
-    # An unchanged seed is its item already: importing it only links it.
-    for r in rows:
-        if r.seed_item is not None and is_unchanged_seed(r):
-            linked[r.seed_item] = LocalCopy(
-                name=r.slug, remote_version=1, modified=False
-            )
     slugs = {r.slug for r in rows}
     listed = []
     for item, fetched in listed_items:
@@ -481,6 +430,7 @@ async def list_remote_knowledge_bases(
         listed.append(
             RemoteKnowledgeBase(
                 id=item.id,
+                team_id=item.team_id,
                 name=item.name,
                 head_version=item.head_version,
                 created_by_name=item.created_by_name,
@@ -529,11 +479,8 @@ async def publish_knowledge_base(
     `KnowledgeBaseConflict` (`version_conflict`, with the head) and changes
     nothing here. One published there with no change since is not published
     again (`unchanged`), unless `on_top_of` or `as_new` asks. A change made
-    while it is published leaves it modified.
-
-    An unchanged seed is its `seed_item`: created under that id by the first
-    installation to publish it, and only linked by every other. A seed changed
-    here is published as a new item, so the seed's own stays as VISTA seeds it.
+    while it is published leaves it modified. A private knowledge base is not
+    published: it is copied to a team (`team_copy`).
     """
     url = required_url(local)
     async with kb_lock(slug):
@@ -557,19 +504,8 @@ async def _publish(
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
         return KnowledgeBasePublishResult(status="unchanged", knowledge_base=public)
-    if row.remote_id is not None and row.remote_id == row.seed_item:
-        # The seed's item stays as VISTA seeds it: changed here, this is new.
-        linked = False
-    seed_id = row.seed_item if not as_new and is_unchanged_seed(row) else None
-    if seed_id is not None:
-        # Another installation published this seed already: link it, send nothing.
-        async with client_for(local) as client:
-            if await _item_exists(client, seed_id):
-                return await _seed_published(session, row, url, seed_id)
+    team_id = require_team(row.team_id, f"{row.name} ({slug})")
     before = kb_content(row)
-    here = await indexer.store_format()
-    # A knowledge base nothing has been indexed into has no store yet.
-    has_index = (Path(row.rag_db_path) / "chroma.sqlite3").is_file()
     # The snapshot and the archive are copies of the files and the store, on
     # the disk that holds the database too.
     check_space(
@@ -578,33 +514,7 @@ async def _publish(
     )
 
     async with client_for(local) as client, _incoming() as tmp:
-        store = tmp / "rag_db" if has_index else None
-        archive = tmp / ARCHIVE_NAME
-        try:
-            if store is not None:
-                await indexer.snapshot_store(row.rag_db_path, store)
-            files, size = await asyncio.to_thread(
-                pack_knowledge_base, Path(row.pdfs_dir), store, archive
-            )
-        except Exception as e:  # sqlite3 and OS errors alike
-            raise HTTPException(
-                status_code=500, detail=f"{row.name} could not be packed: {e}"
-            ) from e
-        manifest = KnowledgeBaseManifest(
-            slug=public.slug,
-            name=public.name,
-            description=public.description,
-            publications=_shipped(public.publications),
-            build_status=public.build_status,
-            last_built_at=public.last_built_at,
-            files=files,
-            size=size,
-            archive_size=archive.stat().st_size,
-            has_index=has_index,
-            embedding_model=here.embedding_model,
-            embedding_revision=here.embedding_revision,
-            chromadb=here.chromadb,
-        ).model_dump(mode="json")
+        manifest, archive = await pack(row, tmp)
         blob_ref = await client.upload_large_blob(archive)
         if linked:
             assert row.remote_id is not None
@@ -629,21 +539,15 @@ async def _publish(
                 if e.status_code != 404:
                     raise
                 raise KnowledgeBaseConflict(
-                    f"{slug} is no longer on the collaboration server at {url}; "
+                    f"{slug} is no longer on the collaboration server at {url}, or is in a team you are no longer in; "
                     "publish it as a new knowledge base.",
                     "remote_missing",
                 ) from e
             remote_id, remote_version = row.remote_id, version.version
         else:
-            try:
-                item = await client.create_item(
-                    KB_KIND, slug, manifest=manifest, blob_ref=blob_ref, item_id=seed_id
-                )
-            except CollaborationRefused as e:
-                if seed_id is None or e.status_code != 409:
-                    raise
-                # Another installation published this seed while this one packed.
-                return await _seed_published(session, row, url, seed_id)
+            item = await client.create_item(
+                KB_KIND, slug, team_id=team_id, manifest=manifest, blob_ref=blob_ref
+            )
             remote_id, remote_version = item.id, item.head_version
 
     await reread(session, row)
@@ -659,25 +563,44 @@ async def _publish(
     )
 
 
-async def _item_exists(client: CollaborationClient, item_id: uuid.UUID) -> bool:
+async def pack(row: KnowledgeBaseTable, tmp: Path) -> tuple[dict[str, Any], Path]:
+    """
+    Pack the knowledge base's PDFs and a snapshot of its index into an archive
+    in `tmp`, and return the manifest of a version holding it, and the archive:
+    what a publish sends.
+    """
+    public = KnowledgeBasePublic.model_validate(row)
+    here = await indexer.store_format()
+    # A knowledge base nothing has been indexed into has no store yet.
+    has_index = (Path(row.rag_db_path) / "chroma.sqlite3").is_file()
+    store = tmp / "rag_db" if has_index else None
+    archive = tmp / ARCHIVE_NAME
     try:
-        await client.get_item(item_id)
-    except CollaborationRefused as e:
-        if e.status_code != 404:
-            raise
-        return False
-    return True
-
-
-async def _seed_published(
-    session: AsyncSession, row: KnowledgeBaseTable, url: str, item_id: uuid.UUID
-) -> KnowledgeBasePublishResult:
-    """A seeded knowledge base found on the server already, linked to it."""
-    await reread(session, row)
-    row = await _link_seed(session, row, url, item_id)
-    return KnowledgeBasePublishResult(
-        status="unchanged", knowledge_base=KnowledgeBasePublic.model_validate(row)
-    )
+        if store is not None:
+            await indexer.snapshot_store(row.rag_db_path, store)
+        files, size = await asyncio.to_thread(
+            pack_knowledge_base, Path(row.pdfs_dir), store, archive
+        )
+    except Exception as e:  # sqlite3 and OS errors alike
+        raise HTTPException(
+            status_code=500, detail=f"{row.name} could not be packed: {e}"
+        ) from e
+    manifest = KnowledgeBaseManifest(
+        slug=public.slug,
+        name=public.name,
+        description=public.description,
+        publications=_shipped(public.publications),
+        build_status=public.build_status,
+        last_built_at=public.last_built_at,
+        files=files,
+        size=size,
+        archive_size=archive.stat().st_size,
+        has_index=has_index,
+        embedding_model=here.embedding_model,
+        embedding_revision=here.embedding_revision,
+        chromadb=here.chromadb,
+    ).model_dump(mode="json")
+    return manifest, archive
 
 
 # ---------------------------------------------------------------------------
@@ -808,6 +731,7 @@ async def import_knowledge_base(
             number = planned.version
             # An item's name is its publisher's slug, which the manifest records.
             item_name = manifest.slug if manifest is not None else str(item_id)
+            team_id = (await client.get_item(item_id)).team_id
         else:
             item = await client.get_item(item_id)
             if item.kind != KB_KIND:
@@ -817,6 +741,7 @@ async def import_knowledge_base(
                     f"{item.kind}, not a knowledge base.",
                 )
             item_name = item.name
+            team_id = item.team_id
             number = version if version is not None else item.head_version
             remote = await client.get_version(item_id, number)
             manifest = manifest_of(remote)
@@ -850,6 +775,7 @@ async def import_knowledge_base(
                 url=url,
                 item_id=item_id,
                 item_name=item_name,
+                team_id=team_id,
                 number=number,
                 blob_ref=remote.blob_ref,
                 manifest=manifest,
@@ -866,6 +792,7 @@ async def _import(
     url: str,
     item_id: uuid.UUID,
     item_name: str,
+    team_id: uuid.UUID,
     number: int,
     blob_ref: str,
     manifest: KnowledgeBaseManifest,
@@ -925,10 +852,11 @@ async def _import(
             if await get_kb_optional(session, slug) is not None:
                 raise _name_taken(slug)
             # An id of its own, never one from elsewhere: the seeded knowledge
-            # bases share fixed ids across installations.
+            # bases have fixed ids.
             row = KnowledgeBaseTable(
                 slug=slug,
                 name=manifest.name,
+                team_id=team_id,
                 pdfs_dir="",
                 rag_db_path="",
                 publications=[],

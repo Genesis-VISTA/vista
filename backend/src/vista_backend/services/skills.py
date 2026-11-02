@@ -54,6 +54,7 @@ from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
 from ._helpers import new_storage_path
 from .repo_tokens import settings_repo_token
+from .teams import require_skill_usable, team_for_new
 
 
 logger = logging.getLogger(__name__)
@@ -119,14 +120,17 @@ async def get_skill_detail(session: AsyncSession, name: str) -> tuple[SkillTable
     return skill, read_skill(settings.data_dir / skill.path).body
 
 
-def load_into(session: AsyncSession, project: ProjectTable, name: str) -> None:
+def load_into(session: AsyncSession, project: ProjectTable, skill: SkillTable) -> None:
     """
-    Add skill `name` to `project.skills` in the pending transaction, and rebuild
+    Add `skill` to `project.skills` in the pending transaction, and rebuild
     the project's agents once it commits, so their next turn sees the skill.
+    Refuses (400) a skill of another team (`teams.require_skill_usable`).
     """
     # Imported here: `project_agent` reaches `db.seed`, which imports this module.
     from .project_agent import invalidate_agents
 
+    require_skill_usable(project, skill)
+    name = skill.name
     if name in project.skills:
         return
     project.skills = [
@@ -183,9 +187,9 @@ async def commit_skill_files(
         # cleanup below.
         await invalidate_loading_projects(session, row.name)
     session.add(row)
-    if project is not None:
-        load_into(session, project, row.name)
     try:
+        if project is not None:
+            load_into(session, project, row)
         await session.commit()
     except Exception:
         await session.rollback()
@@ -246,6 +250,7 @@ async def create_skill(
     path = new_storage_path()
     skill = write_skill(settings.data_dir / path, spec)
     row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
+    row.team_id = await team_for_new(session, project)
     await _insert_skill_row(session, row, project)
     return row
 
@@ -481,6 +486,7 @@ async def _install_staged(
     old_path: str | None = None
     if existing is None:
         row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
+        row.team_id = await team_for_new(session, project)
     else:
         row = existing
         old_path = replace_files(row, skill, path)
@@ -669,6 +675,7 @@ async def _register_imported(
         )
 
     row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
+    row.team_id = await team_for_new(session, project)
     await _insert_skill_row(session, row, project)
     return row
 
@@ -800,6 +807,7 @@ async def import_skill_from_output(
     existing = await get_skill_optional(session, skill.name)
     if existing is None:
         row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
+        row.team_id = await team_for_new(session, project)
     elif replace and not existing.bundled:
         row = existing
         old_path = replace_files(row, skill, path)

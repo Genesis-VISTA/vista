@@ -8,8 +8,9 @@ import { AppTopBar } from "@/components/AppTopBar";
 import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
 import { forumCredential, type SettingsTokens } from "@/lib/forum-credential";
-import { fetchSettings } from "@/lib/settings";
-import { useCollaboration } from "@/lib/collaboration";
+import { fetchSettings, type LocalSettings } from "@/lib/settings";
+import { publishAudience, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamSwitcher";
 import {
   importRemoteProject,
   importSummary,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/project-sharing";
 import type { SharingRefusal } from "@/lib/skill-sharing";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
 import { PublishConflictModal } from "@/components/PublishConflictModal";
 import { ProjectImportModal } from "@/components/ProjectImportModal";
 import {
@@ -76,7 +78,11 @@ function ProjectsPageContent() {
     shouldOpenNew ? { mode: "create" } : { mode: "closed" }
   );
   const collab = useCollaboration();
+  const teams = useTeams();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;
+  // Only the selected team's projects (Private's: those on this computer only); the rest are a team switch away.
+  const shownProjects = projects.filter((p) => teams.show(p.teamId));
+  const hiddenCount = projects.length - shownProjects.length;
   const [notice, setNotice] = useState<{
     text: string;
     skill?: string;
@@ -88,6 +94,7 @@ function ProjectsPageContent() {
     null
   );
   const [showImport, setShowImport] = useState(false);
+  const [copying, setCopying] = useState<Project | null>(null);
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
 
@@ -270,6 +277,13 @@ function ProjectsPageContent() {
         </div>
       )}
 
+      {hiddenCount > 0 && (
+        <div className="hub-count" style={{ marginBottom: 12 }}>
+          {hiddenCount === 1 ? "1 project is" : `${hiddenCount} projects are`} in another
+          team. Switch team in the sidebar to see {hiddenCount === 1 ? "it" : "them"}.
+        </div>
+      )}
+
       <div className="projects-panel">
         {!loading && projects.length === 0 ? (
           <div className="projects-empty">
@@ -292,7 +306,7 @@ function ProjectsPageContent() {
           {loading && projects.length === 0 && (
             <div className="chat-bubble">Loading projects…</div>
           )}
-          {projects.map((project) => (
+          {shownProjects.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}
@@ -306,6 +320,8 @@ function ProjectsPageContent() {
               onServer={isProjectOnServer(project, serverUrl)}
               publishing={busyName === project.name}
               publishDisabledReason={collab.available ? null : collab.reason}
+              copyable={teams.shown && copyTargets(teams.teams, project.teamId).length > 0}
+              onCopy={() => setCopying(project)}
               onOpen={() => open(project)}
               onEdit={() => setModal({ mode: "edit", project })}
               onDelete={() => void removeProject(project)}
@@ -347,7 +363,7 @@ function ProjectsPageContent() {
         open={pendingPublish !== null}
         title="Publish project"
         message={pendingPublish
-          ? `Publish "${pendingPublish.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts skills and knowledge bases that are not on the server, or have changed, are published first: a knowledge base with its PDFs and index, which can take a while. Anyone who can reach that server can see and import them. A published version stays there; you can publish newer ones.`
+          ? `Publish "${pendingPublish.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\n${publishAudience(pendingPublish.teamId, teams)}\n\nIts skills and knowledge bases that are not on the server, or have changed, are published to the same team first: a knowledge base with its PDFs and index, which can take a while. A published version stays there; you can publish newer ones.`
           : ""}
         confirmLabel="Publish"
         onCancel={() => setPendingPublish(null)}
@@ -380,6 +396,23 @@ function ProjectsPageContent() {
         />
       )}
 
+      {copying && (
+        <CopyToTeamModal
+          kind="project"
+          name={copying.name}
+          teamId={copying.teamId}
+          onClose={() => setCopying(null)}
+          onCopied={() => {
+            // The project and what it uses joined the team, or were imported
+            // beside the originals: every list here may have changed.
+            refreshSkillCatalog();
+            refreshKbCatalog();
+            void refresh();
+            refreshHeads();
+          }}
+        />
+      )}
+
       {showImport && (
         <ProjectImportModal onClose={() => setShowImport(false)} onImported={imported} />
       )}
@@ -396,6 +429,8 @@ function ProjectCard({
   onServer,
   publishing,
   publishDisabledReason,
+  copyable,
+  onCopy,
   onOpen,
   onEdit,
   onDelete,
@@ -411,6 +446,9 @@ function ProjectCard({
   publishing: boolean;
   /** Why Publish is off; null when it can be used. */
   publishDisabledReason: string | null;
+  /** A team to copy it to exists, and the server answers. */
+  copyable: boolean;
+  onCopy: () => void;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -425,7 +463,10 @@ function ProjectCard({
     >
       <div className="project-card-head">
         <div>
-          <div className="project-card-title">{project.name}</div>
+          <div className="project-card-title">
+            {project.name}
+            <TeamBadge teamId={project.teamId} />
+          </div>
           {active && <span className="project-card-badge active">Active</span>}
         </div>
       </div>
@@ -465,21 +506,36 @@ function ProjectCard({
         <button type="button" className="button ghost button-sm" onClick={onEdit}>
           Edit
         </button>
-        <button
-          type="button"
-          className="button ghost button-sm"
-          disabled={publishing || publishDisabledReason !== null}
-          title={publishDisabledReason ?? "Publish this project and its skills to the collaboration server"}
-          onClick={onPublish}
-        >
-          {publishing
-            ? "Publishing…"
-            : !onServer
-              ? "Publish"
-              : project.modified
-                ? "Publish changes"
-                : "Republish"}
-        </button>
+        {/* A private project is shared by copying it to a team; one in a team
+            publishes new versions to it. */}
+        {project.teamId && (
+          <button
+            type="button"
+            className="button ghost button-sm"
+            disabled={publishing || publishDisabledReason !== null}
+            title={publishDisabledReason ?? "Publish this project and its skills to its team"}
+            onClick={onPublish}
+          >
+            {publishing
+              ? "Publishing…"
+              : !onServer
+                ? "Publish"
+                : project.modified
+                  ? "Publish changes"
+                  : "Republish"}
+          </button>
+        )}
+        {copyable && (
+          <button
+            type="button"
+            className="button ghost button-sm"
+            disabled={publishing}
+            title="Copy this project, with its skills and knowledge bases, to a team"
+            onClick={onCopy}
+          >
+            Copy to team…
+          </button>
+        )}
         <button type="button" className="button ghost button-sm" onClick={onDelete}>
           Delete
         </button>
@@ -503,6 +559,15 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+/** Under a skill or knowledge base a project has but cannot use, which the backend refuses on save. */
+function ForeignNote() {
+  return (
+    <div className="error" style={{ fontSize: 11 }}>
+      In another team: this project cannot use it. Uncheck it to save.
     </div>
   );
 }
@@ -539,7 +604,9 @@ function ProjectModal({
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
   // Which Settings tokens exist, to say which credential the forum publishes with.
-  const [settingsTokens, setSettingsTokens] = useState<SettingsTokens | null>(null);
+  const [settingsTokens, setSettingsTokens] = useState<
+    (SettingsTokens & Pick<LocalSettings, "collaboration_team_id">) | null
+  >(null);
   useEffect(() => {
     let live = true;
     fetchSettings()
@@ -552,6 +619,19 @@ function ProjectModal({
   // Unknown until Settings has loaded: saying "system git" meanwhile would be
   // wrong for anyone with a token saved.
   const credential = settingsTokens ? forumCredential(forumRepoUrl, settingsTokens) : null;
+  // The project's team, which decides what it may use: its own when editing,
+  // else the one selected in Settings, which a new project joins.
+  const projectTeam =
+    mode === "edit" ? (initial?.teamId ?? null) : (settingsTokens?.collaboration_team_id ?? null);
+  // Only what the project can use is offered, the rule the backend enforces on
+  // save. One it already has from another team stays listed, flagged, so it
+  // can be removed.
+  const offeredSkills = skillCatalog.filter(
+    (s) => usableInProject(s.teamId, projectTeam) || skills.has(s.slug),
+  );
+  const offeredKbs = kbCatalog.filter(
+    (kb) => usableInProject(kb.team_id, projectTeam) || kbs.has(kb.slug),
+  );
   const [toolsRaw, setToolsRaw] = useState((initial?.tools ?? []).join(", "));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -668,8 +748,12 @@ function ProjectModal({
             <div className="project-modal-skill-list">
               {skillCatalog.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading skills...</div>
+              ) : offeredSkills.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  No skills this project&rsquo;s team can use.
+                </div>
               ) : (
-                skillCatalog.map((s) => (
+                offeredSkills.map((s) => (
                   <label key={s.slug} className="project-modal-skill-item">
                     <input
                       type="checkbox"
@@ -677,7 +761,11 @@ function ProjectModal({
                       onChange={() => toggleSkill(s.slug)}
                     />
                     <div>
-                      <div style={{ fontWeight: 600 }}>{s.name}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        {s.name}
+                        <TeamBadge teamId={s.teamId} />
+                      </div>
+                      {!usableInProject(s.teamId, projectTeam) && <ForeignNote />}
                       <div style={{ fontSize: 11, color: "var(--muted)" }}>
                         {s.description.slice(0, 120)}
                         {s.description.length > 120 ? "..." : ""}
@@ -692,12 +780,14 @@ function ProjectModal({
           <div className="project-modal-label">
             <div>Knowledge Bases</div>
             <div className="project-modal-skill-list">
-              {kbCatalog.length === 0 ? (
+              {offeredKbs.length === 0 ? (
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                  No knowledge bases yet. Create one from the Knowledge Bases page.
+                  {kbCatalog.length === 0
+                    ? "No knowledge bases yet. Create one from the Knowledge Bases page."
+                    : "No knowledge bases this project\u2019s team can use."}
                 </div>
               ) : (
-                kbCatalog.map((kb) => (
+                offeredKbs.map((kb) => (
                   <label key={kb.slug} className="project-modal-skill-item">
                     <input
                       type="checkbox"
@@ -705,7 +795,11 @@ function ProjectModal({
                       onChange={() => toggleKb(kb.slug)}
                     />
                     <div>
-                      <div style={{ fontWeight: 600 }}>{kb.name}</div>
+                      <div style={{ fontWeight: 600 }}>
+                        {kb.name}
+                        <TeamBadge teamId={kb.team_id} />
+                      </div>
+                      {!usableInProject(kb.team_id, projectTeam) && <ForeignNote />}
                       <div style={{ fontSize: 11, color: "var(--muted)" }}>
                         {(kb.description ?? "").slice(0, 120)}
                         {(kb.description ?? "").length > 120 ? "..." : ""}

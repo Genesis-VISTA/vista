@@ -17,6 +17,7 @@ export type BackendSkill = {
   remote_id?: string | null;
   remote_version?: number | null;
   modified?: boolean;
+  team_id?: string | null;
   // HPC jobs the skill's folder ships under `hpc_jobs/` (read from disk).
   hpc_jobs?: string[];
   created_at?: string;
@@ -31,6 +32,7 @@ export function toSharing(skill: BackendSkill) {
     remoteId: skill.remote_id ?? null,
     remoteVersion: skill.remote_version ?? null,
     modified: skill.modified ?? false,
+    teamId: skill.team_id ?? null,
   };
 }
 

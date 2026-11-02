@@ -61,6 +61,7 @@ from .collaboration import (
     list_with_heads,
     server_url,
 )
+from .teams import require_team
 from .skills import (
     build_skill_row,
     commit_skill_files,
@@ -133,6 +134,8 @@ class RemoteSkill(BaseModel):
     """A skill on the collaboration server, as the Skill Hub lists it."""
 
     id: uuid.UUID
+    team_id: uuid.UUID
+    """ The team it is in on the server. """
     name: str
     head_version: int
     created_by_name: str | None
@@ -292,6 +295,7 @@ async def list_remote_skills(
         listed.append(
             RemoteSkill(
                 id=item.id,
+                team_id=item.team_id,
                 name=item.name,
                 head_version=item.head_version,
                 created_by_name=item.created_by_name,
@@ -341,16 +345,11 @@ async def publish_skill(
     retry. A write to the skill while it is published leaves it modified.
     """
     row = await get_skill(session, name)
-    if row.bundled:
-        raise HTTPException(
-            status_code=409,
-            detail=f"{name} is bundled with VISTA, so every installation has it "
-            "already; it is not published.",
-        )
     url, _ = server_url(local)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
         return row
+    team_id = require_team(row.team_id, name)
     edited_at = row.updated_at
     async with client_for(local) as client, work_dir() as tmp:
         archive = tmp / ARCHIVE_NAME
@@ -379,14 +378,18 @@ async def publish_skill(
                 if e.status_code != 404:
                     raise
                 raise SkillConflict(
-                    f"{name} is no longer on the collaboration server at {url}; "
+                    f"{name} is no longer on the collaboration server at {url}, or is in a team you are no longer in; "
                     "publish it as a new skill.",
                     "remote_missing",
                 ) from e
             remote_id, remote_version = row.remote_id, version.version
         else:
             item = await client.create_item(
-                SKILL_KIND, name, manifest=manifest, blob_ref=blob_ref
+                SKILL_KIND,
+                name,
+                team_id=team_id,
+                manifest=manifest,
+                blob_ref=blob_ref,
             )
             remote_id, remote_version = item.id, item.head_version
     await reread(session, row)
@@ -491,7 +494,7 @@ async def import_skill(
         if existing is not None:
             if existing.remote_version == number and not existing.modified:
                 if project is not None:
-                    load_into(session, project, existing.name)
+                    load_into(session, project, existing)
                     await session.commit()
                     await session.refresh(existing)
                 return existing, "unchanged"
@@ -525,6 +528,7 @@ async def import_skill(
         row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
         row.origin_server = url
         row.remote_id = item_id
+        row.team_id = item.team_id
         status: ImportStatus = "imported"
     else:
         await reread(session, existing)

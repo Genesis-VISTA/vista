@@ -148,6 +148,9 @@ async def test_the_status_route_without_a_server(session):
         "signed_in": False,
         "sign_in_required": False,
         "sign_in_url": None,
+        "user": None,
+        "teams": [],
+        "team_id": None,
     }
 
 

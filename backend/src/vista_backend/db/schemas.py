@@ -113,6 +113,15 @@ class ProjectSharing(SQLModel):
     a skill it loads is the skill's own `modified`, not this. True for a
     project never published, seeded ones included: all of it is local.
     """
+    team_id: uuid.UUID | None = None
+    """
+    The collaboration team it is in, on the server in effect, and publishes
+    to: the team selected when it was made (`collaboration_team_id`), its
+    project's when made for one, its item's when imported, or the one it was
+    copied to (`team_copy`). None is private: on this computer only, as
+    everything made with Private selected, or seeded or bundled by VISTA, is.
+    Only resources of the same team are used together (`services/teams.py`).
+    """
 
 
 class ProjectPublic(ProjectBase, ProjectSharing):
@@ -298,8 +307,16 @@ class KnowledgeBaseSharing(SQLModel):
     """
     Changed here since `remote_version`: set by a change of name or
     description and by adding or deleting a PDF, cleared by a publish or an
-    import. True for one never published, except a seeded one, which is
-    False until changed (see `KnowledgeBaseTable.seed_item`).
+    import. True for one never published, seeded ones included.
+    """
+    team_id: uuid.UUID | None = None
+    """
+    The collaboration team it is in, on the server in effect, and publishes
+    to: the team selected when it was made (`collaboration_team_id`), its
+    project's when made for one, its item's when imported, or the one it was
+    copied to (`team_copy`). None is private: on this computer only, as
+    everything made with Private selected, or seeded or bundled by VISTA, is.
+    Only resources of the same team are used together (`services/teams.py`).
     """
 
 
@@ -342,9 +359,8 @@ class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """ ISO timestamp updated on every write. """
     seed_item: uuid.UUID | None = None
     """
-    For a seeded knowledge base, the collaboration item it is, unchanged, on
-    any server (`seed.seed_item_id`); None for any other. That item is only
-    ever VISTA's seed: changed here, it is published as an item of its own.
+    No longer used: seeds are private, like anything else never published.
+    Kept so an older database still opens.
     """
 
 
@@ -417,6 +433,15 @@ class SkillBase(SQLModel):
     Changed here since `remote_version`: set by every write to the skill's
     files, cleared by a publish or an import. A skill never published is
     modified from its creation, as everything in it is local.
+    """
+    team_id: uuid.UUID | None = None
+    """
+    The collaboration team it is in, on the server in effect, and publishes
+    to: the team selected when it was made (`collaboration_team_id`), its
+    project's when made for one, its item's when imported, or the one it was
+    copied to (`team_copy`). None is private: on this computer only, as
+    everything made with Private selected, or seeded or bundled by VISTA, is.
+    Only resources of the same team are used together (`services/teams.py`).
     """
 
 
@@ -544,6 +569,8 @@ class LocalSettingsUpdate(SQLModel):
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
     collaboration_server_url: OptionalHttpUrl = None
     """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
+    collaboration_team_id: uuid.UUID | None = None
+    """ The collaboration team selected here; None for Private. """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -644,6 +671,7 @@ class LocalSettingsPublic(SQLModel):
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
     collaboration_server_url: str | None = None
+    collaboration_team_id: uuid.UUID | None = None
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -742,6 +770,13 @@ class LocalSettingsTable(SQLModel, table=True):
     The collaboration server this installation publishes to and imports from.
     `None` falls back to `Settings.collaboration_server_url`; with neither,
     publishing and importing are off. Not a secret.
+    """
+    collaboration_team_id: uuid.UUID | None = None
+    """
+    The collaboration team selected here, which every page shows the
+    resources of and every new project, skill and knowledge base joins; None
+    for Private, on this computer only. A team on that server, so cleared
+    when the server's address changes.
     """
     email: str | None = None
     """ Where campaign notifications go; nothing is sent without it. """

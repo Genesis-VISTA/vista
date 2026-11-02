@@ -45,6 +45,9 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     signed_in: true,
     sign_in_required: false,
     sign_in_url: null,
+    user: null,
+    teams: [],
+    team_id: null,
     ...overrides,
   };
 }
@@ -64,6 +67,8 @@ function row(name: string, overrides: Partial<ProjectPublic> = {}): ProjectPubli
     remote_id: null,
     remote_version: null,
     modified: true,
+    // In the public team: a private one is copied to a team, not published.
+    team_id: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };
 }
@@ -75,6 +80,7 @@ function project(overrides: Partial<ProjectPublic> = {}): Project {
 function remote(overrides: Partial<RemoteProject> = {}): RemoteProject {
   return {
     id: ITEM,
+    team_id: "00000000-0000-4000-8000-000000000000",
     name: "salt-lab",
     head_version: 1,
     created_by_name: "Bea",

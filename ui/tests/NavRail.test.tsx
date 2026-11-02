@@ -17,6 +17,7 @@ vi.mock("@/lib/settings", () => ({
 }));
 vi.mock("@/components/HpcStatusSection", () => ({ HpcStatusSection: () => null }));
 vi.mock("@/components/UserSettingsModal", () => ({ UserSettingsModal: () => null }));
+vi.mock("@/components/TeamSwitcher", () => ({ TeamSwitcher: () => null }));
 
 const KEY = "vista.navRail.collapsed.v1";
 

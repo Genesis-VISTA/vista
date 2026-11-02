@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useCollaboration } from "@/lib/collaboration";
+import { emptyTeamNote, useCollaboration, useTeams } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamSwitcher";
 import { projectNameError } from "@/lib/projects";
 import {
   importRemoteProject,
@@ -31,6 +32,7 @@ export function ProjectImportModal({
   onImported: (result: ProjectImported) => void;
 }) {
   const collab = useCollaboration();
+  const teams = useTeams();
   const [projects, setProjects] = useState<RemoteProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,6 +99,9 @@ export function ProjectImportModal({
     else void runImport(project);
   }
 
+  // Only the selected team's: Private has nothing on the server.
+  const shownProjects = projects.filter((project) => teams.show(project.team_id));
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div
@@ -129,20 +134,23 @@ export function ProjectImportModal({
                   {error}
                 </div>
               )}
-              {loading && projects.length === 0 && <div className="hub-count">Loading…</div>}
-              {!loading && projects.length === 0 && !error && (
+              {loading && shownProjects.length === 0 && <div className="hub-count">Loading…</div>}
+              {!loading && shownProjects.length === 0 && !error && (
                 <div className="hub-empty">
-                  No projects have been published yet. Publish one from its card on this page.
+                  {projects.length > 0 ? emptyTeamNote(teams, "projects") : "No projects have been published yet. Publish one from its card on this page."}
                 </div>
               )}
-              {projects.map((project) => {
+              {shownProjects.map((project) => {
                 const action = projectImportAction(project);
                 const busy = busyId === project.id;
                 const manifest = project.manifest;
                 return (
                   <div key={project.id} className="hub-card" data-testid="remote-project">
                     <div className="hub-card-head">
-                      <div className="hub-card-name">{project.name}</div>
+                      <div className="hub-card-name">
+                        {project.name}
+                        <TeamBadge teamId={project.team_id} />
+                      </div>
                       <button
                         type="button"
                         className={`hub-card-action${action.kind === "current" ? " loaded" : ""}`}

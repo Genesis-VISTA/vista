@@ -44,6 +44,8 @@ from ..db.schemas import (
 )
 from ..services import knowledge_base as kb_service
 from ..services import knowledge_base_collaboration as kb_collaboration
+from ..services import team_copy
+from .skills import TeamCopyRequest
 from ..utils import indexer
 from ..utils.misc import write_file_unique
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -848,6 +850,17 @@ async def publish_knowledge_base(
     return await kb_collaboration.publish_knowledge_base(
         session, local, slug, on_top_of=body.on_top_of, as_new=body.as_new
     )
+
+
+@router.post("/{slug}/copy")
+async def copy_knowledge_base(
+    slug: str, body: TeamCopyRequest, session: SessionDep, local: LocalSettingsDep
+) -> team_copy.TeamCopyResult:
+    """
+    Copy the knowledge base to a team on the collaboration server (`team_copy`).
+    Used by a project here, the copy is imported beside it under a free slug.
+    """
+    return await team_copy.copy_knowledge_base(session, local, slug, body.team_id)
 
 
 # ---------------------------------------------------------------------------

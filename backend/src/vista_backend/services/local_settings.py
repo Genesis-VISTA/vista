@@ -6,6 +6,7 @@ inference keys, cluster credentials, repository tokens, the research profile —
 lives on `LocalSettingsTable`, made at startup by `ensure`.
 """
 
+import uuid
 from typing import Annotated as A
 
 from fastapi import Depends
@@ -50,12 +51,16 @@ async def update(
 ) -> LocalSettingsTable:
     row = await get(session)
     changes = updates.model_dump(exclude_unset=True)
+    changed = set(changes)
     if (
         "collaboration_server_url" in changes
         and changes["collaboration_server_url"] != row.collaboration_server_url
     ):
-        # The token is the old server's: never send it to the new one.
+        # The token is the old server's: never send it to the new one. Its
+        # teams are the old server's too, here and on everything in them.
         row.collaboration_token = None
+        row.collaboration_team_id = None
+        await _forget_teams(session, changes["collaboration_server_url"])
     for key in WRITE_ONLY_TOKENS:
         # Write-only: null keeps the stored token (the client never has it to
         # send back), "" removes it.
@@ -68,12 +73,37 @@ async def update(
     session.add(row)
     await session.flush()
     await session.refresh(row)
-    # Every agent was built from these settings. Imported here because the
-    # agent pool reads this module to build an agent.
-    from .project_agent import invalidate_agents
+    if changed - {"collaboration_team_id"}:
+        # Every agent was built from these settings (the team is not one they
+        # read). Imported here because the agent pool reads this module to
+        # build an agent.
+        from .project_agent import invalidate_agents
 
-    invalidate_agents(session)
+        invalidate_agents(session)
     return row
+
+
+async def _forget_teams(session: AsyncSession, url: str | None) -> None:
+    """
+    Make private every project, skill and knowledge base not linked to `url`,
+    the new server: their teams are another server's, and mean nothing on it.
+    """
+    from sqlalchemy import update
+    from sqlmodel import col, or_
+
+    from ..db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
+
+    for table in (ProjectTable, SkillTable, KnowledgeBaseTable):
+        stmt = update(table).values(team_id=None)
+        if url:
+            server = col(table.origin_server)
+            stmt = stmt.where(or_(server.is_(None), server != url))
+        await session.exec(stmt)
+
+
+async def selected_team(session: AsyncSession) -> uuid.UUID | None:
+    """The team a new project, skill or knowledge base joins: the one selected here."""
+    return (await get(session)).collaboration_team_id
 
 
 def to_public(row: LocalSettingsTable) -> LocalSettingsPublic:
