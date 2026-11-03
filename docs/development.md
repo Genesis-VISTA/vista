@@ -130,8 +130,10 @@ also starts a local collaboration server, logging to `logs/collab.log`, and poin
 at it with `VISTA_BACKEND_COLLABORATION_SERVER_URL`; an address set under Settings →
 Collaboration takes its place. `--collab` works in every mode. The server keeps its data in
 `data/collaboration-server/` (`VISTA_COLLAB_DATA_DIR`), listens on `127.0.0.1:8002`
-(`VISTA_COLLAB_HOST`, `VISTA_COLLAB_PORT`), and has no sign-in yet, so anyone who can reach it
-can read and write everything on it. Packages never start one.
+(`VISTA_COLLAB_HOST`, `VISTA_COLLAB_PORT`), and runs in `dev-headers` mode: it believes the
+caller's identity headers as sent, so it refuses to listen on anything but loopback. Packages
+never start one. How the server works, and how a deployment signs researchers in, is in
+[The collaboration server](collaboration-server.md).
 
 ### By hand
 

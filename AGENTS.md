@@ -137,9 +137,9 @@ Keep `db/schemas.py` changes additive: a nullable column, or a NOT NULL one with
 ### Collaboration server
 Where researchers explicitly publish and import projects, skills and knowledge bases.
 A generic item/version API, deployed on the Holly testbed behind Obsidian's gateway at
-`https://obsidian.ccs.ornl.gov/vista/api` (`collaboration_server/deploy/holly/`, and the
-README's Deployment section). Authentication is `services/identity.py`, the one place it
-lives: `auth_mode=oidc` (the default) verifies a Keycloak token itself, as well as the gateway;
+`https://obsidian.ccs.ornl.gov/vista/api` (`collaboration_server/deploy/holly/`, whose README
+is the runbook; how the server works is `docs/collaboration-server.md`). Authentication is
+`services/identity.py`, the one place it lives: `auth_mode=oidc` (the default) verifies a Keycloak token itself, as well as the gateway;
 `dev-headers` trusts `X-Vista-Install-Id` / `X-Vista-Display-Name` and only listens on loopback.
 Access is by team (`services/teams.py`): every item is in one team, and a team's items are
 `404` to anyone not in it. Everyone is in the public team, which has no member rows and starts
