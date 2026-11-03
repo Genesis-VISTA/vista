@@ -504,49 +504,94 @@ async def seed_db(engine: AsyncEngine) -> None:
 
 ALLOY_DESIGN_PROJECT_ID = uuid.UUID("f855bdd8-c433-423e-ab5c-3a9a63b6e661")
 MOLTEN_SALT_PROJECT_ID = uuid.UUID("282531e7-1e05-4369-a339-9d1b4f20aa89")
+# Seeded before hello-olcf replaced it: kept only so `_vista_ships()` still tells
+# a researcher's copy from their own work. Nothing seeds or restores these.
 AI_SAFETY_PROJECT_ID = uuid.UUID("5c0a4f3e-7b1d-4e8a-9a52-3d6f0c1b7e24")
 AI_SAFETY_KB_ID = uuid.UUID("a3e7c915-42d8-4b6f-8f0e-9d1b5c7a2e46")
-AI_SAFETY_SLUG = "ai-safety"
-AI_SAFETY_PROJECT_NAME = "ai-safety-autonomous-labs"
+
+HELLO_OLCF_PROJECT_ID = uuid.UUID("6e8aa455-d499-4dd7-8fa0-40ca7613406c")
+OLCF_DOCS_KB_ID = uuid.UUID("25b339f7-fb19-4551-8d15-560533fb16c9")
+OLCF_DOCS_SLUG = "olcf-docs"
+HELLO_OLCF_PROJECT_NAME = "hello-olcf"
+HELLO_OLCF_SKILLS = ["hello-odo", "hello-frontier", "hello-lux", "hpc-skill-author"]
 
 
-async def _acquire_ai_safety_corpus() -> bool:
+def _install_prebuilt_store(kb_dir: Path) -> bool:
     """
-    Put the `ai-safety` corpus under `knowledge_bases_dir` and verify its index.
+    Move a `rag_db/` that a download left in `kb_dir/pdfs` to `kb_dir/rag_db`,
+    where the MCP server and the indexer look for it, and return whether there
+    was one. It must not stay in `pdfs/`, where its files would sit among the
+    documents. The store's own `bm25_corpus.json` moves with it, and it is the
+    MCP server's signal that the store changed.
+
+    Called only after the whole folder has downloaded, so a download cut short
+    leaves nothing at `kb_dir/rag_db`; the next boot resumes it. A store already
+    at `kb_dir/rag_db` is replaced: it belongs to whatever documents were
+    downloaded before, and this one matches the documents just downloaded.
+    """
+    downloaded = kb_dir / "pdfs" / "rag_db"
+    if not downloaded.is_dir():
+        return False
+    installed = kb_dir / "rag_db"
+    if installed.exists():
+        shutil.rmtree(installed)
+    downloaded.replace(installed)
+    # Left by a download that died between writing and renaming a file.
+    for stale in installed.rglob("*.part"):
+        stale.unlink()
+    return True
+
+
+async def _acquire_olcf_docs_corpus() -> bool:
+    """
+    Put the `olcf-docs` corpus under `knowledge_bases_dir` and verify its index.
     Returns False, with a warning, when the corpus is unavailable; the next boot
     tries again.
 
-    From a payload the index is distributed ready-made and never built here: an
-    absent or empty one is a packaging defect and raises. From a token the PDFs
-    are downloaded and indexed, and a network or token failure only warns, so a
-    revoked token or a GitLab outage never blocks startup.
+    The folder's documents go to `pdfs/` (whatever their format, as for every
+    knowledge base). A `rag_db/` in the folder is the prebuilt index and is
+    installed as it is; nothing is embedded here, since that would be one model
+    call per section. From a payload the folder holds no index: the package
+    ships it at `knowledge-bases/olcf-docs/rag_db`, and an absent or empty one is
+    a packaging defect that raises. From a token, a folder with no `rag_db/` is
+    not seeded, and a network or token failure only warns, so a revoked token
+    or a GitLab outage never blocks startup.
     """
-    kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
+    kb_dir = settings.knowledge_bases_dir / OLCF_DOCS_SLUG
     ctx_manager = _vista_data_client()
     if isinstance(ctx_manager, nullcontext):
         logging.warning(
-            "AI-safety corpus unavailable: neither vista_data_payload_dir nor "
+            "OLCF docs corpus unavailable: neither vista_data_payload_dir nor "
             "vista_data_token is configured; the project is seeded without its "
             "knowledge base"
         )
         return False
     try:
         async with ctx_manager as client:
-            if not await client.has(AI_SAFETY_SLUG):
+            if not await client.has(OLCF_DOCS_SLUG):
                 logging.warning(
-                    f"AI-safety corpus unavailable: vista-data has no "
-                    f"{AI_SAFETY_SLUG}/ folder; the project is seeded without its "
+                    f"OLCF docs corpus unavailable: vista-data has no "
+                    f"{OLCF_DOCS_SLUG}/ folder; the project is seeded without its "
                     "knowledge base"
                 )
                 return False
-            await client.download_dir(AI_SAFETY_SLUG, kb_dir / "pdfs")
-            if not _from_payload():
-                await _build_knowledge_base(kb_dir)
+            await client.download_dir(OLCF_DOCS_SLUG, kb_dir / "pdfs")
     except httpx.HTTPError as exc:
         logging.warning(
-            f"AI-safety corpus unavailable: vista-data request failed ({exc!r}); "
+            f"OLCF docs corpus unavailable: vista-data request failed ({exc!r}); "
             "the project is seeded without its knowledge base and the next "
             "startup will try again"
+        )
+        return False
+    installed = _install_prebuilt_store(kb_dir)
+    if (
+        not installed
+        and not _from_payload()
+        and not (kb_dir / "rag_db" / "chroma.sqlite3").is_file()
+    ):
+        logging.warning(
+            f"OLCF docs corpus unavailable: vista-data's {OLCF_DOCS_SLUG}/ has no "
+            "rag_db/ to install; the project is seeded without its knowledge base"
         )
         return False
     _assert_knowledge_base_indexed(kb_dir)
@@ -555,44 +600,49 @@ async def _acquire_ai_safety_corpus() -> bool:
 
 async def sync_default_projects(engine: AsyncEngine) -> None:
     """
-    Bring the AI-safety default project and knowledge base to this database, on
-    every startup. Additive only, like `sync_bundled_skills`.
+    Bring the hello-olcf default project and its knowledge base to this database,
+    on every startup. Additive only, like `sync_bundled_skills`.
 
     Inserts the project and the KB by their fixed ids where missing, and appends
     the KB's slug to the project's `knowledge_bases` when the KB exists and the
     slug is absent. Nothing else about an existing project or KB is touched, no
     user-attached KB is removed, and nothing is deleted. The science projects are
     not handled here: they stay in `seed_db`, which only ever runs on an empty
-    database.
+    database. The AI-safety project earlier versions seeded is not handled
+    either: a database that holds it keeps it, and it is not restored.
+
+    The project names its skills and does not need them to exist yet:
+    `sync_bundled_skills` runs after this, and the agent looks skills up by name
+    when it is built (`ProjectAgent._setup_volumes`), skipping a missing one.
 
     A deleted default project comes back on the next startup, since there is no
     record of the deletion to tell it apart from a project never seeded.
     """
     async with AsyncSession(engine) as session:
-        project = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
+        project = await session.get(ProjectTable, HELLO_OLCF_PROJECT_ID)
         kb = (
             await session.exec(
                 select(KnowledgeBaseTable).where(
-                    (KnowledgeBaseTable.id == AI_SAFETY_KB_ID)
-                    | (KnowledgeBaseTable.slug == AI_SAFETY_SLUG)
+                    (KnowledgeBaseTable.id == OLCF_DOCS_KB_ID)
+                    | (KnowledgeBaseTable.slug == OLCF_DOCS_SLUG)
                 )
             )
         ).first()
 
-    if kb is None and await _acquire_ai_safety_corpus():
-        kb_dir = settings.knowledge_bases_dir / AI_SAFETY_SLUG
+    if kb is None and await _acquire_olcf_docs_corpus():
+        kb_dir = settings.knowledge_bases_dir / OLCF_DOCS_SLUG
         now = now_iso()
         kb = _seeded_kb(
-            AI_SAFETY_KB_ID,
+            OLCF_DOCS_KB_ID,
             kb_dir,
-            slug=AI_SAFETY_SLUG,
-            name="AI Safety Papers",
+            slug=OLCF_DOCS_SLUG,
+            name="OLCF User Documentation",
             description=(
-                "Papers on the safety and security of autonomous laboratories and "
-                "LLM agents: the interconnected autonomous-labs roadmap, "
-                "autonomy-induced security risks in LLM agents, and security and "
-                "privacy in autonomous driving. Shares its PDF folder and ChromaDB "
-                "index with the MCP server's rag_search tool."
+                "The OLCF User Documentation (docs.olcf.ornl.gov), one file per "
+                "section, each headed with the URL of its section: systems such as "
+                "Odo, Frontier and Lux, accounts and projects, software, data and "
+                "running jobs. Shares its document folder and ChromaDB index with "
+                "the MCP server's rag_search tool."
             ),
             last_built_at=now,
             created_at=now,
@@ -608,33 +658,33 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
         if project is None:
             session.add(
                 ProjectTable(
-                    id=AI_SAFETY_PROJECT_ID,
-                    name=AI_SAFETY_PROJECT_NAME,
+                    id=HELLO_OLCF_PROJECT_ID,
+                    name=HELLO_OLCF_PROJECT_NAME,
                     description=(
-                        "AI Safety in Autonomous Labs: the safety and security of "
-                        "AI agents that plan and run experiments, grounded in a "
-                        "literature corpus and runnable HPC jobs."
+                        "A first look at OLCF: ask the OLCF user documentation "
+                        "questions with cited answers, run a hello job on Odo, "
+                        "Frontier or Lux, and have a job of your own authored."
                     ),
                     system_prompt=(
-                        SYSTEM_PROMPTS / f"{AI_SAFETY_PROJECT_NAME}.md"
+                        SYSTEM_PROMPTS / f"{HELLO_OLCF_PROJECT_NAME}.md"
                     ).read_text(encoding="utf-8"),
-                    skills=[],
-                    knowledge_bases=[AI_SAFETY_SLUG] if kb is not None else [],
+                    skills=list(HELLO_OLCF_SKILLS),
+                    knowledge_bases=[OLCF_DOCS_SLUG] if kb is not None else [],
                     tools=["*", "!agenthpc_*"],
                     usage_limits=dict(request_limit=50),
                 )
             )
         elif (
             kb is not None
-            and AI_SAFETY_SLUG not in project.knowledge_bases
+            and OLCF_DOCS_SLUG not in project.knowledge_bases
             # Only while it is private, as seeded: in a team it uses only that
             # team's, and a copy to one names its own copy of the corpus.
             and project.team_id is None
         ):
-            existing = await session.get(ProjectTable, AI_SAFETY_PROJECT_ID)
+            existing = await session.get(ProjectTable, HELLO_OLCF_PROJECT_ID)
             assert existing is not None
             # A new list: SQLAlchemy does not see an in-place append to a JSON column.
-            existing.knowledge_bases = [*existing.knowledge_bases, AI_SAFETY_SLUG]
+            existing.knowledge_bases = [*existing.knowledge_bases, OLCF_DOCS_SLUG]
             existing.modified = True
             session.add(existing)
         await session.commit()

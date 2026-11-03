@@ -66,6 +66,20 @@ afterEach(() => {
 });
 
 describe("Skills page during the tour", () => {
+  it("points at the tour's skill among the others, and carries its name", async () => {
+    SKILLS.push({ slug: "hello-frontier", name: "Hello Frontier", description: "d3", bundled: true });
+    try {
+      tourPosition.current = { step: "skills", subStep: "open-skill" };
+      render(<SkillsPage />);
+      await screen.findByText("Hello Frontier");
+      const target = document.querySelector('[data-tour="skills:open-skill"]');
+      expect(target).toHaveTextContent("Hello Frontier");
+      expect(target).toHaveAttribute("data-tour-name", "Hello Frontier");
+    } finally {
+      SKILLS.pop();
+    }
+  });
+
   it("carries the tour's anchors on both sections, the first skill, the first Load and Import", async () => {
     render(<SkillsPage />);
     await screen.findByText("Other One");

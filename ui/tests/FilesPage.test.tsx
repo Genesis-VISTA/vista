@@ -213,7 +213,7 @@ describe("Files page", () => {
 });
 
 describe("Files page during the tour's files step", () => {
-  const exampleNames = ["summary.md", "risk-scores.svg", "risks.csv"];
+  const exampleNames = ["sweep-report.md", "sweep-results.svg", "sweep-inputs.csv"];
 
   it("lists no example files when no tour is running", async () => {
     render(<FilesPage />);
@@ -240,10 +240,10 @@ describe("Files page during the tour's files step", () => {
     expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Show in chat" })).not.toBeInTheDocument();
     // The tour's anchors: both trees, the two rows it has opened, and the preview pane.
-    expect(document.querySelector('[data-tour="files:outputs"]')).toHaveTextContent("risk-scores.svg");
+    expect(document.querySelector('[data-tour="files:outputs"]')).toHaveTextContent("sweep-results.svg");
     expect(document.querySelector('[data-tour="files:uploads"]')).not.toBeNull();
-    expect(document.querySelector('[data-tour="files:open-chart"]')).toHaveTextContent("risk-scores.svg");
-    expect(document.querySelector('[data-tour="files:open-report"]')).toHaveTextContent("summary.md");
+    expect(document.querySelector('[data-tour="files:open-chart"]')).toHaveTextContent("sweep-results.svg");
+    expect(document.querySelector('[data-tour="files:open-report"]')).toHaveTextContent("sweep-report.md");
     expect(document.querySelector('[data-tour="files:preview"]')).not.toBeNull();
 
     // Both opened: the examples stay while the review coachmark waits for Next.
@@ -258,7 +258,7 @@ describe("Files page during the tour's files step", () => {
 
   it("keeps real files' actions, and asks the backend for nothing about an example", async () => {
     tourPosition.current = { step: "files", subStep: "open-chart" };
-    search.current = "kind=outputs&path=summary.md";
+    search.current = "kind=outputs&path=sweep-report.md";
     outputs = [{ name: "real.txt", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
     render(<FilesPage />);
     await advance(0);
@@ -266,18 +266,18 @@ describe("Files page during the tour's files step", () => {
     // The preview gets the example's own content, a data URL.
     expect(screen.getByTestId("preview")).toHaveAttribute("data-src", expect.stringMatching(/^data:text\/markdown/));
     const requested = fetchMock.mock.calls.map((c) => decodeURIComponent(String(c[0])));
-    expect(requested.filter((url) => url.includes("summary.md") || url.includes("risk"))).toEqual([]);
+    expect(requested.filter((url) => url.includes("sweep-"))).toEqual([]);
   });
 
   it("reports the example image and the example report when they are opened", async () => {
     tourPosition.current = { step: "files", subStep: "open-chart" };
-    search.current = "kind=outputs&path=risk-scores.svg";
+    search.current = "kind=outputs&path=sweep-results.svg";
     const view = render(<FilesPage />);
     await advance(0);
     expect(tourReport).toHaveBeenCalledExactlyOnceWith("example-image-opened");
     expect(screen.getByTestId("preview")).toHaveAttribute("data-src", expect.stringMatching(/^data:image\/svg\+xml/));
 
-    search.current = "kind=outputs&path=summary.md";
+    search.current = "kind=outputs&path=sweep-report.md";
     view.rerender(<FilesPage />);
     await advance(0);
     expect(tourReport).toHaveBeenLastCalledWith("example-md-opened");
@@ -285,7 +285,7 @@ describe("Files page during the tour's files step", () => {
 
   it("clears an example's selection when the step ends", async () => {
     tourPosition.current = { step: "files", subStep: "open-chart" };
-    search.current = "kind=outputs&path=summary.md";
+    search.current = "kind=outputs&path=sweep-report.md";
     const view = render(<FilesPage />);
     await advance(0);
     expect(replace).not.toHaveBeenCalled();
@@ -298,8 +298,8 @@ describe("Files page during the tour's files step", () => {
 
   it("does not take a real file of the same name for an example", async () => {
     tourPosition.current = { step: "files", subStep: "open-chart" };
-    search.current = "kind=outputs&path=summary.md";
-    outputs = [{ name: "summary.md", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
+    search.current = "kind=outputs&path=sweep-report.md";
+    outputs = [{ name: "sweep-report.md", size: 5, modifiedAt: "2026-01-02T00:00:00Z", shown_in: null }];
     render(<FilesPage />);
     await advance(0);
     expect(screen.getAllByText("Example")).toHaveLength(2);

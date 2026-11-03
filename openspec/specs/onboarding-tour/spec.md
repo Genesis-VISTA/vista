@@ -73,8 +73,7 @@ once.
 
 - **WHEN** the open-a-project step is shown
 - **THEN** the projects page is shown, and after its overview the coachmarks point in turn
-  at the AI Safety in Autonomous Labs project card, at **New project**, and at the card's
-  **Open** button
+  at the `hello-olcf` project card, at **New project**, and at the card's **Open** button
 - **AND** the step completes when any project becomes the active project, which leaves the
   researcher in that project's chat
 
@@ -95,7 +94,7 @@ come once the researcher has reached the screen.
 
 - **WHEN** a researcher on the knowledge bases step clicks the knowledge bases navigation entry
 - **THEN** a coachmark describes the knowledge bases screen, and nothing on it is dimmed
-- **AND** on **Next**, the coachmark points at AI Safety Papers
+- **AND** on **Next**, the coachmark points at OLCF User Documentation
 
 #### Scenario: Arriving in chat
 
@@ -161,30 +160,15 @@ no default (Custom) SHALL be told to pick any model that its endpoint serves.
 - **THEN** Settings is not opened and the picker is not waited for; only the chat's
   coachmarks and the closing "model set" coachmark are shown
 
-### Requirement: Knowledge bases step
-
-The knowledge bases step SHALL point at the navigation entry for knowledge bases, then,
-after the screen's overview, at the list of knowledge bases, and wait for the researcher to
-open the AI Safety Papers knowledge base. It SHALL then point at the knowledge base's
-description, then at its papers, then at the control for adding files, each explained and
-moved past with **Next**. The
-step SHALL NOT require adding or indexing any file.
-
-#### Scenario: Opening AI Safety Papers
-
-- **WHEN** a researcher on the knowledge bases step opens AI Safety Papers
-- **THEN** coachmarks point at its description and at its papers, then at its **+ Add
-  files** control, explaining how to add content
-- **AND** the step completes on **Next**, with no file added
-
 ### Requirement: Skills step
 
 The skills step SHALL point at the navigation entry for the project's skills, then, after
 the screen's overview, at the skills loaded in the project and at those on this computer,
-and wait for the researcher to open any skill. While the skill is open, the coachmark SHALL
-point at its instructions and wait for the researcher to close it. It SHALL then point at the
-control that loads a skill into the project, and at **Import…**, each explained and moved
-past with **Next**. The step SHALL NOT require loading or importing a skill.
+and wait for the researcher to open any skill. Wherever a coachmark names a skill, it SHALL
+name the skill it points at. While the skill is open, the coachmark SHALL point at its
+instructions and wait for the researcher to close it. It SHALL then point at the control that
+loads a skill into the project, and at **Import…**, each explained and moved past with
+**Next**. The step SHALL NOT require loading or importing a skill.
 
 #### Scenario: Reading a skill
 
@@ -192,6 +176,12 @@ past with **Next**. The step SHALL NOT require loading or importing a skill.
 - **THEN** a coachmark points at the skill's instructions while it stays open
 - **AND** once it is closed, the coachmarks point at **Load** and then at **Import…**
 - **AND** the project's loaded skills are unchanged when the step completes
+
+#### Scenario: The default project's skills
+
+- **WHEN** the skills step is shown in `hello-olcf`
+- **THEN** the coachmark over the loaded skills says the project loads its hello skills and
+  `hpc-skill-author`, and any coachmark that names a skill names the one it points at
 
 ### Requirement: Files step with example files
 
@@ -245,8 +235,8 @@ clusters are connected in Settings, each on **Next**. It SHALL NOT require conne
 ### Requirement: First question
 
 The last step SHALL put this starter question in the chat composer, without sending it:
-"What security risks do autonomous labs and LLM agents share, and what mitigations do the
-papers propose? Cite the papers." The coachmark SHALL point at the composer, and the researcher MAY
+"How do I request GPUs for a batch job on Frontier, and which queue should a short test run
+use? Cite the OLCF docs." The coachmark SHALL point at the composer, and the researcher MAY
 edit the question first. Once it is sent, the coachmark SHALL point at the activity panel
 while the turn runs, and when the answer finishes successfully, at the answer, on **Next**.
 If the turn is refused or fails, the coachmark SHALL say so and point at what fixes it (Settings
@@ -307,3 +297,18 @@ itself and its recorded state SHALL be left unchanged. Replaying from Settings S
 - **WHEN** an end-to-end test starts VISTA with fresh data and
   `VISTA_BACKEND_ONBOARDING_TOUR=false`
 - **THEN** no tour is shown over the application
+
+### Requirement: Knowledge bases step opens the OLCF docs
+
+The knowledge bases step SHALL point at the navigation entry for knowledge bases, then,
+after the screen's overview, at the list of knowledge bases, and wait for the researcher to
+open the OLCF User Documentation knowledge base. It SHALL then point at the knowledge base's
+description, then at its documents, then at the control for adding files, each explained and
+moved past with **Next**. The step SHALL NOT require adding or indexing any file.
+
+#### Scenario: Opening OLCF User Documentation
+
+- **WHEN** a researcher on the knowledge bases step opens OLCF User Documentation
+- **THEN** coachmarks point at its description and at its documents, then at its **+ Add
+  files** control, explaining how to add content
+- **AND** the step completes on **Next**, with no file added

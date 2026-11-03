@@ -35,6 +35,7 @@ import {
   unsupportedFileMessage,
 } from "@/lib/kb-formats";
 import { fileLinkProps } from "@/lib/file-links";
+import { OLCF_DOCS_SLUG } from "@/lib/default-project";
 
 /* ---------------------------------------------------------------------- */
 /*  Helpers                                                               */
@@ -248,8 +249,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
     );
   }, [projectScopedList, filter]);
 
-  // The tour points at AI Safety Papers, or at the first one when there is none.
-  const tourKbSlug = (filteredList.find((kb) => kb.slug === "ai-safety") ?? filteredList[0])?.slug;
+  // The tour points at OLCF User Documentation, or at the first one when there is none.
+  const tourKbSlug = (filteredList.find((kb) => kb.slug === OLCF_DOCS_SLUG) ?? filteredList[0])?.slug;
 
   // Auto-select the first KB so the right pane isn't blank, and re-select
   // when the current selection falls outside the active scope (e.g. user

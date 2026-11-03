@@ -393,14 +393,23 @@ export function TourProvider({ children }: { children: ReactNode }) {
           onDestroyStarted: () => actions.current.exit(),
         });
       }
+      // The skills card names the skill it points at, which only the page knows.
+      const shown =
+        coachmarkFor(step, subStep, {
+          providerDefault,
+          providerName,
+          hasCredential,
+          failure,
+          skillName: element?.getAttribute("data-tour-name") ?? null,
+        }) ?? mark;
       driverRef.current.highlight({
         element,
         disableActiveInteraction: lookOnly,
         popover: {
-          title: mark.title,
-          description: mark.body,
+          title: shown.title,
+          description: shown.body,
           onPopoverRender: (popover) => {
-            renderCoachmark(popover, mark, withNext, {
+            renderCoachmark(popover, shown, withNext, {
               next: () => actions.current.next(),
               skip: () => actions.current.skip(),
               exit: () => actions.current.exit(),

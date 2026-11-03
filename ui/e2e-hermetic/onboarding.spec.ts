@@ -177,7 +177,7 @@ test("model: add a credential, then pick a model", async ({ page }) => {
   await card(page, "knowledge-bases:visit");
 });
 
-test("knowledge bases: open AI Safety Papers", async ({ page }) => {
+test("knowledge bases: open OLCF User Documentation", async ({ page }) => {
   await activeProject(page);
   await install(page, "knowledge-bases");
   await page.goto("/projects");
@@ -211,6 +211,7 @@ test("skills: open a skill and close it", async ({ page }) => {
   await card(page, "skills:available");
   await press(page);
   await card(page, "skills:open-skill");
+  await expect(page.locator(".driver-popover")).toContainText("Open salt-analysis to read it.");
   await page.locator('[data-tour="skills:open-skill"]').click();
   await card(page, "skills:detail");
   // Clicking inside the detail keeps the coachmark; Close moves on.
@@ -244,7 +245,7 @@ test("files: the example image and report", async ({ page }) => {
   await card(page, "files:open-report");
   await page.locator('[data-tour="files:open-report"]').click();
   await card(page, "files:review", "files:preview");
-  await expect(page.getByRole("heading", { name: "Risk summary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sweep report" })).toBeVisible();
   await press(page);
   await card(page, "hpc:resources");
 });
@@ -280,7 +281,7 @@ test("first question: send the starter, see the activity, answer and finish", as
   const stub = await install(page, "first-question");
   await page.goto("/files");
   await card(page, "first-question:send");
-  await expect(page.locator("textarea")).toHaveValue(/Cite the papers\.$/);
+  await expect(page.locator("textarea")).toHaveValue(/Cite the OLCF docs\.$/);
   await page.locator(".composer-send").click();
   await stub.waitForStream();
   await card(page, "first-question:activity", "model:panel");

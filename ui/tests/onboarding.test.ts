@@ -381,4 +381,15 @@ describe("tourAnchor", () => {
   it("ignores a failure on any other coachmark", () => {
     expect(tourAnchor({ step: "first-question", subStep: "finish" }, "credential")).toBe("first-question:finish");
   });
+
+  it("names the skill the skills coachmark points at, or stays generic without one", () => {
+    const ctx = { providerDefault: null, hasCredential: true };
+    expect(coachmarkFor("skills", "open-skill", { ...ctx, skillName: "hello-frontier" })?.body).toBe(
+      "Open hello-frontier to read it.",
+    );
+    expect(coachmarkFor("skills", "open-skill", ctx)?.body).toBe("Open the highlighted skill to read it.");
+    expect(coachmarkFor("skills", "open-skill", { ...ctx, skillName: null })?.body).toBe(
+      "Open the highlighted skill to read it.",
+    );
+  });
 });

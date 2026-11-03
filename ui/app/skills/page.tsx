@@ -23,6 +23,7 @@ import { PublishConflictModal, type Conflict } from "@/components/PublishConflic
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
 import { TeamBadge } from "@/components/TeamSwitcher";
 import { useTour } from "@/components/TourProvider";
+import { TOUR_SKILL } from "@/lib/default-project";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
@@ -193,8 +194,14 @@ export default function SkillsPage() {
     [skills, loadedSlugs, matches, teams]
   );
 
-  // The cards the tour points at: the first skill, and the first Load button.
-  const tourOpenSlug = (loadedSkills[0] ?? otherSkills[0])?.slug;
+  // The cards the tour points at: the tour's skill (loaded first, else among the
+  // others), else the first skill; and the first Load button.
+  const tourSkill =
+    loadedSkills.find((s) => s.slug === TOUR_SKILL) ??
+    otherSkills.find((s) => s.slug === TOUR_SKILL) ??
+    loadedSkills[0] ??
+    otherSkills[0];
+  const tourOpenSlug = tourSkill?.slug;
   const tourLoadSlug = otherSkills[0]?.slug;
 
   function card(skill: SkillSummary, loaded: boolean) {
@@ -214,6 +221,7 @@ export default function SkillsPage() {
         key={skill.slug}
         className="skill-item"
         data-tour={skill.slug === tourOpenSlug ? "skills:open-skill" : undefined}
+        data-tour-name={skill.slug === tourOpenSlug ? skill.name : undefined}
         onClick={() => openDetail(skill.slug)}
         role="button"
         tabIndex={0}

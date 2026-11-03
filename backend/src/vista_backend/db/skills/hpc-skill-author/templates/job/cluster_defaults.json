@@ -1,4 +1,24 @@
 {
+  "odo": {
+    "duration": 600,
+    "resources": {
+      "node_count": 1
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {}
+    }
+  },
+  "frontier": {
+    "duration": 1800,
+    "resources": {
+      "node_count": 1
+    },
+    "iri": {
+      "queue_name": "batch",
+      "environment": {}
+    }
+  },
   "lux": {
     "duration": 1800,
     "resources": {

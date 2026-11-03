@@ -53,7 +53,7 @@ The script runs:
    (`molten-salt`, `alloy-design`) via `backend/tests/live/test_golden_prompts.py`.
    Those two are science projects, so the deployment under test must be seeded
    with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true` (a fresh default seed has only
-   `ai-safety-autonomous-labs`)
+   `hello-olcf`)
 2. **Dry-run HPC** — `loadgen.py --campaigns 2 --poll` (tools mode)
 3. **Fault checks** (optional) — `VISTA_RUN_FAULT_CHECKS=1` after starting MCP
    with `VISTA_MCP_FAULT__SUBMIT_FAIL_P=0.2` (see runbook fault-recovery note)
@@ -116,8 +116,8 @@ install the first-boot tour would otherwise draw over the page the smoke clicks.
 need no flag.)
 
 Flow: open app → open Projects → activate the default
-`ai-safety-autonomous-labs` project → send a chat message asking for a
-`rag_search` over the AI-safety papers → observe a tool-call bubble and/or
+`hello-olcf` project → send "Search the OLCF docs for how to request GPUs on
+Frontier. Use rag_search." → observe a tool-call bubble and/or
 elicitation modal. Selectors prefer role/text. **Not** part of required MR CI.
 
 ## VISTA window (manual)

@@ -340,9 +340,14 @@ docs_lint() {
 
 # The pages docs/site.toml publishes, synced into a temporary site and built
 # with mkdocs in strict mode (docs:site). CI runs the same script.
+# Also the OLCF-docs converter's tests (docs:olcf-docs): hermetic, but they need
+# beautifulsoup4 and markdownify, so they run under uv with those, not under bare python.
 docs_test() {
   ensure_uv
   run_job "docs:site" 0 bash "$REPO_ROOT/scripts/docs_site/check_site.sh"
+  run_job "docs:olcf-docs" 0 uv run --no-project --quiet --python 3.14 \
+    --with beautifulsoup4 --with markdownify python -I \
+    -m unittest discover -s "$REPO_ROOT/scripts/olcf_docs" -p 'test_*.py'
 }
 
 install_hooks() {

@@ -241,3 +241,93 @@ def test_metadata_must_be_strings(tmp_path, capsys):
     code, report = _run([str(skill_dir)], capsys)
     assert code == 1
     assert any("metadata values must be strings" in e for e in report["errors"])
+
+
+# --- the job template, filled in per cluster, and the hello skills built from it ---
+
+TEMPLATE_CLUSTERS = ("odo", "frontier", "lux")
+
+
+def _fill_for(skill_dir: Path, cluster: str, job: str = "hello") -> None:
+    """What the template's README tells the agent: delete the clusters the job
+    does not target, with their scripts and `cluster_defaults.json` sections."""
+    job_dir = skill_dir / "hpc_jobs" / job
+    for other in TEMPLATE_CLUSTERS:
+        if other != cluster:
+            (job_dir / f"job.{other}.slurm").unlink()
+            (job_dir / f"setup_{other}.sh").unlink(missing_ok=True)
+    path = job_dir / "cluster_defaults.json"
+    defaults = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({cluster: defaults[cluster]}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("cluster", TEMPLATE_CLUSTERS)
+def test_template_filled_in_for_one_cluster_passes(tmp_path, capsys, cluster):
+    skill_dir = _make_skill(tmp_path)
+    _fill_for(skill_dir, cluster)
+    code, report = _run([str(skill_dir)], capsys)
+    assert (code, report["errors"], report["warnings"]) == (0, [], [])
+
+    job_dir = skill_dir / "hpc_jobs" / "hello"
+    assert [c for c in TEMPLATE_CLUSTERS if (job_dir / f"job.{c}.slurm").is_file()] == [
+        cluster
+    ]
+    info = resolve_job("demo-skill/hello", tmp_path)
+    assert getattr(info.cluster_defaults, cluster) is not None
+    script = (job_dir / f"job.{cluster}.slurm").read_text(encoding="utf-8")
+    assert f"RUN_DIR_{cluster.title()}" in script
+    assert "run.log" in script and "summary.txt" in script
+
+
+def test_template_with_all_three_clusters_passes(tmp_path, capsys):
+    code, report = _run([str(_make_skill(tmp_path))], capsys)
+    assert (code, report["errors"], report["warnings"]) == (0, [], [])
+    defaults = json.loads(
+        (AUTHOR_SKILL / "templates" / "job" / "cluster_defaults.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert set(defaults) == set(TEMPLATE_CLUSTERS)
+
+
+@pytest.mark.parametrize("cluster", TEMPLATE_CLUSTERS)
+def test_hello_skill_passes_the_validator(capsys, cluster):
+    skill_dir = SHIPPED_SKILLS / f"hello-{cluster}"
+    code, report = _run([str(skill_dir)], capsys)
+    assert (code, report["errors"], report["warnings"]) == (0, [], [])
+    assert report["jobs"] == [f"hello-{cluster}/hello"]
+
+    # One job, for its own cluster only: its script and defaults, the input and a README.
+    job_dir = skill_dir / "hpc_jobs" / "hello"
+    assert sorted(p.name for p in job_dir.iterdir()) == [
+        "README.md",
+        "cluster_defaults.json",
+        "input.txt",
+        f"job.{cluster}.slurm",
+    ]
+    assert list(
+        json.loads((job_dir / "cluster_defaults.json").read_text(encoding="utf-8"))
+    ) == [cluster]
+
+
+@pytest.mark.parametrize("cluster", TEMPLATE_CLUSTERS)
+def test_hello_skill_states_the_input_checksum_and_the_report(cluster):
+    import hashlib
+
+    skill_dir = SHIPPED_SKILLS / f"hello-{cluster}"
+    job_dir = skill_dir / "hpc_jobs" / "hello"
+    sha = hashlib.sha256((job_dir / "input.txt").read_bytes()).hexdigest()
+    assert sha in (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert sha in (job_dir / "README.md").read_text(encoding="utf-8")
+    script = (job_dir / f"job.{cluster}.slurm").read_text(encoding="utf-8")
+    for needed in (
+        f"RUN_DIR_{cluster.title()}",
+        "rocm-smi",
+        "module list",
+        "sha256sum",
+        "SLURM_JOB_NODELIST",
+        "hello.txt",
+        "run.log",
+        "summary.txt",
+    ):
+        assert needed in script, needed

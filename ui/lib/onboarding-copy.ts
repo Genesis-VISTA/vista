@@ -4,6 +4,7 @@
  * The wording is the approved storyboard's (design.md §9).
  */
 
+import { HELLO_OLCF_PROJECT_NAME } from "./default-project";
 import type { TourFailure, TourStepId } from "./onboarding";
 
 export type Coachmark = {
@@ -23,13 +24,15 @@ export type CopyContext = {
   hasCredential: boolean;
   /** The provider in effect's display name, e.g. "AmSC MAG". */
   providerName?: string | null;
+  /** The name of the skill the coachmark points at, when it points at one. */
+  skillName?: string | null;
   /** Why the first question failed, when it did. */
   failure?: TourFailure | null;
 };
 
 /** What the last step puts in the message box. */
 export const STARTER_QUESTION =
-  "What security risks do autonomous labs and LLM agents share, and what mitigations do the papers propose? Cite the papers.";
+  "How do I request GPUs for a batch job on Frontier, and which queue should a short test run use? Cite the OLCF docs.";
 
 export const DOCUMENTATION_URL = "https://genesis-vista.github.io/";
 
@@ -62,6 +65,12 @@ export function coachmarkFor(
         context.providerDefault !== null
           ? `Suggested: ${context.providerDefault}. Any model on the list works.`
           : "Any model on the list works.",
+    };
+  }
+  if (key === "skills:open-skill") {
+    return {
+      title: "Read a skill",
+      body: context.skillName ? `Open ${context.skillName} to read it.` : "Open the highlighted skill to read it.",
     };
   }
   if (key === "first-question:send" && context.failure) {
@@ -108,7 +117,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "project:card": {
     title: "A project",
-    body: "AI Safety in Autonomous Labs comes with VISTA. Its card lists its conversations, files, skills, knowledge bases and tools.",
+    body: `${HELLO_OLCF_PROJECT_NAME} comes with VISTA. Its card lists its conversations, files, skills, knowledge bases and tools.`,
   },
   "project:new": {
     title: "Your own projects",
@@ -116,7 +125,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "project:open": {
     title: "Open the project",
-    body: "Open AI Safety in Autonomous Labs.",
+    body: `Open ${HELLO_OLCF_PROJECT_NAME}.`,
   },
 
   "model:overview": {
@@ -154,7 +163,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "knowledge-bases:overview": {
     title: "The Knowledge Bases screen",
-    body: "Collections of papers and data the agent can search and cite.",
+    body: "Collections of documents the agent can search and cite.",
   },
   "knowledge-bases:list": {
     title: "All knowledge bases",
@@ -162,15 +171,15 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "knowledge-bases:open-kb": {
     title: "Open one",
-    body: "Open AI Safety Papers.",
+    body: "Open OLCF User Documentation.",
   },
   "knowledge-bases:about": {
     title: "About this knowledge base",
     body: "What it holds, when it was built, and that the agent's search uses it.",
   },
   "knowledge-bases:papers": {
-    title: "Its papers",
-    body: "The three papers inside. The agent's answers cite these.",
+    title: "Its documents",
+    body: "The OLCF documentation pages inside. The agent's answers cite these.",
   },
   "knowledge-bases:add-files": {
     title: "Adding your own",
@@ -187,15 +196,11 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "skills:loaded": {
     title: "Loaded in this project",
-    body: "Skills this project's agent uses. AI Safety starts with none.",
+    body: `Skills this project's agent uses. ${HELLO_OLCF_PROJECT_NAME} loads its hello skills and hpc-skill-author.`,
   },
   "skills:available": {
     title: "On this computer",
     body: "Skills you can load into this project.",
-  },
-  "skills:open-skill": {
-    title: "Read a skill",
-    body: "Open alloy-design to read it.",
   },
   "skills:detail": {
     title: "A skill's instructions",
@@ -220,15 +225,15 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "files:outputs": {
     title: "Outputs",
-    body: "What the agent writes. These are examples for the tour.",
+    body: "What the agent writes. These are examples for the tour: an example report and chart.",
   },
   "files:uploads": {
     title: "Uploads",
-    body: "What you give the agent, by Upload or drag and drop.",
+    body: "What you give the agent, by Upload or drag and drop. sweep-inputs.csv is an example.",
   },
   "files:open-chart": {
     title: "Preview a chart",
-    body: "Open risk-scores.svg.",
+    body: "Open sweep-results.svg.",
   },
   "files:chart-preview": {
     title: "Image preview",
@@ -236,7 +241,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "files:open-report": {
     title: "Preview a report",
-    body: "Now open summary.md.",
+    body: "Now open sweep-report.md.",
   },
   "files:review": {
     title: "Report preview",
@@ -270,11 +275,11 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "first-question:activity": {
     title: "The agent at work",
-    body: "Each step appears here as it happens: searching the papers, calling tools, writing files.",
+    body: "Each step appears here as it happens: searching the docs, calling tools, writing files.",
   },
   "first-question:answer": {
     title: "The answer",
-    body: "The answer cites the papers it used. Ask a follow-up in the box below.",
+    body: "The answer cites the docs it used. Ask a follow-up in the box below.",
   },
   "first-question:finish": {
     title: "You're set up",

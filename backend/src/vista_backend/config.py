@@ -409,7 +409,7 @@ class Settings(BaseSettings):
     Seed the `molten-salt` and `alloy-design` science projects, the
     `molten-salt-papers` knowledge base and the MSTDB-derived skill assets on first
     run from a `vista_data_token`. Set with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true`.
-    Off by default: VISTA's out-of-the-box project is AI Safety in Autonomous Labs.
+    Off by default: VISTA's out-of-the-box project is hello-olcf, with the olcf-docs knowledge base.
     A bundled payload is seeded by what it contains and ignores this setting.
     """
 

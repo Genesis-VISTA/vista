@@ -242,16 +242,13 @@ async def test_outputs_download_over_sftp_and_cache_locally(lux, tmp_path):
         await m._get_lux_job_outputs(None, CFG, tmp_path, "79", ["../escape"])
 
 
-async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
-    lux, monkeypatch
-):
-    """The repo's lux-hello job: the cheap way to check Lux end to end."""
-    repo_jobs = Path(__file__).resolve().parents[3] / "hpc_jobs"
-    monkeypatch.setattr(settings, "local_hpc_jobs_dir", repo_jobs)
-    monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
+async def test_hello_lux_is_one_small_node_and_runs_nothing_on_the_login_node(lux):
+    """The bundled hello-lux skill's job: the cheap way to check Lux end to end."""
+    skills = Path(__file__).resolve().parents[3] / "backend/src/vista_backend/db/skills"
+    info = m.resolve_job("hello-lux/hello", skills)
 
     job_id, *_, nodes, duration = await m._submit_lux_job(
-        None, CFG, "lux-hello", None, None, None
+        None, CFG, "hello-lux/hello", None, None, None, job_info=info
     )
     assert job_id == "4242"
     assert (nodes, duration) == (1, 300)
@@ -266,16 +263,18 @@ async def test_lux_hello_is_one_small_node_and_runs_nothing_on_the_login_node(
     assert "#SBATCH -p batch" in header
     assert "#SBATCH --gpus-per-node=1" in header
     assert not any("--ntasks-per-node" in line for line in header)
-    # No setup_lux.sh and no sources: besides creating directories and making
-    # the shared `.out` group-writable, sbatch is the only command, and nothing
-    # is uploaded.
+    # No setup_lux.sh: besides creating directories and making the shared
+    # `.out` group-writable, sbatch is the only command.
     assert [
         c
         for c, _ in lux.commands
         if not c.startswith("mkdir -p ") and not c.startswith("umask 002")
     ] == ["sbatch --parsable"]
-    assert lux.puts == []
-    assert 'tee "${VISTA_OUT}/hello.txt"' in script
+    # The one file uploaded is the job's input.
+    [uploaded] = lux.puts
+    assert uploaded.endswith("/input.txt")
+    assert "RUN_DIR_Lux=" in script
+    assert '"$VISTA_OUT/hello.txt"' in script
 
 
 async def test_lux_is_never_the_implicit_default():

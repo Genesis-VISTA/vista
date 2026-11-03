@@ -1,0 +1,95 @@
+# The retrieval gate for the `olcf-docs` corpus (check_retrieval.py, design.md Decision 8).
+#
+# Each question names a file-name prefix that must appear among the files of the top 5
+# hits. Prefixes are `<page path with / as __>__` plus, where one section is the clear
+# answer, that section's anchor (see convert.py for the naming). Checked against the
+# conversion of olcf-user-docs at d86ce4c; when a refresh renames a page or a section,
+# update the prefix here, which is the point of running the gate after each refresh.
+
+[[question]]
+q = "How do I submit a batch job on Frontier with sbatch?"
+expected = "systems__frontier_user_guide__"
+
+[[question]]
+q = "What does a Frontier node look like: how many GPUs and how much memory per node?"
+expected = "systems__frontier_user_guide__system-overview"
+
+[[question]]
+q = "How do I get an interactive allocation on Frontier with salloc?"
+expected = "systems__frontier_user_guide__interactive-jobs"
+
+[[question]]
+q = "What are the Slurm job reason codes such as Priority and Dependency?"
+expected = "systems__frontier_user_guide__job-reason-codes"
+
+[[question]]
+q = "What is the scheduling policy and queue limits for Frontier batch jobs?"
+expected = "systems__frontier_user_guide__scheduling-policy"
+
+[[question]]
+q = "How do I map MPI ranks and threads to GPUs and CPU cores with srun on Frontier?"
+expected = "systems__frontier_user_guide__"
+
+[[question]]
+q = "How do I move data to and from Orion with Globus?"
+expected = "systems__frontier_user_guide__using-globus-to-move-data-to-and-from-orion"
+
+[[question]]
+q = "What is Odo and who can use it?"
+expected = "systems__odo_user_guide__"
+
+[[question]]
+q = "How many nodes does the Odo training system have and how does it differ from Frontier?"
+expected = "systems__odo_user_guide__system-overview"
+
+[[question]]
+q = "How do I run a job on Lux?"
+expected = "systems__lux_user_guide__"
+
+[[question]]
+q = "How do I run containers on Lux with Apptainer?"
+expected = "software__containers_on_lux"
+
+[[question]]
+q = "How do I use kubectl to access my Kubernetes namespace on Lux?"
+expected = "systems__lux_user_guide__"
+
+[[question]]
+q = "Has Summit been decommissioned, and when?"
+expected = "systems__summit_user_guide__"
+
+[[question]]
+q = "How do I submit a job with bsub on Summit?"
+expected = "systems__summit_user_guide__"
+
+[[question]]
+q = "What are the Orion Lustre filesystem storage areas and their quotas?"
+expected = "data__index__"
+
+[[question]]
+q = "What is the data purge and retention policy for scratch storage?"
+expected = "accounts__olcf_policy_guide__data-retention-purge-quotas"
+
+[[question]]
+q = "How do I apply for a user account at OLCF?"
+expected = "accounts__accounts_and_projects__applying-for-a-user-account"
+
+[[question]]
+q = "My RSA SecurID token is broken or expired, what should I do?"
+expected = "accounts__frequently_asked_questions__my-securid-token-is-broken-expired-what-should-i-do"
+
+[[question]]
+q = "How do I connect to an OLCF system for the first time with ssh, and what are the PIN and passcode rules?"
+expected = "connecting__index__"
+
+[[question]]
+q = "How do I set up and activate a conda environment on Frontier?"
+expected = "software__python__"
+
+[[question]]
+q = "How do I acknowledge the OLCF in my publications?"
+expected = "accounts__frequently_asked_questions__how-should-i-acknowledge-the-olcf-in-my-publications-and-presentations"
+
+[[question]]
+q = "How do I launch a JupyterLab session at OLCF?"
+expected = "services_and_applications__jupyter__"

@@ -20,6 +20,8 @@ from .schema_check import schema_problems
 from .seed import (
     AI_SAFETY_KB_ID,
     AI_SAFETY_PROJECT_ID,
+    HELLO_OLCF_PROJECT_ID,
+    OLCF_DOCS_KB_ID,
     ALLOY_DESIGN_PROJECT_ID,
     MOLTEN_SALT_KB_ID,
     MOLTEN_SALT_PROJECT_ID,
@@ -246,8 +248,13 @@ def _vista_ships() -> tuple[set[str], set[str], set[str]]:
         str(ALLOY_DESIGN_PROJECT_ID),
         str(MOLTEN_SALT_PROJECT_ID),
         str(AI_SAFETY_PROJECT_ID),
+        str(HELLO_OLCF_PROJECT_ID),
     }
-    kbs = {str(MOLTEN_SALT_KB_ID), str(AI_SAFETY_KB_ID)}
+    kbs = {
+        str(MOLTEN_SALT_KB_ID),
+        str(AI_SAFETY_KB_ID),
+        str(OLCF_DOCS_KB_ID),
+    }
     return skills, projects, kbs
 
 
@@ -371,7 +378,7 @@ async def init_db() -> None:
     async with AsyncSession(engine) as session:
         await local_settings.ensure(session)
         await session.commit()
-    # The AI-safety default reaches first runs and upgrades alike, after seed_db so
+    # The hello-olcf default reaches first runs and upgrades alike, after seed_db so
     # its empty-database check is unaffected.
     await sync_default_projects(engine)
     # seed_db is first-run only; this picks up skills bundled since then.
