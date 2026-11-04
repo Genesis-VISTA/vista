@@ -341,6 +341,10 @@ electron:test:
   <<: *cache-npm-electron
   variables:
     ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+  before_script:
+    # procps: pgrep, with which the update helper (electron/update/apply-update.sh)
+    # waits for VISTA to close, as install.sh does.
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends procps >/dev/null
   script:
     - cd electron
     - npm ci --prefer-offline
@@ -358,7 +362,7 @@ install:lint:
   image:
     name: koalaman/shellcheck-alpine:v0.11.0
   script:
-    - shellcheck scripts/install.sh scripts/test_install.sh .github/scripts/*.sh
+    - shellcheck scripts/install.sh scripts/test_install.sh .github/scripts/*.sh electron/update/apply-update.sh
 
 install:test:
   stage: test

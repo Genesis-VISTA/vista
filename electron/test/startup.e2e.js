@@ -28,10 +28,11 @@ test.afterAll(() => server.close());
 
 /**
  * @param {string} scenario
- * @param {{ extraArgs?: string[], env?: Record<string, string> }} [options]
+ * @param {{ extraArgs?: string[], env?: Record<string, string>, prepare?: (state: string) => void }} [options]
  */
-async function launchStartup(scenario, { extraArgs = [], env = {} } = {}) {
+async function launchStartup(scenario, { extraArgs = [], env = {}, prepare } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'vista-startup-'));
+  prepare?.(path.join(directory, 'state'));
   const profile = path.join(directory, 'profile');
   const marker = path.join(directory, 'stopped');
   const count = path.join(directory, 'starts');
@@ -236,4 +237,54 @@ test('an unsandboxed window shows why in the startup window, and a sandboxed one
   await expect(fixture.startup.locator('[data-phase="preflight"]')).not.toHaveAttribute('data-state', 'pending');
   await expect(fixture.startup.locator('#sandbox-notice')).toBeHidden();
   await fixture.application.close();
+});
+
+test('a failed update is said first, and VISTA opens once the researcher continues', async () => {
+  const fixture = await launchStartup('success', {
+    prepare: (state) => {
+      mkdirSync(path.join(state, 'updates'), { recursive: true });
+      writeFileSync(path.join(state, 'updates', 'last-failure.json'), JSON.stringify({
+        version: '0.2.5',
+        reason: 'VISTA did not finish closing within 60 seconds, so nothing was installed.',
+        log: 'update.log',
+      }));
+    },
+  });
+  const notice = fixture.startup.locator('#update-failure');
+  await expect(notice).toBeVisible();
+  await expect(fixture.startup.locator('#update-failure-title')).toHaveText('Update to 0.2.5 failed');
+  await expect(fixture.startup.locator('#update-failure-message')).toContainText('nothing was installed');
+  await expect(notice.getByRole('button', { name: 'Open Logs' })).toBeVisible();
+  await expect(notice.getByRole('button', { name: 'Copy Diagnostics' })).toBeVisible();
+
+  // Ready, but held: the notice stays until Continue.
+  const continueButton = notice.getByRole('button', { name: 'Continue to VISTA' });
+  await expect(continueButton).toBeVisible();
+  const visibleMain = () => fixture.application.evaluate(({ BrowserWindow }, targetUrl) =>
+    BrowserWindow.getAllWindows().some((window) => window.webContents.getURL() === targetUrl && window.isVisible()), `${origin}/`);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  expect(await visibleMain()).toBe(false);
+
+  await continueButton.click();
+  await mainWindow(fixture.application);
+  await expect.poll(visibleMain).toBe(true);
+  await expect.poll(() => fixture.application.windows().length).toBe(1);
+  // Read once: the next start says nothing.
+  expect(existsSync(path.join(fixture.directory, 'state', 'updates', 'last-failure.json'))).toBe(false);
+  await fixture.application.close();
+  rmSync(fixture.directory, { recursive: true, force: true });
+});
+
+test('the main window has the update bridge; one not started from a package refuses to restart', async () => {
+  const fixture = await launchStartup('success');
+  expect(await fixture.startup.evaluate(() => typeof /** @type {any} */ (globalThis).vistaApp)).toBe('undefined');
+  const main = await mainWindow(fixture.application);
+  expect(await main.evaluate(() => /** @type {any} */ (globalThis).vistaApp?.isVistaApp)).toBe(true);
+  const answer = await main.evaluate(() => /** @type {any} */ (globalThis).vistaApp.restartToUpdate('0.2.5'));
+  expect(answer).toEqual({ ok: false, reason: 'This VISTA was not installed from a package, so it cannot update itself.' });
+  // Nothing stopped.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  expect(existsSync(fixture.marker)).toBe(false);
+  await fixture.application.close();
+  rmSync(fixture.directory, { recursive: true, force: true });
 });

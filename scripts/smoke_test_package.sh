@@ -285,6 +285,21 @@ WINDOW_EXE="$(
     'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
     "$PACKAGE/manifest.json"
 )"
+# The in-app update's helpers sit beside the window as plain files, where it
+# copies one from before an update (in-app-updates D5): resources/, or
+# Contents/Resources in VISTA.app. Not in app.asar, where no shell reads them.
+update_helpers_are_shipped() {
+  local resources
+  case "$WINDOW_EXE" in
+    *.app/Contents/MacOS/*) resources="$PACKAGE/${WINDOW_EXE%%/MacOS/*}/Resources" ;;
+    *) resources="$PACKAGE/$(dirname "$WINDOW_EXE")/resources" ;;
+  esac
+  [[ -s "$resources/apply-update.sh" && -s "$resources/apply-update.ps1" ]]
+}
+if [[ -n "$WINDOW_EXE" ]]; then
+  check "the window ships the update helpers" update_helpers_are_shipped
+fi
+
 # On Linux it gets the sandbox arguments the launcher would give it on this
 # host (linux-desktop-window D1), and a virtual display when there is no real
 # one, which is how a build container runs it (D7).

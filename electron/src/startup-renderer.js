@@ -9,6 +9,10 @@ const firstRunNote = /** @type {HTMLElement | null} */ (document.querySelector('
 const retry = /** @type {HTMLButtonElement | null} */ (document.querySelector('#retry'));
 const backupAndReset = /** @type {HTMLButtonElement | null} */ (document.querySelector('#backup-and-reset'));
 const sandboxNotice = /** @type {HTMLElement | null} */ (document.querySelector('#sandbox-notice'));
+const updateFailure = /** @type {HTMLElement | null} */ (document.querySelector('#update-failure'));
+const updateTitle = document.querySelector('#update-failure-title');
+const updateMessage = document.querySelector('#update-failure-message');
+const updateContinue = /** @type {HTMLButtonElement | null} */ (document.querySelector('#update-continue'));
 
 /** @param {unknown} value */
 function text(value) {
@@ -44,6 +48,13 @@ function render(snapshot) {
     backupAndReset.hidden = !actions.includes('backup-and-reset');
     backupAndReset.disabled = snapshot.canRetry !== true;
   }
+  // The last update failed (in-app-updates D6): said first, with its own way
+  // to the logs, and VISTA opens once the researcher continues.
+  const update = snapshot.update && typeof snapshot.update === 'object' ? snapshot.update : null;
+  if (updateFailure) updateFailure.hidden = !update;
+  if (updateTitle) updateTitle.textContent = text(update?.title);
+  if (updateMessage) updateMessage.textContent = text(update?.message);
+  if (updateContinue) updateContinue.hidden = !update || snapshot.status !== 'ready';
   if (sandboxNotice) {
     sandboxNotice.textContent = text(snapshot.notice);
     sandboxNotice.hidden = !sandboxNotice.textContent;
@@ -65,11 +76,15 @@ document.querySelector('#backup-and-reset')?.addEventListener('click', async (ev
   }
 });
 document.querySelector('#open-logs')?.addEventListener('click', () => bridge?.openLogs());
+document.querySelector('#update-open-logs')?.addEventListener('click', () => bridge?.openLogs());
+document.querySelector('#update-continue')?.addEventListener('click', () => bridge?.continue());
 document.querySelector('#quit')?.addEventListener('click', () => bridge?.quit());
-document.querySelector('#copy-diagnostics')?.addEventListener('click', async (event) => {
-  const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
-  await bridge?.copyDiagnostics();
-  const previous = button.textContent;
-  button.textContent = 'Copied';
-  setTimeout(() => { button.textContent = previous; }, 1200);
-});
+for (const id of ['#copy-diagnostics', '#update-copy-diagnostics']) {
+  document.querySelector(id)?.addEventListener('click', async (event) => {
+    const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+    await bridge?.copyDiagnostics();
+    const previous = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = previous; }, 1200);
+  });
+}

@@ -27,11 +27,11 @@
 
 ## 5. Electron: bridge and hand-off
 
-- [ ] 5.1 Add `electron/src/main-preload.cjs` (`isVistaApp`, `restartToUpdate(version)`, `onUpdateEvent`) to the main window only, and its `ipcMain` handler checking sender, origin, the backend's `ready` state and a re-hash against `ready.json`. Verify: `npm test` cases for an off-origin sender, a child window, no ready download, a version mismatch and a hash mismatch, each refused
-- [ ] 5.2 Add the helper scripts (`electron/update/apply-update.sh`, `apply-update.ps1`): wait for no process under the install folder (60 s cap), run the cached installer with `--version`, `--no-launch`, `VISTA_INSTALL_BASE_URL=file://…`, `VISTA_INSTALL_DIR`, then launch the new app or write `last-failure.json` and launch the old one; log to `VISTA_HOME/logs/update.log`. Verify: hermetic tests in `electron/test/apply-update.test.js` with a fake installer that succeeds, fails, and a fake process that never exits
-- [ ] 5.3 Wire `restartToUpdate` to spawn the helper detached and call `requestQuit()`. Verify: unit test that the helper is spawned before stop and the session stops through the normal path
-- [ ] 5.4 Add the `update_failed` state to `startup-protocol.js` and the startup window (reason, Open logs on `update.log`, Copy diagnostics, then continue starting); `main.js` reads and removes `last-failure.json` on start. Verify: `npm test` (every code has a message) and an e2e case in `npm run test:e2e` (needs a display; not in PR CI)
-- [ ] 5.5 Ship the helpers in the package beside the window. Verify: `scripts/smoke_test_package.sh` checks they are present
+- [x] 5.1 Add `electron/src/main-preload.cjs` (`isVistaApp`, `restartToUpdate(version)`, `onUpdateEvent`) to the main window only, and its `ipcMain` handler checking sender, origin, the backend's `ready` state and a re-hash against `ready.json`. Verify: `npm test` cases for an off-origin sender, a child window, no ready download, a version mismatch and a hash mismatch, each refused
+- [x] 5.2 Add the helper scripts (`electron/update/apply-update.sh`, `apply-update.ps1`): wait for no process under the install folder (60 s cap), run the cached installer with `--version`, `--no-launch`, `VISTA_INSTALL_BASE_URL=file://…`, `VISTA_INSTALL_DIR`, then launch the new app or write `last-failure.json` and launch the old one; log to `VISTA_HOME/logs/update.log`. Verify: hermetic tests in `electron/test/apply-update.test.js` with a fake installer that succeeds, fails, and a fake process that never exits
+- [x] 5.3 Wire `restartToUpdate` to spawn the helper detached and call `requestQuit()`. Verify: unit test that the helper is spawned before stop and the session stops through the normal path
+- [x] 5.4 Add the `update_failed` state to `startup-protocol.js` and the startup window (reason, Open logs on `update.log`, Copy diagnostics, then continue starting); `main.js` reads and removes `last-failure.json` on start. Verify: `npm test` (every code has a message) and an e2e case in `npm run test:e2e` (needs a display; not in PR CI)
+- [x] 5.5 Ship the helpers in the package beside the window. Verify: `scripts/smoke_test_package.sh` checks they are present
 
 ## 6. Installers and release workflow
 

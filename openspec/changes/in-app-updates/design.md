@@ -145,17 +145,23 @@ Then it calls `requestQuit()`. The helper:
 4. Failure: writes `VISTA_HOME/updates/last-failure.json`
    `{version, reason, log}` and launches the old app (still in place) with the same command.
 
-The helper runs from the cache, not the install folder, so the swap doesn't trip over it. On
-Windows it runs as `powershell -ExecutionPolicy Bypass -File`, detached via
-`Start-Process -WindowStyle Hidden`, so no console window flashes.
+The helper runs from the cache, not the install folder, so the swap doesn't trip over it. Its
+inputs travel in the environment (`VISTA_UPDATE_*`), never its command line, so the wait's
+`pgrep -f "$dir/"` can't match the helper itself. The helpers ship as plain files in the
+window's `resources/` (`extraResource`, not inside `app.asar`, which no shell can read), and
+Electron copies the platform's one into the update's folder before starting it. On Windows it
+runs as `powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File`, spawned detached and
+hidden, so no console window flashes.
 
 ### D6. Failure state in the startup window
 
-On start, `main.js` reads and removes `last-failure.json`, and sends a new protocol-level state
-to the startup window: `update_failed {version, reason}`. The startup window shows it above the
-normal progress, with the existing Open logs (pointed at `update.log`) and Copy diagnostics
-actions, and continues starting. `startup-protocol.js` gets a message for it. Its unit test
-already enforces that every code has a message.
+On start, `main.js` reads and removes `last-failure.json`, and sends the startup window an
+`update` notice (`updateFailureNotice` in `startup-protocol.js`: "Update to 0.2.5 failed" and
+the reason). The startup window shows it above the normal progress, with Open logs (the logs
+archive, `update.log` included) and Copy diagnostics (which then name the failed update), and
+continues starting. Because the startup window normally closes the moment VISTA is ready, it
+holds the main window while the notice shows and offers "Continue to VISTA" once ready, so the
+notice is read rather than flashed.
 
 ### D7. Data-compatibility step in the release workflow
 

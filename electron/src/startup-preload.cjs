@@ -20,5 +20,7 @@ contextBridge.exposeInMainWorld(
     openLogs: () => ipcRenderer.invoke('startup:open-logs'),
     copyDiagnostics: () => ipcRenderer.invoke('startup:copy-diagnostics'),
     quit: () => ipcRenderer.invoke('startup:quit'),
+    // After a failed update: open VISTA once the researcher has read why.
+    continue: () => ipcRenderer.invoke('startup:continue'),
   }),
 );

@@ -158,6 +158,10 @@ h1 {
 }
 
 .failure p { margin: 0 0 12px; font-size: 13px; line-height: 1.45; }
+
+/* A failed update, said above the usual progress (in-app-updates D6). */
+.update-failure { margin: 0 0 16px; }
+.update-failure h2 { margin: 0 0 6px; font-size: 15px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 button {
