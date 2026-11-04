@@ -8,9 +8,9 @@
 
 ## 2. Database and projection
 
-- [ ] 2.1 `ForumThreadTable` and `ForumPostTable`, and nullable `DebateRunTable.forum_thread_id`, in `db/schemas.py`. Verify that `db/schema_check.py` passes against a database created by the previous release (`backend/tests/test_forum_db_columns.py`)
-- [ ] 2.2 `services/debate.py`: `project_forum_thread` fills `forum_thread`/`forum_post` idempotently, as `project_thread` does (concurrent writers, vanished posts kept as `on_remote = False`). Verify in `test_debate_service.py`
-- [ ] 2.3 Carry-over (design D10): link and fill existing runs on a project's first sync, missing threads from `debate_post`. Verify with a fixture database holding an old concluded debate and a missing one
+- [x] 2.1 `ForumThreadTable` and `ForumPostTable`, and nullable `DebateRunTable.forum_thread_id`, in `db/schemas.py`. Verify that `db/schema_check.py` passes against a database created by the previous release (`backend/tests/test_forum_db_columns.py`)
+- [x] 2.2 `services/threads.py`: `project_forum_thread` fills `forum_thread`/`forum_post` idempotently, as `project_thread` does (concurrent writers, vanished posts kept as `on_remote = False`). Verify in `backend/tests/test_threads.py`
+- [x] 2.3 Carry-over (design D10): link and fill existing runs on a project's first sync, missing threads from `debate_post`. Verify in `test_threads.py` with an old concluded debate and a missing one
 
 ## 3. Runs on any thread
 
