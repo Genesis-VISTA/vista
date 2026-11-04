@@ -51,4 +51,4 @@
 - [x] 8.2 Copy the window into the update's folder in the restart handler (`cp -c` on macOS); a failed copy logs and goes on without it. Verify: `update-bridge.test.js`
 - [x] 8.3 The helpers start the copy before waiting (Linux flags from the copy's `window-sandbox`) and write `status.json` at each step, the installer's `==>` lines as its detail. Verify: `apply-update.test.js` asserts the sequence on success and failure, and that the copy does not hold up the wait
 - [x] 8.4 On start, close the status window named by `status-window.pid` once the startup window shows. Verify: `startup.e2e.js`
-- [ ] 8.5 Re-run 7.2's macOS run and record the status window in `docs/validation-lane.md`. Verify: the window is on screen from the close until the startup window, on success and on failure
+- [x] 8.5 Re-run 7.2's macOS run and record the status window in `docs/validation-lane.md`. Verify: the window is on screen from the close until the startup window, on success and on failure
