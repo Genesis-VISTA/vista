@@ -152,8 +152,26 @@ const post = (role: string, kind: string, model: string | null) => ({
   tools_used: [] as unknown[],
 });
 
-const DEBATE = {
+const THREAD_ID = "thread-1";
+
+/** The thread as the lab lists it: concluded here, nobody arguing now. */
+const THREAD = {
+  id: "00000000-0000-4000-8000-0000000000e1",
+  thread_id: THREAD_ID,
+  title: RUN.topic,
+  framing: null,
+  created_by: "a".repeat(32),
+  opened_here: true,
+  opened_at: NOW,
+  status: "done",
+  thread_missing: false,
+  current_verdict: null,
+  live_run: null,
   run: RUN,
+};
+
+const DEBATE = {
+  thread: THREAD,
   participants: [
     participant("proposer", null),
     participant("reviewer", "openai:gpt-5-mini"),
@@ -179,7 +197,7 @@ test.describe("hypothesis lab role models", () => {
   test("the roster line, each post and Continue show the models in use", async ({ page }) => {
     stub = await installStub(page, {
       ...ROUTES,
-      "GET /api/debates": by("run_id", { default: [RUN], [RUN_ID]: DEBATE }),
+      "GET /api/debates": by("thread_id", { default: [THREAD], [THREAD_ID]: DEBATE }),
       "GET /api/forum/status": STATUS,
     });
     await openLab(page);
@@ -219,5 +237,51 @@ test.describe("hypothesis lab role models", () => {
         form.getByRole("button", { name: new RegExp(`^${role} model: Default \\(claude-sonnet\\)\\. `) }),
       ).toBeVisible();
     }
+  });
+});
+
+/**
+ * A thread another install opened (openspec change forum-shared-threads, 5.2):
+ * listed as theirs, joinable with your own agents, and not yours to close.
+ */
+const PEER_THREAD = {
+  ...THREAD,
+  id: "00000000-0000-4000-8000-0000000000e2",
+  thread_id: "thread-2",
+  title: "Does blowing on coffee cool it by evaporation?",
+  created_by: "b".repeat(32),
+  opened_here: false,
+  run: null,
+};
+
+test.describe("hypothesis lab shared threads", () => {
+  let stub: Stub | null = null;
+
+  test.afterEach(async () => {
+    if (stub) {
+      expect(await stub.unstubbed(), "page asked for a route with no fixture").toEqual([]);
+    }
+    stub = null;
+  });
+
+  test("a teammate's thread can be continued with your agents but not closed", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": by("thread_id", {
+        default: [PEER_THREAD],
+        "thread-2": { thread: PEER_THREAD, participants: [], posts: [], simulations: [] },
+      }),
+      "GET /api/forum/status": STATUS,
+    });
+    await openLab(page);
+    const item = page.locator(".debate-list__item").filter({ hasText: PEER_THREAD.title });
+    await expect(item).toContainText("opened by another install");
+    await item.click();
+
+    await expect(page.getByRole("button", { name: "Continue with your agents" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "End this debate" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Post as you" })).toBeVisible();
   });
 });

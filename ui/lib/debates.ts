@@ -153,7 +153,8 @@ export type ToolUse = {
 
 export type DebatePost = {
   id: string;
-  run_id: string;
+  /** The run of this install's that wrote it; null for a human's or a peer's post. */
+  run_id: string | null;
   post_id: string;
   kind: string;
   /** What the poster said. Always their claim, from anyone. */
@@ -247,12 +248,125 @@ export type CommissionedRun = {
   result_collected: boolean;
 };
 
+/**
+ * A run going on in the thread right now, worked out by the backend from the
+ * thread's RUN post and the posts since: whose, how long, how far along.
+ */
+export type LiveRun = {
+  post_id: string;
+  /** Started by this install. Otherwise `origin` is that install's own claim. */
+  ours: boolean;
+  origin: string | null;
+  rounds: number;
+  posts: number;
+  started_at: string;
+  last_post_at: string;
+};
+
+/** The thread's current verdict: its latest DONE post, whoever's Referee wrote it. */
+export type ThreadVerdict = {
+  post_id: string;
+  /** Written by this install's Referee. */
+  ours: boolean;
+  sender: string;
+  /** The verdict as written out; always there. */
+  body: string;
+  /** The structured verdict, when the post carried a valid one. */
+  verdict: Verdict | null;
+};
+
+/**
+ * One thread on the project's forum, whoever opened it.
+ *
+ * The thread is shared; `run` is this install's own run in it, if it has argued
+ * there. A thread may have runs from several installs, one at a time.
+ */
+export type ForumThread = {
+  id: string;
+  thread_id: string;
+  title: string;
+  framing: string | null;
+  created_by: string;
+  /** This install opened it, and so may close it. */
+  opened_here: boolean;
+  opened_at: string;
+  /** What the forum says: open, done, blocked or closed. */
+  status: "open" | "done" | "blocked" | "closed" | string;
+  thread_missing: boolean;
+  current_verdict: ThreadVerdict | null;
+  live_run: LiveRun | null;
+  run: DebateRun | null;
+};
+
 export type DebateState = {
-  run: DebateRun;
+  thread: ForumThread;
+  /** This install's roster in the thread; empty until it has argued here. */
   participants: DebateParticipant[];
   posts: DebatePost[];
   simulations: CommissionedRun[];
 };
+
+/** Some run, this install's or another's, is arguing in the thread now. */
+export function isArguing(thread: ForumThread): boolean {
+  return thread.live_run !== null || (thread.run !== null && isActive(thread.run.status));
+}
+
+/** Whether anyone may post to the thread from here. */
+export function acceptsPosts(thread: ForumThread, posts: DebatePost[]): boolean {
+  // The CLOSED post as well as the status: the copy can lag the thread by a poll.
+  return thread.status !== "closed" && !thread.thread_missing && closedBy(posts) === null;
+}
+
+/** Whether this researcher can start rounds of their own agents in the thread now. */
+export function canContinue(thread: ForumThread, posts: DebatePost[]): boolean {
+  return acceptsPosts(thread, posts) && !isArguing(thread);
+}
+
+/** Only the install that opened a thread may close it. */
+export function canClose(thread: ForumThread, posts: DebatePost[]): boolean {
+  return thread.opened_here && acceptsPosts(thread, posts);
+}
+
+function minutesAgo(iso: string, now: number): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const minutes = Math.max(0, Math.round((now - then) / 60_000));
+  return minutes < 1 ? "just now" : `${minutes} min ago`;
+}
+
+/**
+ * Another install's run, said from what the thread shows: whose, how many
+ * rounds, how far along. A forge forum carries no verified name, so the
+ * researcher is not named.
+ */
+export function liveRunLine(live: LiveRun, now: number = Date.now()): string {
+  const who = live.ours ? "This install is" : "Another researcher is";
+  const posts = live.posts === 1 ? "1 post" : `${live.posts} posts`;
+  return `${who} running ${live.rounds} ${live.rounds === 1 ? "round" : "rounds"} · ${posts} so far · last ${minutesAgo(live.last_post_at, now)}`;
+}
+
+/**
+ * The thread's state in a few words, said accurately: who closed it, whether
+ * someone is arguing, whether it reached a verdict.
+ */
+export function threadStatusLabel(thread: ForumThread, posts: DebatePost[]): string {
+  if (thread.thread_missing) return "No longer on the forum";
+  const closer = closedBy(posts);
+  if (thread.status === "closed" || closer !== null) {
+    return closer === "peer" ? "Ended by a peer" : "Ended early";
+  }
+  if (thread.run && isActive(thread.run.status)) return "Arguing";
+  if (thread.live_run) return thread.live_run.ours ? "Arguing" : "Another researcher is arguing";
+  if (thread.run?.status === "failed") return "Failed";
+  if (thread.status === "done") return "Concluded";
+  if (thread.status === "blocked") return "Stopped";
+  return "Open";
+}
+
+/** Posts a reader reads: RUN markers say who argued when, not what was said. */
+export function readablePosts(posts: DebatePost[]): DebatePost[] {
+  return posts.filter((post) => post.kind !== "RUN");
+}
 
 /**
  * What to tell a reader about a commissioned run, in one phrase.
@@ -379,20 +493,21 @@ export async function fetchForumStatus(
   return unwrap(await fetch(`/api/forum/status?${query}`, { signal }));
 }
 
+/** Every thread on the project's forum, newest first, whoever opened it. */
 export async function listDebates(
   projectName: string,
   signal?: AbortSignal
-): Promise<DebateRun[]> {
+): Promise<ForumThread[]> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(await fetch(`/api/debates?${params}`, { signal }));
 }
 
 export async function fetchDebate(
   projectName: string,
-  runId: string,
+  threadId: string,
   signal?: AbortSignal
 ): Promise<DebateState> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(await fetch(`/api/debates?${params}`, { signal }));
 }
 
@@ -405,7 +520,7 @@ export async function openDebate(
     /** A model per role; a role left out uses the default. */
     models?: Partial<Record<DebateRoleName, string>>;
   }
-): Promise<DebateRun> {
+): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(
     await fetch(`/api/debates?${params}`, {
@@ -418,10 +533,10 @@ export async function openDebate(
 
 export async function postToDebate(
   projectName: string,
-  runId: string,
+  threadId: string,
   body: { body: string; kind?: PostableKind }
 ): Promise<DebatePost> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(
     await fetch(`/api/debates/posts?${params}`, {
       method: "POST",
@@ -431,26 +546,28 @@ export async function postToDebate(
   );
 }
 
+/** End a thread early. Only the install that opened it may. */
 export async function closeDebate(
   projectName: string,
-  runId: string
-): Promise<DebateRun> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  threadId: string
+): Promise<ForumThread> {
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(await fetch(`/api/debates/close?${params}`, { method: "POST" }));
 }
 
 /**
- * Pick a finished debate back up for more rounds, with the same roster: the
- * extra rounds post under the identities the earlier ones used.
+ * Argue a thread for more rounds with this install's own agents: its earlier
+ * roster if it has argued here, a roster of its own otherwise. Refused while
+ * any run is live in the thread.
  */
 export async function continueDebate(
   projectName: string,
-  runId: string,
+  threadId: string,
   rounds: number,
   /** Roles to move to another model (null: back to the default); the rest keep theirs. */
   models: Partial<Record<DebateRoleName, string | null>> = {}
-): Promise<DebateRun> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+): Promise<ForumThread> {
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(
     await fetch(`/api/debates/continue?${params}`, {
       method: "POST",
@@ -489,34 +606,6 @@ export function authorOf(post: DebatePost): string | null {
 /** Debate statuses that can still produce new posts. */
 export function isActive(status: DebateStatus): boolean {
   return status === "setting_up" || status === "debating";
-}
-
-/**
- * Whether a finished debate can still receive posts from outside.
- *
- * A concluded debate is not a closed thread: the agents ran out of rounds, but
- * the forum thread stays open and a peer can still object to the hypothesis —
- * which is the likeliest moment for one to, since there is finally something to
- * object to. The event stream ends at a terminal status and the UI opens none
- * for a finished run, so this is what keeps such a debate watched.
- *
- * `closed` is excluded because a closed thread takes no further posts, and a
- * thread no longer on the forum has nothing left to read.
- */
-export function watchesForPeerPosts(run: DebateRun, posts: DebatePost[]): boolean {
-  return !isActive(run.status) && acceptsPosts(run, posts);
-}
-
-/**
- * Whether anyone may post to this debate from here. A closed thread refuses
- * every post (readers would never show one written after the close), and a
- * thread no longer on the forum has nowhere to put it.
- */
-export function acceptsPosts(run: DebateRun, posts: DebatePost[]): boolean {
-  // The CLOSED post, not only the status: a debate that concluded and was then
-  // closed by a peer keeps its "converged" status, and its thread is closed all
-  // the same.
-  return run.status !== "closed" && !run.thread_missing && closedBy(posts) === null;
 }
 
 /**
