@@ -56,6 +56,19 @@ def _no_inherited_vista_data(monkeypatch):
     monkeypatch.setattr(settings, "vista_data_token", None)
 
 
+@pytest.fixture(autouse=True)
+def _no_update_checks_against_github(monkeypatch):
+    """
+    A test that runs the app's lifespan starts the update checker, which asks
+    GitHub unless the version is `dev`. A machine with `VISTA_VERSION` exported
+    would then reach api.github.com from the suite; point it nowhere instead.
+    Update tests serve their own fake.
+    """
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings.updates, "github_api", "http://127.0.0.1:9")
+
+
 @pytest.fixture
 async def engine(tmp_path_factory):
     """

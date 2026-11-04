@@ -6,9 +6,9 @@
 
 ## 2. Backend: update check
 
-- [ ] 2.1 Add `packaging` as an explicit backend dependency (`uv add packaging`) and `services/update_check.py`: tag normalisation, semver comparison, stable via `releases/latest`, prereleases via `/releases` with drafts excluded, `update.json` lookup for `data_reset`. Verify: `backend/tests/test_update_check.py` with a fake fetch covers `0.2.3`→`v0.2.5` update, equal versions, `0.2.2-rc1`→`v0.2.2` update, an RC hidden unless opted in, missing `update.json` → `data_reset: null`, and a fetch that raises, returns 403/429, or returns bad JSON → no update and a log line
-- [ ] 2.2 Run the check from the lifespan: on start, then 24h after the last success (retry hourly on failure), skipped when checks are off or the build is a dev build; persist `update_checked_at`. `POST /updates/check` runs it now. Verify: a test with a fake clock and a counting fake fetch shows no request while off and exactly one per period while on
-- [ ] 2.3 Extend `GET /version` with `latest`, `notes_url`, `install_command` (the release's own one-liner for this platform), `checked_at` and `data_reset`. Verify: API test against a fake GitHub served by `respx` or an in-process app on `updates.github_api`
+- [x] 2.1 Add `packaging` as an explicit backend dependency (`uv add packaging`) and `services/update_check.py`: tag normalisation, semver comparison, stable via `releases/latest`, prereleases via `/releases` with drafts excluded, `update.json` lookup for `data_reset`. Verify: `backend/tests/test_update_check.py` with a fake fetch covers `0.2.3`→`v0.2.5` update, equal versions, `0.2.2-rc1`→`v0.2.2` update, an RC hidden unless opted in, missing `update.json` → `data_reset: null`, and a fetch that raises, returns 403/429, or returns bad JSON → no update and a log line
+- [x] 2.2 Run the check from the lifespan: on start, then 24h after the last success (retry hourly on failure), skipped when checks are off or the build is a dev build; persist `update_checked_at`. `POST /updates/check` runs it now. Verify: a test with a fake clock and a counting fake fetch shows no request while off and exactly one per period while on
+- [x] 2.3 Extend `GET /version` with `latest`, `notes_url`, `install_command` (the release's own one-liner for this platform), `checked_at` and `data_reset`. Verify: API test against a fake GitHub served by `respx` or an in-process app on `updates.github_api`
 
 ## 3. Backend: download, verification and activity
 
