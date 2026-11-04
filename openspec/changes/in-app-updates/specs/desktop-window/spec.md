@@ -50,3 +50,31 @@ SHALL show that the update failed, the reason, and the Open logs and Copy diagno
 - **WHEN** VISTA is reopened after a failed update
 - **THEN** the startup window shows "Update to 0.2.5 failed" with the reason, Open logs and
   Copy diagnostics, then continues starting the installed version
+
+### Requirement: An update shows its progress until VISTA is back
+
+From the moment the window closes to restart into an update until VISTA's startup window
+appears again, a small update window SHALL stay on screen, showing the version being installed
+and the current step: waiting for VISTA to close, each of the installer's steps, and opening
+VISTA. It SHALL never run from the install folder the update replaces. It SHALL close once
+VISTA's startup window is showing, whether the new version opened or the previous one reopened
+after a failure, and SHALL close by itself if neither has happened within two minutes of the
+update's last step.
+
+#### Scenario: A successful update
+
+- **WHEN** the researcher clicks Restart now for 0.2.6
+- **THEN** the update window appears as the VISTA window closes, says "Installing VISTA 0.2.6"
+  with the installer's current step, and closes once 0.2.6's startup window is showing
+
+#### Scenario: A failed update
+
+- **WHEN** the installer refuses the update
+- **THEN** the update window says the update failed and that the version you had is opening,
+  and closes once that version's startup window, with its failure notice, is showing
+
+#### Scenario: The update window does not hold the install
+
+- **WHEN** the helper waits for VISTA to close
+- **THEN** the update window is not counted as VISTA still running, and the installer can
+  replace every file in the install folder

@@ -44,3 +44,11 @@
 
 - [x] 7.1 Document checking, opting out and prereleases, Update and restart, and recovery with `--version` in `docs/installing.md`; note in the release notes that reaching it is a manual upgrade (`.github/release-notes.md`, worded so it stays true for every release). Verify: `./scripts/ci-local.sh docs` passes
 - [ ] 7.2 Manual end-to-end on macOS (validation lane, not PR CI): install 0.0.x from a fake release served by `VISTA_BACKEND_UPDATES__GITHUB_API` and a `file://` base, update to a newer fake, confirm the new version opens with chats kept; then make the installer fail and confirm the old version reopens with the failure state. Repeat on Linux and Windows. Record results in `docs/validation-lane.md`. The recipe and its tool (`scripts/update_e2e/fake_release.py`) are there; macOS passed 2026-11-04, Linux and Windows not yet run
+
+## 8. The update status window (D9)
+
+- [ ] 8.1 `main.js` `--update-status <folder>` mode: before package resolution and the single-instance lock, its own `userData`, one window (`update.html`) polling `status.json`, its PID in `updates/status-window.pid`, and exiting two minutes after `opening` or `failed`. Verify: `startup.e2e.js` cases for each step and the timeout
+- [ ] 8.2 Copy the window into the update's folder in the restart handler (`cp -c` on macOS); a failed copy logs and goes on without it. Verify: `update-bridge.test.js`
+- [ ] 8.3 The helpers start the copy before waiting (Linux flags from the copy's `window-sandbox`) and write `status.json` at each step, the installer's `==>` lines as its detail. Verify: `apply-update.test.js` asserts the sequence on success and failure, and that the copy does not hold up the wait
+- [ ] 8.4 On start, close the status window named by `status-window.pid` once the startup window shows. Verify: `startup.e2e.js`
+- [ ] 8.5 Re-run 7.2's macOS run and record the status window in `docs/validation-lane.md`. Verify: the window is on screen from the close until the startup window, on success and on failure

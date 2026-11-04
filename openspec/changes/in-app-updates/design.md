@@ -153,6 +153,9 @@ Electron copies the platform's one into the update's folder before starting it. 
 runs as `powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File`, spawned detached and
 hidden, so no console window flashes.
 
+The helper also starts the update status window (D9) before it waits, and writes each step to
+the status file it shows.
+
 ### D6. Failure state in the startup window
 
 On start, `main.js` reads and removes `last-failure.json`, and sends the startup window an
@@ -189,6 +192,43 @@ is the new version itself.
 helper's wait makes the race unlikely, but the installer is also run by hand. It turned out to
 do so already; `test_install.ps1` now checks that the second call sits between unpacking and
 the swap, since the running-process case stops at the first.
+
+### D9. The update status window
+
+Measured on macOS, the installer runs for 1 min 39 s after VISTA closes, with nothing on screen
+until the new version's startup window. A notification fades, so a window stays up instead,
+in the startup window's style: "Installing VISTA 0.2.6" and one status line.
+
+Nothing on screen can run from the install folder, which the installer replaces and the helper
+waits on. A second app would carry its own Electron runtime, the bulk of the window's size, so
+the status window is VISTA's own window run from a copy:
+
+1. **The copy.** In the restart handler, before the hand-off, Electron copies its own app into
+   the update's folder as `window/`: `VISTA.app` on macOS (`cp -c`, a clone, so instant and no
+   extra disk), `app/window/` on Linux and `app\window\` on Windows (a real copy). A failed
+   copy is not fatal: the update goes ahead without the status window, and the log says so.
+   The backend's `clean_cache` already removes the folder afterwards.
+2. **A mode of `main.js`, `--update-status <folder>`.** Taken before anything else: no
+   `resolvePackage` (a copy has no package around it, and the check must not be loosened for
+   it), no single-instance lock and its own `userData` (`<folder>/window-data`), since it has
+   the same identity as the VISTA about to start and would otherwise be taken for it. No
+   launcher, no backend. One small window (`update.html`, the startup window's CSS) polls
+   `<folder>/status.json` every 250 ms. It writes its PID to `VISTA_HOME/updates/status-window.pid`.
+3. **The helper drives it.** `apply-update.sh` / `.ps1` start the copy first, its binary
+   directly (not `open`, so macOS registers no second VISTA; Linux takes its flags from the
+   copy's own `window-sandbox`, which, with the copy outside the AppArmor profile's path, may
+   say `--no-sandbox`: acceptable for a window that loads one local file). Then they write
+   `status.json` `{version, step, detail}` at each step: `waiting`, `installing` with the
+   installer's own `==>` lines as `detail`, `opening`, or `failed` with the reason.
+4. **Closing.** On start, `main.js` (any version with this change: the new one, or the old one
+   after a failure) reads `status-window.pid` and stops that process once its startup window is
+   showing, then removes the file. The status window also exits by itself two minutes after
+   `status.json` last says `opening` or `failed`, so a reopen that never comes does not leave
+   it up. On a failure it does not repeat the reason at length: the reopened version's startup
+   window owns the failure notice (D6).
+
+The helper's running check matches the install folder's path, and the copy is under
+`VISTA_HOME/updates`, so it is never counted as VISTA still running.
 
 ## Risks / Trade-offs
 
