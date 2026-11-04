@@ -166,14 +166,3 @@ failed startup.
 - **WHEN** the installer exits with an error during the update to 0.2.5
 - **THEN** 0.2.3 reopens, its startup window says the update to 0.2.5 failed with the reason,
   and Open logs shows the update log
-
-### Requirement: The update is available only inside the window
-
-The Update and Restart actions SHALL be offered only where VISTA runs in its own window. Where
-the page is not inside VISTA's window, About SHALL show the one-line install command for the
-available release instead.
-
-#### Scenario: In a browser
-
-- **WHEN** a newer release is available and the UI is open in a browser tab
-- **THEN** About shows the release and the install command to copy, and no Update button

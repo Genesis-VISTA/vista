@@ -16,7 +16,6 @@ no update.
 
 import asyncio
 import logging
-import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -242,23 +241,6 @@ def github_fetch(
             raise CheckFailed(f"GET {url}: not JSON") from exc
 
     return fetch
-
-
-def install_command(
-    version: str, *, platform: str = sys.platform, repo: str | None = None
-) -> str:
-    """
-    The release's own one-line installer, pinned to `version`, for a researcher
-    using VISTA in a browser, where the window cannot restart it. Pasted into a
-    terminal on macOS and Linux, into PowerShell on Windows.
-    """
-    url = f"https://github.com/{repo or settings.updates.repo}/releases/download/v{version}"
-    if platform.startswith("win"):
-        return (
-            f'$env:VISTA_INSTALL_VERSION="{version}"; '
-            f'powershell -ExecutionPolicy Bypass -c "irm {url}/install.ps1 | iex"'
-        )
-    return f"curl -fsSL {url}/install.sh | bash -s -- --version {version}"
 
 
 # ---------------------------------------------------------------------------

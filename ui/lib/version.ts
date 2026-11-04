@@ -25,8 +25,6 @@ export type VersionInfo = {
   /** A newer release's version, when the last check found one. */
   latest: string | null;
   notes_url: string | null;
-  /** The release's one-line installer for this platform, for a browser. */
-  install_command: string | null;
   /** Whether installing it will ask to reset local data; null when the release does not say. */
   data_reset: boolean | null;
 };

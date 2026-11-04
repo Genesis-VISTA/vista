@@ -8,7 +8,7 @@
 
 - [x] 2.1 Add `packaging` as an explicit backend dependency (`uv add packaging`) and `services/update_check.py`: tag normalisation, semver comparison, stable via `releases/latest`, prereleases via `/releases` with drafts excluded, `update.json` lookup for `data_reset`. Verify: `backend/tests/test_update_check.py` with a fake fetch covers `0.2.3`→`v0.2.5` update, equal versions, `0.2.2-rc1`→`v0.2.2` update, an RC hidden unless opted in, missing `update.json` → `data_reset: null`, and a fetch that raises, returns 403/429, or returns bad JSON → no update and a log line
 - [x] 2.2 Run the check from the lifespan: on start, then 24h after the last success (retry hourly on failure), skipped when checks are off or the build is a dev build; persist `update_checked_at`. `POST /updates/check` runs it now. Verify: a test with a fake clock and a counting fake fetch shows no request while off and exactly one per period while on
-- [x] 2.3 Extend `GET /version` with `latest`, `notes_url`, `install_command` (the release's own one-liner for this platform), `checked_at` and `data_reset`. Verify: API test against a fake GitHub served by `respx` or an in-process app on `updates.github_api`
+- [x] 2.3 Extend `GET /version` with `latest`, `notes_url`, `checked_at` and `data_reset`. Verify: API test against a fake GitHub served by `respx` or an in-process app on `updates.github_api`
 
 ## 3. Backend: download, verification and activity
 
@@ -22,7 +22,7 @@
 - [x] 4.1 Read the relevant docs in `ui/node_modules/next/dist/docs/`, then add `ui/lib/version.ts` and proxy routes for `/version`, `/updates/*` and `/activity`. Verify: `npm run lint` and the typecheck pass
 - [x] 4.2 Add the About section at the end of the settings navigation (`UserSettingsModal.tsx`, `SettingsSection`): version and commit with `CopyableLine`, notes link, update state, Check now, the two toggles saving like other fields. Verify: component test or Playwright check for a release, a dev build and checks-off
 - [x] 4.3 Add the marker on the rail's settings button and the About entry while an update is available. Verify: shown when `latest` is set, gone when checks are turned off
-- [x] 4.4 Add Update: when `window.vistaApp` is present, start the download and show progress, then a confirm dialog listing `/activity` and the data-reset warning (exact or generic per `data_reset`); without the bridge show `install_command` with copy. Verify: Playwright against a stubbed backend for both paths and for cancel
+- [x] 4.4 Add Update: start the download and show progress, then a confirm dialog listing `/activity` and the data-reset warning (exact or generic per `data_reset`), then `window.vistaApp.restartToUpdate`; there is no browser path (without the bridge, Restart now says it needs VISTA's window). Verify: Playwright against a stubbed backend for restart, a refused restart and cancel
 - [x] 4.5 Run `./scripts/ci-local.sh ui` and verify it passes (not in a checkout running `launch.sh`: it rebuilds `ui/.next`)
 
 ## 5. Electron: bridge and hand-off

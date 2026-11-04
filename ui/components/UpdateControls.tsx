@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { CopyableLine } from "./CopyableLine";
 import {
   activityLines,
   checkNow,
@@ -18,11 +17,10 @@ import {
 /**
  * About's update state and actions (openspec change `in-app-updates`).
  *
- * In VISTA's window (the `window.vistaApp` bridge is there): Update downloads
- * and verifies the release while VISTA keeps running, then Restart to update
- * asks to confirm, listing what a restart interrupts, before the window stops
- * VISTA and installs it. In a browser there is no window to restart, so the
- * release's one-line installer is shown to copy instead.
+ * Update downloads and verifies the release while VISTA keeps running, then
+ * Restart to update asks to confirm, listing what a restart interrupts, before
+ * the window (`window.vistaApp`) stops VISTA and installs it. VISTA runs only
+ * in its window, so there is no other path.
  */
 export function UpdateControls({ info }: { info: VersionInfo }) {
   const { checking, error, download } = useVersion();
@@ -48,7 +46,6 @@ export function UpdateControls({ info }: { info: VersionInfo }) {
     );
   }
 
-  const bridge = vistaApp();
   const mine = download?.version === info.latest ? download : null;
 
   return (
@@ -61,17 +58,7 @@ export function UpdateControls({ info }: { info: VersionInfo }) {
           </a>
         )}
       </p>
-      {!bridge ? (
-        info.install_command && (
-          <div className="settings-about-install">
-            <p className="user-settings-hint">
-              VISTA is open in a browser, so it cannot restart itself. To update, run this in a terminal
-              {info.install_command.startsWith("$env:") ? " (PowerShell)" : ""}:
-            </p>
-            <CopyableLine value={info.install_command} label="Install command" copyLabel="Copy command" />
-          </div>
-        )
-      ) : mine?.state === "ready" ? (
+      {mine?.state === "ready" ? (
         <RestartToUpdate version={info.latest} dataReset={info.data_reset} />
       ) : mine?.state === "downloading" ? (
         <div className="settings-about-progress">
@@ -127,7 +114,11 @@ function RestartToUpdate({ version, dataReset }: { version: string; dataReset: b
 
   async function restart() {
     const bridge = vistaApp();
-    if (!bridge) return;
+    if (!bridge) {
+      // Only `./launch.sh --no-electron` has no window, and a checkout is never offered an update.
+      setConfirm({ step: "refused", reason: "Restarting into an update needs VISTA's window." });
+      return;
+    }
     setConfirm({ step: "restarting" });
     try {
       const answer = await bridge.restartToUpdate(version);

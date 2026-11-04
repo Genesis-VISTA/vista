@@ -20,7 +20,6 @@ function info(overrides: Partial<VersionInfo> = {}): VersionInfo {
     checked_at: null,
     latest: null,
     notes_url: null,
-    install_command: null,
     data_reset: null,
     ...overrides,
   };

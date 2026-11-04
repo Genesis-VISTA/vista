@@ -19,7 +19,6 @@ from vista_backend.services import local_settings
 from vista_backend.services.update_check import (
     UpdateStatus,
     github_fetch,
-    install_command,
     update_checker,
 )
 
@@ -156,7 +155,6 @@ async def test_check_now_offers_a_newer_release(session, github):
 
     assert got["latest"] == "0.2.5"
     assert got["notes_url"] == "https://github.com/x/releases/tag/v0.2.5"
-    assert got["install_command"] == install_command("0.2.5")
     assert got["data_reset"] is True  # 0.2.3 is older than 0.2.4
     assert got["checked_at"] is not None
     # And GET /version keeps saying so without asking again.

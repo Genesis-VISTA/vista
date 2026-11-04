@@ -34,7 +34,6 @@ function versionInfo(overrides: Record<string, unknown> = {}) {
       checked_at: "2026-11-04T09:00:00Z",
       latest: null,
       notes_url: null,
-      install_command: null,
       data_reset: null,
       ...overrides,
     },

@@ -7220,8 +7220,11 @@ textarea.input:focus {
   left: calc(50% + 4px);
 }
 
+/* minmax(0, …): a grid track's default minimum is its content, which would
+   stretch a long line past the box instead of letting it scroll. */
 .settings-about-identity {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   margin-bottom: 16px;
 }
@@ -7230,6 +7233,7 @@ textarea.input:focus {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  min-width: 0;
   gap: 8px;
   padding: 12px 14px;
   margin-bottom: 16px;
@@ -7251,12 +7255,6 @@ textarea.input:focus {
 .settings-about-error {
   margin: 0;
   font-size: 12px;
-}
-
-.settings-about-install {
-  display: grid;
-  gap: 6px;
-  width: 100%;
 }
 
 .settings-about-progress {

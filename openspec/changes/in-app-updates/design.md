@@ -49,7 +49,7 @@ See proposal.md for motivation, and the specs for the behaviour. What exists tod
 (streaming download, progress, verification). Routes:
 
 - `GET /version` → `{version, commit, checks: "on" | "off" | "dev_build", latest?,
-  notes_url?, install_command?, checked_at?, data_reset?}`
+  notes_url?, checked_at?, data_reset?}`
 - `POST /updates/check` — check now.
 - `POST /updates/download` — start the download of the release `GET /version` offered;
   `GET /updates/download` — `{state: idle|downloading|ready|failed, bytes, total, error?}`.
@@ -66,7 +66,7 @@ after the last success (retry hourly after a failure). The result is cached in m
 `checked_at` is stored on the settings row so it survives a restart. Requests send a
 `User-Agent: VISTA/<version>` header and nothing identifying.
 
-*Alternatives:* checking in Electron (no browser/dev path, Node tests, duplicate settings);
+*Alternatives:* checking in Electron (no `--no-electron` dev path, Node tests, duplicate settings);
 checking from the UI (one request per tab, nowhere to cache). Rejected in grilling.
 
 ### D2. Settings
@@ -114,8 +114,9 @@ The handler in `main.js` checks:
 4. Electron re-hashes the cached installer and archive against `ready.json`.
 
 Paths are never taken from the page. The page only passes a version string, which must equal
-the ready one. The UI detects the bridge by `window.vistaApp?.isVistaApp`. Without it, About
-shows `install_command`.
+the ready one. The UI detects the bridge by `window.vistaApp?.isVistaApp`. VISTA runs only in
+its window, so there is no browser path: without the bridge (only `./launch.sh --no-electron`,
+a dev build that is never offered an update), Restart now says it needs the window.
 
 *Alternatives:* relaying through the backend or the launcher protocol, or a `vista-update://`
 URL caught by `routing.js`. Both put a control path somewhere it doesn't belong.

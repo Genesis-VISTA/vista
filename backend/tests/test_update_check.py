@@ -23,7 +23,6 @@ from vista_backend.services.update_check import (
     UpdateChecker,
     check,
     github_fetch,
-    install_command,
     is_dev_build,
 )
 
@@ -224,16 +223,6 @@ def test_release_versions_are_not_dev_builds(version):
 )
 def test_other_versions_are_dev_builds(version):
     assert is_dev_build(version)
-
-
-def test_install_command_pins_the_release():
-    assert install_command("0.2.5", platform="darwin", repo="Genesis-VISTA/vista") == (
-        "curl -fsSL https://github.com/Genesis-VISTA/vista/releases/download/v0.2.5/"
-        "install.sh | bash -s -- --version 0.2.5"
-    )
-    windows = install_command("0.2.6-rc1", platform="win32", repo="Genesis-VISTA/vista")
-    assert windows.startswith('$env:VISTA_INSTALL_VERSION="0.2.6-rc1"; ')
-    assert "releases/download/v0.2.6-rc1/install.ps1 | iex" in windows
 
 
 # ---------------------------------------------------------------------------

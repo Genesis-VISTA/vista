@@ -1407,13 +1407,9 @@ describe("UserSettingsModal About", () => {
     expect(within(about).getByText("Update checks are off.")).toBeInTheDocument();
   });
 
-  it("in a browser, offers the release's install command and no Update button", async () => {
+  it("offers an available release with its notes and Update, which starts the download", async () => {
     useVersionMock.mockReturnValue(
-      versionView({
-        latest: "0.2.5",
-        notes_url: "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5",
-        install_command: "curl -fsSL https://x/install.sh | bash -s -- --version 0.2.5",
-      }),
+      versionView({ latest: "0.2.5", notes_url: "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5" }),
     );
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
@@ -1425,19 +1421,21 @@ describe("UserSettingsModal About", () => {
       "href",
       "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5",
     );
-    expect(within(about).getByRole("textbox", { name: "Install command" })).toHaveTextContent("--version 0.2.5");
-    expect(within(about).queryByRole("button", { name: /Update to/ })).toBeNull();
+    await userEvent.click(within(about).getByRole("button", { name: "Update to 0.2.5" }));
+    expect(startDownloadMock).toHaveBeenCalledWith("0.2.5");
   });
 
-  it("in VISTA's window, offers Update, which starts the download", async () => {
-    window.vistaApp = { isVistaApp: true, restartToUpdate: vi.fn(async () => ({ ok: true })) };
-    useVersionMock.mockReturnValue(versionView({ latest: "0.2.5", install_command: "curl …" }));
+  it("without VISTA's window, Restart now says it needs the window", async () => {
+    useVersionMock.mockReturnValue({
+      ...versionView({ latest: "0.2.5" }),
+      download: { state: "ready", version: "0.2.5", bytes: 1, total: 1, error: null },
+    });
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     const about = await openOn("About");
 
-    expect(within(about).queryByRole("textbox", { name: "Install command" })).toBeNull();
-    await userEvent.click(within(about).getByRole("button", { name: "Update to 0.2.5" }));
-    expect(startDownloadMock).toHaveBeenCalledWith("0.2.5");
+    await userEvent.click(within(about).getByRole("button", { name: "Restart to update" }));
+    await userEvent.click(await within(about).findByRole("button", { name: "Restart now" }));
+    expect(within(about).getByRole("alert")).toHaveTextContent("Restarting into an update needs VISTA's window.");
   });
 });

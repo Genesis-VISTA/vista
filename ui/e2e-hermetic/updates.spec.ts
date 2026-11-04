@@ -5,7 +5,7 @@ import { installStub } from "./stub";
  * Settings > About's update flow against the built app (openspec change
  * `in-app-updates`), with the backend stubbed in the page. In VISTA's window
  * the page sees `window.vistaApp`; here an init script plays the window,
- * recording each restart it is asked for. Without it the page is a browser tab.
+ * recording each restart it is asked for.
  */
 
 const OFFERED = {
@@ -15,7 +15,6 @@ const OFFERED = {
   checked_at: "2026-11-04T09:00:00Z",
   latest: "0.2.5",
   notes_url: "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5",
-  install_command: "curl -fsSL https://github.com/Genesis-VISTA/vista/releases/download/v0.2.5/install.sh | bash -s -- --version 0.2.5",
   data_reset: true,
 };
 
@@ -77,7 +76,6 @@ test("the window downloads, confirms what it interrupts, and restarts", async ({
   const about = await openAbout(page);
   await expect(page.getByTestId("about-update-marker")).toBeVisible();
   await expect(about.getByText("VISTA 0.2.5 is available.")).toBeVisible();
-  await expect(about.getByRole("textbox", { name: "Install command" })).toHaveCount(0);
 
   await about.getByRole("button", { name: "Update to 0.2.5" }).click();
   await expect(about.getByRole("progressbar", { name: "Downloading VISTA 0.2.5" })).toBeVisible();
@@ -120,17 +118,6 @@ test("a refused restart says why and keeps the update ready", async ({ page }) =
 
   await expect(about.getByRole("alert")).toHaveText("The downloaded update no longer matches its hashes.");
   await expect(about.getByRole("button", { name: "Restart to update" })).toBeVisible();
-});
-
-test("a browser tab shows the install command instead of Update", async ({ page }) => {
-  const stub = await installStub(page, { "GET /api/version": OFFERED });
-  await page.goto("/");
-  const about = await openAbout(page);
-
-  await expect(about.getByText("VISTA 0.2.5 is available.")).toBeVisible();
-  await expect(about.getByRole("textbox", { name: "Install command" })).toHaveText(OFFERED.install_command);
-  await expect(about.getByRole("button", { name: /Update to/ })).toHaveCount(0);
-  expect((await stub.requests()).filter((r) => r.includes("/api/updates/download"))).toEqual([]);
 });
 
 test("a development checkout shows its version and never offers to check", async ({ page }) => {

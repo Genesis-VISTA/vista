@@ -19,7 +19,6 @@ from ..services import local_settings
 from ..services.chat_run import chat_run_registry
 from ..services.update_check import (
     Release,
-    install_command,
     is_dev_build,
     update_checker,
 )
@@ -44,8 +43,6 @@ class VersionInfo(BaseModel):
     """ A newer release's version, when the last check found one. """
     notes_url: str | None = None
     """ Its release notes on GitHub. """
-    install_command: str | None = None
-    """ Its one-line installer for this platform, for a browser, where the window cannot update. """
     data_reset: bool | None = None
     """
     Whether installing it will ask to reset local data; `None` when the release
@@ -83,7 +80,6 @@ async def _version_info(session: SessionDep) -> VersionInfo:
     if release is not None:
         info.latest = release.version
         info.notes_url = release.notes_url
-        info.install_command = install_command(release.version)
         info.data_reset = release.data_reset
     return info
 

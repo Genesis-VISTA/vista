@@ -245,7 +245,6 @@ export const VERSION = {
   checked_at: null,
   latest: null,
   notes_url: null,
-  install_command: null,
   data_reset: null,
 };
 
