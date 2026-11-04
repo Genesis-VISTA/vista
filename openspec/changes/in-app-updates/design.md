@@ -165,7 +165,9 @@ notice is read rather than flashed.
 
 ### D7. Data-compatibility step in the release workflow
 
-`.github/scripts/data-compat.sh`, run once on Linux before `draft-release.sh`:
+`.github/scripts/data-compat.sh`, run once on Linux as the workflow's `data-compat` job,
+alongside the package jobs (so a refusal costs no build time); `release` needs it, and
+`draft-release.sh` refuses a folder without its two files:
 
 1. Builds an empty DB with the new code (`init_db`).
 2. For each earlier release tag, newest first, takes that release's empty DB and runs the new
@@ -175,12 +177,18 @@ notice is read rather than flashed.
 To avoid rebuilding old trees every release, each release also publishes its own empty DB as
 `vista-schema.sqlite`. The step downloads earlier releases' copies, and builds one from the
 tag (`git worktree` + `uv run`) only for releases published before this change. A failure
-fails the run, so no draft is created.
+fails the run, so no draft is created. The ordering of tags, the check (the startup one,
+`schema_problems(assume_additive=True)`) and the verdict live in
+`vista_backend/db/release_schema.py`, so they are unit-tested with the backend; the script
+only fetches and builds. When the newest earlier release is refused, `data_compatible_from`
+is the new version itself.
 
 ### D8. `install.ps1` second running check
 
 `install.ps1` calls `Assert-NotRunning` again just before the swap, matching `install.sh`. The
-helper's wait makes the race unlikely, but the installer is also run by hand.
+helper's wait makes the race unlikely, but the installer is also run by hand. It turned out to
+do so already; `test_install.ps1` now checks that the second call sits between unpacking and
+the swap, since the running-process case stops at the first.
 
 ## Risks / Trade-offs
 

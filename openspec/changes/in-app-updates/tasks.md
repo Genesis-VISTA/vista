@@ -35,10 +35,10 @@
 
 ## 6. Installers and release workflow
 
-- [ ] 6.1 Call `Assert-NotRunning` again in `install.ps1` just before the swap. Verify: a case in `scripts/test_install.ps1`; `./scripts/ci-local.sh install`
-- [ ] 6.2 Publish `vista-schema.sqlite` (an empty DB from `init_db`) with every release. Verify: `.github/scripts/draft-release.sh` attaches it, and a local dry run of `.github/scripts/` lists it
-- [ ] 6.3 Add `.github/scripts/data-compat.sh`: walk earlier release tags newest first, use their `vista-schema.sqlite` (or build from the tag when absent), run the new `schema_check`, write `update.json` with `data_compatible_from`; fail the run on error; call it from `release.yml` before drafting. Verify: run it locally against v0.2.3/v0.2.4 tags and a fixture DB with a dropped column
-- [ ] 6.4 Add `update.json` and `vista-schema.sqlite` to the draft checklist in `docs/releasing.md`. Verify: `./scripts/ci-local.sh docs` passes
+- [x] 6.1 Make sure `install.ps1` calls `Assert-NotRunning` again just before the swap (it already did; the existing running test stops at the first call). Verify: a case in `scripts/test_install.ps1`; `./scripts/ci-local.sh install`
+- [x] 6.2 Publish `vista-schema.sqlite` (an empty DB from `init_db`) with every release. Verify: `.github/scripts/draft-release.sh` attaches it, and a local dry run of `.github/scripts/` lists it
+- [x] 6.3 Add `.github/scripts/data-compat.sh`: walk earlier release tags newest first, use their `vista-schema.sqlite` (or build from the tag when absent), run the new `schema_check`, write `update.json` with `data_compatible_from`; fail the run on error; call it from `release.yml` before drafting. Verify: run it locally against v0.2.3/v0.2.4 tags and a fixture DB with a dropped column
+- [x] 6.4 Add `update.json` and `vista-schema.sqlite` to the draft checklist in `docs/releasing.md`. Verify: `./scripts/ci-local.sh docs` passes
 
 ## 7. Docs and end-to-end
 

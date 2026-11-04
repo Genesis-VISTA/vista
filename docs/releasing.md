@@ -37,7 +37,7 @@ maintainer does it by hand.
 
    The version comes from the tag, without the `v`. No file needs editing.
 
-3. If a platform fails, no draft is created. Fix the cause on GitLab, then delete the tag on
+3. If a platform or the `data-compat` job fails, no draft is created. Fix the cause on GitLab, then delete the tag on
    both GitLab and GitHub and push it again, or push a new tag. A re-run for a tag whose draft
    already exists replaces its assets and its generated notes, and keeps what you wrote under
    "What's changed".
@@ -50,9 +50,28 @@ Drafts are visible only to people with write access to the repository.
 gh release view v0.2.0 -R Genesis-VISTA/vista
 ```
 
-Check that it has three archives, each with its `.sha256` file, plus `install.sh` and
-`install.ps1`, and that the notes name the right build-inputs commit under "Build and
-verification".
+Check that it has three archives, each with its `.sha256` file, plus `install.sh`,
+`install.ps1`, `update.json` and `vista-schema.sqlite`, and that the notes name the right
+build-inputs commit under "Build and verification".
+
+`update.json` is what VISTA's update check reads to warn that an update resets local data:
+its `data_compatible_from` is the oldest earlier release whose database this one opens, and
+an install older than that is told its data will be reset. The workflow's `data-compat` job
+writes it with [`.github/scripts/data-compat.sh`](../.github/scripts/data-compat.sh), which
+runs this release's startup check against each earlier release's empty database, newest
+first, and stops at the first refusal. Its log names the tag and the columns. If it
+refuses the newest earlier release (`data_compatible_from` is this version), this release
+resets every researcher's data: a `db/schemas.py` change since then was not additive. Make
+sure that is intended before publishing.
+`vista-schema.sqlite` is this release's own empty database, for the next release's check.
+
+To run the check yourself before tagging (it builds each earlier release from its tag, so
+it needs the tags fetched):
+
+```bash
+VERSION=0.2.5 REPO=Genesis-VISTA/vista .github/scripts/data-compat.sh /tmp/data-compat
+VERSION=0.2.5 RELEASE_TAGS="v0.2.4 v0.2.3" .github/scripts/data-compat.sh /tmp/data-compat  # without GitHub
+```
 
 While the repository is private, its release assets need a signed-in download: plain `curl`
 gets a 404, so the release notes' own commands work only once it is public. Use
