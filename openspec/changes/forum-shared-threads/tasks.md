@@ -1,0 +1,35 @@
+## 1. Forum format and client
+
+- [ ] 1.1 `RUN` kind in `services/forum_git.py`: `start_run(thread, rounds, roster)` writes it with its `run` object; readers parse `run`; unknown or malformed `run` objects are skipped and logged. Verify with new cases in `backend/tests/test_forum_git.py`
+- [ ] 1.2 `verdict` field on `DONE`: written by the Referee's post, read and validated, falling back to the body. Verify in `test_forum_git.py`, including a `DONE` without the field
+- [ ] 1.3 `live_run(thread, now, expiry)`: the latest unended `RUN`, ended by its Referee's `DONE` or `BLOCKED` or by `CLOSED`, expired past `run_expiry_seconds`. Verify with table-driven unit tests (waiting run kept, abandoned run expired, failed run ended)
+- [ ] 1.4 `sync_forum`: one fetch of every thread ref, returning the threads whose tip moved. Verify with two working repositories against one bare remote in `test_forum_git.py` (Bob's install lists Alice's new thread)
+- [ ] 1.5 `forum.run_expiry_seconds` derived from `max_job_wait_seconds + 900` in `config.py`. Verify with a unit test
+
+## 2. Database and projection
+
+- [ ] 2.1 `ForumThreadTable` and `ForumPostTable`, and nullable `DebateRunTable.forum_thread_id`, in `db/schemas.py`. Verify that `db/schema_check.py` passes against a database created by the previous release (`backend/tests/test_forum_db_columns.py`)
+- [ ] 2.2 `services/debate.py`: `project_forum_thread` fills `forum_thread`/`forum_post` idempotently, as `project_thread` does (concurrent writers, vanished posts kept as `on_remote = False`). Verify in `test_debate_service.py`
+- [ ] 2.3 Carry-over (design D10): link and fill existing runs on a project's first sync, missing threads from `debate_post`. Verify with a fixture database holding an old concluded debate and a missing one
+
+## 3. Runs on any thread
+
+- [ ] 3.1 Orchestrator (`agents/forum/debate.py`): start writes the root, `forum_thread` and the first run with its `RUN`. Each Continue is a new run that reuses this install's roster in the thread or mints one. A `finally` posts the Referee's `BLOCKED` when a run ends without a verdict. Verify in `test_debate_driver.py` with `fake_forum`
+- [ ] 3.2 Continue on a thread this install did not open: refused (`409`, naming whose run) while another run is live, accepted after expiry, models starting from this install's last run or the defaults. Verify in `test_debate_driver.py` and `test_debate_api.py`
+- [ ] 3.3 Simulations in a teammate's run use the runner's credentials and clusters, and late results post outside the run. Verify in `test_debate_simulation.py`
+- [ ] 3.4 Referee prompt rules on the whole thread including earlier verdicts; teammates' posts stay peers (`agents/forum/roles.py`). Verify in `test_debate_roles.py`
+
+## 4. API
+
+- [ ] 4.1 Thread-keyed routes in `api/debate.py` (design D8): list with throttled sync, view, post, runs, close (`403` unless opened here), events (stays open while the thread is viewed and not closed). Remove the run-keyed routes. Verify by porting `test_debate_api.py` to the new routes
+- [ ] 4.2 Two-install end-to-end on real git: Alice opens and concludes, Bob lists it, posts, continues, concludes; both see Bob's verdict as current, and Bob cannot close it. New test in `backend/tests/test_project_forum.py`
+
+## 5. UI
+
+- [ ] 5.1 `lib/debates.ts` and the `app/api/debates/*` proxies use thread ids and the new routes. Verify with `ui/tests/debates.test.ts`
+- [ ] 5.2 `app/hypothesis-lab/page.tsx`: list of every thread with opener and status, polled every 30 s while mounted; view with the current verdict, earlier verdicts, the live run ("Alice is running 3 rounds · 2 posts · last 4 min ago") and Continue refused with its reason; Close only on threads opened here. Verify with `ui/tests/debates.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts` (hermetic Playwright, in PR CI)
+
+## 6. Docs and checks
+
+- [ ] 6.1 `docs/forum-git-format.md` (`RUN`, the `verdict` field, liveness and expiry, Close by the opener) and `docs/hypothesis-forum-hosting.md` §5 (joining now works) and §6. Verify with `./scripts/ci-local.sh docs`
+- [ ] 6.2 `./scripts/ci-local.sh backend ui` and `openspec validate forum-shared-threads --strict` pass
