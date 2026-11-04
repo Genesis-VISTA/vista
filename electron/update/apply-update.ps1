@@ -109,12 +109,17 @@ try {
   # The PowerShell this runs in: powershell.exe from the window, pwsh in the tests.
   $powershell = (Get-Process -Id $PID).Path
   Write-Status 'installing' 'starting the installer'
-  # Each of the installer's "==> " lines becomes the status window's line, as it comes.
+  # Each of the installer's "==> " lines becomes the status window's line, as it
+  # comes, up to "installed VISTA": what it says after that is for a terminal.
+  $installed = $false
   $output = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -Version $version -NoLaunch 2>&1 |
     ForEach-Object {
       $line = "$_"
       Say "installer: $line"
-      if ($line -match '^==> (.+)$') { Write-Status 'installing' $Matches[1] }
+      if (-not $installed -and $line -match '^==> (.+)$') {
+        Write-Status 'installing' $Matches[1]
+        if ($Matches[1] -like 'installed VISTA*') { $installed = $true }
+      }
       $line
     })
   $status = $LASTEXITCODE

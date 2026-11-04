@@ -86,7 +86,16 @@ function New-Releases([string]$From) {
   Say "unpacking $From"
   & $tar -x -f $From -C $stage
   if ($LASTEXITCODE -ne 0) { throw "could not unpack $From" }
+  # GitHub's artifact download is a zip holding the package's zip: unpack that too.
+  $inner = Get-ChildItem $stage -File -Filter 'vista-*-win-x86.zip' | Select-Object -First 1
+  if (-not (Get-ChildItem $stage -Directory) -and $inner) {
+    Say "unpacking $($inner.Name) from it"
+    & $tar -x -f $inner.FullName -C $stage
+    if ($LASTEXITCODE -ne 0) { throw "could not unpack $($inner.Name)" }
+    Get-ChildItem $stage -File | Remove-Item
+  }
   $built = (Get-ChildItem $stage -Directory | Select-Object -First 1).Name
+  if (-not $built) { throw "$From holds no VISTA package: pass the vista-...-win-x86.zip, or GitHub's package-win-x86 download" }
   $built = New-Release $stage $built '0.0.1' $installed $installer
   $built = New-Release $stage $built '0.0.2' $releases $installer
   $built = New-Release $stage $built '0.0.3' $later $installer

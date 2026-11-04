@@ -36,7 +36,7 @@ function world(kind, { installer }) {
 
   if (kind === 'sh') {
     writeFileSync(path.join(cache, 'install.sh'), installer === 'succeeds'
-      ? `#!/bin/bash\nprintf '%s|%s|%s\\n' "$*" "$VISTA_INSTALL_BASE_URL" "$VISTA_INSTALL_DIR" > '${invoked}'\necho '==> installed'\necho ${VERSION} > "$VISTA_INSTALL_DIR/VERSION"\n`
+      ? `#!/bin/bash\nprintf '%s|%s|%s\\n' "$*" "$VISTA_INSTALL_BASE_URL" "$VISTA_INSTALL_DIR" > '${invoked}'\necho '==> installed VISTA ${VERSION}'\necho '==> for diagnostics, run: vista'\necho ${VERSION} > "$VISTA_INSTALL_DIR/VERSION"\n`
       : `#!/bin/bash\necho '==> downloading'\necho 'error: VISTA needs about 7 GB free in /x, and there is 2 GB.' >&2\nexit 1\n`);
     const open = path.join(root, 'open.sh');
     writeFileSync(open, `#!/bin/bash\necho "$1 $(cat "$1/VERSION")" >> '${opened}'\n`);
@@ -44,7 +44,7 @@ function world(kind, { installer }) {
     return { root, install, home, cache, opened, invoked, open, installerPath: path.join(cache, 'install.sh') };
   }
   writeFileSync(path.join(cache, 'install.ps1'), installer === 'succeeds'
-    ? `param([string]$Version, [switch]$NoLaunch)\n"$Version|$NoLaunch|$env:VISTA_INSTALL_BASE_URL|$env:VISTA_INSTALL_DIR" | Set-Content '${invoked}'\nWrite-Host '==> installed'\nSet-Content (Join-Path $env:VISTA_INSTALL_DIR 'VERSION') '${VERSION}'\n`
+    ? `param([string]$Version, [switch]$NoLaunch)\n"$Version|$NoLaunch|$env:VISTA_INSTALL_BASE_URL|$env:VISTA_INSTALL_DIR" | Set-Content '${invoked}'\nWrite-Host '==> installed VISTA ${VERSION}'\nWrite-Host '==> for diagnostics, run: vista.cmd'\nSet-Content (Join-Path $env:VISTA_INSTALL_DIR 'VERSION') '${VERSION}'\n`
     : `param([string]$Version, [switch]$NoLaunch)\nWrite-Host 'error: VISTA was not installed: VISTA is running from C:\\x. Close VISTA, then run this again.'\nexit 1\n`);
   const open = path.join(root, 'open.ps1');
   writeFileSync(open, `param([string]$Dir)\n"$Dir $((Get-Content (Join-Path $Dir 'VERSION')).Trim())" | Add-Content '${opened}'\n`);
@@ -111,7 +111,7 @@ for (const kind of /** @type {const} */ (['sh', 'ps1'])) {
     assert.equal(result.status, 0);
     const log = read(path.join(w.home, 'logs', 'update.log'));
     const steps = [...log.matchAll(/apply-update: status: (.+)$/gm)].map((m) => m[1]);
-    assert.deepEqual(steps, ['waiting', 'installing (starting the installer)', 'installing (installed)', 'opening']);
+    assert.deepEqual(steps, ['waiting', 'installing (starting the installer)', `installing (installed VISTA ${VERSION})`, 'opening']);
     assert.deepEqual(JSON.parse(read(path.join(w.cache, 'status.json'))), { version: VERSION, step: 'opening', detail: '' });
     assert.match(log, /no update status window/);
   });

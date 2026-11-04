@@ -126,15 +126,20 @@ say "VISTA has closed (after ${waited}s); running the installer"
 
 out="$(mktemp)"
 write_status installing "starting the installer"
-# Each of the installer's "==> " lines becomes the status window's line.
+# Each of the installer's "==> " lines becomes the status window's line, up to
+# "installed VISTA": what it says after that is for a terminal.
 VISTA_INSTALL_BASE_URL="file://$cache" VISTA_INSTALL_DIR="$dir" \
   bash "$installer" --version "$version" --no-launch < /dev/null 2>&1 \
   | tee "$out" \
-  | while IFS= read -r line; do
-      line="${line##*$'\r'}"
-      line="$(printf '%s' "$line" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
-      [[ "$line" == "==> "* ]] && write_status installing "${line#==> }"
-    done
+  | { installed=0
+      while IFS= read -r line; do
+        line="${line##*$'\r'}"
+        line="$(printf '%s' "$line" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+        if (( ! installed )) && [[ "$line" == "==> "* ]]; then
+          write_status installing "${line#==> }"
+          [[ "$line" == "==> installed VISTA"* ]] && installed=1
+        fi
+      done; }
 status=${PIPESTATUS[0]}
 cat "$out"
 if (( status != 0 )); then
