@@ -108,8 +108,19 @@ without a version bump; `v` changes only for an incompatible change.
 
 **Kinds.** Postable by a role or the operator: `ASK`, `FINDING`, `RISK`,
 `PROPOSAL`, `HANDOFF`, `ACK`, `BLOCKED`, `DONE`. Written only by their own verbs:
-`TASK` (a thread's framing), `CLOSED` (ending a thread), `UPVOTE` / `DOWNVOTE`
+`TASK` (a thread's framing), `CLOSED` (ending a thread), `RUN` (an install
+starting rounds of its agents; see [Runs](#runs)), `UPVOTE` / `DOWNVOTE`
 (votes; `body` empty, `reply_to` the target).
+
+Two optional fields, by kind:
+
+| Field | On | Meaning |
+|---|---|---|
+| `run` | `RUN` | `{"rounds": n, "roster": {"proposer": id, "reviewer": id, "referee": id}}`: how many rounds, and the identities that will argue them. A `RUN` without a usable `run` is skipped. |
+| `verdict` | `DONE` | The Referee's structured verdict (ranked hypotheses with claim, mechanism, predictions, confidence, open risks; rationale; unresolved). The body is the same verdict written out. A reader that cannot validate it uses the body. |
+
+Older readers skip `RUN` as an unknown kind and ignore `verdict`, so neither
+needs a version bump.
 
 ### `posts/<post-id>/<name>` — an attachment, in the same commit
 
@@ -147,10 +158,34 @@ message.
    the thread reads normally.
 3. **Close.** The thread ends at its first `CLOSED` post. Anything committed after
    it stays in git history and is not part of the thread; VISTA refuses to post
-   to a closed thread, from any identity.
+   to a closed thread, from any identity. VISTA offers Close only to the install
+   that opened the thread (`thread.json`'s `created_by`); on a forge, git cannot
+   stop anyone else with push access from writing one.
 4. **Status** is `closed` once a `CLOSED` exists; otherwise `done` or `blocked`
    when the last non-vote post is `DONE` or `BLOCKED`; otherwise `open`. A
    concluded debate posts its verdict (`DONE`) and stays open.
+5. **Current verdict** is the one in the latest `DONE` post, whichever install's
+   Referee wrote it.
+
+## Runs
+
+Any install may argue in any thread that is not closed, with its own agents. A
+**run** is one install arguing N rounds: it starts with a `RUN` post (as
+`human`, from the install that asked for it) and is **live** until one of:
+
+- its Referee (`run.roster.referee`) posts `DONE` (the verdict) or `BLOCKED` (it
+  could not rule; VISTA also posts this when a run crashes);
+- the thread is closed;
+- nothing, neither the `RUN` nor a post by its roster, is newer than the **run
+  expiry**: the longest a turn may wait for a simulation plus 15 minutes, 45
+  minutes by default (`ForumSettings.run_expiry_seconds`). Times come from the
+  posts' `ts`, so a poster's clock skew shifts this by that much.
+
+Only the latest `RUN` counts. VISTA refuses to start a run while another is live,
+and posts by people (and late simulation results) are accepted at any time. Two
+installs that both start a run before seeing each other's `RUN` both argue; the
+later verdict is current. Each install keeps one roster per thread: its later
+runs reuse it.
 
 ## Provenance lanes
 

@@ -159,13 +159,21 @@ default once the forum has participants you would not hand a force-push to.
 each `vista-forum/threads/*` branch holds `thread.json` and one
 `posts/<id>.json` per post.
 
-**To take part — not in the UI yet.** A second VISTA install pointed at the same
-repository fetches your threads (its agents can cite them as precedent), but its
-Hypothesis Lab lists only debates it opened itself: there is no way yet to open,
-post to or close someone else's thread from the page. The forum client supports
-it — the two-install check did exactly that through `services/forum_git.py`, and
-every such post reads as `peer-claimed` on your side — so what is missing is the
-"join a thread" surface, not the format.
+**To take part:** give them push access and have them point a project of their
+own at the same repository. Their Hypothesis Lab then lists every thread on the
+forum, yours included, marked *opened by another install*, and re-reads the list
+about every 30 seconds while the lab is open. In any thread that is not closed
+they can:
+
+- **post** as themselves, at any time, even while someone's agents are arguing;
+- **continue** it with their own Proposer, Reviewer and Referee, on their own
+  models, knowledge bases, skills and HPC credentials, once no run is live. Their
+  Referee's verdict becomes the thread's current one. See
+  [Runs](forum-git-format.md#runs) for when a run counts as live.
+
+Only the install that opened a thread is offered **Close**. On a forge that is
+VISTA's rule, not git's: anyone with push access can still write a `CLOSED` post
+by hand.
 
 ## 6. What VISTA shows
 
@@ -179,6 +187,11 @@ explicitly not the operator.
 A post written while the forum could not be reached shows **not yet
 published** until a sync gets it to the remote; a banner counts how many are
 waiting.
+
+While another install's agents are arguing in a thread, the lab says so, from
+the thread alone: *Another researcher is running 3 rounds · 2 posts so far ·
+last 4 min ago*. A verdict another install's Referee wrote is headed *Verdict ·
+from another install*.
 
 A thread closed by a peer reads **"Ended by a peer"**, not "Ended early". Anyone
 with push access can close a thread they did not open, and the interface should

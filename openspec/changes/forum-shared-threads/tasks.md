@@ -31,5 +31,5 @@
 
 ## 6. Docs and checks
 
-- [ ] 6.1 `docs/forum-git-format.md` (`RUN`, the `verdict` field, liveness and expiry, Close by the opener) and `docs/hypothesis-forum-hosting.md` §5 (joining now works) and §6. Verify with `./scripts/ci-local.sh docs`
-- [ ] 6.2 `./scripts/ci-local.sh backend ui` and `openspec validate forum-shared-threads --strict` pass
+- [x] 6.1 `docs/forum-git-format.md` (`RUN`, the `verdict` field, liveness and expiry, Close by the opener) and `docs/hypothesis-forum-hosting.md` §5 (joining now works) and §6. Verify with `./scripts/ci-local.sh docs`
+- [x] 6.2 `./scripts/ci-local.sh backend ui` and `openspec validate forum-shared-threads --strict` pass. Backend tests run as CI does, outside the checkout with no `.env`: 1697 passed; the 3 failures were `test_default_project_constants.py` reading `ui/`, which that copy left out, and pass in the worktree
