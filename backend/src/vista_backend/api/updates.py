@@ -1,17 +1,27 @@
 """
-`GET /version` and `/updates/*`: which VISTA this is, and whether a newer
-release exists, for Settings > About (openspec change `in-app-updates`).
+`GET /version`, `/updates/*` and `GET /activity`: which VISTA this is,
+whether a newer release exists, downloading it, and what restarting into it
+would interrupt, for Settings > About (openspec change `in-app-updates`).
 """
 
+import uuid
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..config import settings
 from ..db.db import SessionDep
+from ..services import campaign as campaign_service
 from ..services import local_settings
-from ..services.update_check import install_command, is_dev_build, update_checker
+from ..services.chat_run import chat_run_registry
+from ..services.update_check import (
+    Release,
+    install_command,
+    is_dev_build,
+    update_checker,
+)
+from ..services.update_download import update_downloader
 
 router = APIRouter(tags=["updates"])
 
@@ -41,25 +51,34 @@ class VersionInfo(BaseModel):
     """
 
 
+def _checks(row) -> Literal["on", "off", "dev_build"]:
+    if is_dev_build(settings.version):
+        return "dev_build"
+    return "on" if row.update_checks else "off"
+
+
+def _offered(row) -> Release | None:
+    """
+    The release this install is offered, if any. One found before the
+    prerelease switch changed is not: an RC must not linger after opting out,
+    and the next check finds the right one.
+    """
+    status = update_checker.status
+    if _checks(row) != "on" or status.latest is None:
+        return None
+    return status.latest if status.prereleases == row.update_prereleases else None
+
+
 async def _version_info(session: SessionDep) -> VersionInfo:
     row = await local_settings.get(session)
     info = VersionInfo(
-        version=settings.version,
-        commit=settings.commit or None,
-        checks="dev_build"
-        if is_dev_build(settings.version)
-        else "on"
-        if row.update_checks
-        else "off",
+        version=settings.version, commit=settings.commit or None, checks=_checks(row)
     )
     if info.checks != "on":
         return info
     info.checked_at = row.update_checked_at
-    status = update_checker.status
-    # A release found before the prerelease switch changed is not offered: an
-    # RC must not linger after opting out. The next check finds the right one.
-    if status.latest is not None and status.prereleases == row.update_prereleases:
-        release = status.latest
+    release = _offered(row)
+    if release is not None:
         info.latest = release.version
         info.notes_url = release.notes_url
         info.install_command = install_command(release.version)
@@ -81,3 +100,108 @@ async def check_for_updates(session: SessionDep) -> VersionInfo:
     """
     await update_checker.check_now()
     return await _version_info(session)
+
+
+# ---------------------------------------------------------------------------
+# The download
+# ---------------------------------------------------------------------------
+
+
+class DownloadRequest(BaseModel):
+    version: str
+    """ The version the page offered, which must still be the one on offer. """
+
+
+class DownloadStatusPublic(BaseModel):
+    state: Literal["idle", "downloading", "ready", "failed"]
+    version: str | None = None
+    bytes: int = 0
+    total: int = 0
+    error: str | None = None
+
+
+def _download_status() -> DownloadStatusPublic:
+    s = update_downloader.status
+    return DownloadStatusPublic(
+        state=s.state, version=s.version, bytes=s.bytes, total=s.total, error=s.error
+    )
+
+
+@router.post("/updates/download")
+async def start_download(
+    request: DownloadRequest, session: SessionDep
+) -> DownloadStatusPublic:
+    """
+    Download and verify the offered release into the cache, in the background;
+    poll `GET /updates/download` for progress. 409 when that version is not the
+    one on offer (checks off, a dev build, or a newer check since).
+    """
+    release = _offered(await local_settings.get(session))
+    if release is None or release.version != request.version:
+        raise HTTPException(409, f"VISTA {request.version} is not the update on offer.")
+    update_downloader.start(release)
+    return _download_status()
+
+
+@router.get("/updates/download")
+async def get_download() -> DownloadStatusPublic:
+    return _download_status()
+
+
+# ---------------------------------------------------------------------------
+# What a restart would interrupt
+# ---------------------------------------------------------------------------
+
+
+class ActiveChatRun(BaseModel):
+    chat_session_id: uuid.UUID
+    project_id: uuid.UUID
+    needs_you: bool
+    """ Waiting on the researcher's answer to a prompt. """
+
+
+class WatchedJob(BaseModel):
+    job_id: str
+    cluster: str
+    job_name: str | None = None
+    state: str
+
+
+class Activity(BaseModel):
+    """Work a restart would stop, for the update's confirm dialog."""
+
+    chat_runs: list[ActiveChatRun]
+    debates: int
+    """ Hypothesis Lab debates arguing in the background. """
+    watched_jobs: list[WatchedJob]
+    """
+    HPC jobs VISTA is still watching. They keep running on the cluster; VISTA
+    stops watching them until it is back.
+    """
+
+
+@router.get("/activity")
+async def get_activity(session: SessionDep) -> Activity:
+    from . import debate
+
+    return Activity(
+        chat_runs=[
+            ActiveChatRun(
+                chat_session_id=run.chat_session_id,
+                project_id=run.project_id,
+                needs_you=bool(run.pending),
+            )
+            for run in chat_run_registry.active()
+            if not run.finished
+        ],
+        debates=sum(1 for task in debate._BACKGROUND if not task.done()),
+        watched_jobs=[
+            WatchedJob(
+                job_id=job.job_id,
+                cluster=job.cluster,
+                job_name=job.job_name,
+                state=job.state,
+            )
+            for job in await campaign_service.list_open_jobs(session)
+        ],
+    )

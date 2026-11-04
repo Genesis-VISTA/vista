@@ -12,10 +12,10 @@
 
 ## 3. Backend: download, verification and activity
 
-- [ ] 3.1 Add `services/update_download.py`: free-space check, streamed download to `VISTA_HOME/updates/<version>/*.part`, sha256 against the API `digest` (refuse an asset without one), archive also against its `.sha256`, `ready.json`, progress state; `POST` / `GET /updates/download`. Verify: `backend/tests/test_update_download.py` covers success, a tampered byte (file deleted, `failed` with reason), a missing digest, and too little disk
-- [ ] 3.2 Clean the cache on start when the running version equals a cached one. Verify: unit test
-- [ ] 3.3 Add `GET /activity` combining `chat_run_registry.active()`, running debate tasks and `campaign_service.list_open_jobs`. Verify: `backend/tests/test_activity_api.py` with one active run, one debate and one open job
-- [ ] 3.4 Run `./scripts/ci-local.sh backend` (lint and test) and verify it passes
+- [x] 3.1 Add `services/update_download.py`: free-space check, streamed download to `VISTA_HOME/updates/<version>/*.part`, sha256 against the API `digest` (refuse an asset without one), archive also against its `.sha256`, `ready.json`, progress state; `POST` / `GET /updates/download`. Verify: `backend/tests/test_update_download.py` covers success, a tampered byte (file deleted, `failed` with reason), a missing digest, and too little disk
+- [x] 3.2 Clean the cache on start when the running version equals a cached one. Verify: unit test
+- [x] 3.3 Add `GET /activity` combining `chat_run_registry.active()`, running debate tasks and `campaign_service.list_open_jobs`. Verify: `backend/tests/test_activity_api.py` with one active run, one debate and one open job
+- [x] 3.4 Run `./scripts/ci-local.sh backend` (lint and test) and verify it passes
 
 ## 4. UI: About and the marker
 
