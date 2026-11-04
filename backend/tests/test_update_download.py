@@ -18,6 +18,7 @@ from vista_backend.config import settings
 from vista_backend.db.schemas import (
     CampaignRunTable,
     CampaignStepTable,
+    ChatSessionTable,
     HpcJobTable,
     ProjectTable,
 )
@@ -397,8 +398,14 @@ async def test_activity_lists_runs_debates_and_watched_jobs(session, monkeypatch
     )
     await session.flush()
 
+    conversation = ChatSessionTable(
+        project_id=project.id, title="Li6 enrichment", created_at=now, updated_at=now
+    )
+    session.add(conversation)
+    await session.flush()
+
     chat = SimpleNamespace(
-        chat_session_id=project.id,
+        chat_session_id=conversation.id,
         project_id=project.id,
         pending={"p1"},
         finished=False,
@@ -418,9 +425,11 @@ async def test_activity_lists_runs_debates_and_watched_jobs(session, monkeypatch
     assert resp.json() == {
         "chat_runs": [
             {
-                "chat_session_id": str(project.id),
+                "chat_session_id": str(conversation.id),
                 "project_id": str(project.id),
                 "needs_you": True,
+                "title": "Li6 enrichment",
+                "project_name": "activity-project",
             }
         ],
         "debates": 1,

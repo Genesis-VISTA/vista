@@ -9,9 +9,11 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlmodel import col, select
 
 from ..config import settings
 from ..db.db import SessionDep
+from ..db.schemas import ChatSessionTable, ProjectTable
 from ..services import campaign as campaign_service
 from ..services import local_settings
 from ..services.chat_run import chat_run_registry
@@ -158,6 +160,9 @@ class ActiveChatRun(BaseModel):
     project_id: uuid.UUID
     needs_you: bool
     """ Waiting on the researcher's answer to a prompt. """
+    title: str | None = None
+    """ The conversation's title, so the confirm dialog can name it. """
+    project_name: str | None = None
 
 
 class WatchedJob(BaseModel):
@@ -184,15 +189,38 @@ class Activity(BaseModel):
 async def get_activity(session: SessionDep) -> Activity:
     from . import debate
 
+    runs = [run for run in chat_run_registry.active() if not run.finished]
+    titles: dict[uuid.UUID, str] = {}
+    projects: dict[uuid.UUID, str] = {}
+    if runs:
+        titles = dict(
+            (
+                await session.exec(
+                    select(ChatSessionTable.id, ChatSessionTable.title).where(
+                        col(ChatSessionTable.id).in_([r.chat_session_id for r in runs])
+                    )
+                )
+            ).all()
+        )
+        projects = dict(
+            (
+                await session.exec(
+                    select(ProjectTable.id, ProjectTable.name).where(
+                        col(ProjectTable.id).in_([r.project_id for r in runs])
+                    )
+                )
+            ).all()
+        )
     return Activity(
         chat_runs=[
             ActiveChatRun(
                 chat_session_id=run.chat_session_id,
                 project_id=run.project_id,
                 needs_you=bool(run.pending),
+                title=titles.get(run.chat_session_id),
+                project_name=projects.get(run.project_id),
             )
-            for run in chat_run_registry.active()
-            if not run.finished
+            for run in runs
         ],
         debates=sum(1 for task in debate._BACKGROUND if not task.done()),
         watched_jobs=[

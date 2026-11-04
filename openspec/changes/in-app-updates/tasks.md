@@ -19,11 +19,11 @@
 
 ## 4. UI: About and the marker
 
-- [ ] 4.1 Read the relevant docs in `ui/node_modules/next/dist/docs/`, then add `ui/lib/version.ts` and proxy routes for `/version`, `/updates/*` and `/activity`. Verify: `npm run lint` and the typecheck pass
-- [ ] 4.2 Add the About section at the end of the settings navigation (`UserSettingsModal.tsx`, `SettingsSection`): version and commit with `CopyableLine`, notes link, update state, Check now, the two toggles saving like other fields. Verify: component test or Playwright check for a release, a dev build and checks-off
-- [ ] 4.3 Add the marker on the rail's settings button and the About entry while an update is available. Verify: shown when `latest` is set, gone when checks are turned off
-- [ ] 4.4 Add Update: when `window.vistaApp` is present, start the download and show progress, then a confirm dialog listing `/activity` and the data-reset warning (exact or generic per `data_reset`); without the bridge show `install_command` with copy. Verify: Playwright against a stubbed backend for both paths and for cancel
-- [ ] 4.5 Run `./scripts/ci-local.sh ui` and verify it passes (not in a checkout running `launch.sh`: it rebuilds `ui/.next`)
+- [x] 4.1 Read the relevant docs in `ui/node_modules/next/dist/docs/`, then add `ui/lib/version.ts` and proxy routes for `/version`, `/updates/*` and `/activity`. Verify: `npm run lint` and the typecheck pass
+- [x] 4.2 Add the About section at the end of the settings navigation (`UserSettingsModal.tsx`, `SettingsSection`): version and commit with `CopyableLine`, notes link, update state, Check now, the two toggles saving like other fields. Verify: component test or Playwright check for a release, a dev build and checks-off
+- [x] 4.3 Add the marker on the rail's settings button and the About entry while an update is available. Verify: shown when `latest` is set, gone when checks are turned off
+- [x] 4.4 Add Update: when `window.vistaApp` is present, start the download and show progress, then a confirm dialog listing `/activity` and the data-reset warning (exact or generic per `data_reset`); without the bridge show `install_command` with copy. Verify: Playwright against a stubbed backend for both paths and for cancel
+- [x] 4.5 Run `./scripts/ci-local.sh ui` and verify it passes (not in a checkout running `launch.sh`: it rebuilds `ui/.next`)
 
 ## 5. Electron: bridge and hand-off
 
