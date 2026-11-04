@@ -9,9 +9,12 @@
 //   <update folder>/window/       the copy (VISTA.app on macOS, app/window elsewhere)
 //   <update folder>/status.json   {version, step, detail}, written by the helper
 //   VISTA_HOME/updates/status-window.json
-//                                 written by the status window while it is up; the
-//                                 next VISTA to show its startup window removes it,
-//                                 and the status window, seeing it gone, exits
+//                                 written by the helper before it starts the status
+//                                 window, and so before it opens any VISTA; the next
+//                                 VISTA to show its startup window removes it, and the
+//                                 status window, seeing it gone, exits. The status
+//                                 window never writes it: one that started late would
+//                                 put it back after that VISTA had looked.
 //
 // Everything here is plain Node, so the unit tests run it without Electron.
 
@@ -139,7 +142,8 @@ export function shouldClose({ changedAt, endedAt, now, dismissed }) {
 }
 
 /**
- * Say the status window is up, in VISTA_HOME/updates.
+ * Say a status window is coming, in VISTA_HOME/updates: what the helpers do
+ * (apply-update.sh / .ps1); here for the tests.
  *
  * @param {string} cacheRoot
  * @param {{ pid: number, folder: string }} who

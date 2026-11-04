@@ -132,13 +132,17 @@ for (const kind of /** @type {const} */ (['sh', 'ps1'])) {
     mkdirSync(windowDir, { recursive: true });
     const started = path.join(w.root, 'status-window-args.txt');
     const stand = path.join(windowDir, 'VISTA');
-    writeFileSync(stand, `#!/bin/bash\nprintf '%s\\n' "$@" > '${started}'\nexec sleep 20 < /dev/null > /dev/null 2>&1\n`);
+    // It also records whether the marker was already there when it started: the
+    // VISTA the helper opens removes it, so it must exist before either starts.
+    const marker = path.join(w.home, 'updates', 'status-window.json');
+    writeFileSync(stand, `#!/bin/bash\nprintf '%s\\n' "$@" > '${started}'\n[[ -f '${marker}' ]] && echo marker >> '${started}'\nexec sleep 20 < /dev/null > /dev/null 2>&1\n`);
     chmodSync(stand, 0o755);
     try {
       const result = runHelper(kind, w, { VISTA_UPDATE_STATUS_WINDOW: stand, VISTA_UPDATE_WAIT_SECONDS: '5' });
       assert.equal(result.status, 0, read(path.join(w.home, 'logs', 'update.log')));
       await new Promise((resolve) => setTimeout(resolve, 300));
-      assert.equal(read(started).trim(), `--update-status=${w.cache}`);
+      assert.equal(read(started).trim(), `--update-status=${w.cache}\nmarker`);
+      assert.equal(JSON.parse(read(marker)).folder, w.cache);
       assert.equal(read(w.opened).trim(), `${w.install} ${VERSION}`);
       assert.match(read(path.join(w.home, 'logs', 'update.log')), /started the update status window/);
     } finally {

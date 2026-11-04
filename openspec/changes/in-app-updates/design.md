@@ -213,16 +213,20 @@ the status window is VISTA's own window run from a copy:
    it), no single-instance lock and its own `userData` (`<folder>/window-data`), since it has
    the same identity as the VISTA about to start and would otherwise be taken for it. No
    launcher, no backend. One small window (`update.html`, the startup window's CSS) polls
-   `<folder>/status.json` every 250 ms. It writes its PID to `VISTA_HOME/updates/status-window.pid`.
+   `<folder>/status.json` every 250 ms.
 3. **The helper drives it.** `apply-update.sh` / `.ps1` start the copy first, its binary
    directly (not `open`, so macOS registers no second VISTA; Linux takes its flags from the
    copy's own `window-sandbox`, which, with the copy outside the AppArmor profile's path, may
    say `--no-sandbox`: acceptable for a window that loads one local file). Then they write
    `status.json` `{version, step, detail}` at each step: `waiting`, `installing` with the
    installer's own `==>` lines as `detail`, `opening`, or `failed` with the reason.
-4. **Closing.** On start, `main.js` (any version with this change: the new one, or the old one
-   after a failure) reads `status-window.pid` and stops that process once its startup window is
-   showing, then removes the file. The status window also exits by itself two minutes after
+4. **Closing.** Before starting the status window, the helper writes a marker,
+   `VISTA_HOME/updates/status-window.json`. On start, `main.js` (any version with this change:
+   the new one, or the old one after a failure) removes it once its startup window is showing,
+   and the status window, seeing it gone, exits. The helper writes it, not the status window:
+   after a failure VISTA reopens within a second, and on macOS its startup window showed before
+   the status window had started, so a marker the window wrote itself came too late and was
+   never removed. A file, not a PID, so a reused PID can never stop the wrong process. The status window also exits by itself two minutes after
    `status.json` last says `opening` or `failed`, so a reopen that never comes does not leave
    it up. On a failure it does not repeat the reason at length: the reopened version's startup
    window owns the failure notice (D6).

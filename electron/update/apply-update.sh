@@ -85,6 +85,10 @@ start_status_window() {
     flag="$("$(dirname "$status_window")/window-sandbox" 2>/dev/null || true)"
     [[ -n "$flag" ]] && flags+=("$flag")
   fi
+  # The marker comes first, before any VISTA opens: the VISTA this helper opens
+  # removes it once its startup window shows, which closes the status window
+  # however late that window started.
+  printf '{"folder": %s}\n' "$(json_string "$cache")" > "$home/updates/status-window.json"
   "$status_window" ${flags[@]+"${flags[@]}"} "--update-status=$cache" < /dev/null &
   disown 2>/dev/null || true
   say "started the update status window"

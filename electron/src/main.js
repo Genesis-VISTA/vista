@@ -31,7 +31,7 @@ import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
 import { formatDiagnostics, resetAllowed, StartupStateMachine, updateFailureNotice } from './startup-protocol.js';
 import { checkRestartRequest, handOff, helperCommand, helperName, takeUpdateFailure } from './update-bridge.js';
 import {
-  copyWindow, dismissStatusWindow, markerPresent, POLL_MS, readStatus, shouldClose, statusView, writeMarker,
+  copyWindow, dismissStatusWindow, markerPresent, POLL_MS, readStatus, shouldClose, statusView,
 } from './update-status.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
@@ -507,11 +507,9 @@ function runUpdateStatusWindow(folder) {
   let endedAt = null;
   const send = () => { if (!win.isDestroyed()) win.webContents.send('update:status', view); };
   ipcMain.on('update:ready', send);
-  try {
-    writeMarker(cacheRoot, { pid: process.pid, folder });
-  } catch (error) {
-    console.error(`vista-window: could not write the status window's marker: ${error instanceof Error ? error.message : error}`);
-  }
+  // The helper wrote the marker before starting this window and before it opens
+  // any VISTA, so a VISTA that is up before this window is has already removed
+  // it, and this window closes on its first look.
   const timer = setInterval(async () => {
     const status = await readStatus(folder);
     const key = JSON.stringify(status);

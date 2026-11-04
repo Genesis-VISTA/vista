@@ -298,6 +298,9 @@ test('the update status window shows each step and closes when its marker goes',
   mkdirSync(folder, { recursive: true });
   const status = (/** @type {object} */ body) => writeFileSync(path.join(folder, 'status.json'), JSON.stringify(body));
   status({ version: '0.2.6', step: 'waiting', detail: '' });
+  // The helper's marker, written before it starts the window.
+  const marker = path.join(home, 'updates', 'status-window.json');
+  writeFileSync(marker, JSON.stringify({ folder }));
   const application = await electron.launch({
     args: [APP_DIR, `--update-status=${folder}`, ...ROOT_ARGS],
     env: { ...process.env, VISTA_HOME: home },
@@ -306,9 +309,8 @@ test('the update status window shows each step and closes when its marker goes',
   const page = await application.firstWindow();
   await expect(page.locator('#update-title')).toHaveText('Updating to VISTA 0.2.6');
   await expect(page.locator('#update-line')).toHaveText('Waiting for VISTA to close…');
-  // It says it is up, for the next VISTA to close it.
-  const marker = path.join(home, 'updates', 'status-window.json');
-  await expect.poll(() => existsSync(marker)).toBe(true);
+  // It leaves the marker alone, for the next VISTA to remove.
+  expect(existsSync(marker)).toBe(true);
   // It has its own profile, so it holds no lock the next VISTA needs.
   await expect.poll(() => existsSync(path.join(folder, 'window-data'))).toBe(true);
 
@@ -322,6 +324,25 @@ test('the update status window shows each step and closes when its marker goes',
 
   rmSync(marker);
   await exited;
+  rmSync(directory, { recursive: true, force: true });
+});
+
+// A failed update reopens VISTA within a second, which can show its startup
+// window before the status window has even started.
+test('an update status window that starts after VISTA is back closes at once', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vista-update-status-'));
+  const home = path.join(directory, 'home');
+  const folder = path.join(home, 'updates', '0.2.6');
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(path.join(folder, 'status.json'), JSON.stringify({ version: '0.2.6', step: 'failed', detail: 'x' }));
+  const application = await electron.launch({
+    args: [APP_DIR, `--update-status=${folder}`, ...ROOT_ARGS],
+    env: { ...process.env, VISTA_HOME: home },
+  });
+  const started = Date.now();
+  await new Promise((resolve) => application.process().once('exit', resolve));
+  expect(Date.now() - started).toBeLessThan(10_000);
+  expect(existsSync(path.join(home, 'updates', 'status-window.json'))).toBe(false);
   rmSync(directory, { recursive: true, force: true });
 });
 

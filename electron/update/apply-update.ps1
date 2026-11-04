@@ -67,6 +67,10 @@ function Start-StatusWindow {
     Say 'no update status window'
     return
   }
+  # The marker comes first, before any VISTA opens: the VISTA this helper opens
+  # removes it once its startup window shows, which closes the status window
+  # however late that window started.
+  [IO.File]::WriteAllText((Join-Path $updates 'status-window.json'), ([ordered]@{ folder = $cache } | ConvertTo-Json -Compress), $utf8)
   Start-Process -FilePath $window -ArgumentList "--update-status=$cache" -WorkingDirectory $cache
   Say 'started the update status window'
 }
