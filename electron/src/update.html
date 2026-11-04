@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+    <title>Updating VISTA</title>
+    <link rel="stylesheet" href="./startup.css" />
+    <script type="module" src="./update-renderer.js"></script>
+  </head>
+  <body>
+    <main class="startup-shell update-shell" aria-labelledby="update-title">
+      <header class="hero">
+        <img class="app-mark" src="../assets/icon.png" alt="" />
+        <div>
+          <p class="eyebrow">VISTA</p>
+          <h1 id="update-title">Updating VISTA</h1>
+          <p id="update-line" class="message" aria-live="polite">Starting the update…</p>
+        </div>
+      </header>
+      <div id="update-progress" class="update-progress" role="progressbar" aria-labelledby="update-line"></div>
+      <p class="footnote">VISTA reopens by itself when this is done. Your work is kept.</p>
+    </main>
+  </body>
+</html>

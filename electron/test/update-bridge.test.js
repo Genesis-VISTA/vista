@@ -154,6 +154,33 @@ test('the helper gets its inputs in the environment, never on its command line',
   assert.ok(windows.args.includes('Hidden'));
 });
 
+test('the helper is told the status window only when there is a copy of it', () => {
+  const hand = {
+    platform: /** @type {NodeJS.Platform} */ ('darwin'),
+    helper: '/h/updates/0.2.5/apply-update.sh',
+    packageRoot: '/Applications/VISTA',
+    version: VERSION,
+    folder: '/h/updates/0.2.5',
+    vistaHome: '/h',
+    installer: 'install.sh',
+  };
+  const copied = '/h/updates/0.2.5/window/VISTA.app/Contents/MacOS/VISTA';
+  assert.equal(helperCommand({ ...hand, statusWindow: copied, env: {} }).env.VISTA_UPDATE_STATUS_WINDOW, copied);
+  // A copy that failed: none, even if one leaked into VISTA's own environment.
+  assert.equal(helperCommand({ ...hand, statusWindow: null, env: { VISTA_UPDATE_STATUS_WINDOW: '/elsewhere' } })
+    .env.VISTA_UPDATE_STATUS_WINDOW, undefined);
+});
+
+test('the hand-off waits for the helper to be started, copy and all', async () => {
+  /** @type {string[]} */
+  const order = [];
+  await handOff({
+    spawnHelper: async () => { await new Promise((resolve) => setTimeout(resolve, 20)); order.push('helper'); },
+    quit: () => { order.push('requestQuit'); },
+  });
+  assert.deepEqual(order, ['helper', 'requestQuit']);
+});
+
 test('the helper starts before VISTA stops, and VISTA stops the ordinary way', async () => {
   /** @type {string[]} */
   const order = [];

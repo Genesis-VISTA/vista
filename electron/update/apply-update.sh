@@ -14,6 +14,9 @@
 #   VISTA_UPDATE_INSTALLER    the release's install.sh, in that folder
 #   VISTA_HOME                VISTA's state; logs/update.log and
 #                             updates/last-failure.json go here
+#   VISTA_UPDATE_STATUS_WINDOW  the copy of VISTA's window in that folder, started
+#                             first as the update status window (design D9), which
+#                             shows each step from status.json there; optional
 #
 # For tests only:
 #   VISTA_UPDATE_WAIT_SECONDS how long to wait for VISTA to close (default 60)
@@ -30,6 +33,8 @@ version="${VISTA_UPDATE_VERSION:?}"
 cache="${VISTA_UPDATE_CACHE:?}"
 installer="${VISTA_UPDATE_INSTALLER:?}"
 home="${VISTA_HOME:?}"
+status_window="${VISTA_UPDATE_STATUS_WINDOW:-}"
+status_file="$cache/status.json"
 wait_seconds="${VISTA_UPDATE_WAIT_SECONDS:-60}"
 
 mkdir -p "$home/logs" "$home/updates"
@@ -59,8 +64,35 @@ json_string() {
   printf '"%s"' "$s"
 }
 
+# What the status window shows: replaced whole, so it never reads half a file.
+write_status() {
+  say "status: $1${2:+ ($2)}"
+  printf '{"version": %s, "step": %s, "detail": %s}\n' \
+    "$(json_string "$version")" "$(json_string "$1")" "$(json_string "${2:-}")" > "$status_file.tmp" \
+    && mv -f "$status_file.tmp" "$status_file"
+}
+
+# The status window runs from the update's folder, so the wait below never
+# counts it as VISTA. On Linux its sandbox flag comes from the copy's own
+# window-sandbox, as for every VISTA window.
+start_status_window() {
+  if [[ -z "$status_window" || ! -x "$status_window" ]]; then
+    say "no update status window"
+    return
+  fi
+  local flags=() flag
+  if [[ "$(uname -s)" == Linux && -x "$(dirname "$status_window")/window-sandbox" ]]; then
+    flag="$("$(dirname "$status_window")/window-sandbox" 2>/dev/null || true)"
+    [[ -n "$flag" ]] && flags+=("$flag")
+  fi
+  "$status_window" ${flags[@]+"${flags[@]}"} "--update-status=$cache" < /dev/null &
+  disown 2>/dev/null || true
+  say "started the update status window"
+}
+
 fail() {
   local reason="$1"
+  write_status failed "$reason"
   say "update to $version failed: $reason"
   printf '{"version": %s, "reason": %s, "log": "update.log"}\n' \
     "$(json_string "$version")" "$(json_string "$reason")" > "$home/updates/last-failure.json"
@@ -80,6 +112,8 @@ running() {
 }
 
 say "updating VISTA in $dir to $version"
+write_status waiting
+start_status_window
 waited=0
 while running; do
   if (( waited >= wait_seconds )); then
@@ -91,9 +125,17 @@ done
 say "VISTA has closed (after ${waited}s); running the installer"
 
 out="$(mktemp)"
+write_status installing "starting the installer"
+# Each of the installer's "==> " lines becomes the status window's line.
 VISTA_INSTALL_BASE_URL="file://$cache" VISTA_INSTALL_DIR="$dir" \
-  bash "$installer" --version "$version" --no-launch < /dev/null > "$out" 2>&1
-status=$?
+  bash "$installer" --version "$version" --no-launch < /dev/null 2>&1 \
+  | tee "$out" \
+  | while IFS= read -r line; do
+      line="${line##*$'\r'}"
+      line="$(printf '%s' "$line" | sed -E $'s/\x1b\\[[0-9;]*m//g')"
+      [[ "$line" == "==> "* ]] && write_status installing "${line#==> }"
+    done
+status=${PIPESTATUS[0]}
 cat "$out"
 if (( status != 0 )); then
   reason="$(grep -E '^error: ' "$out" | tail -1 | sed -E 's/^error: //')"
@@ -103,4 +145,5 @@ fi
 rm -f "$out"
 
 say "installed VISTA $version; opening it"
+write_status opening
 open_vista

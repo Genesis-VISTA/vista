@@ -140,9 +140,13 @@ export async function checkRestartRequest(request) {
  * Its inputs travel in the environment, never its command line: the helper waits
  * until no process's command line names the install folder, and must not be one.
  *
- * @param {{ platform: NodeJS.Platform, helper: string, packageRoot: string, version: string, folder: string, vistaHome: string, installer: string, env?: NodeJS.ProcessEnv }} hand
+ * `statusWindow` is the copied window's executable, which the helper starts as
+ * the update status window (D9); without it the update runs with none.
+ *
+ * @param {{ platform: NodeJS.Platform, helper: string, packageRoot: string, version: string, folder: string, vistaHome: string, installer: string, statusWindow?: string | null, env?: NodeJS.ProcessEnv }} hand
  */
-export function helperCommand({ platform, helper, packageRoot, version, folder, vistaHome, installer, env = process.env }) {
+export function helperCommand({ platform, helper, packageRoot, version, folder, vistaHome, installer, statusWindow = null, env = process.env }) {
+  /** @type {NodeJS.ProcessEnv} */
   const vars = {
     ...env,
     VISTA_UPDATE_INSTALL_DIR: packageRoot,
@@ -151,6 +155,8 @@ export function helperCommand({ platform, helper, packageRoot, version, folder, 
     VISTA_UPDATE_INSTALLER: path.join(folder, installer),
     VISTA_HOME: vistaHome,
   };
+  delete vars.VISTA_UPDATE_STATUS_WINDOW;
+  if (statusWindow) vars.VISTA_UPDATE_STATUS_WINDOW = statusWindow;
   if (platform === 'win32') {
     return {
       command: 'powershell.exe',
@@ -174,10 +180,10 @@ export function helperName(platform) {
  * The helper is running before anything stops, so it is there to wait for
  * every process to exit and only then install.
  *
- * @param {{ spawnHelper: () => void, notify?: () => void, quit: () => Promise<void> | void }} steps
+ * @param {{ spawnHelper: () => unknown, notify?: () => void, quit: () => Promise<void> | void }} steps
  */
 export async function handOff({ spawnHelper, notify, quit }) {
-  spawnHelper();
+  await spawnHelper();
   notify?.();
   await quit();
 }

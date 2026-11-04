@@ -44,7 +44,7 @@ function world(kind, { installer }) {
     return { root, install, home, cache, opened, invoked, open, installerPath: path.join(cache, 'install.sh') };
   }
   writeFileSync(path.join(cache, 'install.ps1'), installer === 'succeeds'
-    ? `param([string]$Version, [switch]$NoLaunch)\n"$Version|$NoLaunch|$env:VISTA_INSTALL_BASE_URL|$env:VISTA_INSTALL_DIR" | Set-Content '${invoked}'\nSet-Content (Join-Path $env:VISTA_INSTALL_DIR 'VERSION') '${VERSION}'\n`
+    ? `param([string]$Version, [switch]$NoLaunch)\n"$Version|$NoLaunch|$env:VISTA_INSTALL_BASE_URL|$env:VISTA_INSTALL_DIR" | Set-Content '${invoked}'\nWrite-Host '==> installed'\nSet-Content (Join-Path $env:VISTA_INSTALL_DIR 'VERSION') '${VERSION}'\n`
     : `param([string]$Version, [switch]$NoLaunch)\nWrite-Host 'error: VISTA was not installed: VISTA is running from C:\\x. Close VISTA, then run this again.'\nexit 1\n`);
   const open = path.join(root, 'open.ps1');
   writeFileSync(open, `param([string]$Dir)\n"$Dir $((Get-Content (Join-Path $Dir 'VERSION')).Trim())" | Add-Content '${opened}'\n`);
@@ -103,6 +103,47 @@ for (const kind of /** @type {const} */ (['sh', 'ps1'])) {
     assert.equal(failure.log, 'update.log');
     assert.match(failure.reason, kind === 'sh' ? /^VISTA needs about 7 GB free/ : /^VISTA is running from/);
     assert.equal(read(w.opened).trim(), `${w.install} 0.2.3`);
+  });
+
+  test(`${kind}: the status window is told each step, ending with opening`, { skip }, () => {
+    const w = world(kind, { installer: 'succeeds' });
+    const result = runHelper(kind, w);
+    assert.equal(result.status, 0);
+    const log = read(path.join(w.home, 'logs', 'update.log'));
+    const steps = [...log.matchAll(/apply-update: status: (.+)$/gm)].map((m) => m[1]);
+    assert.deepEqual(steps, ['waiting', 'installing (starting the installer)', 'installing (installed)', 'opening']);
+    assert.deepEqual(JSON.parse(read(path.join(w.cache, 'status.json'))), { version: VERSION, step: 'opening', detail: '' });
+    assert.match(log, /no update status window/);
+  });
+
+  test(`${kind}: a failure ends the status as failed, with the reason`, { skip }, () => {
+    const w = world(kind, { installer: 'fails' });
+    runHelper(kind, w);
+    const status = JSON.parse(read(path.join(w.cache, 'status.json')));
+    assert.equal(status.step, 'failed');
+    assert.match(status.detail, kind === 'sh' ? /^VISTA needs about 7 GB free/ : /^VISTA is running from/);
+  });
+
+  test(`${kind}: the status window is started from the update's folder and does not hold up the install`, { skip }, async () => {
+    const w = world(kind, { installer: 'succeeds' });
+    // A stand-in for the copied window: it records how it was started, then
+    // keeps running from the update's folder, as the real one does.
+    const windowDir = path.join(w.cache, 'window');
+    mkdirSync(windowDir, { recursive: true });
+    const started = path.join(w.root, 'status-window-args.txt');
+    const stand = path.join(windowDir, 'VISTA');
+    writeFileSync(stand, `#!/bin/bash\nprintf '%s\\n' "$@" > '${started}'\nexec sleep 20 < /dev/null > /dev/null 2>&1\n`);
+    chmodSync(stand, 0o755);
+    try {
+      const result = runHelper(kind, w, { VISTA_UPDATE_STATUS_WINDOW: stand, VISTA_UPDATE_WAIT_SECONDS: '5' });
+      assert.equal(result.status, 0, read(path.join(w.home, 'logs', 'update.log')));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.equal(read(started).trim(), `--update-status=${w.cache}`);
+      assert.equal(read(w.opened).trim(), `${w.install} ${VERSION}`);
+      assert.match(read(path.join(w.home, 'logs', 'update.log')), /started the update status window/);
+    } finally {
+      spawnSync('pkill', ['-f', stand]);
+    }
   });
 
   test(`${kind}: VISTA that never closes is not installed over`, { skip }, async () => {

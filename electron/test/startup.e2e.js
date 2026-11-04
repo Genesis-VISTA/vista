@@ -288,3 +288,53 @@ test('the main window has the update bridge; one not started from a package refu
   await fixture.application.close();
   rmSync(fixture.directory, { recursive: true, force: true });
 });
+
+// ─── the update status window (in-app-updates D9) ───────────────────────────
+
+test('the update status window shows each step and closes when its marker goes', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vista-update-status-'));
+  const home = path.join(directory, 'home');
+  const folder = path.join(home, 'updates', '0.2.6');
+  mkdirSync(folder, { recursive: true });
+  const status = (/** @type {object} */ body) => writeFileSync(path.join(folder, 'status.json'), JSON.stringify(body));
+  status({ version: '0.2.6', step: 'waiting', detail: '' });
+  const application = await electron.launch({
+    args: [APP_DIR, `--update-status=${folder}`, ...ROOT_ARGS],
+    env: { ...process.env, VISTA_HOME: home },
+  });
+  const exited = new Promise((resolve) => application.process().once('exit', resolve));
+  const page = await application.firstWindow();
+  await expect(page.locator('#update-title')).toHaveText('Updating to VISTA 0.2.6');
+  await expect(page.locator('#update-line')).toHaveText('Waiting for VISTA to close…');
+  // It says it is up, for the next VISTA to close it.
+  const marker = path.join(home, 'updates', 'status-window.json');
+  await expect.poll(() => existsSync(marker)).toBe(true);
+  // It has its own profile, so it holds no lock the next VISTA needs.
+  await expect.poll(() => existsSync(path.join(folder, 'window-data'))).toBe(true);
+
+  status({ version: '0.2.6', step: 'installing', detail: 'unpacking into /x' });
+  await expect(page.locator('#update-title')).toHaveText('Installing VISTA 0.2.6');
+  await expect(page.locator('#update-line')).toHaveText('Unpacking into /x');
+  status({ version: '0.2.6', step: 'opening', detail: '' });
+  await expect(page.locator('#update-line')).toHaveText('Opening VISTA 0.2.6…');
+  // No bridge but its own.
+  expect(await page.evaluate(() => typeof /** @type {any} */ (globalThis).vistaStartup)).toBe('undefined');
+
+  rmSync(marker);
+  await exited;
+  rmSync(directory, { recursive: true, force: true });
+});
+
+test('a starting VISTA closes a waiting update status window once its startup window shows', async () => {
+  const fixture = await launchStartup('success', {
+    prepare: (state) => {
+      mkdirSync(path.join(state, 'updates'), { recursive: true });
+      writeFileSync(path.join(state, 'updates', 'status-window.json'), '{"pid": 1, "folder": "/x"}\n');
+    },
+  });
+  await expect(fixture.startup.locator('#startup-title')).toBeVisible();
+  await expect.poll(() => existsSync(path.join(fixture.directory, 'state', 'updates', 'status-window.json'))).toBe(false);
+  await mainWindow(fixture.application);
+  await fixture.application.close();
+  rmSync(fixture.directory, { recursive: true, force: true });
+});

@@ -10,6 +10,8 @@
 #   VISTA_UPDATE_CACHE        the verified download: archive, .sha256, installer
 #   VISTA_UPDATE_INSTALLER    the release's install.ps1, in that folder
 #   VISTA_HOME                logs\update.log and updates\last-failure.json go here
+#   VISTA_UPDATE_STATUS_WINDOW  the copied VISTA.exe in that folder, started first as
+#                             the update status window (design D9); optional
 #
 # For tests only:
 #   VISTA_UPDATE_WAIT_SECONDS how long to wait for VISTA to close (default 60)
@@ -32,6 +34,7 @@ $updates = Join-Path $vistaHome 'updates'
 New-Item -ItemType Directory -Force -Path $logs, $updates | Out-Null
 $log = Join-Path $logs 'update.log'
 $utf8 = New-Object System.Text.UTF8Encoding $false
+$statusFile = Join-Path $cache 'status.json'
 
 function Say([string]$Message) {
   $line = "$((Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')) apply-update: $Message"
@@ -48,7 +51,28 @@ function Open-Vista {
   Start-Process -FilePath $window -ArgumentList '--startup' -WorkingDirectory $dir
 }
 
+# What the status window shows: replaced whole, so it never reads half a file.
+function Write-Status([string]$Step, [string]$Detail = '') {
+  Say ("status: $Step" + $(if ($Detail) { " ($Detail)" } else { '' }))
+  $body = [ordered]@{ version = $version; step = $Step; detail = $Detail } | ConvertTo-Json -Compress
+  $tmp = "$statusFile.tmp"
+  [IO.File]::WriteAllText($tmp, $body, $utf8)
+  Move-Item -Force $tmp $statusFile
+}
+
+# Run from the update's folder, so the wait below never counts it as VISTA.
+function Start-StatusWindow {
+  $window = $env:VISTA_UPDATE_STATUS_WINDOW
+  if (-not $window -or -not (Test-Path $window)) {
+    Say 'no update status window'
+    return
+  }
+  Start-Process -FilePath $window -ArgumentList "--update-status=$cache" -WorkingDirectory $cache
+  Say 'started the update status window'
+}
+
 function Fail([string]$Reason) {
+  try { Write-Status 'failed' $Reason } catch { Say "could not write the status: $($_.Exception.Message)" }
   Say "update to $version failed: $Reason"
   $record = [ordered]@{ version = $version; reason = $Reason; log = 'update.log' } | ConvertTo-Json -Compress
   [IO.File]::WriteAllText((Join-Path $updates 'last-failure.json'), $record, $utf8)
@@ -68,6 +92,8 @@ function Test-Running {
 
 try {
   Say "updating VISTA in $dir to $version"
+  Write-Status 'waiting'
+  try { Start-StatusWindow } catch { Say "no update status window: $($_.Exception.Message)" }
   $waited = 0
   while (Test-Running) {
     if ($waited -ge $waitSeconds) {
@@ -82,9 +108,16 @@ try {
   $env:VISTA_INSTALL_DIR = $dir
   # The PowerShell this runs in: powershell.exe from the window, pwsh in the tests.
   $powershell = (Get-Process -Id $PID).Path
-  $output = & $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -Version $version -NoLaunch 2>&1
+  Write-Status 'installing' 'starting the installer'
+  # Each of the installer's "==> " lines becomes the status window's line, as it comes.
+  $output = @(& $powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $installer -Version $version -NoLaunch 2>&1 |
+    ForEach-Object {
+      $line = "$_"
+      Say "installer: $line"
+      if ($line -match '^==> (.+)$') { Write-Status 'installing' $Matches[1] }
+      $line
+    })
   $status = $LASTEXITCODE
-  foreach ($line in $output) { Say "installer: $line" }
   if ($status -ne 0) {
     # install.ps1 ends a refusal with one line: "error: VISTA was not installed: <why>".
     $refusal = @($output | ForEach-Object { "$_" } | Where-Object { $_ -match '^error: ' }) | Select-Object -Last 1
@@ -92,6 +125,7 @@ try {
     Fail $reason
   }
   Say "installed VISTA $version; opening it"
+  Write-Status 'opening'
   Open-Vista
 } catch {
   Fail "the update could not run ($($_.Exception.Message))."

@@ -8,6 +8,7 @@
  * @property {string | null} userDataDir
  * @property {boolean} startup
  * @property {string | null} launcher
+ * @property {string | null} updateStatus the update's folder, for the update status window
  */
 
 /**
@@ -28,6 +29,8 @@ export function parseArgs(argv, platform = process.platform) {
   const url = value('url') ?? '';
   const smokeTest = argv.includes('--smoke-test');
   const launcher = value('launcher');
+  // The update status window (in-app-updates D9), run from a copy of the window.
+  const updateStatus = value('update-status');
   // An application opened with nothing to say starts VISTA: VISTA.app from
   // Finder, and VISTA.exe double-clicked in its folder rather than through the
   // Start menu's --startup. Not on Linux: there the window must come through
@@ -35,7 +38,7 @@ export function parseArgs(argv, platform = process.platform) {
   const startup =
     argv.includes('--startup') ||
     launcher !== null ||
-    ((platform === 'darwin' || platform === 'win32') && !url && !smokeTest);
+    ((platform === 'darwin' || platform === 'win32') && !url && !smokeTest && updateStatus === null);
 
   return {
     url,
@@ -44,5 +47,6 @@ export function parseArgs(argv, platform = process.platform) {
     userDataDir: value('user-data-dir'),
     startup,
     launcher,
+    updateStatus,
   };
 }
