@@ -50,6 +50,21 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+class UpdateSettings(BaseModel):
+    """
+    Where the backend looks for newer releases (`services/update_check.py`).
+    Whether it looks at all is the researcher's, on `LocalSettingsTable`.
+    Override via `VISTA_BACKEND_UPDATES__GITHUB_API=...`, as tests and the
+    end-to-end run do to serve a fake release.
+    """
+
+    github_api: str = "https://api.github.com"
+    """ Base URL of the GitHub REST API. """
+
+    repo: str = "Genesis-VISTA/vista"
+    """ The repository whose published releases are VISTA's. """
+
+
 class ForumSettings(BaseModel):
     """
     Agent-forum settings — the git-backed debate forum (see
@@ -424,6 +439,13 @@ class Settings(BaseSettings):
     checkout.
     """
 
+    commit: A[str | None, Field(validation_alias="VISTA_COMMIT")] = None
+    """
+    The commit the build came from: the manifest's `commit`, exported by the
+    package launcher beside `VISTA_VERSION`, or the checkout's HEAD from
+    `./launch.sh`. `None` when nothing says.
+    """
+
     hpc_jobs_dir: A[
         ResolvedPath | None, Field(validation_alias="VISTA_HPC_JOBS_DIR")
     ] = None
@@ -480,6 +502,9 @@ class Settings(BaseSettings):
 
     campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
     """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
+
+    updates: UpdateSettings = Field(default_factory=UpdateSettings)
+    """ Where to look for newer releases; see `UpdateSettings`. """
 
     forum: ForumSettings = Field(default_factory=ForumSettings)
     """

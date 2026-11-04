@@ -1,8 +1,8 @@
 ## 1. Backend: version and settings
 
-- [ ] 1.1 Add `update_checks` (default true), `update_prereleases` (default false) and `update_checked_at` (nullable) to `LocalSettingsTable` with server defaults, and the first two to `LocalSettingsUpdate` / `LocalSettingsPublic`. Verify: `db/schema_check.py` accepts a DB created before the change (add a case to the existing schema-check tests), and a `PUT /settings` round-trip test passes
-- [ ] 1.2 Add `Settings.commit` (from `VISTA_COMMIT`, which the launchers export beside `VISTA_VERSION` from the manifest's commit) and `Settings.updates.github_api` (default `https://api.github.com`). Verify: `scripts/package_launcher.sh` / `.ps1` export it, and `./scripts/ci-local.sh launcher` passes
-- [ ] 1.3 Add `GET /version` returning version, commit and `checks: dev_build` for `dev` / `+meta` / `-dirty`. Verify: `backend/tests/test_version_api.py` covers a release version, `dev` and `0.2.4+3.gabc`
+- [x] 1.1 Add `update_checks` (default true), `update_prereleases` (default false) and `update_checked_at` (nullable) to `LocalSettingsTable` with server defaults, and the first two to `LocalSettingsUpdate` / `LocalSettingsPublic`. Verify: `db/schema_check.py` accepts a DB created before the change (add a case to the existing schema-check tests), and a `PUT /settings` round-trip test passes
+- [x] 1.2 Add `Settings.commit` (from `VISTA_COMMIT`, which the launchers export beside `VISTA_VERSION` from the manifest's commit) and `Settings.updates.github_api` (default `https://api.github.com`). Verify: `scripts/package_launcher.sh` / `.ps1` export it, and `./scripts/ci-local.sh launcher` passes
+- [x] 1.3 Add `GET /version` returning version, commit and `checks: dev_build` for `dev` / `+meta` / `-dirty`. Verify: `backend/tests/test_version_api.py` covers a release version, `dev` and `0.2.4+3.gabc`
 
 ## 2. Backend: update check
 

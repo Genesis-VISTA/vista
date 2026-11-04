@@ -47,6 +47,7 @@ from .projects import router as projects_router
 from .reports import router as reports_router
 from .settings import router as settings_router
 from .skills import router as skills_router
+from .version import router as version_router
 
 
 def _report_database_incompatible(refusal: DatabaseIncompatible) -> None:
@@ -227,6 +228,7 @@ app.include_router(reports_router)
 app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(files_router)
 app.include_router(settings_router)
+app.include_router(version_router)
 
 # PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when

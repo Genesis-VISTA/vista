@@ -394,6 +394,62 @@ async def test_tour_enabled_comes_from_configuration_and_a_put_cannot_set_it(
 
 
 # ---------------------------------------------------------------------------
+# Update checking (in-app-updates)
+# ---------------------------------------------------------------------------
+
+
+def test_an_older_settings_row_gets_the_update_defaults(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE local_settings (id INTEGER PRIMARY KEY, "
+                "install_id CHAR(32))"
+            )
+        )
+        conn.execute(
+            text("INSERT INTO local_settings (id, install_id) VALUES (1, :i)"),
+            {"i": uuid.uuid4().hex},
+        )
+        _add_missing_columns(conn)
+        row = conn.execute(
+            text(
+                "SELECT update_checks, update_prereleases, update_checked_at "
+                "FROM local_settings"
+            )
+        ).one()
+    assert tuple(row) == (1, 0, None)
+
+
+@pytest.mark.anyio
+async def test_update_switches_round_trip_over_http(session):
+    from harness import api_client
+
+    with api_client(session) as (client, _):
+        got = (await client.get("/settings")).json()
+        assert got["update_checks"] is True
+        assert got["update_prereleases"] is False
+        assert "update_checked_at" not in got
+
+        resp = await client.put(
+            "/settings", json={"update_checks": False, "update_prereleases": True}
+        )
+        assert resp.status_code == 200, resp.text
+        got = (await client.get("/settings")).json()
+    assert got["update_checks"] is False
+    assert got["update_prereleases"] is True
+
+
+@pytest.mark.anyio
+async def test_update_switches_refuse_null(session):
+    from harness import api_client
+
+    with api_client(session) as (client, _):
+        resp = await client.put("/settings", json={"update_checks": None})
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # Where each cluster's jobs live
 # ---------------------------------------------------------------------------
 

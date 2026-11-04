@@ -274,6 +274,8 @@ $env:UV_NO_SYNC = '1'
 # encoding="utf-8" everywhere; this is the backstop for third-party code.
 $env:PYTHONUTF8 = '1'
 $env:VISTA_VERSION = $VERSION
+# The build's commit, which Settings > About shows beside the version.
+$env:VISTA_COMMIT = [string]$manifest.commit
 $env:VISTA_DATA_DIR = $STATE
 $env:VISTA_MCP_SERVERS_PATH = "$PACKAGE\app\mcp_servers"
 $env:VISTA_MCP_LOCAL_HPC_JOBS_DIR = "$PACKAGE\app\hpc_jobs"

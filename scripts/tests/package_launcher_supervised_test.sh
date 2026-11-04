@@ -73,6 +73,9 @@ for service in \
 #!/usr/bin/env bash
 PID_FILE="$TEST_SERVICE_PIDS/${0##*/}.pid"
 printf '%s\n' "$$" > "$PID_FILE"
+# What the backend was told about its build, for Settings > About.
+[[ "${0##*/}" != vista-backend ]] \
+  || printf '%s %s\n' "$VISTA_VERSION" "$VISTA_COMMIT" > "$TEST_SERVICE_PIDS/backend.build"
 # TEST_BACKEND_EXIT: the backend stops at once, saying why only for "refuse".
 if [[ "${0##*/}" == vista-backend && -n "${TEST_BACKEND_EXIT:-}" ]]; then
   [[ "$TEST_BACKEND_EXIT" != refuse ]] || printf 'database-incompatible\n' > "$VISTA_STARTUP_FAILURE_FILE"
@@ -436,7 +439,7 @@ supervised_suite macos Darwin
 supervised_suite linux Linux
 
 # The existing diagnostic CLI remains human-readable and does not emit JSON.
-printf '%s\n' '{"os": "macos", "arch": "arm64", "exe": "missing-window"}' \
+printf '%s\n' '{"commit": "c0ffee1", "os": "macos", "arch": "arm64", "exe": "missing-window"}' \
   > "$PACKAGE/manifest.json"
 stop_fake_services
 rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
@@ -460,6 +463,12 @@ done
 grep -q "VISTA is running at http://127.0.0.1:$PORT_BASE (no window: VISTA_NO_WINDOW is set)" \
   "$TMP/cli-stdout"
 wait_for_fake_services
+# The backend gets the package's version and the manifest's commit.
+if [[ "$(cat "$TMP/service-pids/backend.build")" != "test-version c0ffee1" ]]; then
+  printf 'backend was not given the build identity: %s\n' \
+    "$(cat "$TMP/service-pids/backend.build")" >&2
+  exit 1
+fi
 if grep -q '^{"protocol":' "$TMP/cli-stdout"; then
   printf 'ordinary CLI emitted supervised protocol output\n' >&2
   exit 1

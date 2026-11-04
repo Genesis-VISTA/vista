@@ -24,6 +24,9 @@ from ..db.schemas import (
 WRITE_ONLY_TOKENS = ("github_token", "gitlab_token", "collaboration_token")
 """Fields that are never read back, so a save that sends null keeps them."""
 
+AGENT_IRRELEVANT = {"collaboration_team_id", "update_checks", "update_prereleases"}
+"""Fields no agent reads, so changing them leaves the built agents alone."""
+
 
 async def ensure(session: AsyncSession) -> LocalSettingsTable:
     """The settings row, created (with a new `install_id`) if there is none yet."""
@@ -78,9 +81,9 @@ async def update(
     session.add(row)
     await session.flush()
     await session.refresh(row)
-    if changed - {"collaboration_team_id"}:
-        # Every agent was built from these settings (the team is not one they
-        # read). Imported here because the agent pool reads this module to
+    if changed - AGENT_IRRELEVANT:
+        # Every agent was built from these settings (the team and the update
+        # switches are not ones they read). Imported here because the agent pool reads this module to
         # build an agent.
         from .project_agent import invalidate_agents
 
