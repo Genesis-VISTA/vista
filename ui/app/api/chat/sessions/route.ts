@@ -33,7 +33,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let body: { project_name?: unknown; title?: unknown };
+  let body: {
+    project_name?: unknown;
+    title?: unknown;
+    memory_enabled?: unknown;
+    memory_context_size?: unknown;
+  };
   try {
     body = await request.json();
   } catch {
@@ -54,6 +59,14 @@ export async function POST(request: Request) {
         headers: await backendHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           title: typeof body.title === "string" ? body.title : null,
+          ...(typeof body.memory_enabled === "boolean"
+            ? { memory_enabled: body.memory_enabled }
+            : {}),
+          ...(body.memory_context_size === "automatic" ||
+          body.memory_context_size === "compact" ||
+          body.memory_context_size === "extended"
+            ? { memory_context_size: body.memory_context_size }
+            : {}),
         }),
       }
     );

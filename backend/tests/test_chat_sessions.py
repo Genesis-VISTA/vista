@@ -358,6 +358,31 @@ async def test_chat_model_set_clear_and_untouched_round_trip(session):
     assert row.inference_model is None
 
 
+@pytest.mark.anyio
+async def test_chat_memory_settings_round_trip_per_conversation(session):
+    project = await project_service.create_project(
+        session,
+        ProjectCreate(name="chat-memory-project", description=None, system_prompt=None),
+    )
+    first = await chat_session_service.create_chat_session(
+        session, project_id=project.id
+    )
+    second = await chat_session_service.create_chat_session(
+        session, project_id=project.id
+    )
+
+    assert (first.memory_enabled, first.memory_context_size) == (True, "automatic")
+    updated = await chat_session_service.update_chat_session(
+        session,
+        project_id=project.id,
+        chat_session_id=first.id,
+        updates=ChatSessionUpdate(memory_enabled=False, memory_context_size="compact"),
+    )
+
+    assert (updated.memory_enabled, updated.memory_context_size) == (False, "compact")
+    assert (second.memory_enabled, second.memory_context_size) == (True, "automatic")
+
+
 def test_chat_model_column_reaches_an_existing_database(tmp_path):
     from vista_backend.db import schemas  # noqa: F401  (registers the tables)
     from vista_backend.db.db import _add_missing_columns
@@ -379,6 +404,33 @@ def test_chat_model_column_reaches_an_existing_database(tmp_path):
 
     build()
     assert "inference_model" in columns()
+
+
+def test_chat_memory_columns_reach_an_existing_database(tmp_path):
+    from vista_backend.db import schemas  # noqa: F401  (registers the tables)
+    from vista_backend.db.db import _add_missing_columns
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        SQLModel.metadata.create_all(conn)
+        for name in (
+            "memory_enabled",
+            "memory_context_size",
+            "memory_summary",
+            "memory_archive",
+            "memory_archived_until",
+        ):
+            conn.execute(text(f'ALTER TABLE chat_session DROP COLUMN "{name}"'))
+        _add_missing_columns(conn)
+
+    columns = {c["name"] for c in inspect(engine).get_columns("chat_session")}
+    assert {
+        "memory_enabled",
+        "memory_context_size",
+        "memory_summary",
+        "memory_archive",
+        "memory_archived_until",
+    } <= columns
 
 
 def test_displayed_file_table_reaches_an_existing_database(tmp_path):

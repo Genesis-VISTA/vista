@@ -116,6 +116,11 @@ async def create_chat_session(
         run_unseen=False,
         run_events=None,
         inference_model=None,
+        memory_enabled=payload.memory_enabled if payload else True,
+        memory_context_size=(payload.memory_context_size if payload else "automatic"),
+        memory_summary=None,
+        memory_archive=[],
+        memory_archived_until=0,
         created_at=now,
         updated_at=now,
     )
@@ -178,6 +183,10 @@ async def update_chat_session(
 
         # Only this chat's pooled agent holds the old model.
         invalidate_agents(session, chat_session_id=row.id)
+    if updates.memory_enabled is not None:
+        row.memory_enabled = updates.memory_enabled
+    if updates.memory_context_size is not None:
+        row.memory_context_size = updates.memory_context_size
     row.updated_at = now_iso()
     session.add(row)
     await session.flush()
@@ -196,8 +205,13 @@ async def delete_chat_session(
         project_id=project_id,
         chat_session_id=chat_session_id,
     )
+    has_memory_archive = bool(row.memory_archive)
     await session.delete(row)
     await session.flush()
+    if has_memory_archive:
+        from .conversation_memory import delete_index
+
+        await delete_index(chat_session_id)
 
 
 async def get_effective_message_history(

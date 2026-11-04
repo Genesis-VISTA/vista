@@ -38,6 +38,7 @@ from ..db.db import get_engine
 from ..db.schemas import ChatSessionTable, DisplayedFileTable
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from . import conversation_memory
 from .displayed_files import sandbox_path_to_file
 from .project_agent import (
     ProjectAgentKey,
@@ -101,6 +102,7 @@ class ChatRun:
     agent_key: ProjectAgentKey
     user_prompt: str
     prior_history: list[ModelMessage]
+    model_history: list[ModelMessage]
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     state: str = "running"
     events: list[RunEvent] = field(default_factory=list)
@@ -198,6 +200,7 @@ class ChatRunRegistry:
         agent_key: ProjectAgentKey,
         user_prompt: str,
         prior_history: list[ModelMessage],
+        model_history: list[ModelMessage] | None = None,
     ) -> ChatRun:
         """
         Start a turn in the background. Raises `RunBusy` if the conversation has one.
@@ -213,6 +216,7 @@ class ChatRunRegistry:
             agent_key=agent_key,
             user_prompt=user_prompt,
             prior_history=prior_history,
+            model_history=model_history if model_history is not None else prior_history,
         )
         self._runs[chat_session_id] = run
         try:
@@ -256,6 +260,7 @@ class ChatRunRegistry:
         history: list[ModelMessage] | None = None
         reraise: BaseException | None = None
         error_msg: str | None = None
+        memory_update: conversation_memory.MemoryUpdate | None = None
         try:
             async with project_agent_pool.get(run.agent_key) as agent:
                 async with session_factory() as db:
@@ -271,7 +276,7 @@ class ChatRunRegistry:
                     )
                     async for event in agent.run_stream(
                         user_prompt=run.user_prompt,
-                        message_history=run.prior_history,
+                        message_history=run.model_history,
                         enable_elicitation=True,
                         db_session=db,
                         capture=run.capture,
@@ -292,6 +297,26 @@ class ChatRunRegistry:
             run.state = "done"
             if run.result is not None:
                 history = [*run.prior_history, *run.result.new_messages]
+                async with session_factory() as memory_db:
+                    row = await chat_session_service.get_chat_session_optional(
+                        memory_db,
+                        project_id=run.project_id,
+                        chat_session_id=run.chat_session_id,
+                    )
+                    if row is not None:
+                        try:
+                            memory_update = await conversation_memory.compact_history(
+                                row,
+                                history,
+                                lambda source: conversation_memory.summarize_memory(
+                                    source, agent.local, agent.model_override
+                                ),
+                            )
+                        except Exception:  # noqa: BLE001 -- the answer still succeeds
+                            log.exception(
+                                "Could not update memory for conversation %s",
+                                run.chat_session_id,
+                            )
         except asyncio.CancelledError as cancelled:
             run.state = run.stop_reason or "interrupted"
             if run.stop_reason is None:
@@ -315,9 +340,10 @@ class ChatRunRegistry:
             error_msg = describe_run_failure(exc)
 
         if history is None:
+            captured_new = run.capture.messages[len(run.model_history) :]
             history = trim_partial_history(
                 run.prior_history,
-                run.capture.messages,
+                [*run.prior_history, *captured_new],
                 user_prompt=run.user_prompt,
                 note=_END_NOTES.get(run.state, FAILED_NOTE),
             )
@@ -346,8 +372,14 @@ class ChatRunRegistry:
                         ]
                     ),
                     history=history,
+                    memory_update=memory_update,
                 )
             )
+
+            if memory_update is not None:
+                conversation_memory.queue_index(
+                    run.chat_session_id, memory_update.archive
+                )
 
             await asyncio.shield(_write_displays(run))
         except Exception:
@@ -458,6 +490,7 @@ async def _write_row(
     unseen: bool,
     events: list[dict[str, Any]] | None,
     history: list[ModelMessage] | None = None,
+    memory_update: conversation_memory.MemoryUpdate | None = None,
 ) -> None:
     async with session_factory() as db:
         row = await chat_session_service.get_chat_session_optional(
@@ -469,6 +502,10 @@ async def _write_row(
             return
         if history is not None:
             row.message_history = chat_session_service.dump_message_history(history)
+        if memory_update is not None:
+            row.memory_summary = memory_update.summary
+            row.memory_archive = memory_update.archive
+            row.memory_archived_until = memory_update.archived_until
         row.run_state = state
         row.run_unseen = unseen
         row.run_events = events

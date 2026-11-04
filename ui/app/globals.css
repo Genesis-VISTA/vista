@@ -2225,6 +2225,38 @@ button.chat-bubble.intermediate.collapsed:hover {
   min-width: 0;
 }
 
+.memory-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.memory-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.memory-toggle input {
+  accent-color: var(--brand);
+}
+
+.memory-context-select {
+  max-width: 102px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+}
+
 .chat-header-secondary-actions {
   margin-left: auto;
   display: inline-flex;

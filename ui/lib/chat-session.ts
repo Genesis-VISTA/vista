@@ -13,6 +13,8 @@ export type PersistedChatSessionSummary = {
   updated_at: string;
 };
 
+export type MemoryContextSize = "automatic" | "compact" | "extended";
+
 /** One event of a run the researcher did not watch, as stored by the backend (compacted). */
 export type StoredRunEvent = { event: string; data: Record<string, unknown> };
 
@@ -29,6 +31,8 @@ export type PersistedChatSession = PersistedChatSessionSummary & {
   run_events: StoredRunEvent[] | null;
   /** The chat's own model (`openai:<name>`); null follows the researcher's default. */
   inference_model: string | null;
+  memory_enabled: boolean;
+  memory_context_size: MemoryContextSize;
 };
 
 export class PersistedChatSessionError extends Error {
@@ -121,7 +125,11 @@ export async function listPersistedChatSessions(
 
 export async function createPersistedChatSession(
   projectName: string,
-  payload: { title?: string } = {}
+  payload: {
+    title?: string;
+    memoryEnabled?: boolean;
+    memoryContextSize?: MemoryContextSize;
+  } = {}
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/sessions", {
     method: "POST",
@@ -129,6 +137,10 @@ export async function createPersistedChatSession(
     body: JSON.stringify({
       project_name: projectName,
       title: payload.title ?? null,
+      ...("memoryEnabled" in payload ? { memory_enabled: payload.memoryEnabled } : {}),
+      ...(payload.memoryContextSize
+        ? { memory_context_size: payload.memoryContextSize }
+        : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -165,6 +177,8 @@ export async function savePersistedChatSession(
      * default), and leaving it out leaves it as it is.
      */
     inferenceModel?: string | null;
+    memoryEnabled?: boolean;
+    memoryContextSize?: MemoryContextSize;
   }
 ): Promise<PersistedChatSession> {
   const res = await fetch("/api/chat/session", {
@@ -178,6 +192,10 @@ export async function savePersistedChatSession(
       latest_result: payload.latestResult ?? null,
       ack_run: payload.ackRun === true,
       ...("inferenceModel" in payload ? { inference_model: payload.inferenceModel ?? null } : {}),
+      ...("memoryEnabled" in payload ? { memory_enabled: payload.memoryEnabled } : {}),
+      ...(payload.memoryContextSize
+        ? { memory_context_size: payload.memoryContextSize }
+        : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractError(res));

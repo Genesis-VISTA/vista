@@ -1033,6 +1033,7 @@ class ChatTranscriptMessage(BaseModel):
 
 
 ChatRunState = Literal["idle", "running", "done", "failed", "interrupted", "stopped"]
+MemoryContextSize = Literal["automatic", "compact", "extended"]
 
 
 class ChatSessionBase(SQLModel):
@@ -1077,10 +1078,28 @@ class ChatSessionBase(SQLModel):
         Field(default=None, sa_column=Column(String, nullable=True)),
     ]
     """ This chat's own `provider:name` model; null follows the researcher's default. """
+    memory_enabled: A[
+        bool,
+        Field(
+            default=True,
+            sa_column=Column(Boolean, nullable=False, server_default=true()),
+        ),
+    ]
+    """ Whether earlier turns are supplied to the agent through managed memory. """
+    memory_context_size: A[
+        MemoryContextSize,
+        Field(
+            default="automatic",
+            sa_column=Column(String, nullable=False, server_default="automatic"),
+        ),
+    ]
+    """ The bounded context policy for this conversation. """
 
 
 class ChatSessionCreate(BaseModel):
     title: str | None = None
+    memory_enabled: bool = True
+    memory_context_size: MemoryContextSize = "automatic"
 
 
 class ChatSessionUpdate(BaseModel):
@@ -1093,6 +1112,8 @@ class ChatSessionUpdate(BaseModel):
     """ The researcher has seen the last run: clear its unseen flag and its stored events. """
     inference_model: str | None = None
     """ This chat's model. An explicit null clears it (follow the default); absent leaves it untouched. """
+    memory_enabled: bool | None = None
+    memory_context_size: MemoryContextSize | None = None
 
 
 class ChatSessionSummary(BaseModel):
@@ -1114,6 +1135,18 @@ class ChatSessionPublic(ChatSessionBase):
 
 class ChatSessionTable(ChatSessionBase, table=True):
     __tablename__: str = "chat_session"
+
+    memory_summary: A[
+        str | None,
+        Field(default=None, sa_column=Column(String, nullable=True)),
+    ]
+    memory_archive: A[
+        list[dict[str, Any]], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    memory_archived_until: A[
+        int,
+        Field(default=0, nullable=False, sa_column_kwargs={"server_default": "0"}),
+    ]
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")

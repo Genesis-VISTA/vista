@@ -11,6 +11,7 @@ from ..agents.agents import ProjectAgentResult
 from ..db.db import SessionDep
 from ..db.schemas import ProjectPublic
 from ..services import chat_session as chat_session_service
+from ..services import conversation_memory
 from ..services import project as project_service
 from ..services.chat_run import RunBusy, chat_run_registry
 from ..services.project_agent import ProjectAgentKey, project_agent_pool
@@ -107,6 +108,13 @@ async def agent_run(
         fallback_history=body.message_history,
         chat_session_id=body.chat_session_id,
     )
+    model_history = (
+        await conversation_memory.model_history(
+            chat_row, effective_history, body.user_prompt
+        )
+        if chat_row
+        else effective_history
+    )
 
     if body.stream and body.chat_session_id is None:
         raise HTTPException(
@@ -124,6 +132,7 @@ async def agent_run(
                 agent_key=agent_key,
                 user_prompt=body.user_prompt,
                 prior_history=effective_history,
+                model_history=model_history,
             )
         except RunBusy:
             # HTTPException can't carry a sibling field without making `detail`

@@ -58,6 +58,7 @@ import {
   stopChatRun,
   type PersistedChatSession,
   type PersistedChatSessionSummary,
+  type MemoryContextSize,
   useActiveChatSessionId,
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
@@ -222,6 +223,8 @@ function ChatPage() {
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
   /** The open conversation's own model; null follows the researcher's default. */
   const [activeChatModel, setActiveChatModel] = useState<string | null>(null);
+  const [memoryEnabled, setMemoryEnabled] = useState(true);
+  const [memoryContextSize, setMemoryContextSize] = useState<MemoryContextSize>("automatic");
   const [editingChatSessionId, setEditingChatSessionId] = useState<string | null>(null);
   const [draftChatSessionTitle, setDraftChatSessionTitle] = useState("");
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<PersistedChatSessionSummary | null>(null);
@@ -342,6 +345,8 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setMemoryEnabled(true);
+      setMemoryContextSize("automatic");
       setIsSessionHydrated(false);
       return;
     }
@@ -350,6 +355,8 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setMemoryEnabled(true);
+      setMemoryContextSize("automatic");
       setMessages([]);
       setMessageHistory([]);
       setLatestResult(null);
@@ -369,6 +376,8 @@ function ChatPage() {
     if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
       locallyCreatedSessionIdRef.current = null;
       setActiveChatModel(null);
+      setMemoryEnabled(true);
+      setMemoryContextSize("automatic");
       hydratedSessionKeyRef.current = sessionKey;
       // Nothing is persisted for it yet, so the next change must save.
       lastPersistedSnapshotRef.current = null;
@@ -391,6 +400,8 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(persisted.title);
         setActiveChatModel(persisted.inference_model ?? null);
+        setMemoryEnabled(persisted.memory_enabled ?? true);
+        setMemoryContextSize(persisted.memory_context_size ?? "automatic");
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -412,6 +423,8 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(null);
         setActiveChatModel(null);
+        setMemoryEnabled(true);
+        setMemoryContextSize("automatic");
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
@@ -1450,6 +1463,30 @@ function ChatPage() {
     setDraftChatSessionTitle(chatSession.title);
   }
 
+  async function updateMemorySettings(
+    nextEnabled: boolean,
+    nextContextSize: MemoryContextSize,
+  ) {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !activeChatSessionId) return;
+    const previousEnabled = memoryEnabled;
+    const previousContextSize = memoryContextSize;
+    setMemoryEnabled(nextEnabled);
+    setMemoryContextSize(nextContextSize);
+    try {
+      const saved = await savePersistedChatSession(projectName, {
+        chatSessionId: activeChatSessionId,
+        memoryEnabled: nextEnabled,
+        memoryContextSize: nextContextSize,
+      });
+      setMemoryEnabled(saved.memory_enabled);
+      setMemoryContextSize(saved.memory_context_size);
+    } catch {
+      setMemoryEnabled(previousEnabled);
+      setMemoryContextSize(previousContextSize);
+    }
+  }
+
   return (
     <main
       ref={mainRef}
@@ -1507,6 +1544,38 @@ function ChatPage() {
                   </svg>
                   <span>Generate report</span>
                 </button>
+              </div>
+            ) : null}
+            {activeChatSessionId ? (
+              <div className="memory-controls" aria-label="Conversation memory settings">
+                <label className="memory-toggle" title="Use managed context from earlier turns">
+                  <input
+                    type="checkbox"
+                    checked={memoryEnabled}
+                    disabled={isRunActive}
+                    onChange={(event) =>
+                      void updateMemorySettings(event.target.checked, memoryContextSize)
+                    }
+                  />
+                  <span>Memory</span>
+                </label>
+                <select
+                  className="memory-context-select"
+                  aria-label="Memory context size"
+                  title="Choose how much recent conversation context the agent keeps"
+                  value={memoryContextSize}
+                  disabled={!memoryEnabled || isRunActive}
+                  onChange={(event) =>
+                    void updateMemorySettings(
+                      memoryEnabled,
+                      event.target.value as MemoryContextSize,
+                    )
+                  }
+                >
+                  <option value="automatic">Automatic</option>
+                  <option value="compact">Compact</option>
+                  <option value="extended">Extended</option>
+                </select>
               </div>
             ) : null}
             <ModelPicker

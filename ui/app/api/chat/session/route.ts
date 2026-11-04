@@ -47,6 +47,8 @@ export async function PUT(request: Request) {
     latest_result?: unknown;
     ack_run?: unknown;
     inference_model?: unknown;
+    memory_enabled?: unknown;
+    memory_context_size?: unknown;
   };
   try {
     body = await request.json();
@@ -85,6 +87,14 @@ export async function PUT(request: Request) {
                 inference_model:
                   typeof body.inference_model === "string" ? body.inference_model : null,
               }
+            : {}),
+          ...(typeof body.memory_enabled === "boolean"
+            ? { memory_enabled: body.memory_enabled }
+            : {}),
+          ...(body.memory_context_size === "automatic" ||
+          body.memory_context_size === "compact" ||
+          body.memory_context_size === "extended"
+            ? { memory_context_size: body.memory_context_size }
             : {}),
         }),
       }
