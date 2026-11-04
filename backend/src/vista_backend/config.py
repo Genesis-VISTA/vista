@@ -122,6 +122,18 @@ class ForumSettings(BaseModel):
     this bounds the stall rather than deciding whether the evidence is used.
     """
 
+    run_expiry_margin_seconds: float = 900.0
+    """ How much longer than a turn's longest job wait a silent run is still live. """
+
+    @property
+    def run_expiry_seconds(self) -> float:
+        """
+        How long a run may go without a post before others may Continue the
+        thread: the longest a turn may wait for a simulation, plus a margin.
+        A run waiting on a job posts nothing for that long and is not dead.
+        """
+        return self.max_job_wait_seconds + self.run_expiry_margin_seconds
+
     job_poll_seconds: float = 15.0
     """
     How often a waiting role re-checks its job.

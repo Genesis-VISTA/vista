@@ -147,8 +147,9 @@ class PostKind(StrEnum):
     Every kind a thread can hold.
 
     Some are written only by specific verbs — `create_thread` writes TASK,
-    `close_thread` writes CLOSED, `vote` writes UPVOTE/DOWNVOTE — so this set is
-    wider than what a role may post. See `POSTABLE_KINDS`.
+    `close_thread` writes CLOSED, `start_run` writes RUN, `vote` writes
+    UPVOTE/DOWNVOTE — so this set is wider than what a role may post. See
+    `POSTABLE_KINDS`.
     """
 
     ASK = "ASK"
@@ -161,6 +162,8 @@ class PostKind(StrEnum):
     DONE = "DONE"
     TASK = "TASK"
     CLOSED = "CLOSED"
+    RUN = "RUN"
+    """ An install starting N rounds of its own agents in the thread; see `live_run`. """
     UPVOTE = "UPVOTE"
     DOWNVOTE = "DOWNVOTE"
 
@@ -272,6 +275,34 @@ class InvalidKind(ForumError, ValueError):
 # --------------------------------------------------------------------------- #
 
 
+class RunSpec(BaseModel):
+    """
+    What a RUN post announces: how many rounds, and the roster that will argue
+    them. `roster` maps a debate role to the identity it posts under.
+    """
+
+    rounds: int
+    roster: dict[str, str]
+
+    @property
+    def referee(self) -> str | None:
+        return self.roster.get("referee")
+
+
+def _parse_run(value: object) -> RunSpec | None:
+    """A RUN post's `run` object, or None when it is not one we can use."""
+    if not isinstance(value, dict):
+        return None
+    rounds, roster = value.get("rounds"), value.get("roster")
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or rounds < 1:
+        return None
+    if not isinstance(roster, dict) or not roster:
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in roster.items()):
+        return None
+    return RunSpec(rounds=rounds, roster=roster)
+
+
 class Post(BaseModel):
     """
     One post, as read from its file.
@@ -293,6 +324,14 @@ class Post(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     denied: str | None = None
     """ Kept for the projection's shape. Nothing in the git format records a refusal. """
+    run: RunSpec | None = None
+    """ On a RUN post: the rounds and roster it starts. """
+    verdict: dict[str, Any] | None = None
+    """
+    On a DONE post: the Referee's structured verdict, as the poster wrote it.
+    Not validated here: the debate service checks its shape and falls back to
+    the body.
+    """
 
     @property
     def is_vote(self) -> bool:
@@ -314,7 +353,7 @@ class Post(BaseModel):
     @property
     def agent_authored(self) -> bool:
         """False for the framing and closing posts, which nobody argued."""
-        return self.kind not in (PostKind.TASK, PostKind.CLOSED)
+        return self.kind not in (PostKind.TASK, PostKind.CLOSED, PostKind.RUN)
 
 
 class ThreadHeader(BaseModel):
@@ -409,6 +448,87 @@ def thread_status(posts: Sequence[Post]) -> str:
     if said and said[-1].kind == PostKind.BLOCKED:
         return "blocked"
     return "open"
+
+
+class LiveRun(BaseModel):
+    """A thread's run that is still going, as any reader works it out from git."""
+
+    post_id: str
+    """ The RUN post that started it. """
+    origin: str | None
+    """ The host id that posted the RUN. A claim, like every origin. """
+    rounds: int
+    roster: dict[str, str]
+    started_at: str
+    posts: int
+    """ Posts its roster has made since the RUN. """
+    last_post_at: str
+    """ The newest `ts` of the RUN and its roster's posts. """
+
+
+def _parse_ts(value: str) -> datetime | None:
+    try:
+        ts = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+
+def live_run(posts: Sequence[Post], *, now: datetime, expiry: float) -> LiveRun | None:
+    """
+    The thread's live run, or None.
+
+    `posts` are a thread's visible posts, in order (`Thread.posts`). The live
+    run is the latest RUN, unless the thread is closed, the RUN's Referee has
+    since posted DONE or BLOCKED, or nothing (neither the RUN nor a post by its
+    roster) is newer than `expiry` seconds before `now`.
+
+    Only the latest RUN counts: a later RUN means someone judged the earlier
+    one over, which is what a reader would conclude too.
+
+    Expiry reads the posts' own `ts`, so a skewed clock on the poster shifts it
+    by that skew; the window (the job-wait limit plus a margin) is long enough
+    for minutes not to matter. A RUN whose `ts` cannot be read counts as
+    expired, so a malformed marker never blocks a thread.
+    """
+    if any(p.kind == PostKind.CLOSED for p in posts):
+        return None
+    start = next(
+        (i for i in range(len(posts) - 1, -1, -1) if posts[i].kind == PostKind.RUN),
+        None,
+    )
+    if start is None:
+        return None
+    marker = posts[start]
+    if marker.run is None:  # `_parse_post` drops a RUN without one
+        return None
+    roster = set(marker.run.roster.values())
+    referee = marker.run.referee
+    newest = _parse_ts(marker.ts)
+    if newest is None:
+        return None
+    last = marker.ts
+    count = 0
+    for post in posts[start + 1 :]:
+        if post.sender not in roster:
+            continue
+        if post.sender == referee and post.kind in (PostKind.DONE, PostKind.BLOCKED):
+            return None
+        count += 1
+        ts = _parse_ts(post.ts)
+        if ts is not None and ts > newest:
+            newest, last = ts, post.ts
+    if (now - newest).total_seconds() > expiry:
+        return None
+    return LiveRun(
+        post_id=marker.id,
+        origin=marker.origin,
+        rounds=marker.run.rounds,
+        roster=dict(marker.run.roster),
+        started_at=marker.ts,
+        posts=count,
+        last_post_at=last,
+    )
 
 
 class ThreadSummary(BaseModel):
@@ -815,6 +935,13 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
         if not isinstance(data.get(key), str):
             logger.warning("forum: skipping %s: %s is not a string", where, key)
             return None
+    run = None
+    if data["kind"] == PostKind.RUN:
+        run = _parse_run(data.get("run"))
+        if run is None:
+            logger.warning("forum: skipping %s: RUN without a usable run object", where)
+            return None
+    verdict = data.get("verdict") if data["kind"] == PostKind.DONE else None
     origin = data.get("origin")
     reply_to = data.get("reply_to")
     attachments = data.get("attachments") or []
@@ -831,6 +958,8 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
         attachments=[a for a in attachments if isinstance(a, dict)]
         if isinstance(attachments, list)
         else [],
+        run=run,
+        verdict=verdict if isinstance(verdict, dict) else None,
     )
 
 
@@ -1511,6 +1640,28 @@ class ForumClient:
             )
         return sorted(rows, key=lambda r: r.header.created_at, reverse=True)
 
+    async def thread_tips(self) -> tuple[bool, dict[str, str]]:
+        """
+        Fetch every thread once, bring each local ref up to date, and return
+        whether the fetch reached the remote and each thread's tip.
+
+        For a reader that keeps its own copy: a thread whose tip has not moved
+        since it last looked needs no reading. Never pushes. A thread missing
+        from the remote, or without a readable header, is left out.
+        """
+        await self.ensure_repo()
+        fetched = await self._try_fetch()
+        tips: dict[str, str] = {}
+        for thread in await self._thread_ids():
+            async with _thread_lock(self.repo, thread):
+                try:
+                    history = await self._integrate(thread, fetched=fetched)
+                except ThreadMissing:
+                    continue
+            if history.header is not None:
+                tips[thread] = history.tip
+        return fetched, tips
+
     async def read_thread(self, thread: str) -> Thread:
         """
         Read a thread, fetching first. A failed fetch reads what is here.
@@ -1565,9 +1716,11 @@ class ForumClient:
         reply_to: str | None,
         attachments: list[dict[str, Any]],
         post_id: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         post_id = post_id or str(uuid.uuid7())
         return post_id, {
+            **(extra or {}),
             "v": FORMAT_VERSION,
             "id": post_id,
             "thread": thread,
@@ -1612,10 +1765,13 @@ class ForumClient:
         reply_to: str | None = None,
         attachment: str | None = None,
         attachment_kind: str | None = None,
+        verdict: dict[str, Any] | None = None,
     ) -> Post:
         """
         Post as a role. Returns once the post is committed locally; publishing
         is attempted straight after and its failure never fails the post.
+
+        `verdict` goes into a DONE post's file as its structured verdict.
         """
         _validate_kind(kind)
         staged = None
@@ -1625,8 +1781,38 @@ class ForumClient:
                 raise ForumError(f"no staged attachment {attachment!r} on this client")
             if attachment_kind:
                 staged.kind = attachment_kind
+        if verdict is not None and kind != PostKind.DONE:
+            raise InvalidKind("only a DONE post carries a verdict")
         return await self._post(
-            thread, participant, kind, body, reply_to=reply_to, staged=staged
+            thread,
+            participant,
+            kind,
+            body,
+            reply_to=reply_to,
+            staged=staged,
+            extra={"verdict": verdict} if verdict is not None else None,
+        )
+
+    async def start_run(
+        self, thread: str, *, rounds: int, roster: dict[str, str]
+    ) -> Post:
+        """
+        Announce that this install's agents are about to argue `rounds` rounds
+        in `thread` under `roster` (debate role → identity). Posted as the
+        operator, who asked for the run, and published at once when the remote
+        answers, so other installs see the run before its first turn.
+        """
+        if rounds < 1 or not roster:
+            raise ValueError("a run needs at least one round and a roster")
+        spec = RunSpec(rounds=rounds, roster=roster)
+        return await self._post(
+            thread,
+            HUMAN,
+            PostKind.RUN,
+            "",
+            reply_to=None,
+            staged=None,
+            extra={"run": spec.model_dump()},
         )
 
     async def vote(
@@ -1648,6 +1834,7 @@ class ForumClient:
         reply_to: str | None,
         staged: StagedAttachment | None,
         target: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> Post:
         self._check_thread_id(thread)
         await self.ensure_repo()
@@ -1674,7 +1861,9 @@ class ForumClient:
                     )
                 )
                 meta.append(info)
-            _, doc = self._post_doc(thread, who, kind, body, reply_to, meta, post_id)
+            _, doc = self._post_doc(
+                thread, who, kind, body, reply_to, meta, post_id, extra
+            )
             entries.append(
                 ("100644", "blob", await self._blob(_dump(doc)), f"{post_id}.json")
             )

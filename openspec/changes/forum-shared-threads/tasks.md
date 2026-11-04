@@ -1,10 +1,10 @@
 ## 1. Forum format and client
 
-- [ ] 1.1 `RUN` kind in `services/forum_git.py`: `start_run(thread, rounds, roster)` writes it with its `run` object; readers parse `run`; unknown or malformed `run` objects are skipped and logged. Verify with new cases in `backend/tests/test_forum_git.py`
-- [ ] 1.2 `verdict` field on `DONE`: written by the Referee's post, read and validated, falling back to the body. Verify in `test_forum_git.py`, including a `DONE` without the field
-- [ ] 1.3 `live_run(thread, now, expiry)`: the latest unended `RUN`, ended by its Referee's `DONE` or `BLOCKED` or by `CLOSED`, expired past `run_expiry_seconds`. Verify with table-driven unit tests (waiting run kept, abandoned run expired, failed run ended)
-- [ ] 1.4 `sync_forum`: one fetch of every thread ref, returning the threads whose tip moved. Verify with two working repositories against one bare remote in `test_forum_git.py` (Bob's install lists Alice's new thread)
-- [ ] 1.5 `forum.run_expiry_seconds` derived from `max_job_wait_seconds + 900` in `config.py`. Verify with a unit test
+- [x] 1.1 `RUN` kind in `services/forum_git.py`: `start_run(thread, rounds, roster)` writes it with its `run` object; readers parse `run`; unknown or malformed `run` objects are skipped and logged. Verify with new cases in `backend/tests/test_forum_git.py`
+- [x] 1.2 `verdict` field on `DONE`: written by the Referee's post, read and validated, falling back to the body. Verify in `test_forum_git.py`, including a `DONE` without the field
+- [x] 1.3 `live_run(thread, now, expiry)`: the latest unended `RUN`, ended by its Referee's `DONE` or `BLOCKED` or by `CLOSED`, expired past `run_expiry_seconds`. Verify with table-driven unit tests (waiting run kept, abandoned run expired, failed run ended)
+- [x] 1.4 `sync_forum`: one fetch of every thread ref, returning the threads whose tip moved. Verify with two working repositories against one bare remote in `test_forum_git.py` (Bob's install lists Alice's new thread)
+- [x] 1.5 `forum.run_expiry_seconds` derived from `max_job_wait_seconds + 900` in `config.py`. Verify with a unit test
 
 ## 2. Database and projection
 

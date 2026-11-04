@@ -17,6 +17,7 @@ import stat
 import subprocess
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -32,7 +33,9 @@ from vista_backend.services.forum_git import (
     ForumCommandError,
     InvalidKind,
     Participant,
+    Post,
     PostKind,
+    RunSpec,
     ThreadClosed,
     ThreadMissing,
     VouchLane,
@@ -1040,3 +1043,212 @@ async def test_a_successful_push_clears_the_record(a, remote):
 
     assert await a.publish_error() is None
     assert not (a.repo_root / forum_git.LAST_PUBLISH_FILE).exists()
+
+
+# --------------------------------------------------------------------------- #
+# Shared threads: runs, verdicts and listing (forum-shared-threads 1.1–1.5)
+# --------------------------------------------------------------------------- #
+
+ROSTER = {
+    "proposer": PROPOSER.identity,
+    "reviewer": REVIEWER.identity,
+    "referee": "vista-referee-1a2b3c4d",
+}
+REFEREE = Participant(identity=ROSTER["referee"], role="referee")
+T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+EXPIRY = 2700.0
+
+
+def _p(kind: str, sender: str, minutes: float, **over) -> Post:
+    return Post(
+        id=over.pop("id", str(uuid.uuid7())),
+        thread="t",
+        kind=kind,
+        body="",
+        sender=sender,
+        role="",
+        ts=(T0 + timedelta(minutes=minutes)).isoformat(),
+        **over,
+    )
+
+
+def _run(minutes: float = 0, rounds: int = 3) -> Post:
+    return _p(
+        "RUN",
+        "human",
+        minutes,
+        origin="a" * 32,
+        run=RunSpec(rounds=rounds, roster=ROSTER),
+    )
+
+
+@pytest.mark.parametrize(
+    "posts, at_minutes, live",
+    [
+        pytest.param([], 0, False, id="no-run"),
+        pytest.param([_run()], 10, True, id="just-started"),
+        pytest.param(
+            [_run(), _p("PROPOSAL", PROPOSER.identity, 1)],
+            1 + 30 + 14,
+            True,
+            id="waiting-on-a-30-min-simulation",
+        ),
+        pytest.param(
+            [_run(), _p("PROPOSAL", PROPOSER.identity, 1)],
+            1 + 46,
+            False,
+            id="abandoned",
+        ),
+        pytest.param(
+            [_run(), _p("DONE", ROSTER["referee"], 5)], 6, False, id="verdict-ends-it"
+        ),
+        pytest.param(
+            [_run(), _p("BLOCKED", ROSTER["referee"], 5)],
+            6,
+            False,
+            id="referee-blocked-ends-it",
+        ),
+        pytest.param(
+            [_run(), _p("BLOCKED", PROPOSER.identity, 5)],
+            6,
+            True,
+            id="a-failed-turn-does-not",
+        ),
+        pytest.param(
+            [_run(), _p("DONE", "vista-referee-99999999", 5)],
+            6,
+            True,
+            id="another-rosters-verdict-does-not",
+        ),
+        pytest.param(
+            [_run(), _p("ASK", "human", 44)],
+            46,
+            False,
+            id="human-posts-do-not-keep-it-alive",
+        ),
+        pytest.param([_run(), _p("CLOSED", "human", 1)], 2, False, id="closed"),
+        pytest.param(
+            [_run(), _p("DONE", ROSTER["referee"], 5), _run(10)],
+            11,
+            True,
+            id="a-later-run-is-live",
+        ),
+    ],
+)
+def test_live_run(posts, at_minutes, live):
+    found = forum_git.live_run(
+        posts, now=T0 + timedelta(minutes=at_minutes), expiry=EXPIRY
+    )
+    assert (found is not None) == live
+
+
+def test_live_run_reports_progress():
+    marker = _run(rounds=3)
+    posts = [
+        marker,
+        _p("PROPOSAL", PROPOSER.identity, 2),
+        _p("ASK", "human", 3),
+        _p("RISK", REVIEWER.identity, 4),
+    ]
+    found = forum_git.live_run(posts, now=T0 + timedelta(minutes=8), expiry=EXPIRY)
+    assert found is not None
+    assert found.post_id == marker.id and found.origin == "a" * 32
+    assert (found.rounds, found.posts) == (3, 2)
+    assert found.last_post_at == posts[3].ts
+
+
+def test_a_run_whose_time_cannot_be_read_is_not_live():
+    marker = _run().model_copy(update={"ts": "yesterday-ish"})
+    assert forum_git.live_run([marker], now=T0, expiry=EXPIRY) is None
+
+
+def test_the_run_expiry_is_the_job_wait_plus_a_margin():
+    assert ForumSettings(max_job_wait_seconds=1800.0).run_expiry_seconds == 2700.0
+
+
+@pytest.mark.anyio
+async def test_a_run_is_announced_and_read_back(a, b):
+    thread = await a.create_thread("t")
+    await a.start_run(thread, rounds=3, roster=ROSTER)
+
+    [marker] = (await b.read_thread(thread)).posts
+    assert marker.kind == PostKind.RUN and marker.sender == "human"
+    assert marker.run == RunSpec(rounds=3, roster=ROSTER)
+    assert not marker.agent_authored
+
+
+@pytest.mark.anyio
+async def test_a_run_needs_rounds_and_a_roster(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(ValueError):
+        await a.start_run(thread, rounds=0, roster=ROSTER)
+    with pytest.raises(ValueError):
+        await a.start_run(thread, rounds=3, roster={})
+
+
+@pytest.mark.anyio
+async def test_run_is_not_postable_as_a_role(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(InvalidKind):
+        await a.post_as(PROPOSER, thread, "", kind=PostKind.RUN)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "run",
+    [None, "3 rounds", {"rounds": 0, "roster": ROSTER}, {"rounds": 3, "roster": {}}],
+)
+async def test_a_malformed_run_is_skipped(a, remote, run, caplog):
+    thread = await a.create_thread("t")
+    peer_post(remote, thread, kind="RUN", identity="human", role="human", run=run)
+    assert (await a.read_thread(thread)).posts == []
+    assert "RUN without a usable run object" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_verdict_travels_with_its_done_post(a, b):
+    thread = await a.create_thread("t")
+    verdict = {"claim": "Forced convection", "confidence": 0.7}
+    await a.post_as(REFEREE, thread, "## Verdict", kind=PostKind.DONE, verdict=verdict)
+
+    [done] = (await b.read_thread(thread)).posts
+    assert done.verdict == verdict and done.body == "## Verdict"
+
+
+@pytest.mark.anyio
+async def test_a_done_without_a_verdict_reads_as_before(a, remote):
+    thread = await a.create_thread("t")
+    peer_post(remote, thread, kind="DONE", body="verdict in prose")
+    [done] = (await a.read_thread(thread)).posts
+    assert done.verdict is None and done.body == "verdict in prose"
+
+
+@pytest.mark.anyio
+async def test_only_done_carries_a_verdict(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(InvalidKind):
+        await a.post_as(
+            PROPOSER, thread, "x", kind=PostKind.PROPOSAL, verdict={"claim": "x"}
+        )
+
+
+@pytest.mark.anyio
+async def test_thread_tips_list_another_installs_new_thread(a, b):
+    fetched, before = await b.thread_tips()
+    assert fetched and before == {}
+
+    thread = await a.create_thread("Alice's question", body="Frame.")
+    _, tips = await b.thread_tips()
+    assert list(tips) == [thread]
+
+    await a.post_as(PROPOSER, thread, "a proposal", kind=PostKind.PROPOSAL)
+    _, moved = await b.thread_tips()
+    assert moved[thread] != tips[thread]
+
+
+@pytest.mark.anyio
+async def test_thread_tips_without_the_remote_read_what_is_here(tmp_path):
+    offline = await _host(tmp_path / "offline", "http://127.0.0.1:9/forum.git")
+    thread = await offline.create_thread("t")
+    fetched, tips = await offline.thread_tips()
+    assert not fetched and list(tips) == [thread]
