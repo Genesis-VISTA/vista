@@ -1666,6 +1666,13 @@ class ForumPostTable(ForumPostBase, table=True):
     Where the post came in the thread when it was first copied: the order the
     remote accepted it. Posts are read in this order, never by `ts`.
     """
+    authored_by: str | None = None
+    """
+    For a post this install's researcher wrote by hand: their name from
+    Settings, as on `debate_post`. Here because a researcher can post in a
+    thread their install has never run agents in, so there may be no run row to
+    hold it. The one field here git does not hold: a rebuild loses it.
+    """
 
 
 DebateRoleName = Literal["proposer", "reviewer", "referee"]

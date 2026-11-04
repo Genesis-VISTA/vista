@@ -331,3 +331,81 @@ async def test_an_unreachable_forum_keeps_the_list(session, tmp_path, remote):
     assert not outcome.reached and outcome.missing == []
     [row] = await threads.list_threads(session, project_id=project.id)
     assert not row.thread_missing
+
+
+@needs_git
+@pytest.mark.anyio
+async def test_two_installs_share_a_thread_end_to_end(session, tmp_path, remote):
+    """
+    The change's whole story on real git (task 4.2). Two installs are two
+    forum clients with their own host ids and outboxes, and two projects in
+    one database, so their rows stay apart as two databases would keep them.
+
+    Alice opens and concludes a debate. Bob's lab lists it; Bob posts new
+    evidence, continues it with his own agents, and his Referee's verdict
+    becomes the thread's current one in both labs.
+    """
+    from test_debate_driver import _committing, _roles
+
+    from vista_backend.agents.forum.debate import DebateOrchestrator, identity_for
+
+    alice_project = (await _project(session)).id
+    bob_project = (await _project(session)).id
+    alice = await _host(tmp_path / "alice", remote)
+    bob = await _host(tmp_path / "bob", remote)
+
+    # Alice opens and concludes.
+    alice_orch = DebateOrchestrator(
+        client=alice, roles=_roles(), checkpoint=_committing
+    )
+    run = await alice_orch.start(
+        session, project_id=alice_project, topic="Why does the knee move?", rounds=1
+    )
+    thread_id, alice_run_id = run.thread_id, run.id
+    await alice_orch.run(session, run)
+
+    # Bob's lab lists it, opened by another install.
+    await threads.sync_forum(session, project_id=bob_project, client=bob)
+    row = await threads.require_thread(
+        session, project_id=bob_project, thread_id=thread_id
+    )
+    assert row.created_by == alice.host_id != bob.host_id
+    assert row.status == "done" and row.verdict is not None
+    first = threads.current_verdict(await threads.list_posts(session, thread=row))
+    assert first is not None and first.sender == identity_for("referee", alice_run_id)
+
+    # Bob posts, then continues with his own agents.
+    await bob.post_as_human(thread_id, "New evidence: the knee moves with pressure.")
+    bob_orch = DebateOrchestrator(client=bob, roles=_roles(), checkpoint=_committing)
+    bob_run = await bob_orch.adopt(session, thread=row)
+    bob_run_id = bob_run.id
+    await bob_orch.resume(session, run=bob_run, extra_rounds=1)
+
+    # Both labs read the same thread, ending in Bob's verdict.
+    await threads.sync_forum(session, project_id=alice_project, client=alice)
+    for project_id in (alice_project, bob_project):
+        shared = await threads.require_thread(
+            session, project_id=project_id, thread_id=thread_id
+        )
+        posts = await threads.list_posts(session, thread=shared)
+        current = threads.current_verdict(posts)
+        assert current is not None
+        assert current.sender == identity_for("referee", bob_run_id)
+        # The scripted Referees write the same words, so it is the post that
+        # tells whose verdict is current.
+        assert current.post_id != first.post_id
+        assert shared.verdict == current.verdict
+        assert [p.kind for p in posts].count("RUN") == 2
+        assert threads.live_run_of(posts, expiry=2700.0) is None
+
+    # On Alice's side, Bob's posts are a peer's; Bob's own are his.
+    alice_side = await threads.require_thread(
+        session, project_id=alice_project, thread_id=thread_id
+    )
+    lanes = {
+        p.sender: p.vouch_lane
+        for p in await threads.list_posts(session, thread=alice_side)
+        if p.sender.startswith("vista-")
+    }
+    assert lanes[identity_for("referee", bob_run_id)] == "peer-claimed"
+    assert lanes[identity_for("referee", alice_run_id)] == "host-observed"

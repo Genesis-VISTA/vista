@@ -217,12 +217,12 @@ async def posts_with_notes(
         note = notes.get(row.post_id)
         out.append(
             ThreadPost(
-                **row.model_dump(exclude={"forum_thread_id", "seq"}),
+                **row.model_dump(exclude={"forum_thread_id", "seq", "authored_by"}),
                 run_id=note.run_id if note is not None and _has_notes(note) else None,
                 round_index=note.round_index if note else None,
                 tools_used=list(note.tools_used or []) if note else [],
                 model=note.model if note else None,
-                authored_by=note.authored_by if note else None,
+                authored_by=(note.authored_by if note else None) or row.authored_by,
                 denied=note.denied if note else None,
             )
         )
@@ -373,6 +373,28 @@ async def project_forum_thread(
     return row
 
 
+async def record_author(
+    session: AsyncSession, *, thread: ForumThreadTable, post_id: str, authored_by: str
+) -> None:
+    """
+    Name this install's researcher on a post they just made by hand. Only
+    ever called on the posting path, as `debate.record_author` is.
+    """
+    row = (
+        await session.exec(
+            select(ForumPostTable).where(
+                ForumPostTable.forum_thread_id == thread.id,
+                ForumPostTable.post_id == post_id,
+            )
+        )
+    ).first()
+    if row is None:
+        return
+    row.authored_by = authored_by
+    session.add(row)
+    await session.flush()
+
+
 async def mark_thread_missing(
     session: AsyncSession, *, thread: ForumThreadTable
 ) -> None:
@@ -475,6 +497,7 @@ async def _copy_run_posts(
                 peer_votes=post.peer_votes,
                 run=None,
                 verdict=None,
+                authored_by=post.authored_by,
             )
             .on_conflict_do_nothing(index_elements=["forum_thread_id", "post_id"])
         )

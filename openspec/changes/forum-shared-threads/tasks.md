@@ -21,8 +21,8 @@
 
 ## 4. API
 
-- [ ] 4.1 Thread-keyed routes in `api/debate.py` (design D8): list with throttled sync, view, post, runs, close (`403` unless opened here), events (stays open while the thread is viewed and not closed). Remove the run-keyed routes. Verify by porting `test_debate_api.py` to the new routes
-- [ ] 4.2 Two-install end-to-end on real git: Alice opens and concludes, Bob lists it, posts, continues, concludes; both see Bob's verdict as current, and Bob cannot close it. New test in `backend/tests/test_project_forum.py`
+- [x] 4.1 Thread-keyed routes in `api/debate.py` (design D8): list with throttled sync, view, post, runs, close (`403` unless opened here), events (stays open while the thread is viewed and not closed). Remove the run-keyed routes. Verified by porting `test_debate_api.py` to the new routes (57 pass), with new cases for a peer's thread: listed, posted to, adopted by Continue, Continue refused while a peer's RUN is live and accepted once it expires, Close refused
+- [x] 4.2 Two-install end-to-end on real git: Alice opens and concludes, Bob lists it, posts, continues, concludes; both see Bob's verdict as current, and Bob's posts are peer-claimed on Alice's side. Verified in `backend/tests/test_threads.py::test_two_installs_share_a_thread_end_to_end`; Bob's refused close (403, no CLOSED post) in `test_debate_api.py`
 
 ## 5. UI
 
