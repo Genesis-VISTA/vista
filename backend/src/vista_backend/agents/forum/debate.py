@@ -31,8 +31,9 @@ from pydantic_ai.exceptions import (
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
-from ...db.schemas import DebateRunTable
+from ...db.schemas import DebateRunTable, ForumThreadTable
 from ...services import debate as debate_service
+from ...services import threads as thread_service
 from ...services.forum_git import (
     ForumClient,
     Participant,
@@ -161,6 +162,14 @@ class DebateOrchestrator:
         have distinguishable voices.
         """
         thread_id = await self.client.create_thread(topic, body=framing)
+        thread = await thread_service.ensure_thread(
+            session,
+            project_id=project_id,
+            thread_id=thread_id,
+            title=topic,
+            framing=framing,
+            created_by=self.client.host_id,
+        )
         run = await debate_service.create_debate(
             session,
             project_id=project_id,
@@ -169,10 +178,36 @@ class DebateOrchestrator:
             framing=framing,
             rounds=rounds or settings.forum.default_rounds,
         )
+        await thread_service.link_run(session, run=run, thread=thread)
 
         await self._add_roster(session, run.id)
         return await debate_service.set_status(
             session, run_id=run.id, status="debating"
+        )
+
+    async def adopt(
+        self, session: AsyncSession, *, thread: ForumThreadTable
+    ) -> DebateRunTable:
+        """
+        Give this install a run in a thread it has not argued in yet, so that
+        `resume` can continue it.
+
+        The run starts with no rounds and a roster of this install's own, named
+        after the new run, so its voices are told apart from the opener's. It is
+        left concluded; `resume` raises the budget and argues.
+        """
+        run = await debate_service.create_debate(
+            session,
+            project_id=thread.project_id,
+            topic=thread.title,
+            thread_id=thread.thread_id,
+            framing=thread.framing,
+            rounds=0,
+        )
+        await thread_service.link_run(session, run=run, thread=thread)
+        await self._add_roster(session, run.id)
+        return await debate_service.set_status(
+            session, run_id=run.id, status="converged"
         )
 
     async def resume(
@@ -261,6 +296,7 @@ class DebateOrchestrator:
             session, run_id=run_id, granted=granted
         )
         try:
+            await self._announce_run(session, run_id, roster)
             while True:
                 run = await debate_service.require_debate(session, run_id)
                 if run.rounds_done >= run.rounds:
@@ -276,6 +312,14 @@ class DebateOrchestrator:
             logger.info("debate %s: the thread is no longer on the forum", run_id)
             await debate_service.mark_thread_missing(session, run_id=run_id)
             await self._checkpoint(session)
+        except Exception as exc:
+            # A crash must still end the run on the forum, or every other
+            # install would see it as live until it expired. The Referee's
+            # BLOCKED is what ends a run (forum_git.live_run).
+            if "referee" in roster:
+                run = await debate_service.require_debate(session, run_id)
+                await self._blocked(session, run, roster["referee"], None, exc)
+            raise
         finally:
             # Whatever ended the debate — verdict, closure, a raised error — the
             # interface must stop saying someone is thinking. A stale activity is
@@ -408,6 +452,7 @@ class DebateOrchestrator:
             kind=PostKind.DONE,
             round_index=None,
             deps=deps,
+            verdict=verdict.model_dump(),
         )
         await debate_service.record_verdict(
             session, run_id=run_id, verdict=verdict.model_dump()
@@ -428,6 +473,7 @@ class DebateOrchestrator:
         reply_to: str | None = None,
         round_index: int | None = None,
         deps: DebateDeps | None = None,
+        verdict: dict | None = None,
     ) -> Post:
         attachment = await self._stage_receipts(participant, deps)
         post = await self.client.post_as(
@@ -437,6 +483,7 @@ class DebateOrchestrator:
             kind=kind,
             reply_to=reply_to,
             attachment=attachment,
+            verdict=verdict,
         )
         await self._sync_thread(session, run, round_index=round_index)
         if deps is not None:
@@ -612,12 +659,39 @@ class DebateOrchestrator:
     async def _sync_thread(
         self, session: AsyncSession, run: DebateRunTable, *, round_index: int | None
     ) -> Thread:
-        """Read the forum and project it. The read is what makes the DB catch up."""
+        """
+        Read the forum and project it, into this run's rows and into the
+        thread's shared copy that the lab shows. The read is what makes the DB
+        catch up.
+        """
         thread = await self.client.read_thread(run.thread_id)
         await debate_service.project_thread(
             session, run_id=run.id, thread=thread, round_index=round_index
         )
+        shared = await thread_service.project_forum_thread(
+            session, project_id=run.project_id, thread=thread
+        )
+        await thread_service.link_run(session, run=run, thread=shared)
         return thread
+
+    async def _announce_run(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        roster: dict[DebateRole, Participant],
+    ) -> None:
+        """
+        Post this run's RUN marker, so every install sees whose agents are
+        arguing and for how long (forum_git.live_run).
+        """
+        run = await debate_service.require_debate(session, run_id)
+        await self.client.start_run(
+            run.thread_id,
+            rounds=max(1, run.rounds - run.rounds_done),
+            roster={str(role): p.identity for role, p in roster.items()},
+        )
+        await self._sync_thread(session, run, round_index=None)
+        await self._checkpoint(session)
 
     async def _sync(self, session: AsyncSession, run_id: uuid.UUID) -> None:
         """

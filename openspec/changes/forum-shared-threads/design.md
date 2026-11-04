@@ -99,12 +99,18 @@ allows it, the view shows both, and the later `DONE` wins. The hosted forum refu
 Alternative: heartbeat posts, which free a dead run sooner but add commits every reader has to
 skip. Rejected in the grilling.
 
-### D6: Every Continue is a new run; the roster is kept per install and thread
+### D6: One local run per install and thread; every Continue posts a RUN
 
-Continue creates a new `debate_run` row for the new `RUN`, with participants copied from this
-install's latest run in the thread, so identities are reused (spec: per-role attribution).
-When this install has no run in the thread, it mints a roster, with every role on the default
-model. `rounds` and `rounds_done` are per run, and the view shows the live run's progress.
+An install keeps one `debate_run` per thread it argues in. Continue on a thread this install
+has argued in raises that run's budget and argues, as before, so its roster and models carry
+over (spec: per-role attribution). Continue on a thread it has not argued in first *adopts*
+it: a new `debate_run` with no rounds and a roster named after it, with the models the
+request chose (the defaults unless changed). Either way, each `run()` begins with a `RUN`
+post announcing the rounds still to argue.
+
+Alternative: a new `debate_run` per Continue. Rejected while implementing, because it would
+have meant copying rosters and models between rows to keep one voice per install, which
+the existing run already does.
 
 ### D7: The structured verdict is a field of the `DONE` post
 

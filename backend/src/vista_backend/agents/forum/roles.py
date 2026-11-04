@@ -354,10 +354,10 @@ def render_transcript(thread: Thread, *, limit: int | None = None) -> str:
 
     The identity line is kept above the body, with whether this install wrote
     the post, because a role reasoning about who said something needs to know
-    which half of that is known and which is claimed. Votes are dropped: they are
-    posts, but they are not turns in the conversation.
+    which half of that is known and which is claimed. Votes and RUN markers are
+    dropped: they are posts, but they are not turns in the conversation.
     """
-    posts = thread.content_posts()
+    posts = [p for p in thread.content_posts() if p.kind != PostKind.RUN]
     if limit is not None:
         posts = posts[-limit:]
 

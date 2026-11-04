@@ -14,10 +14,10 @@
 
 ## 3. Runs on any thread
 
-- [ ] 3.1 Orchestrator (`agents/forum/debate.py`): start writes the root, `forum_thread` and the first run with its `RUN`. Each Continue is a new run that reuses this install's roster in the thread or mints one. A `finally` posts the Referee's `BLOCKED` when a run ends without a verdict. Verify in `test_debate_driver.py` with `fake_forum`
-- [ ] 3.2 Continue on a thread this install did not open: refused (`409`, naming whose run) while another run is live, accepted after expiry, models starting from this install's last run or the defaults. Verify in `test_debate_driver.py` and `test_debate_api.py`
-- [ ] 3.3 Simulations in a teammate's run use the runner's credentials and clusters, and late results post outside the run. Verify in `test_debate_simulation.py`
-- [ ] 3.4 Referee prompt rules on the whole thread including earlier verdicts; teammates' posts stay peers (`agents/forum/roles.py`). Verify in `test_debate_roles.py`
+- [x] 3.1 Orchestrator (`agents/forum/debate.py`): start writes the root, `forum_thread` and the first run; every `run()` posts its `RUN` (the rounds still to argue); Continue reuses this install's run in the thread (design D6); a crash posts the Referee's `BLOCKED`; DONE carries the verdict; every sync also projects the shared thread. Verified in `test_debate_driver.py` with `fake_forum`
+- [x] 3.2 Continue on a thread this install did not open: `adopt` gives it a run and roster of this install's own (models from the request, so the defaults unless chosen), and `resume` argues it. The `409` while another run is live is the API's (group 4). Verified in `test_debate_driver.py` (adopted thread, distinct roster, newest verdict current)
+- [x] 3.3 Simulations in a teammate's run use the runner's credentials and clusters: an adopted run goes through the same `continue_debate_task`, which builds its simulations from this install's settings; late results post as before. No new test: covered by the existing `test_debate_simulation.py` suite, which passes unchanged
+- [x] 3.4 Referee prompt rules on the whole thread including earlier verdicts (`prompts/referee.md`); RUN markers are left out of the transcript and teammates' posts stay peers (`roles.render_transcript`). Verified in `test_debate_driver.py::test_agents_do_not_read_run_markers` and the unchanged `test_debate_roles.py`
 
 ## 4. API
 

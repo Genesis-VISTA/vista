@@ -1107,3 +1107,128 @@ async def test_each_post_records_the_model_that_wrote_it(client, session):
     assert models[(True, "reviewer")] == {"openai:a"}
     assert models[(False, "reviewer")] == {"openai:c"}
     assert models[(False, "proposer")] == {"openai:a"}
+
+
+# --------------------------------------------------------------------------- #
+# Shared threads (forum-shared-threads group 3)
+# --------------------------------------------------------------------------- #
+
+
+def _live(posts):
+    from datetime import UTC, datetime
+
+    from vista_backend.services.forum_git import live_run
+
+    return live_run(posts, now=datetime.now(UTC), expiry=2700.0)
+
+
+@pytest.mark.anyio
+async def test_a_run_announces_itself_and_its_verdict_ends_it(client, session):
+    from vista_backend.services import threads as thread_service
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
+    run_id, thread_id = run.id, run.thread_id
+    await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    marker = next(p for p in thread.posts if p.kind == PostKind.RUN)
+    assert marker.run is not None and marker.run.rounds == 2
+    assert marker.run.roster == {role: identity_for(role, run_id) for role in ROSTER}
+    done = next(p for p in thread.posts if p.kind == PostKind.DONE)
+    assert done.verdict is not None
+    assert done.verdict["unresolved"] == ["measure at 650K"]
+    assert _live(thread.posts) is None, "the Referee's verdict ends the run"
+
+    shared = await thread_service.require_thread(
+        session, project_id=run.project_id, thread_id=thread_id
+    )
+    assert shared.verdict == done.verdict
+    linked = await debate_service.require_debate(session, run_id)
+    assert linked.forum_thread_id == shared.id
+
+
+@pytest.mark.anyio
+async def test_a_continue_announces_only_its_extra_rounds(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run_id, thread_id = run.id, run.thread_id
+    await orch.run(session, run)
+    await orch.resume(
+        session,
+        run=await debate_service.require_debate(session, run_id),
+        extra_rounds=2,
+    )
+
+    markers = [
+        p for p in (await client.read_thread(thread_id)).posts if p.kind == PostKind.RUN
+    ]
+    assert [m.run.rounds for m in markers] == [1, 2]
+    assert markers[0].run.roster == markers[1].run.roster, "same roster on continue"
+
+
+@pytest.mark.anyio
+async def test_another_installs_thread_is_adopted_with_a_roster_of_our_own(
+    client, session
+):
+    from vista_backend.services import threads as thread_service
+
+    project_id = (await _project(session)).id
+    thread_id = client.peer_thread("Alice's question", body="Frame it.")
+    peer_roster = client.peer_run(thread_id, rounds=1)
+    client.peer_post(
+        thread_id,
+        "verdict",
+        kind="DONE",
+        identity=peer_roster["referee"],
+        role="referee",
+    )
+    shared = await thread_service.project_forum_thread(
+        session, project_id=project_id, thread=await client.read_thread(thread_id)
+    )
+
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
+    run = await orch.adopt(session, thread=shared)
+    run_id = run.id
+    assert run.topic == "Alice's question" and run.framing == "Frame it."
+    await orch.resume(session, run=run, extra_rounds=1)
+
+    thread = await client.read_thread(thread_id)
+    mine = {identity_for(role, run_id) for role in ROSTER}
+    assert not mine & set(peer_roster.values()), "our voices are our own"
+    markers = [p for p in thread.posts if p.kind == PostKind.RUN]
+    assert len(markers) == 2 and set(markers[1].run.roster.values()) == mine
+    dones = [p for p in thread.posts if p.kind == PostKind.DONE]
+    assert dones[-1].sender == identity_for("referee", run_id)
+
+    shared = await thread_service.require_thread(
+        session, project_id=project_id, thread_id=thread_id
+    )
+    assert shared.verdict == dones[-1].verdict, "the newest verdict is current"
+
+
+@pytest.mark.anyio
+async def test_a_crashed_run_ends_with_the_referees_blocked(client, session):
+    def explode(messages, info):
+        raise RuntimeError("the database went away")
+
+    orch, run = await _start(
+        client,
+        session,
+        roles=_roles(proposer=FunctionModel(explode)),
+        rounds=1,
+    )
+    thread_id = run.thread_id
+    with pytest.raises(RuntimeError):
+        await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    assert thread.posts[-1].kind == PostKind.BLOCKED
+    assert thread.posts[-1].role == "referee"
+    assert _live(thread.posts) is None, "nobody else waits on a dead run"
+
+
+@pytest.mark.anyio
+async def test_agents_do_not_read_run_markers(client, session):
+    capture: list[str] = []
+    orch, run = await _start(client, session, roles=_roles(capture=capture), rounds=1)
+    await orch.run(session, run)
+    assert capture and all("RUN —" not in prompt for prompt in capture)
