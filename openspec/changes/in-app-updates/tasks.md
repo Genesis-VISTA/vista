@@ -43,7 +43,7 @@
 ## 7. Docs and end-to-end
 
 - [x] 7.1 Document checking, opting out and prereleases, Update and restart, and recovery with `--version` in `docs/installing.md`; note in the release notes that reaching it is a manual upgrade (`.github/release-notes.md`, worded so it stays true for every release). Verify: `./scripts/ci-local.sh docs` passes
-- [ ] 7.2 Manual end-to-end on macOS (validation lane, not PR CI): install 0.0.x from a fake release served by `VISTA_BACKEND_UPDATES__GITHUB_API` and a `file://` base, update to a newer fake, confirm the new version opens with chats kept; then make the installer fail and confirm the old version reopens with the failure state. Repeat on Linux and Windows. Record results in `docs/validation-lane.md`. The recipe and its tool (`scripts/update_e2e/fake_release.py`) are there; macOS passed 2026-11-04, Windows 2026-11-05; Linux not yet run
+- [x] 7.2 Manual end-to-end on macOS (validation lane, not PR CI): install 0.0.x from a fake release served by `VISTA_BACKEND_UPDATES__GITHUB_API` and a `file://` base, update to a newer fake, confirm the new version opens with chats kept; then make the installer fail and confirm the old version reopens with the failure state. Repeat on Linux and Windows. Record results in `docs/validation-lane.md`. The recipe and its tool (`scripts/update_e2e/fake_release.py`) are there; macOS passed 2026-11-04, Windows and Linux 2026-11-05
 
 ## 8. The update status window (D9)
 
