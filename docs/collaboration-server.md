@@ -8,7 +8,8 @@ publishing and importing are off. No VISTA package starts one.
 It stores *items* of any kind, each created with its first version and given more, numbered
 2, 3… by the server, none ever changed; what a version holds (a JSON manifest and optionally
 one blob) is for the VISTA backends to read. Its database is SQLite and its blobs are files
-named by their SHA-256, both under its data directory.
+named by their SHA-256, both under its data directory. It can also host a project's
+Hypothesis Lab forum as a git repository ([Forums](#forums)).
 
 ## Run
 
@@ -111,6 +112,117 @@ between teams, never moved.
 
 The server chooses every item's id; a client cannot.
 
+## Forums
+
+A project's Hypothesis Lab forum can be hosted here: a git repository the server runs, per
+project, that VISTA installs fetch and push over HTTP, so access follows the project's team
+and the lab's rules are enforced at push time
+([`hypothesis-forum-hosting.md`](hypothesis-forum-hosting.md) is the researcher's side, and
+[`forum-git-format.md`](forum-git-format.md) the format). Forums are not items: a forum is live
+and mutable, an item's versions never change, so they have their own tables (`forum`, and
+`forum_push`, below) and routes
+([`api/forums.py`](../collaboration_server/src/vista_collaboration_server/api/forums.py),
+[`services/forums.py`](../collaboration_server/src/vista_collaboration_server/services/forums.py)).
+The server still reads no manifests: a project item's manifest carries `{"forum": "hosted"}`
+for a hosted forum, and the backend asks `GET /items/{id}/forum` where it is.
+
+**Access.** A forum belongs to the account that created it, and is its owner's alone until it
+is linked, once, to a `project` item. From then on it belongs to that item's team, and every
+member can fetch and push it; the link never changes. A forum the caller may not use, or that
+does not exist, is `404`, as for items.
+
+**Git.** The server requires **git 2.34 or later** on its host, and only for forums: it checks
+at startup, never running macOS's `/usr/bin/git` install shim to find out. Without it every
+forum route answers `503` and items go on working.
+
+### Routes
+
+| Route | |
+|---|---|
+| `POST /forums` | a new, empty forum owned by the caller: `{id, git_url, item_id, created_at}` (`201`) |
+| `PUT /forums/{id}/item` | `{item_id}`: link the caller's forum to a `project` item they can see. `403` for a member who is not the owner, `409` when the forum is linked already, the item already has a forum, or the item is not a project |
+| `GET /items/{id}/forum` | the forum linked to an item the caller can see; `404` when it has none |
+| `DELETE /forums/{id}` | delete an unlinked forum and its repository (`204`). `403` for a non-owner who can see it, `409` once it is linked |
+| `GET /forums/{id}/pushes?after=&limit=` | the push records with a `seq` above `after` (default 0), at most `limit` (default 1000, up to 5000), oldest first |
+| `/git/{id}.git/info/refs`, `git-upload-pack`, `git-receive-pack` | git's smart HTTP |
+
+Each of these answers `503` when the server has no usable git. `git_url` is
+`<base URL>/git/<id>.git`, built from the request's own base URL, so behind a gateway the
+server must see the public scheme and path prefix (`VISTA_COLLAB_ROOT_PATH` and the gateway's
+forwarded headers) or it hands out URLs clients cannot reach.
+
+### Git over HTTP
+
+The three git routes run `git http-backend` as a CGI, one process per request, after the
+identity dependency and the forum's access check; the request body streams to its stdin and its
+output streams back, never held whole. The forum id must be a UUID in its canonical spelling
+before any path is built from it. `REMOTE_USER` is the caller's `sub` and the process gets a
+clean environment (not the server's, and no user's git configuration). A gateway in front must
+pass these requests through with their bodies streamed and not buffer, cap or time them out
+early.
+
+Repositories live under `data/forums/<id>.git`, created bare with
+`receive.denyNonFastForwards`, `receive.denyDeletes` and `receive.advertisePushOptions` on, and
+the two hooks below.
+
+### Hooks and rules
+
+Each repository has a `pre-receive` and a `post-receive` hook, both the server package's
+`vista-collab-forum-hook` entry point
+([`services/forum_hook.py`](../collaboration_server/src/vista_collaboration_server/services/forum_hook.py)),
+run by the interpreter that runs the server. `pre-receive` refuses a push that would:
+
+- update any ref other than `refs/heads/vista-forum/threads/<thread-id>`;
+- delete a thread, or be anything but a fast-forward;
+- add a `CLOSED` post to a thread whose root was pushed by another account;
+- add a `RUN` post while the thread's latest run is live.
+
+A run's liveness is the forum format's rule ([Runs](forum-git-format.md#runs)), timed by when
+the server received the posts rather than their `ts`, so a pusher's clock cannot shift it. A
+run expires after `VISTA_COLLAB_FORUM_RUN_EXPIRY_SECONDS` (default 2700, the backend's default
+too). A refusal prints a sentence naming the rule, which git relays to the client as
+`remote: Refused …`, and changes nothing.
+
+A push with the `vista-import` push option may create threads the forum does not have yet, for
+a project moved onto the forum: their posts are recorded as imported and the `CLOSED` and `RUN`
+rules are not applied to them. It changes nothing for a thread that exists.
+
+git tells a client its push was accepted before `post-receive` has run, so a push that passes
+`pre-receive` leaves a marker until its `post-receive` is done, and the next `pre-receive`
+waits (up to 10 s) for markers to clear. Otherwise an opener closing a thread right after
+opening it could be judged before the server had recorded who opened it.
+
+### Push records
+
+`post-receive` writes one `forum_push` row for each post a push added, and one of kind
+`THREAD` for each thread root (the only record of who opened a thread): `forum_id`,
+`thread_id`, `post_id`, `kind`, `commit`, `pusher_sub`, `pusher_name`, `imported`,
+`received_at`, and `seq`, the order the server took them. `GET /forums/{id}/pushes?after=<seq>`
+serves them to anyone who may use the forum, so a VISTA backend can show who wrote each post
+and ask only for what is new. A post copied in by an import is recorded `imported`, as pushed by
+the account that moved it, and the backend shows no name for it.
+
+### Copying and deleting
+
+`POST /items/{id}/copy` of an item with a forum also makes a new, empty forum, owned by the
+copier and linked to the copy, so the copy's team cannot reach the original's. The original's
+forum is not touched. A linked forum cannot be deleted, so it stays as long as its item.
+
+### Failures and a current limitation
+
+A hook's stderr goes to the pushing client, so a hook that fails for any reason other than a
+rule is logged, with the forum id and the traceback, to `data/forums/forum-hook-errors.log`.
+`pre-receive` then refuses with a generic message ("The server could not check this push;
+nothing was changed."); `post-receive` lets the already-accepted push stand. Look there first
+when pushes fail without a rule's sentence.
+
+The hooks read and write the server's database through SQLite directly, because they run as
+git's synchronous child processes; the server passes them its database settings, and a hook
+refuses to run against any other database, so every forum push would fail with the generic
+message. This is how it works today, not a commitment to SQLite. Running the server on another
+database engine will mean giving the hooks a synchronous connection to it, or having them ask
+the server, and the hook tests in `tests/test_forums.py` are what will catch it.
+
 ## API
 
 | Route | |
@@ -135,6 +247,7 @@ The server chooses every item's id; a client cannot.
 | `POST /teams/{id}/members` | `{sub}`: add someone who has signed in |
 | `DELETE /teams/{id}/members/me` | leave it; `409` for its last member |
 | `GET /users?q=` | everyone signed in whose name or email holds `q` |
+| `/forums`, `/items/{id}/forum`, `/git/{id}.git/…` | hosted forums and git's protocol; see [Forums](#forums) |
 
 Every route but `/version` needs a user, reads included. `max_blob_size` caps a blob either way. A
 streamed blob is written to disk as it arrives, never held whole.
@@ -157,7 +270,9 @@ A deployment runs in `oidc` mode behind a login gateway, with the realm set in
 and the client role a researcher needs in `VISTA_COLLAB_OIDC_REQUIRED_ROLE`. Who can sign in is
 therefore decided in the realm, by who holds that role. When the gateway serves the server under
 a path prefix and strips it, `VISTA_COLLAB_ROOT_PATH` puts the prefix back in the API docs'
-links. On NFS, where SQLite's WAL does not work, set `VISTA_COLLAB_SQLITE_JOURNAL_MODE=DELETE`.
+links. On NFS, where SQLite's WAL does not work, set `VISTA_COLLAB_SQLITE_JOURNAL_MODE=DELETE`
+(the forum hooks use it too). To host [forums](#forums) the host needs git 2.34 or later, and
+the gateway must stream git's requests and pass on the public scheme and prefix.
 
 [`collaboration_server/deploy/`](../collaboration_server/deploy/) holds VISTA's own deployment,
 a systemd unit and its environment, as an example.

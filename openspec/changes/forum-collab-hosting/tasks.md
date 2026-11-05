@@ -31,5 +31,5 @@
 
 ## 5. Docs and checks
 
-- [ ] 5.1 `docs/hypothesis-forum-hosting.md` (hosted forums first, forges second), the collaboration server's docs (`docs/collaboration-server.md` once the `collab-server-docs` MR lands, else `collaboration_server/README.md`: forum routes, hooks, git requirement), `docs/forum-git-format.md` (what the server enforces). Verify with `./scripts/ci-local.sh docs`
-- [ ] 5.2 `./scripts/ci-local.sh collab backend ui` and `openspec validate forum-collab-hosting --strict` pass
+- [x] 5.1 `docs/hypothesis-forum-hosting.md` (hosted forums first, forges second), the collaboration server's docs (`docs/collaboration-server.md` once the `collab-server-docs` MR lands, else `collaboration_server/README.md`: forum routes, hooks, git requirement), `docs/forum-git-format.md` (what the server enforces). Verify with `./scripts/ci-local.sh docs`
+- [x] 5.2 `./scripts/ci-local.sh collab backend ui` and `openspec validate forum-collab-hosting --strict` pass

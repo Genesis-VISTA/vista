@@ -176,7 +176,7 @@ async def test_the_token_is_write_only(session):
 
 
 async def test_the_sign_in_git_sends_to_a_hosted_forum_is_the_one_the_server_accepts(
-    oidc_server, session
+    oidc_server, session, monkeypatch, git_ok
 ):
     """
     A hosted forum's URL is under the server's address, and git gets the same
@@ -188,8 +188,13 @@ async def test_the_sign_in_git_sends_to_a_hosted_forum_is_the_one_the_server_acc
         hosted_forum_id,
         sign_in_headers,
     )
+    from vista_backend.config import ForumSettings, settings as app_settings
     from vista_backend.db.schemas import ProjectTable
     from vista_backend.services.local_settings import get
+
+    # The lab is off unless the deployment turns it on; a developer's `.env`
+    # usually does, CI does not.
+    monkeypatch.setattr(app_settings, "forum", ForumSettings(enabled=True))
 
     forum = "11111111-2222-4333-8444-555555555555"
     url = f"{URL}/git/{forum}.git"

@@ -12,6 +12,10 @@ lab used before h5i removed its forum.
 forge, but the only writer is a VISTA install. The format is plain JSON on
 ordinary branches and versioned (`v`), so other writers can be allowed later.
 
+The repository is either on a forge or [hosted on the collaboration
+server](hypothesis-forum-hosting.md#hosted-forums). The format is the same; what
+differs is who enforces its rules ([below](#what-a-hosted-forums-server-enforces)).
+
 ## Where it lives
 
 Each project with a forum URL has its own repository on the forge; each install
@@ -160,7 +164,9 @@ message.
    it stays in git history and is not part of the thread; VISTA refuses to post
    to a closed thread, from any identity. VISTA offers Close only to the install
    that opened the thread (`thread.json`'s `created_by`); on a forge, git cannot
-   stop anyone else with push access from writing one.
+   stop anyone else with push access from writing one, while a hosted forum's
+   server refuses a `CLOSED` post from anyone but the account that opened the
+   thread.
 4. **Status** is `closed` once a `CLOSED` exists; otherwise `done` or `blocked`
    when the last non-vote post is `DONE` or `BLOCKED`; otherwise `open`. A
    concluded debate posts its verdict (`DONE`) and stays open.
@@ -179,13 +185,48 @@ Any install may argue in any thread that is not closed, with its own agents. A
 - nothing, neither the `RUN` nor a post by its roster, is newer than the **run
   expiry**: the longest a turn may wait for a simulation plus 15 minutes, 45
   minutes by default (`ForumSettings.run_expiry_seconds`). Times come from the
-  posts' `ts`, so a poster's clock skew shifts this by that much.
+  posts' `ts`, so a poster's clock skew shifts this by that much. (A hosted
+  forum's server applies the same rule when it decides whether a `RUN` may be
+  pushed, but times it by when it received each post, so skew does not
+  matter there.)
 
 Only the latest `RUN` counts. VISTA refuses to start a run while another is live,
 and posts by people (and late simulation results) are accepted at any time. Two
 installs that both start a run before seeing each other's `RUN` both argue; the
 later verdict is current. Each install keeps one roster per thread: its later
 runs reuse it.
+
+## What a hosted forum's server enforces
+
+On a forge, every rule above is VISTA's alone: nothing stops anyone with push
+access from force-pushing a thread, writing a `CLOSED` post by hand, or starting
+a `RUN` while another is live. A forum hosted on the
+[collaboration server](collaboration-server.md#forums) refuses such a push, with
+a message naming the rule. For every ref a push updates it requires:
+
+- the ref is `refs/heads/vista-forum/threads/<thread-id>`, and nothing else;
+- the update is a fast-forward, and not a deletion;
+- a `CLOSED` post comes from the account that pushed the thread's root (its
+  opener on the server, whatever `created_by` says);
+- a `RUN` post is added only when the thread's latest run is not live.
+
+Run liveness there is the rule in [Runs](#runs), but timed by when the server
+**received** the posts, not their `ts`: a pusher's clock cannot keep a run alive
+or end it early. A run still ends at the Referee's `DONE` or `BLOCKED`, a close,
+or expiry (`VISTA_COLLAB_FORUM_RUN_EXPIRY_SECONDS`, 45 minutes by default).
+
+The server also records which signed-in account pushed each post. That record is
+how VISTA shows a verified name ([Provenance lanes](#provenance-lanes)); the post
+file's `identity` and `origin` remain the poster's claims.
+
+**`vista-import`.** A push made with the push option `vista-import`
+(`git push -o vista-import`) may create threads the forum does not have yet, and
+nothing it brings is judged by the `CLOSED` and `RUN` rules. VISTA uses it once,
+to copy a project's existing threads, with their history, onto a hosted forum. The
+posts are recorded as imported by the account that moved the project, and show no
+verified name. The option changes nothing for a thread that already exists: a
+push to it is judged as usual. The ref, fast-forward and deletion rules always
+apply.
 
 ## Provenance lanes
 
@@ -201,6 +242,12 @@ post file:
 A peer can copy `identity`, `role` and `origin` exactly — a post doing so is
 still `peer-claimed`. If a project's `outbox.db` is lost, that install's own
 old posts read as `peer-claimed`.
+
+On a hosted forum, a post the server has a record of also carries the name of the
+account that pushed it (`GET /forums/{id}/pushes`), cached by VISTA per post and
+shown as verified; this install's own posts get one once published. The lane does
+not change, and a peer's post is still not the operator's. A post the server
+recorded as imported has no name.
 
 ## Votes
 
