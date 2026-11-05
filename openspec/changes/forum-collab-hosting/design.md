@@ -34,8 +34,12 @@ nor blobs. A forum is different: it is a live repository the server must enforce
 
 Forums sit beside items, not among them: `forum` (`id`, `owner_sub`, `item_id` nullable and
 unique, `created_at`) and `forum_push` (`forum_id`, `thread_id`, `post_id`, `kind`, `commit`,
-`pusher_sub`, `pusher_name`, `imported`, `received_at`). A forum's team is its item's team,
-looked up through the item. An unlinked forum is visible only to `owner_sub`. Routes:
+`pusher_sub`, `pusher_name`, `imported`, `received_at`, and `seq`, the order the server took
+them, which is the `after=` cursor). A thread's root is recorded as a row of kind `THREAD`
+whose `post_id` is the thread id: it is the only record of who opened the thread, since a
+thread need not have a `TASK` post. Readers of the push records skip it. A forum's team is its
+item's team, looked up through the item. An unlinked forum is visible only to `owner_sub`. A
+non-owner who can see a linked forum gets `403` from link and delete. Routes:
 
 | Route | |
 |---|---|
@@ -71,8 +75,10 @@ A FastAPI route for `GET /git/{id}.git/info/refs`, `POST /git/{id}.git/git-uploa
 Repositories live under `data_dir/forums/<id>.git`, created bare with
 `receive.denyNonFastForwards=true`, `receive.denyDeletes=true`,
 `receive.advertisePushOptions=true` and the hooks of D3. The server requires git 2.34 or later
-at startup, and only for forums: without git, the forum routes answer `503` and items keep
-working.
+at startup, and only for forums: without git, every forum route answers `503` and items keep
+working. On macOS it never runs the `/usr/bin/git` install shim to find out (as the backend's
+`git_check.py`). `git_url` is built from the request's base URL, so behind a gateway the
+server must see the public scheme and prefix (`root_path` and forwarded headers).
 
 Alternatives: dulwich (pure Python), which avoids the subprocess but reimplements git's
 protocol; a separate git server with its own auth, which is a second service and identity
@@ -94,7 +100,21 @@ installed into each repository's `hooks/`. They read the server's settings and d
 
 A push with the `vista-import` push option (D5) may create threads that do not yet exist on the
 forum. Their posts are recorded with `imported = true`, and `CLOSED`/`RUN` checks don't apply
-to them. On SQLite over NFS the hooks use the configured journal mode, as the server does.
+to them. The option only applies to threads the push creates; an existing thread is judged as
+usual. An imported thread's root is recorded as pushed by the account that moved the project,
+so that account is its opener on the server. On SQLite over NFS the hooks use the configured
+journal mode, as the server does.
+
+git tells the client a push was accepted before it runs `post-receive`, so a quick second push
+could be judged on records the first has not written yet (an opener closing a thread they just
+opened would be refused). A push that passes `pre-receive` leaves a marker named by its
+`receive-pack` process, `post-receive` removes it, and the next `pre-receive` waits for
+markers to clear, up to 10 s. A push that loses the ref update after `pre-receive` (two pushes
+from one tip) gets no `post-receive`, so a marker whose process has exited is dropped at once.
+
+A hook error is logged with the forum id to `forums/forum-hook-errors.log`, since a hook's
+stderr goes to the client. `pre-receive` then refuses with a generic message, and
+`post-receive` lets the already-accepted push stand.
 
 ### D4: The backend sends the sign-in to the server's forum URLs only
 
@@ -140,6 +160,12 @@ posts get no name.
   new one.
 - [A hook that crashes refuses every push] → Hooks are tested against real git in CI. A hook
   error is logged with the forum id and refuses with a generic message, never a traceback.
+- [The hooks read the server's database with `sqlite3` directly, because they run as git's
+  synchronous child processes] → This is how it works today, not a choice of engine. The server
+  passes the hooks its database settings, and a hook refuses a non-SQLite database
+  (`forum_hook.Context.db`), so every forum push would fail with the generic message. Moving
+  the server to another engine means giving the hooks a synchronous connection to it, or
+  having them ask the server, and the hook tests in `test_forums.py` are what will catch it.
 - [Server disk grows with forums] → Forums are small text repositories. Deletion of unlinked
   forums is covered, and pruning is out of scope.
 - [The server now runs subprocesses for requests] → One `git http-backend` per git request,
