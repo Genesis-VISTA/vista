@@ -21,9 +21,9 @@
 
 ## 3. UI
 
-- [ ] 3.1 Project dialog: the hosted forum is the default when signed in, and a repository URL or no forum can be chosen instead; the credential line names the collaboration sign-in. Verify in `ui/tests/`
-- [ ] 3.2 Project settings: "Host on the collaboration server", with its progress and failure. Verify in `ui/tests/`
-- [ ] 3.3 Hypothesis Lab: verified names on posts and runs; the sign-in-refused message links to the server's `/sign-in`. Verify in `ui/tests/debates.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts`
+- [x] 3.1 Project dialog: the hosted forum is the default when signed in, and a repository URL or no forum can be chosen instead; the credential line names the collaboration sign-in. Verify in `ui/tests/`
+- [x] 3.2 Project settings: "Host on the collaboration server", with its progress and failure. Verify in `ui/tests/`
+- [x] 3.3 Hypothesis Lab: verified names on posts and runs; the sign-in-refused message links to the server's `/sign-in`. Verify in `ui/tests/debates.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts`
 
 ## 4. Deployment check (outside PR CI)
 

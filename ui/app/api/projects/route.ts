@@ -34,7 +34,10 @@ export async function POST(request: Request) {
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendUrl("/projects"), {
+    // `hosted_forum_wanted=false` is a project with no forum at all; only that
+    // value is passed on.
+    const noForum = new URL(request.url).searchParams.get("hosted_forum_wanted") === "false";
+    upstream = await fetch(backendUrl(`/projects${noForum ? "?hosted_forum_wanted=false" : ""}`), {
       method: "POST",
       headers: await backendHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(body),

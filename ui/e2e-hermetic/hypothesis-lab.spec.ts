@@ -295,3 +295,106 @@ test.describe("hypothesis lab shared threads", () => {
     await expect(page.locator(".debate-roster")).toHaveCount(0);
   });
 });
+
+/**
+ * A forum hosted on the collaboration server (openspec change
+ * forum-collab-hosting, 3.3): a post the server recorded a pusher for shows that
+ * name as verified, and a refused sign-in links to the server's sign-in page.
+ */
+const HOSTED_SERVER = "https://obsidian.example.org/vista/api";
+const HOSTED_STATUS = {
+  ...STATUS,
+  remote: `${HOSTED_SERVER}/git/11111111-2222-4333-8444-555555555555.git`,
+};
+
+test.describe("hypothesis lab on a hosted forum", () => {
+  let stub: Stub | null = null;
+
+  test.afterEach(async () => {
+    if (stub) {
+      expect(await stub.unstubbed(), "page asked for a route with no fixture").toEqual([]);
+    }
+    stub = null;
+  });
+
+  test("a post with a verified name shows it, and one without stays unverified", async ({
+    page,
+  }) => {
+    const verified = {
+      ...post("proposer", "FINDING", null),
+      id: "row-peer-1",
+      post_id: "post-peer-1",
+      sender: "human",
+      vouch_lane: "peer-claimed",
+      run_id: null,
+      pusher_name: "Ada Lovelace",
+    };
+    const unnamed = {
+      ...post("reviewer", "RISK", null),
+      id: "row-peer-2",
+      post_id: "post-peer-2",
+      sender: "human",
+      vouch_lane: "peer-claimed",
+      run_id: null,
+      pusher_name: null,
+    };
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": by("thread_id", {
+        default: [THREAD],
+        [THREAD_ID]: { ...DEBATE, posts: [verified, unnamed] },
+      }),
+      "GET /api/forum/status": HOSTED_STATUS,
+    });
+    await openLab(page);
+    await page.locator(".debate-list__item").filter({ hasText: RUN.topic }).click();
+
+    await expect(page.locator(".debate-post__verified")).toHaveText("Ada Lovelace · verified");
+    await expect(page.locator(".debate-post__unverified")).toHaveCount(1);
+  });
+
+  test("a refused sign-in is explained, with a link to the server's sign-in page", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": [],
+      "GET /api/forum/status": {
+        ...HOSTED_STATUS,
+        unpublished: 1,
+        publish_error: {
+          reason: "refused",
+          credential: "collaboration",
+          message: `The collaboration sign-in was refused. Get a token from ${HOSTED_SERVER}/sign-in and paste it under Settings → Collaboration.`,
+          at: "2026-11-05T16:00:00+00:00",
+        },
+      },
+    });
+    await openLab(page);
+
+    const notice = page.getByRole("alert").filter({ hasText: "sign-in was refused" });
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole("link", { name: "Open the sign-in page" })).toHaveAttribute(
+      "href",
+      `${HOSTED_SERVER}/sign-in`,
+    );
+  });
+
+  test("a rule the server enforced is shown by its message", async ({ page }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": [],
+      "GET /api/forum/status": {
+        ...HOSTED_STATUS,
+        publish_error: {
+          reason: "rule",
+          credential: "collaboration",
+          message: "Only the user who opened this thread may close it.",
+          at: "2026-11-05T16:00:00+00:00",
+        },
+      },
+    });
+    await openLab(page);
+    await expect(page.getByText("Only the user who opened this thread may close it.")).toBeVisible();
+  });
+});

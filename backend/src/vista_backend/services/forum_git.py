@@ -1311,7 +1311,7 @@ class ForumClient:
             )
         if "returned error: 404" in lowered or "not found" in lowered:
             return (
-                "refused",
+                "no_access",
                 "The collaboration server has no forum your account may use here: "
                 "it was deleted, or you are not in the team that owns it.",
             )

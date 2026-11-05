@@ -196,6 +196,13 @@ export type DebatePost = {
    * could believe.
    */
   authored_by: string | null;
+  /**
+   * On a forum hosted on the collaboration server: the name of the account the
+   * server recorded as pushing this post. Verified, unlike every other name on
+   * a post, because the server took it from the sign-in and not from the post.
+   * Null on a forge forum, an imported post, or one not yet read from the server.
+   */
+  pusher_name?: string | null;
   round_index: number | null;
   /**
    * The model that wrote this post, as resolved at the time; null for a human or
@@ -337,12 +344,26 @@ function minutesAgo(iso: string, now: number): string {
 /**
  * Another install's run, said from what the thread shows: whose, how many
  * rounds, how far along. A forge forum carries no verified name, so the
- * researcher is not named.
+ * researcher is not named there; on a hosted one `runner` names them.
  */
-export function liveRunLine(live: LiveRun, now: number = Date.now()): string {
-  const who = live.ours ? "This install is" : "Another user is";
+export function liveRunLine(
+  live: LiveRun,
+  now: number = Date.now(),
+  /** The server-verified name of whoever started it (`runnerName`), when known. */
+  runner: string | null = null,
+): string {
+  const who = live.ours ? "This install is" : runner ? `${runner} is` : "Another user is";
   const posts = live.posts === 1 ? "1 post" : `${live.posts} posts`;
   return `${who} running ${live.rounds} ${live.rounds === 1 ? "round" : "rounds"} · ${posts} so far · last ${minutesAgo(live.last_post_at, now)}`;
+}
+
+/**
+ * The verified name of whoever started the live run, from the server's record of
+ * who pushed its RUN post; null when there is none (a forge, or not read yet).
+ */
+export function runnerName(live: LiveRun | null, posts: DebatePost[]): string | null {
+  if (!live || live.ours) return null;
+  return posts.find((p) => p.post_id === live.post_id)?.pusher_name ?? null;
 }
 
 /**
@@ -413,9 +434,11 @@ export type ForumStatus = {
 
 /** Backend `PublishError`: why posts did not reach the forum. */
 export type PublishError = {
-  reason: "refused" | "unreachable" | "failed";
-  credential: "settings-github" | "settings-gitlab" | "system-git";
-  /** Git's own message. It never holds the token. */
+  /** `rule`: a hosted forum's server refused the push under one of its rules. */
+  reason: "refused" | "no_access" | "rule" | "unreachable" | "failed";
+  /** `collaboration`: the sign-in for a forum hosted on the collaboration server. */
+  credential: "settings-github" | "settings-gitlab" | "system-git" | "collaboration";
+  /** Git's own message, or for a hosted forum the server's rule or sign-in advice. It never holds the token. */
   message: string;
   at: string;
 };
@@ -424,6 +447,7 @@ const CREDENTIAL_NAMES: Record<PublishError["credential"], string> = {
   "settings-github": "Your GitHub token from Settings",
   "settings-gitlab": "Your gitlab.com token from Settings",
   "system-git": "Your system git’s credentials",
+  collaboration: "Your collaboration sign-in",
 };
 
 const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
@@ -431,7 +455,33 @@ const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
   "settings-gitlab": "Replace it in Settings → Repositories.",
   "system-git":
     "Add a token in Settings → Repositories for a github.com or gitlab.com forum; elsewhere, give your system git an SSH key or a credential helper that can push to it.",
+  collaboration:
+    "Get a new token from the server’s sign-in page and paste it under Settings → Collaboration.",
 };
+
+const HOSTED_FORUM_URL =
+  /^(.*?)\/git\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.git\/?$/i;
+
+/**
+ * The collaboration server a hosted forum's remote (`<server>/git/<id>.git`)
+ * is on, or null for any other URL. Pass `serverUrl` to require that it is
+ * that server's: a URL alone cannot say it is the configured one.
+ */
+export function hostedForumServer(
+  remote: string | null | undefined,
+  serverUrl?: string | null,
+): string | null {
+  const match = HOSTED_FORUM_URL.exec((remote ?? "").trim());
+  if (!match) return null;
+  const server = match[1];
+  if (serverUrl !== undefined && server !== (serverUrl ?? "").replace(/\/+$/, "")) return null;
+  return server;
+}
+
+/** The server's `/sign-in` page, where a token comes from (backend `sign_in_page`). */
+export function signInPageUrl(serverUrl: string): string {
+  return `${serverUrl.replace(/\/+$/, "")}/sign-in`;
+}
 
 /**
  * The page a forum's remote can be opened at in a browser, or null.
@@ -457,7 +507,32 @@ export function forumWebUrl(remote: string): string | null {
  * where to change it, or that the forum could not be reached, or git's message.
  * A refusal is never worded as "unreachable", and only a refusal names a token.
  */
-export function publishErrorNotice(error: PublishError): { headline: string; detail: string } {
+export function publishErrorNotice(
+  error: PublishError,
+  /** The collaboration server's address, for the sign-in link. */
+  serverUrl?: string | null,
+): { headline: string; detail: string; link?: { href: string; label: string } } {
+  if (error.reason === "rule") {
+    return {
+      headline: "The server refused a post under one of the forum’s rules.",
+      detail: error.message,
+    };
+  }
+  if (error.reason === "no_access") {
+    return {
+      headline: "The collaboration server turned this account away.",
+      detail: error.message,
+    };
+  }
+  if (error.reason === "refused" && error.credential === "collaboration") {
+    return {
+      headline: "The collaboration sign-in was refused by the server.",
+      detail: CREDENTIAL_FIXES.collaboration,
+      ...(serverUrl
+        ? { link: { href: signInPageUrl(serverUrl), label: "Open the sign-in page" } }
+        : {}),
+    };
+  }
   if (error.reason === "refused") {
     return {
       headline: `${CREDENTIAL_NAMES[error.credential]} ${
@@ -483,6 +558,16 @@ async function unwrap<T>(response: Response): Promise<T> {
     throw new Error(detail || `Request failed with ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+/** A refused request's `detail` sentence, or null when the body has none. */
+async function detailOf(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.clone().json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchForumStatus(
@@ -568,13 +653,17 @@ export async function continueDebate(
   models: Partial<Record<DebateRoleName, string | null>> = {}
 ): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
-  return unwrap(
-    await fetch(`/api/debates/continue?${params}`, {
-      method: "POST",
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ rounds, models }),
-    })
-  );
+  const response = await fetch(`/api/debates/continue?${params}`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ rounds, models }),
+  });
+  if (response.status === 409) {
+    // The one-run rule of a hosted forum's server: say its sentence, not JSON.
+    const detail = await detailOf(response);
+    if (detail) throw new Error(detail);
+  }
+  return unwrap<ForumThread>(response);
 }
 
 /**

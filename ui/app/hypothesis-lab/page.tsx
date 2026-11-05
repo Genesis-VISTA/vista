@@ -29,7 +29,9 @@ import {
   liveRunLine,
   modelsOf,
   noRoleModels,
+  hostedForumServer,
   readablePosts,
+  runnerName,
   simulationStanding,
   threadStatusLabel,
   listDebates,
@@ -38,6 +40,7 @@ import {
   publishErrorNotice,
 } from "@/lib/debates";
 import { useAgentSettings } from "@/lib/agent-settings";
+import { useCollaboration } from "@/lib/collaboration";
 import { displayModelName } from "@/lib/models";
 import { useActiveProject } from "@/lib/projects";
 
@@ -150,7 +153,7 @@ function Working({ activity, since }: { activity: string; since: string | null }
 }
 
 /** Another install's run, as the thread shows it; re-said every half minute. */
-function PeerRun({ thread }: { thread: ForumThread }) {
+function PeerRun({ thread, posts }: { thread: ForumThread; posts: DebatePost[] }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30_000);
@@ -160,7 +163,7 @@ function PeerRun({ thread }: { thread: ForumThread }) {
   return (
     <p className="debate-working" aria-live="polite">
       <span className="debate-working__pulse" aria-hidden="true" />
-      {liveRunLine(thread.live_run, now)}
+      {liveRunLine(thread.live_run, now, runnerName(thread.live_run, posts))}
     </p>
   );
 }
@@ -191,6 +194,7 @@ function DebatesPage() {
   const [rounds, setRounds] = useState(5);
   const [message, setMessage] = useState("");
   const { settings: agentSettings } = useAgentSettings();
+  const collab = useCollaboration();
   /** A model per role for the debate being opened; null is the default. */
   const [roleModels, setRoleModels] = useState<RoleModels>(noRoleModels);
   /** The same for Continue, starting from the models this install last used here. */
@@ -414,7 +418,8 @@ function DebatesPage() {
       );
       await reload(state.thread.thread_id);
     } catch (err) {
-      setError(String(err));
+      // The server's own sentence for a refused Continue (409), not "Error: ".
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -455,14 +460,29 @@ function DebatesPage() {
   // Why posts are not reaching the forum. An error, so it is drawn as one, and
   // it sits on the open thread, whose posts are the ones marked "not yet
   // published". With no thread open it falls back to the top.
-  const publishNotice = forum?.publish_error ? (
+  const unpublishedCount = forum?.unpublished ?? 0;
+  const publishDetails = forum?.publish_error
+    ? publishErrorNotice(
+        forum.publish_error,
+        hostedForumServer(forum.remote) ?? collab.status?.url ?? null,
+      )
+    : null;
+  const publishNotice = publishDetails ? (
     <p className="debate-publish-error" role="alert">
-      <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
-      {publishErrorNotice(forum.publish_error).detail}
-      {forum.unpublished > 0 && (
+      <strong>{publishDetails.headline}</strong> {publishDetails.detail}
+      {publishDetails.link && (
         <>
           {" "}
-          {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
+          <a href={publishDetails.link.href} target="_blank" rel="noreferrer">
+            {publishDetails.link.label}
+          </a>
+          .
+        </>
+      )}
+      {unpublishedCount > 0 && (
+        <>
+          {" "}
+          {unpublishedCount === 1 ? "1 post is" : `${unpublishedCount} posts are`} kept here,
           marked <em>not yet published</em>, until it works.
         </>
       )}
@@ -780,7 +800,7 @@ function DebatesPage() {
                   since={thread.run.activity_since}
                 />
               )}
-              <PeerRun thread={thread} />
+              <PeerRun thread={thread} posts={allPosts} />
 
               <DebateThread posts={posts} />
 

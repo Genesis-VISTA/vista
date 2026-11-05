@@ -71,9 +71,11 @@ router = APIRouter(prefix="/projects", tags=["debates"])
 class PublishError(BaseModel):
     """Why posts did not reach the forum, for the lab page to explain (design D7)."""
 
-    reason: Literal["refused", "rule", "unreachable", "failed"]
+    reason: Literal["refused", "no_access", "rule", "unreachable", "failed"]
     """
-    `refused`: the credential was turned away. `rule`: a hosted forum's server
+    `refused`: the credential was turned away. `no_access`: a hosted forum's
+    server has no forum this account may use (deleted, or not in its team).
+    `rule`: a hosted forum's server
     refused the push under one of its rules, which `message` names.
     `unreachable`: the forge was not reached.
     """

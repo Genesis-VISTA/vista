@@ -6637,6 +6637,16 @@ textarea.input:focus {
   );
 }
 
+.debate-post__verified {
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
 .debate-post__unverified {
   border: 1px solid var(--brand-2);
   color: var(--brand-2);

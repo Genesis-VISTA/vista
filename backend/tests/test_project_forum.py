@@ -647,6 +647,20 @@ async def test_a_refused_sign_in_is_not_a_forum_that_cannot_be_reached(
     assert "sign-in-token-1234" not in str(told)
 
 
+async def test_a_forum_the_account_may_not_use_is_no_access_not_a_refused_sign_in(
+    forum_home, tmp_path
+):
+    client = _hosted_client(tmp_path)
+    client._record_failure(
+        "fatal: unable to access 'https://obsidian.test/': "
+        "The requested URL returned error: 404"
+    )
+    told = await client.publish_error()
+    assert told is not None
+    assert (told["reason"], told["credential"]) == ("no_access", "collaboration")
+    assert "no forum your account may use" in told["message"]
+
+
 async def test_a_rule_the_server_refused_is_reported_by_its_message(
     forum_home, tmp_path
 ):
