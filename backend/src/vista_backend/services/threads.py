@@ -3,7 +3,7 @@ Shared threads: this install's copy of every thread on a project's forum.
 
 `debate.py` keeps what this install's own runs did. This module keeps what the
 forum holds, whoever wrote it, so that the Hypothesis Lab can list, show and
-join a thread another install opened (openspec/changes/forum-shared-threads).
+join a thread another install opened (openspec/changes/archive/2026-11-05-forum-shared-threads).
 
 Everything written here is a copy of git and can be rebuilt by syncing: nothing
 here is a fact the forum does not hold, except which threads went missing.

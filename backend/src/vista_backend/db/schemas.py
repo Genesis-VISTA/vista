@@ -1584,7 +1584,7 @@ class DebatePostTable(DebatePostBase, table=True):
 
 
 # ---------------------------------------------------------------------------
-# Shared threads (openspec/changes/forum-shared-threads)
+# Shared threads (openspec/changes/archive/2026-11-05-forum-shared-threads)
 #
 # Every thread on a project's forum, whichever install opened it, copied from
 # git. `debate_run` stays "a run this install executed", and `debate_post` the

@@ -1,6 +1,6 @@
 """
 Shared threads: every thread on a project's forum, copied into the tables
-(openspec/changes/forum-shared-threads, group 2).
+(openspec/changes/archive/2026-11-05-forum-shared-threads, group 2).
 
 The projection tests use hand-built `Thread`s, like `test_debate_service.py`.
 The sync tests run two real forum clients against one bare repository, like

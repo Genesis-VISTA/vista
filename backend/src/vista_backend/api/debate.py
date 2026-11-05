@@ -3,7 +3,7 @@ Hypothesis Lab API — list a project's threads, open one, watch it, join it.
 
 Scoped under a project (`project_service.get_project_by_name` 404s an unknown
 one), and keyed by forum thread rather than by this install's run
-(openspec/changes/forum-shared-threads, design D8): a thread may have been
+(openspec/changes/archive/2026-11-05-forum-shared-threads, design D8): a thread may have been
 opened by another install, and may hold runs from several. Routes stay thin:
 what the forum holds is copied by `services/threads.py`, this install's runs are
 `services/debate.py`, and the argument is in `agents/forum/`.

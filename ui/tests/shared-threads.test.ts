@@ -13,7 +13,7 @@ import {
 } from "@/lib/debates";
 
 /*
- * A shared Hypothesis Lab (openspec/changes/forum-shared-threads): every thread
+ * A shared Hypothesis Lab (openspec/changes/archive/2026-11-05-forum-shared-threads): every thread
  * on the forum is listed, anyone may post or continue it with their own agents
  * while no run is live, and only the install that opened it may close it.
  */
