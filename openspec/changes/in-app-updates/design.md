@@ -150,8 +150,12 @@ inputs travel in the environment (`VISTA_UPDATE_*`), never its command line, so 
 `pgrep -f "$dir/"` can't match the helper itself. The helpers ship as plain files in the
 window's `resources/` (`extraResource`, not inside `app.asar`, which no shell can read), and
 Electron copies the platform's one into the update's folder before starting it. On Windows it
-runs as `powershell -ExecutionPolicy Bypass -WindowStyle Hidden -File`, spawned detached and
-hidden, so no console window flashes.
+can't be spawned detached: Windows PowerShell started with no console (what `detached` means
+there) exits before running its script, and a child that isn't detached dies with VISTA. So
+Electron waits for a short hidden PowerShell hop, which starts the helper with
+`Start-Process -WindowStyle Hidden` (a hidden console of its own, outside VISTA's process tree)
+and exits; the helper's path reaches it in the environment. No window shows. The helper's own
+output goes nowhere there, so it writes everything to `update.log` itself.
 
 The helper also starts the update status window (D9) before it waits, and writes each step to
 the status file it shows.

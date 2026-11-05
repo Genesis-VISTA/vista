@@ -2,8 +2,11 @@
 # (openspec change `in-app-updates`, design D5). Windows; apply-update.sh is the
 # macOS and Linux twin, and says more about each step.
 #
-# Started hidden and detached by the window from the update's own folder in
-# VISTA_HOME\updates, with its inputs in the environment:
+# Started hidden by the window from the update's own folder in VISTA_HOME\updates,
+# through a short PowerShell hop that gives it a console of its own (a Windows
+# PowerShell started without one exits before running its script; see
+# helperCommand in update-bridge.js). Its own output goes nowhere, so everything
+# worth knowing is written to update.log with Say. Its inputs are in the environment:
 #
 #   VISTA_UPDATE_INSTALL_DIR  the installed package (what the installer replaces)
 #   VISTA_UPDATE_VERSION      the version being installed

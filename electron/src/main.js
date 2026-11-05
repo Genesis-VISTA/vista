@@ -585,14 +585,40 @@ async function spawnUpdateHelper(ready, root) {
     const child = spawn(run.command, run.args, {
       cwd: ready.folder,
       env: run.env,
-      detached: true,
+      detached: !run.wait,
       windowsHide: true,
       stdio: ['ignore', log, log],
     });
-    child.unref();
+    if (run.wait) {
+      // Windows: the hop that starts the helper, which takes about half a second.
+      await helperStarted(child);
+    } else {
+      child.unref();
+    }
   } finally {
     closeSync(log);
   }
+}
+
+/**
+ * Wait for the Windows hop to exit, and refuse the restart if it did not start
+ * the helper: VISTA then stays open and says so.
+ *
+ * @param {import('node:child_process').ChildProcess} child
+ */
+function helperStarted(child) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('the helper took more than 30 seconds to start'));
+    }, 30_000);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(undefined);
+      else reject(new Error(`the helper could not be started (status ${code}); update.log says why`));
+    });
+  });
 }
 
 ipcMain.handle('app:restart-to-update', async (event, version) => {

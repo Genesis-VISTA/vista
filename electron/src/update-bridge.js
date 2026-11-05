@@ -136,9 +136,18 @@ export async function checkRestartRequest(request) {
 }
 
 /**
- * How to run the helper, detached, once it is copied into the update's folder.
- * Its inputs travel in the environment, never its command line: the helper waits
- * until no process's command line names the install folder, and must not be one.
+ * How to run the helper once it is copied into the update's folder. Its inputs
+ * travel in the environment, never its command line: the helper waits until no
+ * process's command line names the install folder, and must not be one.
+ *
+ * On macOS and Linux the helper is started detached (its own session), so it
+ * outlives VISTA. On Windows it cannot be: Windows PowerShell started with no
+ * console, which is what Node's `detached` means there, exits at once without
+ * running its script; and a child that is not detached is killed with VISTA.
+ * So `wait` is set, and the command is a short PowerShell hop that VISTA waits
+ * for: it starts the helper with Start-Process, which gives it a hidden console
+ * of its own outside VISTA's process tree, and exits. The helper's path reaches
+ * the hop as VISTA_UPDATE_HELPER, so no quoting can go wrong.
  *
  * `statusWindow` is the copied window's executable, which the helper starts as
  * the update status window (D9); without it the update runs with none.
@@ -158,14 +167,24 @@ export function helperCommand({ platform, helper, packageRoot, version, folder, 
   delete vars.VISTA_UPDATE_STATUS_WINDOW;
   if (statusWindow) vars.VISTA_UPDATE_STATUS_WINDOW = statusWindow;
   if (platform === 'win32') {
+    vars.VISTA_UPDATE_HELPER = helper;
     return {
       command: 'powershell.exe',
-      args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', helper],
+      args: [...POWERSHELL, '-WindowStyle', 'Hidden', '-Command', WINDOWS_HOP],
       env: vars,
+      wait: true,
     };
   }
-  return { command: '/bin/bash', args: [helper], env: vars };
+  return { command: '/bin/bash', args: [helper], env: vars, wait: false };
 }
+
+const POWERSHELL = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'];
+
+/** The Windows hop (helperCommand): start the helper with a console of its own, then exit. */
+export const WINDOWS_HOP =
+  "$ErrorActionPreference = 'Stop'; " +
+  'Start-Process -FilePath powershell.exe -WindowStyle Hidden -WorkingDirectory $env:VISTA_UPDATE_CACHE ' +
+  `-ArgumentList @(${POWERSHELL.map((a) => `'${a}'`).join(',')},'-File',('"' + $env:VISTA_UPDATE_HELPER + '"'))`;
 
 /**
  * The helper shipped with this window, for each platform.

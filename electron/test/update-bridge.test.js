@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
-  checkRestartRequest, handOff, helperCommand, requiredFiles, takeUpdateFailure,
+  checkRestartRequest, handOff, helperCommand, requiredFiles, takeUpdateFailure, WINDOWS_HOP,
 } from '../src/update-bridge.js';
 
 const ORIGIN = 'http://127.0.0.1:3000';
@@ -150,8 +150,35 @@ test('the helper gets its inputs in the environment, never on its command line',
     env: {},
   });
   assert.equal(windows.command, 'powershell.exe');
-  assert.deepEqual(windows.args.slice(-2), ['-File', 'C:\\Users\\r\\.vista\\updates\\0.2.5\\apply-update.ps1']);
-  assert.ok(windows.args.includes('Hidden'));
+  assert.ok(!windows.args.join(' ').includes('AppData'));
+  assert.equal(windows.env.VISTA_UPDATE_INSTALL_DIR, 'C:\\Users\\r\\AppData\\Local\\VISTA\\app');
+  assert.equal(run.wait, false);
+});
+
+// Windows PowerShell started with no console (Node's `detached` on Windows)
+// exits before running its script, and a child that is not detached dies with
+// VISTA: so a hop, which VISTA waits for, starts the helper with Start-Process.
+test('on Windows a hop that VISTA waits for starts the helper, whose path is only in the environment', () => {
+  const helper = 'C:\\Users\\Jo Smith\\.vista\\updates\\0.2.5\\apply-update.ps1';
+  const run = helperCommand({
+    platform: 'win32',
+    helper,
+    packageRoot: 'C:\\Users\\Jo Smith\\AppData\\Local\\VISTA\\app',
+    version: VERSION,
+    folder: 'C:\\Users\\Jo Smith\\.vista\\updates\\0.2.5',
+    vistaHome: 'C:\\Users\\Jo Smith\\.vista',
+    installer: 'install.ps1',
+    env: {},
+  });
+  assert.equal(run.wait, true);
+  assert.equal(run.command, 'powershell.exe');
+  assert.deepEqual(run.args.slice(-2), ['-Command', WINDOWS_HOP]);
+  assert.ok(run.args.includes('Hidden'));
+  assert.ok(!run.args.join(' ').includes('Jo Smith'));
+  assert.equal(run.env.VISTA_UPDATE_HELPER, helper);
+  assert.match(WINDOWS_HOP, /\$ErrorActionPreference = 'Stop'/);
+  assert.match(WINDOWS_HOP, /Start-Process -FilePath powershell\.exe -WindowStyle Hidden -WorkingDirectory \$env:VISTA_UPDATE_CACHE/);
+  assert.match(WINDOWS_HOP, /'-File',\('"' \+ \$env:VISTA_UPDATE_HELPER \+ '"'\)/);
 });
 
 test('the helper is told the status window only when there is a copy of it', () => {
