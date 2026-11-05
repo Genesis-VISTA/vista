@@ -130,9 +130,13 @@ sign-in being refused. A rule refusal (`remote:` lines from D3) is reported by i
 - **Create**: when the collaboration server is set and reachable with a sign-in, project
   creation calls `POST /forums` and stores its `git_url` as the project's forum URL. A failure
   creates the project with no forum and says why, so creating a project never fails on the
-  server.
-- **Publish**: the first publish of a project with a hosted forum calls `PUT /forums/{id}/item`
-  after the item exists.
+  server. On `POST /projects`, a blank `forum_repo_url` means a hosted forum, a URL means that
+  repository, and `?hosted_forum_wanted=false` means none; the response's `forum_notice` says
+  why no hosted forum was made.
+- **Publish**: every publish of a project with a hosted forum calls `PUT /forums/{id}/item`
+  after the item exists, ignoring `403`/`404`/`409`. The first links it; later ones are no-ops,
+  and a project moved onto the server after its first publish is linked by its next. A project
+  published as a new item gets no forum, since its forum is linked to the first item.
 - **Import**: a manifest with `"forum": "hosted"` gets its URL from `GET /items/{id}/forum`.
 - **Copy**: `POST /items/{id}/copy` on the server creates a new forum linked to the copy when
   the source item has one. This is the server's own record, so it reads no manifest.
@@ -140,7 +144,12 @@ sign-in being refused. A rule refusal (`remote:` lines from D3) is reported by i
   ignores `409` for a linked one.
 - **Move** (project settings): `POST /forums`, then push every local `vista-forum/threads/*`
   ref (after a sync of the old forum) with `-o vista-import`, then switch the project's URL.
-  Any failure leaves the URL unchanged, and the empty forum is deleted.
+  Any failure leaves the URL unchanged, and the empty forum is deleted. The route is
+  `POST /projects/{name}/forum/host`.
+- **Continue**: on a hosted forum, Continue posts its `RUN` to the server before it answers,
+  so a run refused under the one-run rule is a `409` ("Another user is continuing this
+  debate.") and nothing starts. A forge forum keeps posting the `RUN` from the run itself,
+  local first.
 
 ### D6: Verified names come from push records, cached per post
 
@@ -148,7 +157,13 @@ On each thread sync, the backend asks `GET /forums/{id}/pushes?after=<last>` and
 `pusher_name` on `forum_post` (a nullable column added by this change). The lab shows it with
 a "verified" mark. Role prompts present such a post as "<name> (teammate, verified by the
 server)" while keeping the "not your operator" framing of `agents/forum/roles.py`. Imported
-posts get no name.
+posts get no name. The cursor into the push records lives in `pushers.json` beside the forum's
+outbox, not in `vista.db`, so a database reset cannot leave it pointing past records the new
+database never stored.
+
+A post the server refuses under a rule, other than a `RUN`, stays unpublished and is retried
+at each sync, as any refused post is. The lab's own rules (Close only for the opener) keep
+the interface from writing one.
 
 ## Risks / Trade-offs
 
