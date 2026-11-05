@@ -39,6 +39,11 @@ class VersionInfo(BaseModel):
     """
     checked_at: str | None = None
     """ When the last successful check finished (ISO 8601, UTC), if checks are on. """
+    pending: bool = False
+    """
+    Checks are on and this backend has not finished its first check yet (the one
+    it makes on start), so `latest` may be about to change.
+    """
     latest: str | None = None
     """ A newer release's version, when the last check found one. """
     notes_url: str | None = None
@@ -76,6 +81,7 @@ async def _version_info(session: SessionDep) -> VersionInfo:
     if info.checks != "on":
         return info
     info.checked_at = row.update_checked_at
+    info.pending = not update_checker.attempted
     release = _offered(row)
     if release is not None:
         info.latest = release.version

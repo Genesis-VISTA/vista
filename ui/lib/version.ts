@@ -22,6 +22,8 @@ export type VersionInfo = {
   /** `dev_build`: a checkout or local build, which never checks. */
   checks: "on" | "off" | "dev_build";
   checked_at: string | null;
+  /** The backend has not finished its first check since it started, so `latest` may be about to change. */
+  pending?: boolean;
   /** A newer release's version, when the last check found one. */
   latest: string | null;
   notes_url: string | null;
@@ -83,6 +85,8 @@ export const STALE_MS = 5 * 60_000;
 /** How often the answer is refreshed while anything shows it. */
 export const REFRESH_MS = 30 * 60_000;
 const POLL_MS = 1000;
+/** How soon to ask again while the backend's first check is still out (`pending`). */
+export const PENDING_MS = 3000;
 
 const initial = (): Snapshot => ({
   info: null,
@@ -96,6 +100,7 @@ let snapshot: Snapshot = initial();
 let request = 0;
 let timer: ReturnType<typeof setInterval> | null = null;
 let polling: ReturnType<typeof setTimeout> | null = null;
+let soon: ReturnType<typeof setTimeout> | null = null;
 const listeners = new Set<() => void>();
 
 function set(update: Partial<Snapshot>): void {
@@ -120,6 +125,13 @@ async function load(path: string, init?: RequestInit): Promise<void> {
     const info = await ask(path, init);
     if (id !== request) return;
     set({ info, error: null, checking: false, checkedAt: Date.now() });
+    // The page can load before the backend's startup check lands: ask again soon.
+    if (info.pending && soon === null) {
+      soon = setTimeout(() => {
+        soon = null;
+        void refreshVersion();
+      }, PENDING_MS);
+    }
   } catch (e) {
     if (id !== request) return;
     set({ error: e instanceof Error ? e.message : "request failed", checking: false, checkedAt: Date.now() });
@@ -209,8 +221,10 @@ export function resetVersionForTests(): void {
   request++;
   if (timer !== null) clearInterval(timer);
   if (polling !== null) clearTimeout(polling);
+  if (soon !== null) clearTimeout(soon);
   timer = null;
   polling = null;
+  soon = null;
   snapshot = initial();
 }
 

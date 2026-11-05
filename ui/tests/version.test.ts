@@ -1,9 +1,12 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   activityLines,
   checksSentence,
   dataResetSentence,
+  PENDING_MS,
   progressText,
+  refreshVersion,
+  resetVersionForTests,
   relativeTime,
   updateAvailable,
   vistaApp,
@@ -113,5 +116,30 @@ describe("vistaApp", () => {
     expect(vistaApp()).toBeNull();
     window.vistaApp = { isVistaApp: true, restartToUpdate: async () => ({ ok: true }) };
     expect(vistaApp()).not.toBeNull();
+  });
+});
+
+describe("refreshVersion while the backend's first check is out", () => {
+  afterEach(() => {
+    resetVersionForTests();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("asks again soon until the check lands, then stops", async () => {
+    vi.useFakeTimers();
+    const answers = [info({ pending: true }), info({ pending: true }), info({ pending: false, latest: "0.2.5" })];
+    const fetch = vi.fn(async () => new Response(JSON.stringify(answers.shift()), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await refreshVersion();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(PENDING_MS);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(PENDING_MS);
+    expect(fetch).toHaveBeenCalledTimes(3);
+    // The check has landed: no more quick re-asks.
+    await vi.advanceTimersByTimeAsync(PENDING_MS * 10);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 });

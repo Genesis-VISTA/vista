@@ -81,6 +81,7 @@ def github(session, monkeypatch):
         update_checker, "session_factory", lambda: AsyncSession(session.bind)
     )
     monkeypatch.setattr(update_checker, "status", UpdateStatus())
+    monkeypatch.setattr(update_checker, "attempted", False)
     monkeypatch.setattr(settings, "version", "0.2.3")
     return fake
 
@@ -109,6 +110,7 @@ async def test_a_release_reports_its_version_and_commit(session, github, monkeyp
     assert got["commit"] == "abc1234def"
     assert got["checks"] == "on"
     assert got["latest"] is None  # nothing checked yet in this process
+    assert got["pending"] is True  # so the page asks again soon
     assert github.requests == []  # GET /version never asks GitHub itself
 
 
@@ -157,6 +159,7 @@ async def test_check_now_offers_a_newer_release(session, github):
     assert got["notes_url"] == "https://github.com/x/releases/tag/v0.2.5"
     assert got["data_reset"] is True  # 0.2.3 is older than 0.2.4
     assert got["checked_at"] is not None
+    assert got["pending"] is False
     # And GET /version keeps saying so without asking again.
     assert (await _call(session))["latest"] == "0.2.5"
     assert github.requests == ["latest"]
@@ -185,6 +188,8 @@ async def test_a_rate_limited_check_is_silent(session, github, status):
     assert got["checks"] == "on"
     assert got["latest"] is None
     assert got["checked_at"] is None
+    # A failed check is finished too: the page goes back to its slow pace.
+    assert got["pending"] is False
 
 
 @pytest.mark.anyio

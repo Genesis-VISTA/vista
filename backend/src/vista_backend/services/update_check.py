@@ -286,6 +286,11 @@ class UpdateChecker:
     now: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
     status: UpdateStatus = field(default_factory=UpdateStatus)
+    attempted: bool = False
+    """
+    Whether this process has finished a check, whatever came of it: until then
+    the page asks again soon, as the startup check may land just after it loads.
+    """
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
@@ -303,6 +308,12 @@ class UpdateChecker:
         """
         if is_dev_build(self.installed):
             return None
+        try:
+            return await self._check_now()
+        finally:
+            self.attempted = True
+
+    async def _check_now(self) -> bool | None:
         async with self._lock:
             async with self.session_factory() as db:
                 row = await local_settings.get(db)
