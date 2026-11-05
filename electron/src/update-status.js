@@ -19,10 +19,28 @@
 // Everything here is plain Node, so the unit tests run it without Electron.
 
 import { execFile } from 'node:child_process';
-import { cp, readFile, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { promisify } from 'node:util';
+
+/**
+ * The file system without Electron's archive support. Electron's own `fs` reads
+ * a `.asar` as the folder inside it, so copying the window with it fails on
+ * resources/app.asar ("Invalid package"); `original-fs` copies it as the file
+ * it is. Plain Node, as in the unit tests, has no `original-fs` and no archives.
+ *
+ * @returns {typeof import('node:fs')}
+ */
+function plainFs() {
+  const require = createRequire(import.meta.url);
+  try {
+    return require('original-fs');
+  } catch {
+    return require('node:fs');
+  }
+}
 
 export const STATUS_FILE = 'status.json';
 export const MARKER_FILE = 'status-window.json';
@@ -58,7 +76,8 @@ export function windowCopyPaths({ platform, packageRoot, folder }) {
 
 /**
  * Copy VISTA's window into the update's folder. On macOS `cp -c` clones it,
- * so it is instant and takes no space; elsewhere it is a real copy.
+ * so it is instant and takes no space; elsewhere it is a real copy, made
+ * without Electron's archive support (plainFs).
  *
  * @param {{ platform: NodeJS.Platform, packageRoot: string, folder: string }} where
  * @param {{ run?: (file: string, args: string[]) => Promise<unknown> }} [deps]
@@ -72,7 +91,7 @@ export async function copyWindow(where, { run = promisify(execFile) } = {}) {
     await run('/bin/mkdir', ['-p', path.dirname(target)]);
     await run('/bin/cp', ['-cR', source, target]);
   } else {
-    await cp(source, target, { recursive: true, verbatimSymlinks: true });
+    await plainFs().promises.cp(source, target, { recursive: true, verbatimSymlinks: true });
   }
   if (!existsSync(executable)) throw new Error(`the copy has no ${path.basename(executable)}`);
   return executable;

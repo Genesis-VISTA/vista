@@ -291,6 +291,40 @@ test('the main window has the update bridge; one not started from a package refu
 
 // ─── the update status window (in-app-updates D9) ───────────────────────────
 
+// Run in Electron, where `fs` reads a .asar as a folder: a Windows or Linux
+// window has resources/app.asar, which the copy must carry as the file it is.
+test('the window copy for Windows and Linux carries app.asar whole under Electron', async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'vista-window-copy-'));
+  const window = path.join(directory, 'package', 'app', 'window');
+  mkdirSync(path.join(window, 'resources'), { recursive: true });
+  const binary = /** @type {string} */ (/** @type {unknown} */ (electronBinary));
+  const asars = [path.join(path.dirname(binary), '..', 'Resources'), path.join(path.dirname(binary), 'resources')]
+    .map((resources) => path.join(resources, 'default_app.asar'))
+    .filter((file) => existsSync(file));
+  expect(asars.length).toBeGreaterThan(0);
+  writeFileSync(path.join(window, 'resources', 'app.asar'), readFileSync(asars[0]));
+  writeFileSync(path.join(window, 'VISTA'), 'window');
+  const folder = path.join(directory, 'updates', '0.2.6');
+  mkdirSync(folder, { recursive: true });
+  const script = path.join(directory, 'copy.mjs');
+  const module = new URL('../src/update-status.js', import.meta.url).href;
+  writeFileSync(
+    script,
+    `import { copyWindow } from ${JSON.stringify(module)};\n` +
+      `console.log(await copyWindow({ platform: 'linux', packageRoot: ${JSON.stringify(path.join(directory, 'package'))}, folder: ${JSON.stringify(folder)} }));\n`,
+  );
+  const result = await new Promise((resolve) => {
+    const child = spawn(binary, [script], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } });
+    let output = '';
+    child.stdout.on('data', (/** @type {Buffer} */ chunk) => (output += chunk));
+    child.stderr.on('data', (/** @type {Buffer} */ chunk) => (output += chunk));
+    child.on('exit', (/** @type {number | null} */ code) => resolve({ code, output }));
+  });
+  expect(result).toEqual({ code: 0, output: `${path.join(folder, 'window', 'VISTA')}\n` });
+  expect(readFileSync(path.join(folder, 'window', 'resources', 'app.asar'))).toEqual(readFileSync(asars[0]));
+  rmSync(directory, { recursive: true, force: true });
+});
+
 test('the update status window shows each step and closes when its marker goes', async () => {
   const directory = mkdtempSync(path.join(tmpdir(), 'vista-update-status-'));
   const home = path.join(directory, 'home');
