@@ -26,6 +26,7 @@ from ..db.schemas import (
     ItemVersionTable,
     VersionCreate,
 )
+from . import forums
 from .errors import NotFound
 from .identity import User
 from .teams import get_team, visible_teams
@@ -200,6 +201,8 @@ async def copy_item(
     session.add(item)
     # The item before its version: nothing orders the inserts by their key.
     await session.flush()
+    # A forum is the original's own: the copy gets a new, empty one.
+    await forums.copy_forum_row(session, source.id, item.id, user)
     session.add(
         ItemVersionTable(
             item_id=item.id,

@@ -1,14 +1,14 @@
 ## 0. Prerequisites
 
-- [ ] 0.1 `forum-shared-threads` applied. Verify its tasks are all checked and `./scripts/ci-local.sh backend ui` passes before starting group 1
+- [x] 0.1 `forum-shared-threads` applied. Verify its tasks are all checked and `./scripts/ci-local.sh backend ui` passes before starting group 1
 
 ## 1. Collaboration server: hosting
 
-- [ ] 1.1 `forum` and `forum_push` tables and `services/forums.py` (create, link once, find by item, delete unlinked, access by owner or item team). Verify in `collaboration_server/tests/test_forums.py`
-- [ ] 1.2 Forum routes (design D1) with `404` for anyone without access. Verify in `test_forums.py`
-- [ ] 1.3 `/git/{id}.git/*` passthrough to `git http-backend` (design D2), with streamed bodies, `REMOTE_USER` and git ≥ 2.34 required for forums only. Verify with a `uvicorn` server on a loopback port in `dev-headers` mode: real `git clone` and `git push` succeed for a member and get `404` for a non-member
-- [ ] 1.4 Hooks (design D3): thread refs only, no force-push or deletion, `CLOSED` from the root's pusher only, no second live `RUN` (server time), `vista-import` push option, `forum_push` rows. Verify each refusal and record with real git in `test_forums.py`
-- [ ] 1.5 `POST /items/{id}/copy` gives the copy a new forum when the source has one. Verify in `collaboration_server/tests/test_teams.py`
+- [x] 1.1 `forum` and `forum_push` tables and `services/forums.py` (create, link once, find by item, delete unlinked, access by owner or item team). Verify in `collaboration_server/tests/test_forums.py`
+- [x] 1.2 Forum routes (design D1) with `404` for anyone without access. Verify in `test_forums.py`
+- [x] 1.3 `/git/{id}.git/*` passthrough to `git http-backend` (design D2), with streamed bodies, `REMOTE_USER` and git ≥ 2.34 required for forums only. Verify with a `uvicorn` server on a loopback port in `dev-headers` mode: real `git clone` and `git push` succeed for a member and get `404` for a non-member
+- [x] 1.4 Hooks (design D3): thread refs only, no force-push or deletion, `CLOSED` from the root's pusher only, no second live `RUN` (server time), `vista-import` push option, `forum_push` rows. Verify each refusal and record with real git in `test_forums.py`
+- [x] 1.5 `POST /items/{id}/copy` gives the copy a new forum when the source has one. Verify in `collaboration_server/tests/test_teams.py`
 
 ## 2. Backend
 

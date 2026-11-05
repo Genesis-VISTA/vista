@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from vista_collaboration_server.db.schemas import PUBLIC_TEAM_ID
+from vista_collaboration_server.services import forums
 
 from conftest import INSTALL_ID, OTHER_INSTALL_ID, PUBLIC, headers
 
@@ -356,3 +357,53 @@ async def test_a_blob_is_named_only_by_its_uploader_or_who_sees_it(client, other
 
 def test_the_public_teams_id_is_fixed():
     assert str(PUBLIC_TEAM_ID) == PUBLIC
+
+
+# ---------------------------------------------------------------------------
+# A copy's forum
+# ---------------------------------------------------------------------------
+
+needs_git = pytest.mark.skipif(
+    not forums.git_usable(), reason="needs git 2.34 or later"
+)
+
+
+@needs_git
+async def test_a_copy_of_an_item_with_a_forum_gets_a_new_empty_one(client, other):
+    mine = await _team(client, "mine")
+    theirs = await _team(client, "theirs")
+    await client.post(
+        f"/teams/{theirs['id']}/members", json={"sub": str(OTHER_INSTALL_ID)}
+    )
+    original = await _item(client, mine["id"], kind="project", name="proj")
+    forum = (await client.post("/forums")).json()
+    linked = await client.put(
+        f"/forums/{forum['id']}/item", json={"item_id": original["id"]}
+    )
+    assert linked.status_code == 200, linked.text
+
+    copy = (await _copy(client, original["id"], theirs["id"])).json()
+    res = await client.get(f"/items/{copy['id']}/forum")
+    assert res.status_code == 200, res.text
+    new = res.json()
+    assert new["id"] != forum["id"] and new["item_id"] == copy["id"]
+    assert (await client.get(f"/forums/{new['id']}/pushes")).json() == []
+    # The repository was made with the copy, and is empty.
+    refs = f"/git/{new['id']}.git/info/refs?service=git-upload-pack"
+    assert (await client.get(refs)).status_code == 200
+    # The original's forum is still the original's; the other team cannot read it.
+    assert (await client.get(f"/items/{original['id']}/forum")).json()["id"] == forum[
+        "id"
+    ]
+    assert (await other.get(f"/forums/{forum['id']}/pushes")).status_code == 404
+    gone = f"/git/{forum['id']}.git/info/refs?service=git-upload-pack"
+    assert (await other.get(gone)).status_code == 404
+    assert (await other.get(f"/items/{copy['id']}/forum")).status_code == 200
+
+
+@needs_git
+async def test_a_copy_of_an_item_without_a_forum_has_none(client):
+    team = await _team(client)
+    original = await _item(client, PUBLIC, kind="project")
+    copy = (await _copy(client, original["id"], team["id"])).json()
+    assert (await client.get(f"/items/{copy['id']}/forum")).status_code == 404

@@ -112,8 +112,21 @@ class CollabSettings(BaseSettings):
     `DELETE`, the rollback journal, which is safe there with one server process.
     """
 
+    forum_run_expiry_seconds: float = 2700
+    """
+    How long a debate run (a `RUN` post) stays live without a post of its own
+    or its roster's, by the server's clock: the forum format's run expiry,
+    matching the backend's default. A hosted forum refuses a second `RUN` while
+    one is live (`services/forum_hook.py`).
+    """
+
     max_blob_size: ByteSize = ByteSize(2 * 1024**3)
     """ The largest blob `POST /blobs` or `POST /blobs/stream` accepts, in bytes. """
+
+    @property
+    def forums_dir(self) -> Path:
+        """Where hosted forums live, each a bare git repository `<id>.git`."""
+        return self.data_dir / "forums"
 
     @property
     def blobs_dir(self) -> Path:
