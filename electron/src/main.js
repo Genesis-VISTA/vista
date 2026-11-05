@@ -486,7 +486,9 @@ function runSmokeTest() {
  * @param {string} folder
  */
 function runUpdateStatusWindow(folder) {
-  const cacheRoot = path.join(vistaHome, 'updates');
+  // The marker sits beside the update's folder (VISTA_HOME/updates/<version>),
+  // so the window finds it from its own argument, whatever its environment says.
+  const cacheRoot = path.dirname(path.resolve(folder));
   const win = new BrowserWindow({
     width: 520,
     height: 230,

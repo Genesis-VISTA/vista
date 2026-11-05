@@ -335,9 +335,11 @@ test('the update status window shows each step and closes when its marker goes',
   // The helper's marker, written before it starts the window.
   const marker = path.join(home, 'updates', 'status-window.json');
   writeFileSync(marker, JSON.stringify({ folder }));
+  // The window finds the marker beside its folder, not in VISTA_HOME: here that
+  // names another home, with no marker, and the window must still stay up.
   const application = await electron.launch({
     args: [APP_DIR, `--update-status=${folder}`, ...ROOT_ARGS],
-    env: { ...process.env, VISTA_HOME: home },
+    env: { ...process.env, VISTA_HOME: path.join(directory, 'another-home') },
   });
   const exited = new Promise((resolve) => application.process().once('exit', resolve));
   const page = await application.firstWindow();
