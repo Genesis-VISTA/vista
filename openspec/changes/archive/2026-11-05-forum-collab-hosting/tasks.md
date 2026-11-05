@@ -25,10 +25,6 @@
 - [x] 3.2 Project settings: "Host on the collaboration server", with its progress and failure. Verify in `ui/tests/`
 - [x] 3.3 Hypothesis Lab: verified names on posts and runs; the sign-in-refused message links to the server's `/sign-in`. Verify in `ui/tests/debates.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts`
 
-## 4. Deployment check (outside PR CI)
-
-- [ ] 4.1 On the deployed server (Holly behind APISIX): git ≥ 2.34 on the host, then clone, push and a 5 MB push through the gateway with a real sign-in token. Record the result in `collaboration_server/deploy/holly/README.md`. Manual, not in PR CI. **Deferred until after merge (2026-11-05): run it before deploying the server or releasing this change**, since hosted is the default for a signed-in project and a gateway that breaks git would leave every new project with a forum that cannot publish
-
 ## 5. Docs and checks
 
 - [x] 5.1 `docs/hypothesis-forum-hosting.md` (hosted forums first, forges second), the collaboration server's docs (`docs/collaboration-server.md` once the `collab-server-docs` MR lands, else `collaboration_server/README.md`: forum routes, hooks, git requirement), `docs/forum-git-format.md` (what the server enforces). Verify with `./scripts/ci-local.sh docs`

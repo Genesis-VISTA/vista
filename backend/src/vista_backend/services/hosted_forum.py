@@ -1,6 +1,6 @@
 """
 A project's forum hosted on the collaboration server: its life cycle, from this
-backend's side (openspec/changes/forum-collab-hosting, design D5).
+backend's side (openspec/changes/archive/2026-11-05-forum-collab-hosting, design D5).
 
 The server owns the repository and its rules; this module only asks it for a
 forum when a project is made, links the forum to the project's item when the

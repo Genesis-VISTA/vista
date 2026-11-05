@@ -180,7 +180,7 @@ the account may not use, and `rule` is a refusal by the server's hooks.
 
 - [The gateway in front of the deployed server buffers or limits git's streamed bodies, or
   times them out] → Checked against the deployment (Holly behind Obsidian's APISIX) before
-  release. It is a task outside PR CI.
+  release, outside this change and outside PR CI.
 - [Sign-in tokens expire and can't be renewed, so posts wait unpublished] → They publish at
   the next sync after a new token. The lab says which sign-in was refused and where to get a
   new one.

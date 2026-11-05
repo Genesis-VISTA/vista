@@ -344,10 +344,11 @@ is being read SHALL be logged and SHALL NOT fail the read.
 Saving a project with a forum repository SHALL initialise that project's working
 repository and reach the remote before the save succeeds; an unreachable or
 unauthorised remote SHALL fail the save with git's error. Pushes and fetches
-to an `https://` remote SHALL use the user's Settings token for the remote's host
-(github.com or gitlab.com), and the user's own git credentials otherwise; git
-MUST NOT prompt interactively. A project SHALL NOT hold a token of its own.
-Pointing a project at a repository that already holds threads SHALL join them.
+to a forum hosted on the configured collaboration server SHALL use the researcher's
+collaboration sign-in. Pushes and fetches to another `https://` remote SHALL use the user's
+Settings token for the remote's host (github.com or gitlab.com), and the user's own git
+credentials otherwise; git MUST NOT prompt interactively. A project SHALL NOT hold a token of
+its own. Pointing a project at a repository that already holds threads SHALL join them.
 
 #### Scenario: A typo in the repository URL
 
@@ -374,18 +375,28 @@ Pointing a project at a repository that already holds threads SHALL join them.
 
 #### Scenario: Another host uses the system git
 
-- **GIVEN** a forum on an `https://` host other than github.com or gitlab.com
+- **GIVEN** a forum on an `https://` host other than github.com, gitlab.com or the configured collaboration server
 - **WHEN** git fetches or pushes that forum
 - **THEN** git SHALL send no token, and the system git's credentials SHALL apply
+
+#### Scenario: A hosted forum uses the collaboration sign-in
+
+- **GIVEN** a researcher signed in to the configured collaboration server
+- **WHEN** git fetches or pushes a forum hosted on it
+- **THEN** git SHALL send the researcher's collaboration sign-in and no forge token
 
 ### Requirement: A failed publish names the Settings token or the system git
 
 When posts cannot be published to a project's forum, the Hypothesis Lab SHALL
-say why, from the most recent failed attempt: either the remote refused the
-credential, naming which one was sent (the Settings token for the host, or the
-system git's credentials) and where to change it; or that the remote could not
-be reached; or else git's message. A refused
-credential MUST NOT be reported as the forum being unreachable. The reason SHALL
+say why, from the most recent failed attempt. It SHALL say one of four things:
+- the remote refused the credential, naming which one was sent (the collaboration sign-in for
+  a hosted forum, the Settings token for the host, or the system git's credentials) and where
+  to change it;
+- the collaboration server refused the push under one of its rules, naming the rule;
+- the remote could not be reached;
+- otherwise, git's message.
+
+A refused credential MUST NOT be reported as the forum being unreachable. The reason SHALL
 clear once a publish succeeds. The token itself MUST NOT appear in the message.
 
 #### Scenario: The Settings token is refused
@@ -417,12 +428,20 @@ clear once a publish succeeds. The token itself MUST NOT appear in the message.
 - **WHEN** the lab page loads
 - **THEN** no failure reason SHALL be shown
 
+#### Scenario: The collaboration sign-in has expired
+
+- **GIVEN** a hosted forum and a collaboration sign-in token the server no longer accepts
+- **WHEN** a post fails to publish
+- **THEN** the lab SHALL say the collaboration sign-in was refused and point to the server's sign-in page for a new token
+- **AND** the post SHALL be published by the first sync after a new token is saved
+
 ### Requirement: Git receives the forum's token only on the way to its remote
 
-Git SHALL receive the forum's Settings token only on commands that reach the
-remote, only for an `https://` remote, and scoped to that remote's URL. It MUST
-NOT appear in a command's arguments or in the repository's configuration. The
-project dialog SHALL say which credential the forum will use: the Settings token
+Git SHALL receive the forum's credential (the Settings token, or the collaboration sign-in for
+a hosted forum) only on commands that reach the remote, only for an `https://` remote or a
+collaboration server on loopback, and scoped to that remote's URL. It MUST NOT appear in a
+command's arguments or in the repository's configuration. The project dialog SHALL say which
+credential the forum will use: the collaboration sign-in for a hosted forum, the Settings token
 for its host when one is saved, else the system git's credentials.
 
 #### Scenario: The token goes only to the forum repository
@@ -440,7 +459,7 @@ for its host when one is saved, else the system git's credentials.
 
 #### Scenario: The dialog names the system git elsewhere
 
-- **WHEN** a user enters an `https://` forum URL on a host other than github.com or gitlab.com, or an SSH URL on any host
+- **WHEN** a user enters an `https://` forum URL on a host other than github.com, gitlab.com or the collaboration server, or an SSH URL on any host
 - **THEN** the dialog SHALL say the system git's credentials will be used, such as an SSH key or a credential helper
 - **AND** it SHALL offer no token field
 
@@ -448,6 +467,13 @@ for its host when one is saved, else the system git's credentials.
 
 - **WHEN** the project dialog has not yet learned which tokens the user has saved in Settings
 - **THEN** it SHALL name no credential, rather than one that may be wrong
+
+#### Scenario: The sign-in goes only to the collaboration server
+
+- **GIVEN** a hosted forum and a GitHub token in Settings
+- **WHEN** git fetches or pushes the hosted forum
+- **THEN** git SHALL send the collaboration sign-in to the server's forum URL only
+- **AND** it SHALL NOT send the GitHub token
 
 ### Requirement: Each debate role has its own model
 
