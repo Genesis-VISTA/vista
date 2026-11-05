@@ -353,6 +353,11 @@ test('the update status window shows each step and closes when its marker goes',
   status({ version: '0.2.6', step: 'installing', detail: 'unpacking into /x' });
   await expect(page.locator('#update-title')).toHaveText('Installing VISTA 0.2.6');
   await expect(page.locator('#update-line')).toHaveText('Unpacking into /x');
+  // A read that fails mid-replace (Windows locks the file a moment) keeps the step shown.
+  writeFileSync(path.join(folder, 'status.json'), '{"version": "0.2');
+  await new Promise((resolve) => setTimeout(resolve, 750));
+  await expect(page.locator('#update-title')).toHaveText('Installing VISTA 0.2.6');
+  await expect(page.locator('#update-line')).toHaveText('Unpacking into /x');
   status({ version: '0.2.6', step: 'opening', detail: '' });
   await expect(page.locator('#update-line')).toHaveText('Opening VISTA 0.2.6…');
   // No bridge but its own.

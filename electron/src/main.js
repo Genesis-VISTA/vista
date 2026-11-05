@@ -515,7 +515,10 @@ function runUpdateStatusWindow(folder) {
   const timer = setInterval(async () => {
     const status = await readStatus(folder);
     const key = JSON.stringify(status);
-    if (key !== last) {
+    // A read that fails once a step has shown (Windows locks status.json for a
+    // moment while the helper replaces it) keeps that step rather than flicker.
+    const unreadable = status === null && last !== '' && last !== 'null';
+    if (key !== last && !unreadable) {
       last = key;
       changedAt = Date.now();
       view = statusView(status);
