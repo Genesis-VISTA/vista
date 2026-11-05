@@ -165,6 +165,17 @@ A post the server refuses under a rule, other than a `RUN`, stays unpublished an
 at each sync, as any refused post is. The lab's own rules (Close only for the opener) keep
 the interface from writing one.
 
+### D7: The UI reads hosting from the URL
+
+The UI treats a forum URL `<configured server>/git/<uuid>.git` as hosted; the backend sends
+no separate flag, and a forum on another server shows as a plain URL. A create whose response
+carries a `forum_notice` stays on the projects page to show it instead of opening chat.
+"Host on the collaboration server" acts on the saved forum, so it is disabled while the URL
+field has unsaved edits, and choosing "A repository URL" requires one. A publish failure
+names its cause by reason, never by message text: `refused` with the `collaboration`
+credential is a refused sign-in (linked to the server's `/sign-in`), `no_access` is a forum
+the account may not use, and `rule` is a refusal by the server's hooks.
+
 ## Risks / Trade-offs
 
 - [The gateway in front of the deployed server buffers or limits git's streamed bodies, or

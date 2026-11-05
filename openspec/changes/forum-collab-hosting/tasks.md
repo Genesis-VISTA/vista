@@ -27,7 +27,7 @@
 
 ## 4. Deployment check (outside PR CI)
 
-- [ ] 4.1 On the deployed server (Holly behind APISIX): git ≥ 2.34 on the host, then clone, push and a 5 MB push through the gateway with a real sign-in token. Record the result in `collaboration_server/deploy/holly/README.md`. Manual, not in PR CI
+- [ ] 4.1 On the deployed server (Holly behind APISIX): git ≥ 2.34 on the host, then clone, push and a 5 MB push through the gateway with a real sign-in token. Record the result in `collaboration_server/deploy/holly/README.md`. Manual, not in PR CI. **Deferred until after merge (2026-11-05): run it before deploying the server or releasing this change**, since hosted is the default for a signed-in project and a gateway that breaks git would leave every new project with a forum that cannot publish
 
 ## 5. Docs and checks
 
