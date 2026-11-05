@@ -339,7 +339,8 @@ the updater too.
 | Platform | Date | Commit | Result |
 | --- | --- | --- | --- |
 | macOS 26 (arm64) | 2026-11-04 | `7ead2e63` | Pass. Update: VISTA closed in 1 s, the installer took 1 min 39 s with nothing on screen, 0.0.2 opened with both chats. Failure: refused at once, 0.0.2 reopened with the notice. |
-| macOS 26 (arm64) | 2026-11-04 | `c600bf57` | Status window (D9). Update: it showed from the close (each installer step; unpacking took 1 min 18 s) and closed once 0.0.2's startup window showed. Failure: it showed "failed", but 0.0.2 reopened before it had started, so it missed being closed and stayed up; fixed in `0f6116a2` (the helper writes its marker first), covered by `startup.e2e.js`, not yet re-run here. |
+| macOS 26 (arm64) | 2026-11-04 | `c600bf57` | Status window (D9). Update: it showed from the close (each installer step; unpacking took 1 min 18 s) and closed once 0.0.2's startup window showed. Failure: it showed "failed", but 0.0.2 reopened before it had started, so it missed being closed and stayed up; fixed in `0f6116a2` (the helper writes its marker first), covered by `startup.e2e.js`. |
+| macOS 26 (arm64) | 2026-11-05 | `f00c90d8` | Status window, failure path again (0.0.2 to 0.0.3, disk check forced): it showed waiting, installing and "failed", then closed by itself once 0.0.2's startup window showed. |
 | Linux (x86-64) | | | Not run yet |
 | Windows (x64) | | | Not run yet |
 
