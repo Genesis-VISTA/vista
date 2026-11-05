@@ -1284,6 +1284,7 @@ class ForumClient:
             except ForumCommandError as exc:
                 self._record_failure(exc.stderr or exc.stdout)
                 raise
+        self._clear_unreachable()
 
     # -- why publishing last failed ---------------------------------------- #
 
@@ -1338,6 +1339,24 @@ class ForumClient:
 
     def _clear_failure(self) -> None:
         (self.repo_root / LAST_PUBLISH_FILE).unlink(missing_ok=True)
+
+    def _clear_unreachable(self) -> None:
+        """
+        Forget a failure that said the remote could not be reached, once a fetch
+        has reached it. Only that one: a fetch proves the remote answers, not
+        that the credential may push (a read-only token fetches fine), so a
+        refusal stays until a push succeeds. Without this, a forum that went
+        away while nothing was waiting to publish read as unreachable until the
+        next post.
+        """
+        try:
+            data = json.loads(
+                (self.repo_root / LAST_PUBLISH_FILE).read_text(encoding="utf-8")
+            )
+        except OSError, ValueError:
+            return
+        if isinstance(data, dict) and data.get("reason") == "unreachable":
+            self._clear_failure()
 
     async def publish_error(self) -> dict[str, str] | None:
         """

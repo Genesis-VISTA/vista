@@ -1034,6 +1034,37 @@ async def test_an_unreachable_forge_is_not_blamed_on_a_token(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_a_fetch_that_reaches_the_remote_clears_unreachable(a, remote):
+    """
+    The forum went away while nothing was waiting to publish, then came back:
+    the next fetch reaches it, so the lab stops saying it cannot be reached,
+    with no post needed to clear it.
+    """
+    await a.set_remote("http://127.0.0.1:9/forum.git")
+    with pytest.raises(ForumCommandError):
+        await a.sync()
+    error = await a.publish_error()
+    assert error is not None and error["reason"] == "unreachable"
+
+    await a.set_remote(str(remote))
+    await a.sync()
+
+    assert await a.publish_error() is None
+
+
+@pytest.mark.anyio
+async def test_a_fetch_does_not_clear_a_refused_credential(a, remote):
+    """A read-only credential fetches fine, so only a push clears a refusal."""
+    _refusing(remote)
+    await _publish_one(a)
+    assert (await a.publish_error() or {}).get("reason") == "refused"
+
+    await a._fetch()
+
+    assert (await a.publish_error() or {}).get("reason") == "refused"
+
+
+@pytest.mark.anyio
 async def test_a_successful_push_clears_the_record(a, remote):
     hook = remote / "hooks" / "pre-receive"
     _refusing(remote)
