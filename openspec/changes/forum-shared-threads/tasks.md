@@ -27,7 +27,7 @@
 ## 5. UI
 
 - [x] 5.1 `lib/debates.ts` and the `app/api/debates/*` proxies use thread ids and the new routes. Verified with `ui/tests/debates.test.ts` and the new `ui/tests/shared-threads.test.ts`
-- [x] 5.2 `app/hypothesis-lab/page.tsx`: list of every thread with opener and status, polled every 30 s while mounted; view with the current verdict (marked when another install's Referee wrote it; earlier verdicts stay in the thread), the live run ("Another researcher is running 3 rounds · 2 posts so far · last 4 min ago"; no name on a forge), Continue offered only while no run is live, with a note saying why; Close only on threads opened here. The stream is open while someone argues; a quiet open thread is re-read every 15 s. Verified with `ui/tests/shared-threads.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts` (hermetic Playwright, 5 pass)
+- [x] 5.2 `app/hypothesis-lab/page.tsx`: list of every thread with opener and status, polled every 30 s while mounted; view with the current verdict (marked when another install's Referee wrote it; earlier verdicts stay in the thread), the live run ("Another user is running 3 rounds · 2 posts so far · last 4 min ago"; no name on a forge), Continue offered only while no run is live, with a note saying why; Close only on threads opened here. The stream is open while someone argues; a quiet open thread is re-read every 15 s. Verified with `ui/tests/shared-threads.test.ts` and `ui/e2e-hermetic/hypothesis-lab.spec.ts` (hermetic Playwright, 5 pass)
 
 ## 6. Docs and checks
 

@@ -204,9 +204,17 @@ test.describe("hypothesis lab role models", () => {
     await page.locator(".debate-list__item").filter({ hasText: RUN.topic }).click();
 
     // A role on the default says so, and names what that is today.
-    await expect(page.locator(".debate-roster__models")).toHaveText(
-      "Proposer Default (claude-sonnet) · Reviewer gpt-5-mini · Referee gpt-5",
-    );
+    // One row per role, in role order, with its model and tools.
+    await expect(page.locator(".debate-roster__model")).toHaveText([
+      "Default (claude-sonnet)",
+      "gpt-5-mini",
+      "gpt-5",
+    ]);
+    await expect(page.locator(".debate-roster li strong")).toHaveText([
+      "proposer",
+      "reviewer",
+      "referee",
+    ]);
     // Each post names the model that wrote it.
     await expect(page.locator(".debate-post__model")).toHaveText(["claude-sonnet", "gpt-5-mini"]);
 
@@ -283,5 +291,7 @@ test.describe("hypothesis lab shared threads", () => {
     await expect(page.getByRole("button", { name: "Continue with your agents" })).toBeVisible();
     await expect(page.getByRole("button", { name: "End this debate" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Post as you" })).toBeVisible();
+    // No agents of this install in the thread: no roster, not an empty box.
+    await expect(page.locator(".debate-roster")).toHaveCount(0);
   });
 });

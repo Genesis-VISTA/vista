@@ -6756,9 +6756,8 @@ textarea.input:focus {
   flex-wrap: wrap;
 }
 
-.debate-roster__models {
+.debate-roster__model {
   color: var(--ink);
-  margin: 0 0 6px;
 }
 
 .debate-post__model {

@@ -437,18 +437,20 @@ function DebatesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state?.thread.thread_id, participantModelsKey]);
 
-  /** "Proposer <m> · Reviewer <m> · Referee <m>"; a role on the default says so. */
-  const rosterLine = DEBATE_ROLES.filter((role) =>
-    state?.participants.some((p) => p.debate_role === role)
-  )
-    .map((role) => {
-      const model = participantModels[role];
-      const shown = model
-        ? displayModelName(model)
-        : `Default (${agentSettings?.model ? displayModelName(agentSettings.model) : "default"})`;
-      return `${role[0].toUpperCase()}${role.slice(1)} ${shown}`;
-    })
-    .join(" · ");
+  /**
+   * This install's agents in the thread, one row per role, in role order: its
+   * model (a role on the default says so) and the tools it may use. A thread
+   * this install has not argued in has none, and shows no roster.
+   */
+  const roster = DEBATE_ROLES.flatMap((role) => {
+    const participant = state?.participants.find((p) => p.debate_role === role);
+    if (!participant) return [];
+    const model = participantModels[role];
+    const shown = model
+      ? displayModelName(model)
+      : `Default (${agentSettings?.model ? displayModelName(agentSettings.model) : "default"})`;
+    return [{ role, participant, model: shown }];
+  });
 
   // Why posts are not reaching the forum. An error, so it is drawn as one, and
   // it sits on the open thread, whose posts are the ones marked "not yet
@@ -709,7 +711,7 @@ function DebatesPage() {
 
               {othersRun && (
                 <p className="debate-note">
-                  Another researcher&rsquo;s agents are arguing in this thread. You
+                  Another user&rsquo;s agents are arguing in this thread. You
                   can post into it now; you can continue it with your own agents
                   once their run ends.
                 </p>
@@ -751,20 +753,22 @@ function DebatesPage() {
                 </ul>
               )}
 
-              {rosterLine && <p className="debate-roster__models">{rosterLine}</p>}
-              <ul className="debate-roster">
-                {state.participants.map((participant) => (
-                  <li key={participant.id}>
-                    <strong>{participant.debate_role}</strong>{" "}
-                    <span>{participant.identity}</span>{" "}
-                    <span className="debate-roster__tools">
-                      {participant.granted_tools.length > 0
-                        ? `may use: ${participant.granted_tools.join(", ")}`
-                        : "no tools granted"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              {roster.length > 0 && (
+                <ul className="debate-roster">
+                  {roster.map(({ role, participant, model }) => (
+                    <li key={participant.id} title={participant.identity}>
+                      <strong>{role}</strong>{" "}
+                      <span className="debate-roster__model">{model}</span>
+                      {" · "}
+                      <span className="debate-roster__tools">
+                        {participant.granted_tools.length > 0
+                          ? `may use: ${participant.granted_tools.join(", ")}`
+                          : "no tools granted"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               <DebateVerdict
                 current={thread.current_verdict}

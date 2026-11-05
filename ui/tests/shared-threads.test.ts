@@ -110,7 +110,7 @@ describe("a teammate's thread", () => {
     const busy = thread({ opened_here: false, status: "open", live_run: live() });
     expect(canContinue(busy, [])).toBe(false);
     expect(acceptsPosts(busy, [])).toBe(true);
-    expect(threadStatusLabel(busy, [])).toBe("Another researcher is arguing");
+    expect(threadStatusLabel(busy, [])).toBe("Another user is arguing");
   });
 
   it("cannot be continued while your own run argues", () => {
@@ -141,10 +141,10 @@ describe("threadStatusLabel", () => {
 });
 
 describe("liveRunLine", () => {
-  it("says how far another researcher's run has got", () => {
+  it("says how far another user's run has got", () => {
     const now = Date.parse("2026-11-04T12:14:00+00:00");
     expect(liveRunLine(live(), now)).toBe(
-      "Another researcher is running 3 rounds · 2 posts so far · last 4 min ago",
+      "Another user is running 3 rounds · 2 posts so far · last 4 min ago",
     );
   });
 });

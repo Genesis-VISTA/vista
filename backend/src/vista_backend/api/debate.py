@@ -647,7 +647,7 @@ async def continue_thread(
         who = (
             "This install's earlier run"
             if live.origin == client.host_id
-            else "Another researcher"
+            else "Another user"
         )
         raise HTTPException(status_code=409, detail=f"{who} is continuing this debate.")
 

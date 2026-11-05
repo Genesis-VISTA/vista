@@ -1085,7 +1085,7 @@ async def test_continue_is_refused_while_a_peers_run_is_live(
         f"/projects/{project_name}/threads/{live}/runs", json={"rounds": 1}
     )
     assert resp.status_code == 409, resp.text
-    assert "Another researcher" in resp.json()["detail"]
+    assert "Another user" in resp.json()["detail"]
     assert no_argument == []
 
     resp = await app_client.post(

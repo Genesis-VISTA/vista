@@ -340,7 +340,7 @@ function minutesAgo(iso: string, now: number): string {
  * researcher is not named.
  */
 export function liveRunLine(live: LiveRun, now: number = Date.now()): string {
-  const who = live.ours ? "This install is" : "Another researcher is";
+  const who = live.ours ? "This install is" : "Another user is";
   const posts = live.posts === 1 ? "1 post" : `${live.posts} posts`;
   return `${who} running ${live.rounds} ${live.rounds === 1 ? "round" : "rounds"} · ${posts} so far · last ${minutesAgo(live.last_post_at, now)}`;
 }
@@ -356,7 +356,7 @@ export function threadStatusLabel(thread: ForumThread, posts: DebatePost[]): str
     return closer === "peer" ? "Ended by a peer" : "Ended early";
   }
   if (thread.run && isActive(thread.run.status)) return "Arguing";
-  if (thread.live_run) return thread.live_run.ours ? "Arguing" : "Another researcher is arguing";
+  if (thread.live_run) return thread.live_run.ours ? "Arguing" : "Another user is arguing";
   if (thread.run?.status === "failed") return "Failed";
   if (thread.status === "done") return "Concluded";
   if (thread.status === "blocked") return "Stopped";

@@ -189,7 +189,7 @@ published** until a sync gets it to the remote; a banner counts how many are
 waiting.
 
 While another install's agents are arguing in a thread, the lab says so, from
-the thread alone: *Another researcher is running 3 rounds · 2 posts so far ·
+the thread alone: *Another user is running 3 rounds · 2 posts so far ·
 last 4 min ago*. A verdict another install's Referee wrote is headed *Verdict ·
 from another install*.
 
