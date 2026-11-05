@@ -12,12 +12,12 @@
 
 ## 2. Backend
 
-- [ ] 2.1 Hosted forum URLs recognised in `agents/forum/project_forum.py`; `forum_git._token_config` sends the sign-in (bearer or `dev-headers`) to that URL only and never a forge token (design D4). Verify in `backend/tests/test_forum_git.py` and `test_collaboration_token.py`
-- [ ] 2.2 Publish-failure reasons for a refused sign-in and a refused rule. Verify in `backend/tests/test_project_forum.py`
-- [ ] 2.3 Life cycle (design D5): create, first publish links, import resolves `"forum": "hosted"`, delete of an unlinked forum, and project creation that never fails on the server. Verify in `backend/tests/test_project_collaboration.py` against a loopback server fixture serving git
-- [ ] 2.4 Move to hosted in project settings: sync, push threads with `vista-import`, switch the URL, roll back on failure. Verify with a forge stand-in bare repository holding three threads in `test_project_forum.py`
-- [ ] 2.5 Verified names (design D6): nullable `forum_post.pusher_name` filled from `GET /forums/{id}/pushes`; role prompts name verified teammates while keeping "not your operator". Verify in `test_debate_roles.py` and `test_debate_service.py`
-- [ ] 2.6 Two installs on one hosted forum end-to-end: Alice creates and publishes, Bob imports, lists, posts and continues; Bob's Close is refused by the server; Bob's concurrent `RUN` is refused. New test in `test_project_forum.py`
+- [x] 2.1 Hosted forum URLs recognised in `agents/forum/project_forum.py`; `forum_git._token_config` sends the sign-in (bearer or `dev-headers`) to that URL only and never a forge token (design D4). Verify in `backend/tests/test_forum_git.py` and `test_collaboration_token.py`
+- [x] 2.2 Publish-failure reasons for a refused sign-in and a refused rule. Verify in `backend/tests/test_project_forum.py`
+- [x] 2.3 Life cycle (design D5): create, first publish links, import resolves `"forum": "hosted"`, delete of an unlinked forum, and project creation that never fails on the server. Verify in `backend/tests/test_project_collaboration.py` against a loopback server fixture serving git
+- [x] 2.4 Move to hosted in project settings: sync, push threads with `vista-import`, switch the URL, roll back on failure. Verify with a forge stand-in bare repository holding three threads in `test_project_forum.py`
+- [x] 2.5 Verified names (design D6): nullable `forum_post.pusher_name` filled from `GET /forums/{id}/pushes`; role prompts name verified teammates while keeping "not your operator". Verify in `test_debate_roles.py` and `test_debate_service.py`
+- [x] 2.6 Two installs on one hosted forum end-to-end: Alice creates and publishes, Bob imports, lists, posts and continues; Bob's Close is refused by the server; Bob's concurrent `RUN` is refused. New test in `test_project_forum.py`
 
 ## 3. UI
 

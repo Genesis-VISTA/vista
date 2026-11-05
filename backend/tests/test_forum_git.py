@@ -20,6 +20,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from vista_backend.config import ForumSettings, settings
@@ -32,6 +33,7 @@ from vista_backend.services.forum_git import (
     ForumClient,
     ForumCommandError,
     InvalidKind,
+    MemoryOutbox,
     Participant,
     Post,
     PostKind,
@@ -1252,3 +1254,179 @@ async def test_thread_tips_without_the_remote_read_what_is_here(tmp_path):
     thread = await offline.create_thread("t")
     fetched, tips = await offline.thread_tips()
     assert not fetched and list(tips) == [thread]
+
+
+# --------------------------------------------------------------------------- #
+# A forum hosted on the collaboration server
+# --------------------------------------------------------------------------- #
+
+FORUM_ID = "11111111-2222-4333-8444-555555555555"
+HOSTED = f"https://obsidian.test/vista/api/git/{FORUM_ID}.git"
+
+
+def _hosted_config(tmp_path, url: str = HOSTED, **fields) -> ForumSettings:
+    from pydantic import SecretStr
+
+    return ForumSettings(
+        enabled=True,
+        repo_root=tmp_path / "forum",
+        remote_url=url,
+        remote_token_source="collaboration",
+        remote_headers={
+            "X-Vista-Install-Id": SecretStr("aaaa"),
+            "Authorization": SecretStr("Bearer tok"),
+        },
+        **fields,
+    )
+
+
+def test_hosted_headers_are_scoped_to_the_forum_url(tmp_path):
+    from vista_backend.services.forum_git import _token_config
+
+    env = _token_config({}, _hosted_config(tmp_path))
+    assert env == {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": f"http.{HOSTED}.extraHeader",
+        "GIT_CONFIG_VALUE_0": "X-Vista-Install-Id: aaaa",
+        "GIT_CONFIG_KEY_1": f"http.{HOSTED}.extraHeader",
+        "GIT_CONFIG_VALUE_1": "Authorization: Bearer tok",
+    }
+
+
+def test_a_hosted_forum_never_gets_a_forge_token(tmp_path):
+    from pydantic import SecretStr
+
+    from vista_backend.services.forum_git import _token_config
+
+    config = _hosted_config(tmp_path, remote_token=SecretStr("ghp_forge"))
+    assert "ghp_forge" not in " ".join(_token_config({}, config).values())
+    assert "Basic" not in " ".join(_token_config({}, config).values())
+
+
+@pytest.mark.parametrize(
+    ("url", "sent"),
+    [
+        (HOSTED, True),
+        (f"http://127.0.0.1:8002/git/{FORUM_ID}.git", True),
+        (f"http://localhost:8002/git/{FORUM_ID}.git", True),
+        (f"http://obsidian.test/git/{FORUM_ID}.git", False),
+        (f"http://10.0.0.5:8002/git/{FORUM_ID}.git", False),
+    ],
+)
+def test_the_sign_in_goes_over_https_or_to_this_machine_only(tmp_path, url, sent):
+    from vista_backend.services.forum_git import _token_config
+
+    env = _token_config({}, _hosted_config(tmp_path, url))
+    assert bool(env) is sent
+
+
+def test_rule_refusals_are_read_from_the_remote_lines():
+    from vista_backend.services.forum_git import rule_refusal
+
+    assert (
+        rule_refusal(
+            "remote: Refused refs/heads/x: a thread is append-only; "
+            "force-pushes and rewritten history are not accepted.\n"
+            "To https://s/git/x.git\n ! [remote rejected] x -> x (pre-receive hook declined)"
+        )
+        == "Refused refs/heads/x: a thread is append-only; "
+        "force-pushes and rewritten history are not accepted."
+    )
+    assert rule_refusal(
+        "remote: The server could not check this push; nothing was changed."
+    )
+    # Another server's hook, or git's own words, are not the lab's rules.
+    assert rule_refusal("remote: error: GH006: Protected branch update failed") is None
+    assert rule_refusal("fatal: unable to access: returned error: 401") is None
+
+
+class _Pushes:
+    """A stand-in for the server's `GET /forums/{id}/pushes`, counting its calls."""
+
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+        self.asked: list[int] = []
+        self.sent_headers: list[httpx.Headers] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/vista/api/forums/{FORUM_ID}/pushes"
+        after = int(request.url.params["after"])
+        self.asked.append(after)
+        self.sent_headers.append(request.headers)
+        return httpx.Response(200, json=[r for r in self.rows if r["seq"] > after])
+
+
+def _push(seq: int, post_id: str, name: str | None, *, kind="FINDING", imported=False):
+    return {
+        "seq": seq,
+        "thread_id": "t",
+        "post_id": post_id,
+        "kind": kind,
+        "commit": "c" * 40,
+        "pusher_sub": f"sub-{name}",
+        "pusher_name": name,
+        "imported": imported,
+        "received_at": "2026-11-05T12:00:00+00:00",
+    }
+
+
+@pytest.mark.anyio
+async def test_verified_names_come_from_the_servers_records(tmp_path, monkeypatch):
+    from vista_backend.services import collaboration
+
+    server = _Pushes(
+        [
+            _push(1, "t", "Alice", kind="THREAD"),  # the root: not a post
+            _push(2, "p1", "Alice"),
+            _push(3, "p2", "Bob"),
+            _push(4, "p3", "Alice", imported=True),  # a copied history: no name
+        ]
+    )
+    monkeypatch.setattr(collaboration, "transport", httpx.MockTransport(server))
+    client = ForumClient(_hosted_config(tmp_path), outbox=MemoryOutbox())
+
+    names = await client.pusher_names(["p1", "p2", "p3", "t"])
+    assert names == {"p1": "Alice", "p2": "Bob"}
+    assert server.sent_headers[0]["authorization"] == "Bearer tok"
+    assert server.sent_headers[0]["x-vista-install-id"] == "aaaa"
+
+    # Known posts are not asked about again; a new one asks only for what is after.
+    assert await client.pusher_names(["p1", "p2", "p3"]) == names
+    assert server.asked == [0]
+    server.rows.append(_push(5, "p4", "Bob"))
+    assert (await client.pusher_names(["p4"]))["p4"] == "Bob"
+    assert server.asked == [0, 4]
+
+
+@pytest.mark.anyio
+async def test_a_server_that_cannot_be_asked_leaves_the_names_there_are(
+    tmp_path, monkeypatch
+):
+    from vista_backend.services import collaboration
+
+    monkeypatch.setattr(
+        collaboration,
+        "transport",
+        httpx.MockTransport(lambda request: httpx.Response(503)),
+    )
+    client = ForumClient(_hosted_config(tmp_path), outbox=MemoryOutbox())
+    assert await client.pusher_names(["p1"]) == {}
+
+
+@pytest.mark.anyio
+async def test_a_forge_forum_asks_nobody(tmp_path, monkeypatch):
+    from vista_backend.services import collaboration
+
+    def never(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a forge has no push records")
+
+    monkeypatch.setattr(collaboration, "transport", httpx.MockTransport(never))
+    client = ForumClient(
+        ForumSettings(
+            enabled=True,
+            repo_root=tmp_path / "forum",
+            remote_url="https://github.com/lab/forum.git",
+        ),
+        outbox=MemoryOutbox(),
+    )
+    assert await client.pusher_names(["p1"]) == {}

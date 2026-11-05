@@ -40,6 +40,7 @@ from ...services.forum_git import (
     Post,
     PostKind,
     Thread,
+    RunRefused,
     ThreadClosed,
     ThreadMissing,
 )
@@ -216,8 +217,13 @@ class DebateOrchestrator:
         *,
         run: DebateRunTable,
         extra_rounds: int,
+        announced: bool = False,
     ) -> DebateRunTable:
         """
+        `announced`: this run's RUN post is already on the thread (a hosted
+        forum's Continue posts it before answering, so the server's refusal can
+        be answered with a 409), so `run` does not post another.
+
         Argue a finished debate for another few rounds, with the same roster.
 
         `rounds_done` is left alone and the budget is raised instead, so the loop
@@ -225,6 +231,7 @@ class DebateOrchestrator:
         much arguing this debate has had in total.
         """
         run_id = run.id
+        before = (run.status, run.rounds)
         if not await debate_service.list_active_participants(session, run_id=run_id):
             await self._add_roster(session, run_id)
 
@@ -239,9 +246,22 @@ class DebateOrchestrator:
         # expired the row above. Handing the expired object to `run` makes its
         # first line async IO in a context that cannot await.
         await self._checkpoint(session)
-        return await self.run(
-            session, await debate_service.require_debate(session, run_id)
-        )
+        try:
+            return await self.run(
+                session,
+                await debate_service.require_debate(session, run_id),
+                announced=announced,
+            )
+        except RunRefused as refused:
+            # A hosted forum's server found a run live there: another install
+            # is continuing this debate. This install does not argue, and the
+            # run is as it was before it was asked to.
+            logger.info("debate %s: not continued: %s", run_id, refused)
+            await debate_service.update_debate(
+                session, run_id=run_id, status=before[0], rounds=before[1]
+            )
+            await self._checkpoint(session)
+            return await debate_service.require_debate(session, run_id)
 
     async def _add_roster(self, session: AsyncSession, run_id: uuid.UUID) -> None:
         for role in ROSTER:
@@ -266,7 +286,9 @@ class DebateOrchestrator:
 
     # -- the loop ---------------------------------------------------------- #
 
-    async def run(self, session: AsyncSession, run: DebateRunTable) -> DebateRunTable:
+    async def run(
+        self, session: AsyncSession, run: DebateRunTable, *, announced: bool = False
+    ) -> DebateRunTable:
         """
         Argue to a verdict, or until someone closes the thread.
 
@@ -296,13 +318,18 @@ class DebateOrchestrator:
             session, run_id=run_id, granted=granted
         )
         try:
-            await self._announce_run(session, run_id, roster)
+            if not announced:
+                await self._announce_run(session, run_id, roster)
             while True:
                 run = await debate_service.require_debate(session, run_id)
                 if run.rounds_done >= run.rounds:
                     break
                 await self.run_round(session, run, roster)
             await self.conclude(session, run, roster)
+        except RunRefused:
+            # The server will not have two runs at once. Nothing was said on the
+            # thread, so there is nothing to end with a BLOCKED either.
+            raise
         except ThreadClosed:
             logger.info("debate %s: the thread was closed", run_id)
             await self._sync(session, run_id)

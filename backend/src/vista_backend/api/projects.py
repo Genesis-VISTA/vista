@@ -5,6 +5,7 @@ from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..db.db import SessionDep
 from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable
 from ..services import (
+    hosted_forum,
     local_settings,
     project as project_service,
     project_collaboration,
@@ -52,11 +53,32 @@ async def _open_the_lab(session, project: ProjectTable) -> None:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+class ProjectCreated(ProjectPublic):
+    """A new project, and why it has no hosted forum when it was to get one."""
+
+    forum_notice: str | None = None
+
+
 @router.post("", status_code=201)
-async def create_project(payload: ProjectCreate, session: SessionDep) -> ProjectPublic:
+async def create_project(
+    payload: ProjectCreate, session: SessionDep, hosted_forum_wanted: bool = True
+) -> ProjectCreated:
+    """
+    Create a project. With no forum URL in the payload, and unless
+    `hosted_forum_wanted=false` (a project with no forum), a collaboration
+    server that is set and answers gives the project a forum hosted on it. That
+    never fails the creation: `forum_notice` says why there is none.
+    """
+    wants_hosted = hosted_forum_wanted and not (payload.forum_repo_url or "").strip()
     project = await project_service.create_project(session, payload)
-    await _open_the_lab(session, project)
-    return ProjectPublic.model_validate(project)
+    notice = None
+    if wants_hosted:
+        notice = await hosted_forum.give_new_project_a_forum(session, project)
+    else:
+        await _open_the_lab(session, project)
+    return ProjectCreated(
+        **ProjectPublic.model_validate(project).model_dump(), forum_notice=notice
+    )
 
 
 @router.put("/{project_name}")
@@ -68,9 +90,27 @@ async def update_project(
     return ProjectPublic.model_validate(project)
 
 
+@router.post("/{project_name}/forum/host")
+async def host_forum(project_name: str, session: SessionDep) -> ProjectPublic:
+    """
+    Move the project's forum onto the collaboration server: every thread of its
+    current forum, with its history, then the project uses the hosted one. Any
+    failure leaves it on the forum it had (400, with the reason).
+    """
+    project = await project_service.get_project_by_name(session, project_name)
+    return ProjectPublic.model_validate(
+        await hosted_forum.move_to_hosted(session, project)
+    )
+
+
 @router.delete("/{project_name}", status_code=204)
-async def delete_project(project_name: str, session: SessionDep) -> None:
+async def delete_project(
+    project_name: str, session: SessionDep, local: LocalSettingsDep
+) -> None:
+    project = await project_service.get_project_by_name(session, project_name)
+    forum_url = project.forum_repo_url
     await project_service.delete_project(session, project_name)
+    await hosted_forum.delete_for_project(local, forum_url)
 
 
 class ProjectPublishRequest(BaseModel):

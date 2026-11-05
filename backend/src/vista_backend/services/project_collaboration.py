@@ -27,7 +27,11 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..agents.forum.project_forum import ForumSetupError, ensure_forum
+from ..agents.forum.project_forum import (
+    ForumSetupError,
+    ensure_forum,
+    hosted_forum_id,
+)
 from ..agents.skills import SKILL_NAME_PATTERN
 from ..db.schemas import (
     SLUG_PATTERN,
@@ -38,7 +42,7 @@ from ..db.schemas import (
     ProjectTable,
     SkillTable,
 )
-from . import local_settings
+from . import hosted_forum, local_settings
 from .collaboration import (
     CollaborationError,
     CollaborationRefused,
@@ -151,6 +155,13 @@ class ProjectManifest(BaseModel):
     tools: list[str] = []
     usage_limits: dict[str, Any] = {}
     forum_repo_url: str | None = None
+    forum: Literal["hosted"] | None = None
+    """
+    `hosted`: the project's forum is the one the server has linked to this item
+    (`GET /items/{id}/forum`), which an import resolves; `forum_repo_url` is then
+    empty. Never the forum's URL, so a copy of the item, which carries this
+    manifest, cannot point at the original's forum.
+    """
     skills: list[SkillRef] = []
     knowledge_bases: list[KnowledgeBaseRef] = []
 
@@ -186,6 +197,8 @@ class ProjectPublishResult(BaseModel):
     """ The skills published first, because they were not on the server or had changed. """
     knowledge_bases_published: list[str] = []
     """ The same for its knowledge bases, by slug. """
+    forum_error: str | None = None
+    """ Why the project's hosted forum was not linked to it; the publish stands. """
 
 
 ImportStatus = Literal["imported", "updated", "unchanged"]
@@ -422,15 +435,21 @@ def _build_manifest(
     public: ProjectPublic,
     skills: list[SkillRef],
     knowledge_bases: list[KnowledgeBaseRef],
+    *,
+    hosted: bool = False,
 ) -> ProjectManifest:
-    """The manifest, field by field: nothing of the row goes that is not named here."""
+    """
+    The manifest, field by field: nothing of the row goes that is not named here.
+    A hosted forum is written as `"forum": "hosted"`, never as its URL.
+    """
     return ProjectManifest(
         name=public.name,
         description=public.description,
         system_prompt=public.system_prompt,
         tools=list(public.tools),
         usage_limits=dict(public.usage_limits),
-        forum_repo_url=public.forum_repo_url,
+        forum_repo_url=None if hosted else public.forum_repo_url,
+        forum="hosted" if hosted else None,
         skills=skills,
         knowledge_bases=knowledge_bases,
     )
@@ -535,8 +554,15 @@ async def publish_project(
         kb_refs, kbs_published = await _publish_knowledge_bases(
             session, local, name, slugs, carried_kbs
         )
-        new = _build_manifest(public, refs, kb_refs)
+        new = _build_manifest(
+            public,
+            refs,
+            kb_refs,
+            hosted=hosted_forum_id(public.forum_repo_url, local) is not None,
+        )
         manifest = new.model_dump(mode="json")
+        if manifest["forum"] is None:
+            del manifest["forum"]  # written only for a hosted forum
 
         if linked:
             assert public.remote_id is not None and parent is not None
@@ -574,11 +600,16 @@ async def publish_project(
     session.add(row)
     await session.commit()
     await session.refresh(row)
+    # After the publish is recorded, so a server that will not link it cannot
+    # leave an item published and unrecorded here.
+    forum_error = await hosted_forum.link_after_publish(local, row, remote_id)
+    await session.refresh(row)
     return ProjectPublishResult(
         status="published",
         project=ProjectPublic.model_validate(row),
         skills_published=published,
         knowledge_bases_published=kbs_published,
+        forum_error=forum_error,
     )
 
 
@@ -888,7 +919,10 @@ async def import_project(
             )
         number = version if version is not None else item.head_version
         remote = await client.get_version(item_id, number)
-    manifest = _project_manifest(remote)
+        manifest = _project_manifest(remote)
+        hosted_url, hosted_error = None, None
+        if manifest is not None and manifest.forum == "hosted":
+            hosted_url, hosted_error = await hosted_forum.forum_of_item(client, item_id)
     if manifest is None:
         raise CollaborationError(
             f"Version {number} of {item.name} on the collaboration server is not "
@@ -921,7 +955,7 @@ async def import_project(
             knowledge_bases=[],
             tools=manifest.tools,
             usage_limits=manifest.usage_limits,
-            forum_repo_url=_blank_to_none(manifest.forum_repo_url),
+            forum_repo_url=hosted_url or _blank_to_none(manifest.forum_repo_url),
         )
     except ValidationError as e:
         raise CollaborationError(
@@ -966,7 +1000,7 @@ async def import_project(
     await session.commit()
     await session.refresh(row)
 
-    forum_error = None
+    forum_error = hosted_error
     try:
         await ensure_forum(row, await local_settings.get(session))
     except ForumSetupError as e:

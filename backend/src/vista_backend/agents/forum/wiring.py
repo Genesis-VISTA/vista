@@ -501,7 +501,9 @@ def _toolsets(grounding: Grounding):
     return build_toolsets(grounding)
 
 
-async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
+async def continue_debate_task(
+    run_id: uuid.UUID, extra_rounds: int, announced: bool = False
+) -> None:
     """
     Argue an existing thread for a few more rounds.
 
@@ -531,7 +533,7 @@ async def continue_debate_task(run_id: uuid.UUID, extra_rounds: int) -> None:
                 job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
                 models=await models_for(session, run),
-            ).resume(session, run=run, extra_rounds=extra_rounds)
+            ).resume(session, run=run, extra_rounds=extra_rounds, announced=announced)
             await session.commit()
         except Exception:
             logger.exception("debate %s: could not continue", run_id)

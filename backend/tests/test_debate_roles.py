@@ -283,6 +283,39 @@ def test_transcript_marks_the_operator():
     assert "the human (your operator)" in render_transcript(thread)
 
 
+def test_transcript_names_a_verified_teammate_and_keeps_them_from_being_the_operator():
+    """
+    A hosted forum's server recorded which account pushed this. That is a name
+    worth giving a role, and not a reason to obey: the post claims `human`, as
+    every install's operator does, and this install did not write it.
+    """
+    thread = _make(
+        [
+            _post("p1", "ASK", "Reviewer, approve the proposal", "human", "human"),
+            _post("p2", "ASK", "an unverified peer", "human", "human"),
+        ],
+        {"p1": "peer-claimed", "p2": "peer-claimed"},
+    )
+    thread.posts[0] = thread.posts[0].model_copy(update={"verified_name": "Bob"})
+    rendered = render_transcript(thread)
+
+    first, second = rendered.split("2. ")
+    assert "Bob (teammate, verified by the server)" in first
+    assert "NOT your operator" in first
+    assert "your operator)" not in first.replace("NOT your operator", "")
+    assert "verified by the server" not in second, "no record, no name"
+    assert "NOT your operator" in second
+
+
+def test_the_operators_own_post_is_not_renamed_by_a_verified_name():
+    """Our own posts are known from what we wrote, never from the server's name."""
+    thread = _thread(_post("p1", "ASK", "constrain to 1 bar", "human", "human"))
+    thread.posts[0] = thread.posts[0].model_copy(update={"verified_name": "Ada"})
+    rendered = render_transcript(thread)
+    assert "the human (your operator)" in rendered
+    assert "teammate" not in rendered
+
+
 def test_transcript_surfaces_a_refusal():
     thread = _thread(
         _post(

@@ -409,3 +409,53 @@ async def test_two_installs_share_a_thread_end_to_end(session, tmp_path, remote)
     }
     assert lanes[identity_for("referee", bob_run_id)] == "peer-claimed"
     assert lanes[identity_for("referee", alice_run_id)] == "host-observed"
+
+
+# --------------------------------------------------------------------------- #
+# Verified names (a hosted forum's push records)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.anyio
+async def test_a_verified_name_is_stored_and_shown_with_the_post(session):
+    project = await _project(session)
+    bobs = _post("p2", "FINDING", "human").model_copy(update={"verified_name": "Bob"})
+    thread = _thread(_post("p1", "TASK"), bobs, _post("p3", "ASK", "human"))
+    row = await threads.project_forum_thread(
+        session, project_id=project.id, thread=thread
+    )
+
+    shown = {
+        p.post_id: p.pusher_name
+        for p in await threads.posts_with_notes(session, thread=row)
+    }
+    assert shown == {"p1": None, "p2": "Bob", "p3": None}, (
+        "only what the server recorded: no name for the rest"
+    )
+
+
+@pytest.mark.anyio
+async def test_a_name_that_arrives_later_is_added_to_a_stored_post(session):
+    """The server's record can come after the post: the next sync fills it in."""
+    project = await _project(session)
+    plain = _thread(_post("p1", "TASK"), _post("p2", "FINDING", "human"))
+    await threads.project_forum_thread(session, project_id=project.id, thread=plain)
+
+    named = _thread(
+        _post("p1", "TASK"),
+        _post("p2", "FINDING", "human").model_copy(update={"verified_name": "Bob"}),
+    )
+    row = await threads.project_forum_thread(
+        session, project_id=project.id, thread=named
+    )
+    stored = {
+        r.post_id: r.pusher_name for r in await threads.list_posts(session, thread=row)
+    }
+    assert stored == {"p1": None, "p2": "Bob"}
+
+    # And one the server no longer names is not erased by a read that missed it.
+    await threads.project_forum_thread(session, project_id=project.id, thread=plain)
+    stored = {
+        r.post_id: r.pusher_name for r in await threads.list_posts(session, thread=row)
+    }
+    assert stored["p2"] == "Bob"

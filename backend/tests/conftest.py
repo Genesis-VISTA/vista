@@ -144,6 +144,25 @@ async def collab_server(tmp_path, monkeypatch):
 
 
 @pytest.fixture
+def loopback_server(tmp_path, monkeypatch):
+    """
+    The real collaboration server under `uvicorn` on a free loopback port, in
+    `dev-headers` mode with a temporary data directory, for tests that need git
+    over HTTP (hosted forums), which `collab_server`'s in-process transport
+    cannot give. Backend clients use the network, not an ASGI transport.
+    Yields a `harness.hosted.LoopbackServer`; needs the backend's dev extra.
+    """
+    from harness.hosted import run_server
+    from vista_backend.config import settings
+    from vista_backend.services import collaboration
+
+    monkeypatch.setattr(collaboration, "transport", None)
+    monkeypatch.setattr(settings, "collaboration_server_url", None)
+    with run_server(tmp_path) as server:
+        yield server
+
+
+@pytest.fixture
 def git_ok(monkeypatch):
     """Treat this host as having a usable git, whatever it has."""
     from vista_backend.agents.forum import project_forum

@@ -1232,3 +1232,58 @@ async def test_agents_do_not_read_run_markers(client, session):
     orch, run = await _start(client, session, roles=_roles(capture=capture), rounds=1)
     await orch.run(session, run)
     assert capture and all("RUN —" not in prompt for prompt in capture)
+
+
+@pytest.mark.anyio
+async def test_a_continue_the_server_refuses_starts_no_run(
+    client, session, monkeypatch
+):
+    """
+    A hosted forum refuses a RUN while another install's is live. This install
+    must then not argue, and must not post a BLOCKED either: nothing was said on
+    the thread, so there is nothing to end. The run is as it was before.
+    """
+    from vista_backend.services.forum_git import RunRefused
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id = run.id
+    posts_before = [
+        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
+    ]
+
+    async def refuse(thread, *, rounds, roster):
+        raise RunRefused("Refused: a run is already live on this thread.")
+
+    monkeypatch.setattr(client, "start_run", refuse)
+    run = await debate_service.require_debate(session, run_id)
+    status, rounds = run.status, run.rounds
+    after = await orch.resume(session, run=run, extra_rounds=3)
+
+    assert (after.status, after.rounds) == (status, rounds)
+    assert after.activity is None
+    posts_after = await debate_service.list_posts(session, run_id=run_id)
+    assert [p.post_id for p in posts_after] == posts_before
+    assert PostKind.BLOCKED not in {p.kind for p in posts_after}
+
+
+@pytest.mark.anyio
+async def test_a_run_announces_itself_unless_its_continue_already_did(client, session):
+    """
+    A forge forum keeps its order: `run` posts the RUN itself, local-first. Only
+    a hosted forum's Continue posts it earlier and says so (`announced`).
+    """
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 1
+
+    run = await debate_service.require_debate(session, run.id)
+    await orch.resume(session, run=run, extra_rounds=1)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 2
+
+    run = await debate_service.require_debate(session, run.id)
+    await orch.resume(session, run=run, extra_rounds=1, announced=True)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 2, "its Continue had posted it"

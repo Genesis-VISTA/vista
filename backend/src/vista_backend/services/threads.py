@@ -186,6 +186,8 @@ class ThreadPost(BaseModel):
     tools_used: list[dict[str, Any]] = Field(default_factory=list)
     model: str | None = None
     authored_by: str | None = None
+    pusher_name: str | None = None
+    """ On a hosted forum: the name the server recorded for whoever pushed it (verified). """
     denied: str | None = None
 
 
@@ -327,6 +329,8 @@ async def project_forum_thread(
             stored.vouch_lane = thread.lane(post.id)
             stored.published = published
             stored.on_remote = None if published is False else True
+            if post.verified_name and stored.pusher_name != post.verified_name:
+                stored.pusher_name = post.verified_name
             session.add(stored)
             continue
         seq += 1
@@ -350,6 +354,7 @@ async def project_forum_thread(
                 "peer_votes": peer,
                 "run": post.run.model_dump() if post.run else None,
                 "verdict": post.verdict,
+                "pusher_name": post.verified_name,
             }
         )
     present = {p.id for p in thread.posts}

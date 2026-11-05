@@ -11,6 +11,7 @@ the forge, because what it has to prove — that a URL is reachable, that joinin
 an existing forum lists its threads — is about git, not about VISTA.
 """
 
+import asyncio
 import shutil
 import subprocess
 import uuid
@@ -510,3 +511,546 @@ def test_config_already_in_the_environment_is_kept(forum_home, tmp_path, monkeyp
     assert env["GIT_CONFIG_COUNT"] == "2"
     assert env["GIT_CONFIG_KEY_0"] == "http.sslVerify"
     assert env["GIT_CONFIG_KEY_1"] == f"http.{HTTPS_URL}.extraHeader"
+
+
+# --------------------------------------------------------------------------- #
+# A forum hosted on the collaboration server: its credential and its failures
+# --------------------------------------------------------------------------- #
+
+SERVER = "https://obsidian.test/vista/api"
+HOSTED_URL = f"{SERVER}/git/11111111-2222-4333-8444-555555555555.git"
+
+
+def _local(**fields) -> LocalSettingsTable:
+    base = {
+        "collaboration_server_url": SERVER,
+        "collaboration_token": "sign-in-token-1234",
+        "display_name": "Ada",
+        "github_token": "ghp_forge_token",
+    }
+    return LocalSettingsTable(**{**base, **fields})
+
+
+def _sent(config: ForumSettings, tmp_path) -> dict[str, str]:
+    """The environment git gets for a network command in a client with `config`."""
+    return ForumClient(config.model_copy(update={"repo_root": tmp_path / "f"}))._env(
+        network=True
+    )
+
+
+def test_a_url_under_the_collaboration_server_is_a_hosted_forum(forum_home):
+    config = forum_config_for(_project(HOSTED_URL), _local())
+    assert config is not None
+    assert config.remote_token_source == "collaboration"
+    assert config.remote_token is None, "never a forge token"
+    assert config.remote_headers is not None
+    assert (
+        config.remote_headers["Authorization"].get_secret_value()
+        == "Bearer sign-in-token-1234"
+    )
+    assert "X-Vista-Install-Id" in config.remote_headers
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/lab/forum.git",
+        # Another server, and the same server's other paths, are not its forums.
+        "https://elsewhere.test/vista/api/git/11111111-2222-4333-8444-555555555555.git",
+        f"{SERVER}/items/11111111-2222-4333-8444-555555555555.git",
+        f"{SERVER}/git/not-a-forum.git",
+    ],
+)
+def test_other_urls_keep_their_forge_behaviour(forum_home, url):
+    config = forum_config_for(_project(url), _local())
+    assert config is not None
+    assert config.remote_headers is None
+    assert config.remote_token_source != "collaboration"
+
+
+def test_the_forge_token_still_serves_a_forge(forum_home):
+    config = forum_config_for(_project("https://github.com/lab/forum.git"), _local())
+    assert config is not None
+    assert config.remote_token is not None
+    assert config.remote_token.get_secret_value() == "ghp_forge_token"
+    assert config.remote_token_source == "settings-github"
+
+
+def test_no_server_configured_means_no_hosted_forum(forum_home, monkeypatch):
+    monkeypatch.setattr(app_settings, "collaboration_server_url", None)
+    config = forum_config_for(
+        _project(HOSTED_URL), _local(collaboration_server_url=None)
+    )
+    assert config is not None and config.remote_headers is None
+
+
+def test_git_sends_the_sign_in_to_the_hosted_forum_alone(
+    forum_home, tmp_path, machine_wide_header
+):
+    """Asked of git: the sign-in, scoped to the forum's URL; no forge token anywhere."""
+    import base64
+
+    config = forum_config_for(_project(HOSTED_URL), _local())
+    assert config is not None
+    env = _sent(config, tmp_path)
+
+    header = _header_git_sends(env, HOSTED_URL + "/info/refs")
+    # git reports only the last of several headers; the others are in the env.
+    assert header == "Authorization: Bearer sign-in-token-1234"
+    assert "Authorization: Bearer sign-in-token-1234" in env.values()
+    assert any(v.startswith("X-Vista-Install-Id: ") for v in env.values())
+    elsewhere = _header_git_sends(env, "https://elsewhere.test/x.git")
+    assert elsewhere is None or "sign-in-token-1234" not in elsewhere
+    joined = " ".join(env.values())
+    assert "ghp_forge_token" not in joined
+    assert base64.b64encode(b"oauth2:ghp_forge_token").decode() not in joined
+
+
+def test_the_sign_in_is_never_sent_unencrypted(forum_home, tmp_path):
+    remote = (
+        "http://obsidian.test/vista/api/git/11111111-2222-4333-8444-555555555555.git"
+    )
+    local = _local(collaboration_server_url="http://obsidian.test/vista/api")
+    config = forum_config_for(_project(remote), local)
+    assert config is not None and config.remote_token_source == "collaboration"
+    assert "sign-in-token-1234" not in " ".join(_sent(config, tmp_path).values())
+
+
+def test_this_machine_may_have_the_sign_in_over_http(forum_home, tmp_path):
+    remote = "http://127.0.0.1:8002/git/11111111-2222-4333-8444-555555555555.git"
+    local = _local(collaboration_server_url="http://127.0.0.1:8002")
+    config = forum_config_for(_project(remote), local)
+    assert config is not None
+    assert "Bearer sign-in-token-1234" in " ".join(_sent(config, tmp_path).values())
+
+
+def _hosted_client(tmp_path) -> ForumClient:
+    config = forum_config_for(_project(HOSTED_URL), _local())
+    assert config is not None
+    (tmp_path / "forum").mkdir()
+    return ForumClient(config.model_copy(update={"repo_root": tmp_path / "forum"}))
+
+
+async def test_a_refused_sign_in_is_not_a_forum_that_cannot_be_reached(
+    forum_home, tmp_path
+):
+    client = _hosted_client(tmp_path)
+    client._record_failure(
+        "fatal: unable to access 'https://obsidian.test/': "
+        "The requested URL returned error: 401"
+    )
+    told = await client.publish_error()
+    assert told is not None
+    assert (told["reason"], told["credential"]) == ("refused", "collaboration")
+    assert "collaboration sign-in was refused" in told["message"]
+    assert f"{SERVER}/sign-in" in told["message"] and "Settings" in told["message"]
+    assert "sign-in-token-1234" not in str(told)
+
+
+async def test_a_rule_the_server_refused_is_reported_by_its_message(
+    forum_home, tmp_path
+):
+    client = _hosted_client(tmp_path)
+    client._record_failure(
+        "remote: Refused refs/heads/vista-forum/threads/t: only the thread's opener "
+        "can close it (the account that opened the thread).\n"
+        "To https://obsidian.test/vista/api/git/x.git\n"
+        " ! [remote rejected] t -> t (pre-receive hook declined)\n"
+        "error: failed to push some refs"
+    )
+    told = await client.publish_error()
+    assert told is not None
+    assert (told["reason"], told["credential"]) == ("rule", "collaboration")
+    assert "only the thread's opener can close it" in told["message"]
+    assert "pre-receive" not in told["message"], "the rule, not git's boilerplate"
+
+
+async def test_a_forge_refusal_is_reported_as_before(forum_home, tmp_path):
+    """The forge path is unchanged: its 401 is git's message under the Settings token."""
+    config = forum_config_for(_project("https://github.com/lab/forum.git"), _local())
+    assert config is not None
+    (tmp_path / "forum").mkdir()
+    client = ForumClient(config.model_copy(update={"repo_root": tmp_path / "forum"}))
+    client._record_failure("remote: Refused x: looks like a rule\nreturned error: 401")
+    told = await client.publish_error()
+    assert told is not None
+    assert (told["reason"], told["credential"]) == ("refused", "settings-github")
+    assert "looks like a rule" in told["message"]
+
+
+# --------------------------------------------------------------------------- #
+# Two installs on one hosted forum, and moving a forum onto one
+# (a real collaboration server on loopback, and real git)
+# --------------------------------------------------------------------------- #
+
+ROSTER = {
+    "proposer": "vista-proposer-1",
+    "reviewer": "vista-reviewer-1",
+    "referee": "vista-referee-1",
+}
+
+
+@pytest.fixture
+async def installs(loopback_server, forum_home, tmp_path):
+    """Alice and Bob: two VISTA installs, each signed in to the loopback server."""
+    from harness.hosted import make_install
+
+    alice = await make_install(tmp_path, "Alice", loopback_server.url)
+    bob = await make_install(tmp_path, "Bob", loopback_server.url)
+    yield alice, bob
+    await alice.close()
+    await bob.close()
+
+
+async def _forum_of(install, project_name: str):
+    """(the project's row, the forum client of this install on it); the install is active."""
+    from vista_backend.services import local_settings, project as project_service
+
+    row = await project_service.get_project_by_name(install.session, project_name)
+    return row, build_client_for(row, await local_settings.get(install.session))
+
+
+async def test_two_installs_on_one_hosted_forum(
+    installs, loopback_server, in_public_team
+):
+    """
+    Alice creates a project (it gets a hosted forum) and publishes it; Bob
+    imports it and lists, posts and continues; the server refuses what the lab's
+    rules forbid: Bob's Close, and a second run while one is live.
+    """
+    from harness import api_client
+    from vista_backend.services import local_settings, project_collaboration
+    from vista_backend.services import threads as thread_service
+    from vista_backend.services.forum_git import (
+        ForumCommandError,
+        PostKind,
+        RunRefused,
+        rule_refusal,
+    )
+
+    alice, bob = installs
+
+    # --- Alice creates the project and opens a thread ----------------------
+    async with alice.active() as session:
+        with api_client(session) as (api, _):
+            created = await api.post("/projects", json=_body("salt", None))
+            assert created.status_code == 201, created.text
+            assert created.json()["forum_notice"] is None
+            url = created.json()["forum_repo_url"]
+            assert url.startswith(f"{loopback_server.url}/git/")
+            await session.commit()
+            _, a_client = await _forum_of(alice, "salt")
+            thread = await a_client.create_thread("Does it freeze?", body="Framing.")
+            first = await a_client.post_as_human(thread, "Alice says hello.")
+            loopback_server.wait_for_records(url)
+            published = await api.post("/projects/salt/publish", json={})
+            assert published.status_code == 200, published.text
+            assert published.json()["forum_error"] is None
+            item_id = published.json()["project"]["remote_id"]
+
+    # --- Bob imports it, and sees Alice's thread, by her verified name ------
+    async with bob.active() as session:
+        result = await project_collaboration.import_project(
+            session, await local_settings.get_public(session), uuid.UUID(item_id)
+        )
+        assert result.forum_error is None
+        assert result.project.forum_repo_url == url, "the same forum"
+        await session.commit()
+        b_row, b_client = await _forum_of(bob, "salt")
+        b_id = b_row.id  # a commit expires the row
+        await thread_service.sync_forum(session, project_id=b_id, client=b_client)
+        await session.commit()
+        listed = await thread_service.list_threads(session, project_id=b_id)
+        assert [t.thread_id for t in listed] == [thread]
+        posts = await thread_service.posts_with_notes(session, thread=listed[0])
+        said = next(p for p in posts if p.post_id == first.id)
+        assert said.pusher_name == "Alice", "from the server's record, not the file"
+        assert said.vouch_lane == "peer-claimed"
+
+        # Bob posts and continues: his RUN is taken, the thread is Alice's too.
+        await b_client.post_as_human(thread, "Bob says hello.")
+        run = await b_client.start_run(thread, rounds=1, roster=ROSTER)
+        assert run.kind == PostKind.RUN
+        assert await b_client.unpublished() == 0
+
+    # --- Alice sees Bob by name, and her agents are told he is not her operator
+    async with alice.active() as session:
+        a_row, a_client = await _forum_of(alice, "salt")
+        read = await a_client.read_thread(thread)
+        bobs = next(p for p in read.posts if p.body == "Bob says hello.")
+        assert bobs.verified_name == "Bob"
+        from vista_backend.agents.forum.roles import render_transcript
+
+        shown = render_transcript(read)
+        assert "Bob (teammate, verified by the server)" in shown
+        assert "NOT your operator" in shown
+
+        # Her RUN, while Bob's is live, is refused by the server: it is dropped,
+        # nothing waits to publish, and no run is started.
+        with pytest.raises(RunRefused, match="run is already live"):
+            await a_client.start_run(thread, rounds=1, roster=ROSTER)
+        after = await a_client.read_thread(thread)
+        assert [p.kind for p in after.posts].count("RUN") == 1
+        assert await a_client.unpublished() == 0
+        assert await a_client.publish_error() is None
+        assert await a_client.publish(thread) == 0
+
+    # --- Bob's Close is refused by the server: only the opener's is taken -----
+    async with bob.active():
+        _, b_client = await _forum_of(bob, "salt")
+        await b_client.close_thread(thread)  # a post in his copy; the push is refused
+        with pytest.raises(ForumCommandError) as refused:
+            await b_client.publish(thread)
+        assert "opener" in (rule_refusal(refused.value.stderr) or "")
+        why = await b_client.publish_error()
+        assert why is not None
+        assert (why["reason"], why["credential"]) == ("rule", "collaboration")
+        assert "only the thread's opener can close it" in why["message"]
+        for secret in bob.sign_in.values():
+            assert secret not in why["message"]
+
+    async with alice.active():
+        _, a_client = await _forum_of(alice, "salt")
+        assert not (await a_client.read_thread(thread)).is_closed
+        # Alice, who opened it, can.
+        await a_client.close_thread(thread)
+        assert (await a_client.read_thread(thread)).is_closed
+        assert await a_client.unpublished() == 0
+
+
+@pytest.fixture
+def three_threads_on_a_forge(forum_home, forge, tmp_path):
+    """A forge repository holding three threads, written by an install of someone else's."""
+    import asyncio
+
+    from vista_backend.services.forum_git import MemoryOutbox
+
+    async def seed() -> list[str]:
+        other = ForumClient(
+            ForumSettings(
+                enabled=True, repo_root=tmp_path / "somebody" / "forum-git" / "p"
+            ),
+            outbox=MemoryOutbox(),
+        )
+        await other.set_remote(str(forge))
+        ids = []
+        for title in ("one", "two", "three"):
+            tid = await other.create_thread(title, body=f"about {title}")
+            await other.post_as_human(tid, f"a post in {title}")
+            ids.append(tid)
+        return ids
+
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(seed())
+    finally:
+        loop.close()
+
+
+def _forge_refs(forge: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(forge), "for-each-ref"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    ).stdout
+
+
+async def test_moving_a_forge_forum_onto_the_server(
+    installs, loopback_server, forge, three_threads_on_a_forge
+):
+    from vista_backend.db.schemas import ProjectCreate
+    from vista_backend.services import hosted_forum, project as project_service
+    from vista_backend.services import threads as thread_service
+
+    alice, _ = installs
+    refs_before = _forge_refs(forge)
+    async with alice.active() as session:
+        project = await project_service.create_project(
+            session, ProjectCreate(name="salt", forum_repo_url=str(forge))
+        )
+        await session.commit()
+        await session.refresh(project)
+        moved = await hosted_forum.move_to_hosted(session, project)
+        moved_id, hosted_url = moved.id, moved.forum_repo_url
+        await session.commit()
+        assert hosted_url.startswith(f"{loopback_server.url}/git/")
+
+        _, client = await _forum_of(alice, "salt")
+        await thread_service.sync_forum(session, project_id=moved_id, client=client)
+        listed = await thread_service.list_threads(session, project_id=moved_id)
+        assert sorted(t.thread_id for t in listed) == sorted(three_threads_on_a_forge)
+        for row in listed:
+            posts = await thread_service.list_posts(session, thread=row)
+            assert [p.kind for p in posts] == ["TASK", "ASK"]
+            # Copied history is not attributed to whoever moved it.
+            assert all(p.pusher_name is None for p in posts)
+    assert _forge_refs(forge) == refs_before, "the forge repository is untouched"
+
+    # And a teammate who joins the forum reads the same three, with their history.
+    forum_id = hosted_url.rsplit("/", 1)[-1].removesuffix(".git")
+    records = loopback_server.api(alice.install_id).get(f"/forums/{forum_id}/pushes")
+    assert {r["imported"] for r in records.json()} == {True}
+
+
+async def test_a_move_that_fails_leaves_the_project_on_its_forum(
+    installs, loopback_server, forge, three_threads_on_a_forge, monkeypatch
+):
+    from fastapi import HTTPException
+
+    from vista_backend.db.schemas import ProjectCreate
+    from vista_backend.services import hosted_forum, project as project_service
+    from vista_backend.services.forum_git import ForumCommandError
+
+    alice, _ = installs
+    created: list[str] = []
+    real = ForumClient.push_threads_for_import
+
+    async def refuse(self):
+        created.append(self.config.remote_url)
+        raise ForumCommandError(["git", "push"], 1, "", "remote: Refused: not today")
+
+    monkeypatch.setattr(ForumClient, "push_threads_for_import", refuse)
+    async with alice.active() as session:
+        project = await project_service.create_project(
+            session, ProjectCreate(name="salt", forum_repo_url=str(forge))
+        )
+        await session.commit()
+        await session.refresh(project)
+        with pytest.raises(HTTPException) as failed:
+            await hosted_forum.move_to_hosted(session, project)
+        assert failed.value.status_code == 400
+        assert "still uses" in failed.value.detail
+        assert project.forum_repo_url == str(forge), "the URL is unchanged"
+        _, client = await _forum_of(alice, "salt")
+        assert await client.remote() == str(forge)
+    assert real is not refuse and len(created) == 1
+    forum_id = created[0].rsplit("/", 1)[-1].removesuffix(".git")
+    assert not loopback_server.forum_exists(alice.install_id, forum_id), (
+        "the empty forum is deleted"
+    )
+
+
+async def test_a_project_with_no_forum_gets_an_empty_hosted_one(
+    installs, loopback_server
+):
+    from vista_backend.db.schemas import ProjectCreate
+    from vista_backend.services import hosted_forum, project as project_service
+
+    alice, _ = installs
+    async with alice.active() as session:
+        project = await project_service.create_project(
+            session, ProjectCreate(name="salt")
+        )
+        await session.commit()
+        await session.refresh(project)
+        moved = await hosted_forum.move_to_hosted(session, project)
+        assert moved.forum_repo_url.startswith(f"{loopback_server.url}/git/")
+        _, client = await _forum_of(alice, "salt")
+        assert await client.list_threads() == []
+
+
+async def _alice_and_bob_on_a_published_forum(installs, loopback_server):
+    """Alice's published project with one thread, imported and synced by Bob."""
+    from harness import api_client
+    from vista_backend.services import local_settings, project_collaboration
+    from vista_backend.services import threads as thread_service
+
+    alice, bob = installs
+    async with alice.active() as session:
+        with api_client(session) as (api, _):
+            created = await api.post("/projects", json=_body("salt", None))
+            assert created.status_code == 201, created.text
+            await session.commit()
+            _, a_client = await _forum_of(alice, "salt")
+            thread = await a_client.create_thread("Does it freeze?", body="Framing.")
+            loopback_server.wait_for_records(created.json()["forum_repo_url"])
+            published = await api.post("/projects/salt/publish", json={})
+            assert published.status_code == 200, published.text
+            item_id = published.json()["project"]["remote_id"]
+    async with bob.active() as session:
+        await project_collaboration.import_project(
+            session, await local_settings.get_public(session), uuid.UUID(item_id)
+        )
+        await session.commit()
+        b_row, b_client = await _forum_of(bob, "salt")
+        b_id = b_row.id
+        await thread_service.sync_forum(session, project_id=b_id, client=b_client)
+        await session.commit()
+    return thread
+
+
+async def test_a_continue_that_loses_the_race_for_a_run_is_a_409(
+    installs, loopback_server, in_public_team, monkeypatch
+):
+    """
+    Bob's last fetch predates Alice's RUN, so his own check finds no live run;
+    the server refuses his RUN. The Continue answers 409, nothing is scheduled,
+    and nothing of his RUN is left to publish or shown in his copy.
+    """
+    from harness import api_client
+    from vista_backend.api import debate as debate_api
+
+    alice, bob = installs
+    thread = await _alice_and_bob_on_a_published_forum(installs, loopback_server)
+    async with alice.active():
+        _, a_client = await _forum_of(alice, "salt")
+        await a_client.start_run(thread, rounds=1, roster=ROSTER)
+
+    spawned: list = []
+
+    async def fake_task(*args, **kwargs):
+        spawned.append((args, kwargs))
+
+    async def stale(session, row, client):
+        """The thread as Bob last read it: before Alice's RUN."""
+
+    monkeypatch.setattr(debate_api, "continue_debate_task", fake_task)
+    monkeypatch.setattr(debate_api, "refresh_thread", stale)
+    async with bob.active() as session:
+        with api_client(session) as (api, _):
+            res = await api.post(
+                f"/projects/salt/threads/{thread}/runs", json={"rounds": 1}
+            )
+        assert res.status_code == 409, res.text
+        assert res.json()["detail"] == "Another user is continuing this debate."
+        assert spawned == []
+        _, b_client = await _forum_of(bob, "salt")
+        assert await b_client.unpublished() == 0
+        assert await b_client.publish_error() is None
+        read = await b_client.read_thread(thread)
+        assert [p.kind for p in read.posts].count("RUN") == 1, "only Alice's"
+
+
+async def test_a_hosted_continue_posts_its_run_before_it_answers(
+    installs, loopback_server, in_public_team, monkeypatch
+):
+    from harness import api_client
+    from vista_backend.api import debate as debate_api
+
+    _, bob = installs
+    thread = await _alice_and_bob_on_a_published_forum(installs, loopback_server)
+    spawned: list = []
+
+    async def fake_task(*args, **kwargs):
+        spawned.append((args, kwargs))
+
+    monkeypatch.setattr(debate_api, "continue_debate_task", fake_task)
+    async with bob.active() as session:
+        with api_client(session) as (api, _):
+            res = await api.post(
+                f"/projects/salt/threads/{thread}/runs", json={"rounds": 2}
+            )
+        assert res.status_code == 200, res.text
+        await asyncio.sleep(0.05)  # the spawned task
+        ((args, kwargs),) = spawned
+        assert args[1] == 2 and kwargs == {"announced": True}, (
+            "run() must not announce again"
+        )
+        _, b_client = await _forum_of(bob, "salt")
+        assert await b_client.unpublished() == 0, "already on the server"
+        read = await b_client.read_thread(thread)
+        (run,) = [p for p in read.posts if p.kind == "RUN"]
+        assert run.run is not None and run.run.rounds == 2
+        assert set(run.run.roster) == {"proposer", "reviewer", "referee"}

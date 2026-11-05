@@ -49,6 +49,7 @@ from ..services.forum_git import (
     ForumClient,
     ForumDisabled,
     PostKind,
+    RunRefused,
     ThreadClosed,
     ThreadMissing,
 )
@@ -70,12 +71,24 @@ router = APIRouter(prefix="/projects", tags=["debates"])
 class PublishError(BaseModel):
     """Why posts did not reach the forum, for the lab page to explain (design D7)."""
 
-    reason: Literal["refused", "unreachable", "failed"]
-    """`refused`: the credential was turned away. `unreachable`: the forge was not reached."""
-    credential: Literal["settings-github", "settings-gitlab", "system-git"]
-    """Which credential was sent, so the page can say which one to fix."""
+    reason: Literal["refused", "rule", "unreachable", "failed"]
+    """
+    `refused`: the credential was turned away. `rule`: a hosted forum's server
+    refused the push under one of its rules, which `message` names.
+    `unreachable`: the forge was not reached.
+    """
+    credential: Literal[
+        "settings-github", "settings-gitlab", "system-git", "collaboration"
+    ]
+    """
+    Which credential was sent, so the page can say which one to fix:
+    `collaboration` is the sign-in for a forum hosted on the collaboration server.
+    """
     message: str
-    """Git's own message; it never holds the token, which git gets from the environment."""
+    """
+    Git's own message, or for a hosted forum the server's rule or what to do
+    about its sign-in; it never holds the token, which git gets from the environment.
+    """
     at: str
 
 
@@ -666,10 +679,34 @@ async def continue_thread(
     for role in ROSTER:
         require_inference_credential(local, chosen.get(role))
 
+    announced = False
+    if getattr(client, "hosted", False):
+        # A hosted forum's server decides who may run, so the RUN is posted now,
+        # before this answers: a refusal is a 409 and nothing is scheduled. (A
+        # forge keeps its order: the run announces itself, local-first.)
+        members = await debate_service.list_active_participants(session, run_id=ours.id)
+        if members:
+            try:
+                await client.start_run(
+                    thread_id,
+                    rounds=max(1, ours.rounds + body.rounds - ours.rounds_done),
+                    roster={m.debate_role: m.identity for m in members},
+                )
+            except RunRefused:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=409, detail="Another user is continuing this debate."
+                )
+            announced = True
+
     run_id = ours.id
     payload = await _thread_public(session, row, host_id=client.host_id)
     await session.commit()
-    _spawn(continue_debate_task(run_id, body.rounds))
+    _spawn(
+        continue_debate_task(run_id, body.rounds, announced=True)
+        if announced
+        else continue_debate_task(run_id, body.rounds)
+    )
     return payload
 
 

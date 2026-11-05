@@ -1673,6 +1673,13 @@ class ForumPostTable(ForumPostBase, table=True):
     thread their install has never run agents in, so there may be no run row to
     hold it. The one field here git does not hold: a rebuild loses it.
     """
+    pusher_name: str | None = None
+    """
+    On a hosted forum: the name of the account the collaboration server recorded
+    as pushing the post, read from its push records when the thread is synced.
+    None on a forge, for a post copied onto the forum when a project moved
+    there, and until the server's record is read. A cache of the server's.
+    """
 
 
 DebateRoleName = Literal["proposer", "reviewer", "referee"]

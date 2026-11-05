@@ -170,9 +170,21 @@ class ForumSettings(BaseModel):
 
     remote_token_source: str | None = None
     """
-    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or None
-    when there is none and git uses the system's credentials. A failed publish
-    names it, so the person knows which token to fix. Not configuration.
+    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or
+    `collaboration` for a forum hosted on the collaboration server (see
+    `remote_headers`), or None when there is none and git uses the system's
+    credentials. A failed publish names it, so the person knows which credential
+    to fix. Not configuration.
+    """
+
+    remote_headers: dict[str, SecretStr] | None = None
+    """
+    For a forum hosted on the collaboration server: the sign-in headers git
+    sends to `remote_url` instead of a forge token (the bearer token, and the
+    installation's id and name, as the collaboration client sends them). Set by
+    `forum_config_for` and only for a URL under the server's address; a forge
+    URL never has them, and a hosted one never has `remote_token`. Not
+    configuration.
     """
 
     max_simulations: int = 2
