@@ -716,6 +716,7 @@ class DebateOrchestrator:
             run.thread_id,
             rounds=max(1, run.rounds - run.rounds_done),
             roster={str(role): p.identity for role, p in roster.items()},
+            expiry_seconds=settings.forum.run_expiry_seconds,
         )
         await self._sync_thread(session, run, round_index=None)
         await self._checkpoint(session)

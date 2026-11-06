@@ -1252,7 +1252,7 @@ async def test_a_continue_the_server_refuses_starts_no_run(
         p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
     ]
 
-    async def refuse(thread, *, rounds, roster):
+    async def refuse(thread, *, rounds, roster, expiry_seconds=None):
         raise RunRefused("Refused: a run is already live on this thread.")
 
     monkeypatch.setattr(client, "start_run", refuse)

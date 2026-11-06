@@ -294,6 +294,12 @@ class RunSpec(BaseModel):
 
     rounds: int
     roster: dict[str, str]
+    expiry_seconds: float | None = None
+    """
+    The run expiry of the install that started it (`ForumSettings.run_expiry_seconds`),
+    so a reader whose own is shorter does not call a long-waiting run dead.
+    Optional: a RUN from an older VISTA has none. See `live_run`.
+    """
 
     @property
     def referee(self) -> str | None:
@@ -311,7 +317,10 @@ def _parse_run(value: object) -> RunSpec | None:
         return None
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in roster.items()):
         return None
-    return RunSpec(rounds=rounds, roster=roster)
+    expiry = value.get("expiry_seconds")
+    if isinstance(expiry, bool) or not isinstance(expiry, int | float) or expiry <= 0:
+        expiry = None
+    return RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry)
 
 
 class Post(BaseModel):
@@ -492,6 +501,22 @@ def _parse_ts(value: str) -> datetime | None:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
+MAX_STATED_RUN_EXPIRY = 24 * 3600.0
+""" The longest run expiry a RUN post may ask a reader to honour, in seconds. """
+
+
+def effective_run_expiry(own: float, stated: float | None) -> float:
+    """
+    The expiry to judge a run by: the reader's own, or the starter's if longer
+    (capped at `MAX_STATED_RUN_EXPIRY`, so a post cannot hold a thread forever).
+    A stated expiry never shortens the reader's. The collaboration server's
+    `forum_hook.effective_run_expiry` is the same rule.
+    """
+    if stated is None:
+        return own
+    return max(own, min(stated, MAX_STATED_RUN_EXPIRY))
+
+
 def live_run(posts: Sequence[Post], *, now: datetime, expiry: float) -> LiveRun | None:
     """
     The thread's live run, or None.
@@ -499,7 +524,8 @@ def live_run(posts: Sequence[Post], *, now: datetime, expiry: float) -> LiveRun 
     `posts` are a thread's visible posts, in order (`Thread.posts`). The live
     run is the latest RUN, unless the thread is closed, the RUN's Referee has
     since posted DONE or BLOCKED, or nothing (neither the RUN nor a post by its
-    roster) is newer than `expiry` seconds before `now`.
+    roster) is newer than `expiry` seconds before `now`. A RUN that states a
+    longer expiry of its own keeps it (`effective_run_expiry`).
 
     Only the latest RUN counts: a later RUN means someone judged the earlier
     one over, which is what a reader would conclude too.
@@ -536,6 +562,7 @@ def live_run(posts: Sequence[Post], *, now: datetime, expiry: float) -> LiveRun 
         ts = _parse_ts(post.ts)
         if ts is not None and ts > newest:
             newest, last = ts, post.ts
+    expiry = effective_run_expiry(expiry, marker.run.expiry_seconds)
     if (now - newest).total_seconds() > expiry:
         return None
     return LiveRun(
@@ -1924,7 +1951,12 @@ class ForumClient:
         )
 
     async def start_run(
-        self, thread: str, *, rounds: int, roster: dict[str, str]
+        self,
+        thread: str,
+        *,
+        rounds: int,
+        roster: dict[str, str],
+        expiry_seconds: float | None = None,
     ) -> Post:
         """
         Announce that this install's agents are about to argue `rounds` rounds
@@ -1935,10 +1967,13 @@ class ForumClient:
         On a hosted forum the server decides who may run: the post is published
         before this returns, and one the server refuses because a run is live
         is dropped, with nothing left to publish later, and raises `RunRefused`.
+
+        `expiry_seconds` is this install's run expiry, recorded in the post so
+        other installs and the server keep the run live as long as we would.
         """
         if rounds < 1 or not roster:
             raise ValueError("a run needs at least one round and a roster")
-        spec = RunSpec(rounds=rounds, roster=roster)
+        spec = RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry_seconds)
         return await self._post(
             thread,
             HUMAN,
@@ -1946,7 +1981,7 @@ class ForumClient:
             "",
             reply_to=None,
             staged=None,
-            extra={"run": spec.model_dump()},
+            extra={"run": spec.model_dump(exclude_none=True)},
             claim=self.hosted,
         )
 

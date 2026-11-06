@@ -330,7 +330,12 @@ class FakeForumClient:
         return post
 
     async def start_run(
-        self, thread: str, *, rounds: int, roster: dict[str, str]
+        self,
+        thread: str,
+        *,
+        rounds: int,
+        roster: dict[str, str],
+        expiry_seconds: float | None = None,
     ) -> Post:
         if rounds < 1 or not roster:
             raise ValueError("a run needs at least one round and a roster")
@@ -340,7 +345,7 @@ class FakeForumClient:
             HUMAN,
             PostKind.RUN,
             "",
-            run=RunSpec(rounds=rounds, roster=roster),
+            run=RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry_seconds),
         )
 
     async def vote(

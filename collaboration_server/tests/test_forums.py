@@ -217,8 +217,13 @@ def _post(thread: str, kind: str, identity: str = "human", **fields) -> dict:
     }
 
 
-def _run_post(rounds: int = 2, roster: dict | None = None) -> dict:
-    return {"run": {"rounds": rounds, "roster": roster or ROSTER}}
+def _run_post(
+    rounds: int = 2, roster: dict | None = None, expiry_seconds: float | None = None
+) -> dict:
+    run: dict = {"rounds": rounds, "roster": roster or ROSTER}
+    if expiry_seconds is not None:
+        run["expiry_seconds"] = expiry_seconds
+    return {"run": run}
 
 
 class Forum:
@@ -467,6 +472,31 @@ def test_a_run_is_accepted_once_it_has_expired_by_the_servers_clock(forum):
         forum.set_received_at(p["post_id"], old)
     _ok(forum.ada.push(forum.url, "t1"))
     assert run["id"] in [p["post_id"] for p in forum.live.pushes(forum.id)]
+
+
+@needs_git
+def test_a_run_stays_live_for_the_expiry_its_starter_stated(forum):
+    forum.ada.open_thread("t1")
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=4 * 3600))
+    _ok(forum.ada.push(forum.url, "t1"))
+    # Quiet for an hour: past the server's own 45 minutes, inside the stated 4 hours.
+    old = datetime.now(UTC) - timedelta(hours=1)
+    for p in forum.live.pushes(forum.id):
+        forum.set_received_at(p["post_id"], old)
+    forum.ada.post("t1", "RUN", **_run_post())
+    _refused(forum.ada.push(forum.url, "t1"), "run is already live")
+
+
+@needs_git
+def test_a_stated_expiry_is_capped_and_a_bad_one_ignored(forum):
+    forum.ada.open_thread("t1")
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=10**9))
+    _ok(forum.ada.push(forum.url, "t1"))
+    old = datetime.now(UTC) - timedelta(hours=30)
+    for p in forum.live.pushes(forum.id):
+        forum.set_received_at(p["post_id"], old)
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=-5))
+    _ok(forum.ada.push(forum.url, "t1"))
 
 
 @needs_git

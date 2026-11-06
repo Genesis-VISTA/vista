@@ -117,7 +117,9 @@ class CollabSettings(BaseSettings):
     How long a debate run (a `RUN` post) stays live without a post of its own
     or its roster's, by the server's clock: the forum format's run expiry,
     matching the backend's default. A hosted forum refuses a second `RUN` while
-    one is live (`services/forum_hook.py`).
+    one is live (`services/forum_hook.py`). A RUN may state a longer expiry of
+    its own (`run.expiry_seconds`, an install that waits longer for jobs), which
+    this run then keeps, up to 24 hours; this value is the floor, never a cap.
     """
 
     max_blob_size: ByteSize = ByteSize(2 * 1024**3)

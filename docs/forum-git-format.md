@@ -120,7 +120,7 @@ Two optional fields, by kind:
 
 | Field | On | Meaning |
 |---|---|---|
-| `run` | `RUN` | `{"rounds": n, "roster": {"proposer": id, "reviewer": id, "referee": id}}`: how many rounds, and the identities that will argue them. A `RUN` without a usable `run` is skipped. |
+| `run` | `RUN` | `{"rounds": n, "roster": {"proposer": id, "reviewer": id, "referee": id}}`: how many rounds, and the identities that will argue them, and optionally `"expiry_seconds": n`, the starting install's run expiry (see [Runs](#runs)); readers ignore it if absent or not a positive number. A `RUN` without a usable `run` is skipped. |
 | `verdict` | `DONE` | The Referee's structured verdict (ranked hypotheses with claim, mechanism, predictions, confidence, open risks; rationale; unresolved). The body is the same verdict written out. A reader that cannot validate it uses the body. |
 
 Older readers skip `RUN` as an unknown kind and ignore `verdict`, so neither
@@ -184,7 +184,10 @@ Any install may argue in any thread that is not closed, with its own agents. A
 - the thread is closed;
 - nothing, neither the `RUN` nor a post by its roster, is newer than the **run
   expiry**: the longest a turn may wait for a simulation plus 15 minutes, 45
-  minutes by default (`ForumSettings.run_expiry_seconds`). Times come from the
+  minutes by default (`ForumSettings.run_expiry_seconds`). A `RUN` also records
+  its starter's expiry (`run.expiry_seconds`), and a reader uses the longer of
+  its own and that, capped at 24 hours, so installs configured with different
+  job-wait limits agree on whether a run is live. Times come from the
   posts' `ts`, so a poster's clock skew shifts this by that much. (A hosted
   forum's server applies the same rule when it decides whether a `RUN` may be
   pushed, but times it by when it received each post, so skew does not
@@ -213,7 +216,8 @@ a message naming the rule. For every ref a push updates it requires:
 Run liveness there is the rule in [Runs](#runs), but timed by when the server
 **received** the posts, not their `ts`: a pusher's clock cannot keep a run alive
 or end it early. A run still ends at the Referee's `DONE` or `BLOCKED`, a close,
-or expiry (`VISTA_COLLAB_FORUM_RUN_EXPIRY_SECONDS`, 45 minutes by default).
+or expiry (`VISTA_COLLAB_FORUM_RUN_EXPIRY_SECONDS`, 45 minutes by default, or
+the longer one the `RUN` states, up to 24 hours).
 
 The server also records which signed-in account pushed each post. That record is
 how VISTA shows a verified name ([Provenance lanes](#provenance-lanes)); the post

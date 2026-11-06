@@ -693,6 +693,7 @@ async def continue_thread(
                     thread_id,
                     rounds=max(1, ours.rounds + body.rounds - ours.rounds_done),
                     roster={m.debate_role: m.identity for m in members},
+                    expiry_seconds=settings.forum.run_expiry_seconds,
                 )
             except RunRefused:
                 await session.rollback()

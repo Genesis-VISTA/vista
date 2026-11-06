@@ -1105,13 +1105,15 @@ def _p(kind: str, sender: str, minutes: float, **over) -> Post:
     )
 
 
-def _run(minutes: float = 0, rounds: int = 3) -> Post:
+def _run(
+    minutes: float = 0, rounds: int = 3, expiry_seconds: float | None = None
+) -> Post:
     return _p(
         "RUN",
         "human",
         minutes,
         origin="a" * 32,
-        run=RunSpec(rounds=rounds, roster=ROSTER),
+        run=RunSpec(rounds=rounds, roster=ROSTER, expiry_seconds=expiry_seconds),
     )
 
 
@@ -1173,6 +1175,37 @@ def test_live_run(posts, at_minutes, live):
         posts, now=T0 + timedelta(minutes=at_minutes), expiry=EXPIRY
     )
     assert (found is not None) == live
+
+
+def test_a_run_may_state_a_longer_expiry_than_the_readers():
+    long_run = _run(expiry_seconds=4 * 3600)
+    at = T0 + timedelta(hours=2)
+    assert forum_git.live_run([long_run], now=at, expiry=EXPIRY) is not None
+    assert forum_git.live_run([_run()], now=at, expiry=EXPIRY) is None
+    # ...but not past its own, and a shorter one never shortens the reader's.
+    assert (
+        forum_git.live_run([long_run], now=T0 + timedelta(hours=5), expiry=EXPIRY)
+        is None
+    )
+    short = _run(expiry_seconds=60)
+    assert (
+        forum_git.live_run([short], now=T0 + timedelta(minutes=10), expiry=EXPIRY)
+        is not None
+    )
+
+
+def test_a_stated_expiry_is_capped():
+    absurd = _run(expiry_seconds=10**9)
+    now = T0 + timedelta(hours=25)
+    assert forum_git.live_run([absurd], now=now, expiry=EXPIRY) is None
+
+
+@pytest.mark.anyio
+async def test_a_run_records_the_starters_expiry(a, b):
+    thread = await a.create_thread("t")
+    await a.start_run(thread, rounds=1, roster=ROSTER, expiry_seconds=7200.0)
+    [marker] = (await b.read_thread(thread)).posts
+    assert marker.run is not None and marker.run.expiry_seconds == 7200.0
 
 
 def test_live_run_reports_progress():

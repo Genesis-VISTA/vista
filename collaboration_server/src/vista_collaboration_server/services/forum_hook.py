@@ -157,6 +157,23 @@ def _usable_run(value: object) -> dict[str, object] | None:
     return value
 
 
+MAX_STATED_RUN_EXPIRY = 24 * 3600.0
+""" The longest run expiry a RUN post may ask for, in seconds. """
+
+
+def effective_run_expiry(own: float, run: dict[str, object]) -> float:
+    """
+    The server's expiry, or the one the RUN's starter stated in `run` if longer
+    (capped), so a run on an install that waits longer than the server's default
+    is not called dead while its backends still show it live. Never shorter than
+    `own`. The backend's `forum_git.effective_run_expiry` is the same rule.
+    """
+    stated = run.get("expiry_seconds")
+    if isinstance(stated, bool) or not isinstance(stated, int | float) or stated <= 0:
+        return own
+    return max(own, min(float(stated), MAX_STATED_RUN_EXPIRY))
+
+
 def entries(revs: list[str], thread_id: str) -> list[Entry]:
     """
     The posts and root the commits in `revs` add to thread `thread_id`, in
@@ -255,7 +272,7 @@ def live_run(posts: list[Entry], *, now: datetime, expiry: float) -> Entry | Non
             return None
         if post.received is not None and post.received > newest:
             newest = post.received
-    if (now - newest).total_seconds() > expiry:
+    if (now - newest).total_seconds() > effective_run_expiry(expiry, run):
         return None
     return marker
 
