@@ -54,6 +54,14 @@ ROSTER: tuple[DebateRole, ...] = ("proposer", "reviewer", "referee")
 """ The debate's roles, in speaking order. """
 
 
+class RunSuperseded(Exception):
+    """
+    The thread's latest RUN is not this run's: another install's run has taken
+    over (this one went quiet past the run expiry, and a Continue followed).
+    Control flow, caught in `DebateOrchestrator.run`.
+    """
+
+
 def identity_for(role: DebateRole, run_id: uuid.UUID) -> str:
     """
     The forum identity a role posts under, e.g. `vista-proposer-1a2b3c4d`.
@@ -335,6 +343,9 @@ class DebateOrchestrator:
             await self._sync(session, run_id)
             await debate_service.set_status(session, run_id=run_id, status="closed")
             await self._checkpoint(session)
+        except RunSuperseded:
+            logger.info("debate %s: another run has taken over the thread", run_id)
+            await self._stand_down(session, run_id, roster)
         except ThreadMissing:
             logger.info("debate %s: the thread is no longer on the forum", run_id)
             await debate_service.mark_thread_missing(session, run_id=run_id)
@@ -374,6 +385,7 @@ class DebateOrchestrator:
 
         propose_deps = self._turn_deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        self._ensure_not_superseded(thread, roster)
         # Commit the projection before handing off to the role.
         #
         # `_sync_thread` writes, so without this the session holds a write
@@ -413,6 +425,7 @@ class DebateOrchestrator:
 
         review_deps = self._turn_deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        self._ensure_not_superseded(thread, roster)
         run = await self._announce(
             session, run_id, f"Reviewer is looking for holes · round {index + 1}"
         )
@@ -461,6 +474,7 @@ class DebateOrchestrator:
         """The Referee rules on what the thread produced."""
         run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
+        self._ensure_not_superseded(thread, roster)
         deps = self._turn_deps(run, run.rounds_done, roster["referee"])
         run = await self._announce(session, run_id, "Referee is ruling on the thread")
         try:
@@ -738,6 +752,57 @@ class DebateOrchestrator:
             expiry_seconds=settings.forum.run_expiry_seconds,
         )
         await self._sync_thread(session, run, round_index=None)
+        await self._checkpoint(session)
+
+    @staticmethod
+    def _ensure_not_superseded(
+        thread: Thread, roster: dict[DebateRole, Participant]
+    ) -> None:
+        """
+        Raise `RunSuperseded` if the thread's latest RUN is not ours.
+
+        Ours is the latest RUN whose roster is this run's identities. They are
+        named after the run's id (`identity_for`), so no other run's RUN can
+        carry them, and a Continue of this same run reuses them. The origin is
+        not consulted: it is a peer's claim, and the roster says it better.
+        """
+        latest = next(
+            (p for p in reversed(thread.posts) if p.kind == PostKind.RUN), None
+        )
+        if latest is None or latest.run is None:
+            return
+        if set(latest.run.roster.values()) != {p.identity for p in roster.values()}:
+            raise RunSuperseded()
+
+    async def _stand_down(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        roster: dict[DebateRole, Participant],
+    ) -> None:
+        """
+        Say on the thread that this run has stopped, and leave it not active.
+
+        The Referee's BLOCKED ends only the run whose roster it is on
+        (`live_run`), so the other run carries on. "converged" is the status
+        for a run that is finished without error; the UI has none for this.
+        """
+        run = await debate_service.require_debate(session, run_id)
+        try:
+            await self._post(
+                session,
+                run,
+                roster["referee"],
+                "This run went quiet past the run expiry and another run has "
+                "taken over the thread; stopping here.",
+                kind=PostKind.BLOCKED,
+                round_index=None,
+            )
+        except Exception:  # noqa: BLE001 — best effort, like every BLOCKED
+            logger.warning(
+                "debate %s: could not post a BLOCKED note", run_id, exc_info=True
+            )
+        await debate_service.set_status(session, run_id=run_id, status="converged")
         await self._checkpoint(session)
 
     async def _sync(self, session: AsyncSession, run_id: uuid.UUID) -> None:

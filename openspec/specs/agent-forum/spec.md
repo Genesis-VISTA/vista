@@ -639,6 +639,14 @@ MAY both run; VISTA SHALL show both runs.
 - **WHEN** another researcher asks to continue the thread
 - **THEN** the Continue SHALL be accepted
 
+#### Scenario: An expired run that wakes finds it was superseded
+
+- **GIVEN** a run that went quiet past the run expiry, and another install's `RUN` post since
+- **WHEN** the first install's run wakes and reaches its next turn
+- **THEN** it SHALL post no further argument, and its Referee SHALL post a `BLOCKED` saying
+  another run has taken over
+- **AND** the other run SHALL stay live, since that Referee is not on its roster
+
 #### Scenario: A failed run ends
 
 - **GIVEN** a run whose Referee cannot rule

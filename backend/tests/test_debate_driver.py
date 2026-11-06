@@ -1345,3 +1345,50 @@ async def test_a_forge_continue_that_fails_in_setup_posts_nothing(
         client, session, engine, monkeypatch, announced=False
     )
     assert len((await client.read_thread(thread_id)).posts) == before
+
+
+def _take_over_after_first_round(client, thread_id, roster_out):
+    """An `on_post` hook: install B's RUN lands once A's first round is done."""
+
+    async def hook(post):
+        if post.kind == PostKind.PROPOSAL and not roster_out:
+            roster_out.update(client.peer_run(thread_id, rounds=2))
+
+    return hook
+
+
+@pytest.mark.anyio
+async def test_a_run_another_run_superseded_stops_at_its_next_turn(client, session):
+    from vista_backend.services.debate import ACTIVE_STATUSES
+
+    project = await _project(session)
+    peer: dict[str, str] = {}
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
+    run = await orch.start(
+        session, project_id=project.id, topic="t", framing="f", rounds=3
+    )
+    run_id, thread_id = run.id, run.thread_id
+    orch.on_post = _take_over_after_first_round(client, thread_id, peer)
+    await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    kinds = [p.kind for p in thread.posts]
+    b_run = max(i for i, k in enumerate(kinds) if k == PostKind.RUN)
+    after = thread.posts[b_run + 1 :]
+    ours = {identity_for(r, run_id) for r in ROSTER}
+    assert [p.kind for p in after if p.sender in ours] == [PostKind.BLOCKED]
+    assert after[-1].sender == identity_for("referee", run_id)
+    assert PostKind.DONE not in kinds
+    live = _live(thread.posts)
+    assert live is not None and live.roster == peer, "the other run carries on"
+    final = await debate_service.require_debate(session, run_id)
+    assert final.status not in ACTIVE_STATUSES and final.status != "failed"
+
+
+@pytest.mark.anyio
+async def test_our_own_run_being_latest_is_not_superseded(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
+    thread_id = run.thread_id
+    await orch.run(session, run)
+    kinds = [p.kind for p in (await client.read_thread(thread_id)).posts]
+    assert PostKind.BLOCKED not in kinds and PostKind.DONE in kinds
