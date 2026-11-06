@@ -38,6 +38,9 @@ import {
   type CollaborationView,
 } from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
+import { CopyableLine } from "./CopyableLine";
+import { UpdateControls } from "./UpdateControls";
+import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
 export type SettingsSection =
@@ -47,6 +50,7 @@ export type SettingsSection =
   | "repositories"
   | "collaboration"
   | "compute"
+  | "about"
   | HpcCluster;
 type Section = SettingsSection;
 
@@ -98,6 +102,8 @@ type Draft = {
   technicalDepth: NonNullable<LocalSettingsUpdate["technical_depth"]>;
   evidencePreference: NonNullable<LocalSettingsUpdate["evidence_preference"]>;
   personalizeResponses: boolean;
+  updateChecks: boolean;
+  updatePrereleases: boolean;
   hidden: Set<HpcCluster>;
 };
 
@@ -113,6 +119,8 @@ function draftFrom(user: LocalSettings): Draft {
     technicalDepth: user.technical_depth ?? "balanced",
     evidencePreference: user.evidence_preference ?? "cite_when_available",
     personalizeResponses: user.personalize_responses ?? true,
+    updateChecks: user.update_checks ?? true,
+    updatePrereleases: user.update_prereleases ?? false,
     hidden: new Set((user.hpc_hidden_clusters ?? []).filter((c): c is HpcCluster => HPC_CLUSTERS.includes(c as HpcCluster))),
   };
 }
@@ -154,6 +162,7 @@ const SETTING_FIELDS = new Set([
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
   if (field.startsWith("collaboration_")) return "collaboration";
+  if (field.startsWith("update_")) return "about";
   if ((TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (
     field === "display_name" ||
@@ -203,6 +212,8 @@ const FIELD_LABELS: Record<string, string> = {
   technical_depth: "Technical depth",
   evidence_preference: "Evidence preference",
   personalize_responses: "Response personalization",
+  update_checks: "Check for updates",
+  update_prereleases: "Include prereleases",
   nersc_account: "NERSC account",
   nersc_remote_dir: "NERSC remote directory",
   nersc_iri_token: "NERSC IRI token",
@@ -290,6 +301,10 @@ export function UserSettingsModal({
     // (which it decides) in place.
     if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
     if (field === "collaboration_token") void refreshCollaborationStatus();
+    // About and the settings marker follow the update switches: turning checks
+    // on, or changing which releases count, asks GitHub again.
+    if (field === "update_checks") void (value ? checkNow() : refreshVersion());
+    if (field === "update_prereleases") void checkNow();
     // A token never comes back, so empty the field it was typed into.
     const isToken = (TOKEN_FIELDS as readonly string[]).includes(field);
     if (isToken) {
@@ -327,6 +342,8 @@ export function UserSettingsModal({
       seeded.technical_depth = next.technicalDepth;
       seeded.evidence_preference = next.evidencePreference;
       seeded.personalize_responses = next.personalizeResponses;
+      seeded.update_checks = next.updateChecks;
+      seeded.update_prereleases = next.updatePrereleases;
       seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
       autosave.seed(seeded);
       setUser(loaded);
@@ -476,6 +493,12 @@ export function UserSettingsModal({
     autosave.edit("personalize_responses", personalizeResponses, "now");
   }
 
+  function setUpdateSwitch(field: "update_checks" | "update_prereleases", on: boolean) {
+    const key = field === "update_checks" ? "updateChecks" : "updatePrereleases";
+    setDraft((d) => (d ? { ...d, [key]: on } : d));
+    autosave.edit(field, on, "now");
+  }
+
   // Before the settings load, every cluster reads as shown: the list is the
   // same either way, and only the "hidden" markers wait for it.
   const hidden = draft?.hidden ?? new Set<HpcCluster>();
@@ -531,6 +554,15 @@ export function UserSettingsModal({
         user={user}
         bindToken={bindToken}
         onRemove={() => removeToken("collaboration_token")}
+      />
+    );
+  } else if (section === "about") {
+    content = (
+      <AboutSection
+        draft={draft}
+        setSwitch={setUpdateSwitch}
+        marks={autosave.marks}
+        errors={autosave.errors}
       />
     );
   } else if (section === "compute") {
@@ -680,6 +712,8 @@ function SettingsNav({
   const collaboration = useCollaboration();
   const collaborationNote = collaborationLabel(collaboration);
   const computeCurrent = section === "compute" || HPC_CLUSTERS.includes(section as HpcCluster);
+  const { info: versionInfo } = useVersion();
+  const updateReady = updateAvailable(versionInfo);
 
   return (
     <nav className="settings-nav" aria-label="Settings sections">
@@ -764,6 +798,22 @@ function SettingsNav({
         <span className="settings-nav-name">Compute</span>
         <span className="settings-nav-note">{ready} of {visible.length}</span>
       </NavEntry>
+      <NavEntry
+        label={["About", versionInfo?.version, updateReady ? `VISTA ${versionInfo?.latest} available` : null]
+          .filter(Boolean)
+          .join(", ")}
+        current={section === "about"}
+        failed={failed.has("about")}
+        onClick={() => onChoose("about")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5M12 8h.01" />
+        </svg>
+        <span className="settings-nav-name">About</span>
+        {updateReady && <span className="update-marker" data-testid="about-update-marker" aria-hidden="true" />}
+        <span className="settings-nav-note">{versionInfo?.version ?? ""}</span>
+      </NavEntry>
     </nav>
   );
 }
@@ -824,6 +874,122 @@ function SectionHeader({
         {title}
       </h2>
       {children}
+    </div>
+  );
+}
+
+/** The release VISTA's notes live under. */
+const RELEASES_URL = "https://github.com/Genesis-VISTA/vista/releases";
+
+/**
+ * Which VISTA this is, whether a newer release exists, and the two update
+ * switches (openspec change `in-app-updates`). The version comes from the
+ * backend (`GET /version`), never from a package.json.
+ */
+function AboutSection({
+  draft,
+  setSwitch,
+  marks,
+  errors,
+}: {
+  draft: Draft;
+  setSwitch: (field: "update_checks" | "update_prereleases", on: boolean) => void;
+  marks: Partial<Record<string, FieldMark>>;
+  errors: Partial<Record<string, string>>;
+}) {
+  const { info, error } = useVersion();
+  const release = info && info.checks !== "dev_build";
+  return (
+    <section className="settings-section" aria-label="About">
+      <SectionHeader title="About">
+        <span className="user-settings-hint">The VISTA installed here, and how it stays up to date.</span>
+      </SectionHeader>
+      <div className="settings-section-body">
+        {!info ? (
+          <p className={error ? "error" : "user-settings-hint"}>{error ? `Couldn't read the version: ${error}` : "Loading…"}</p>
+        ) : (
+          <>
+            <div className="settings-about-identity">
+              <span className="user-settings-switch-label">Version</span>
+              <CopyableLine value={info.version} label="Installed version" copyLabel="Copy version" />
+              {info.commit && (
+                <>
+                  <span className="user-settings-switch-label">Commit</span>
+                  <CopyableLine value={info.commit} label="Commit" copyLabel="Copy commit" />
+                </>
+              )}
+              {release && (
+                <a href={`${RELEASES_URL}/tag/v${info.version}`} target="_blank" rel="noreferrer">
+                  Release notes for {info.version}
+                </a>
+              )}
+            </div>
+            <UpdateControls info={info} />
+          </>
+        )}
+        <UpdateSwitch
+          field="update_checks"
+          label="Check for updates"
+          hint="Once a day, VISTA asks GitHub whether a newer release is out. Nothing else is sent."
+          on={draft.updateChecks}
+          onChange={(on) => setSwitch("update_checks", on)}
+          mark={marks.update_checks}
+          error={errors.update_checks}
+        />
+        <UpdateSwitch
+          field="update_prereleases"
+          label="Include prereleases"
+          hint="Also offer release candidates, which are tested less."
+          on={draft.updatePrereleases}
+          disabled={!draft.updateChecks}
+          onChange={(on) => setSwitch("update_prereleases", on)}
+          mark={marks.update_prereleases}
+          error={errors.update_prereleases}
+        />
+      </div>
+    </section>
+  );
+}
+
+function UpdateSwitch({
+  field,
+  label,
+  hint,
+  on,
+  disabled = false,
+  onChange,
+  mark,
+  error,
+}: {
+  field: string;
+  label: string;
+  hint: string;
+  on: boolean;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+  mark?: FieldMark;
+  error?: string;
+}) {
+  return (
+    <div className="settings-profile-switch">
+      <span className="user-settings-switch-text">
+        <span className="user-settings-switch-label">{label}</span>
+        <span className="user-settings-hint">{hint}</span>
+        <FieldError field={field} error={error} />
+      </span>
+      <SaveMark mark={mark} />
+      <button
+        id={fieldId(field)}
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        className="user-settings-switch"
+        disabled={disabled}
+        onClick={() => onChange(!on)}
+      >
+        <span className="user-settings-switch-thumb" aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -2143,77 +2309,6 @@ function GlobusConnect({
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * A long value on one line that scrolls sideways, with a copy button at its
- * end: a Globus address is hundreds of characters, and wrapped it filled the
- * section. A copy flashes "Copied" over the line; if the clipboard is
- * unavailable, the button selects the value instead and says so.
- */
-function CopyableLine({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState<"copied" | "selected" | null>(null);
-  // Bumped on every copy, so a second click flashes again.
-  const [flash, setFlash] = useState(0);
-  const lineRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(null), 2000);
-    return () => clearTimeout(t);
-  }, [copied, flash]);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied("copied");
-      setFlash((n) => n + 1);
-    } catch {
-      const line = lineRef.current;
-      if (line) {
-        const range = document.createRange();
-        range.selectNodeContents(line);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      }
-      setCopied("selected");
-    }
-  }
-
-  return (
-    <>
-      <div className="user-settings-globus-url-row">
-        <div className="user-settings-globus-url-wrap">
-          <div ref={lineRef} className="user-settings-globus-url" role="textbox" aria-readonly="true" aria-label={label} tabIndex={0}>
-            {value}
-          </div>
-          <span className="user-settings-globus-copied" role="status" aria-live="polite">
-            {copied === "copied" && (
-              <span key={flash} className="user-settings-globus-copied-flash">
-                Copied
-              </span>
-            )}
-          </span>
-        </div>
-        <button
-          type="button"
-          className="button ghost button-xs user-settings-copy"
-          aria-label="Copy address"
-          title="Copy address"
-          onClick={() => void copy()}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="9" y="9" width="12" height="12" rx="2" />
-            <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
-          </svg>
-        </button>
-      </div>
-      {copied === "selected" && (
-        <div className="user-settings-hint">Couldn&apos;t copy here; the address is selected, so press ⌘C or Ctrl+C.</div>
-      )}
-    </>
   );
 }
 

@@ -166,9 +166,39 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
+  # Whether updating to this release keeps a researcher's data: update.json,
+  # which the app's update check reads, and this release's empty database for
+  # the next release to check itself against. Alongside the packages, so a
+  # refusal costs no build time; a failure leaves the release undrafted.
+  data-compat:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: plan
+    runs-on: ubuntu-24.04
+    steps:
+      # Full history and tags: a release from before this step is built from its tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.2.0
+      - name: Check this release against the earlier ones
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          export VERSION="${GITHUB_REF_NAME#v}"
+          .github/scripts/data-compat.sh data-compat
+      - uses: actions/upload-artifact@v7
+        with:
+          name: data-compat
+          path: |
+            data-compat/update.json
+            data-compat/vista-schema.sqlite
+          retention-days: 7
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [plan, package]
+    needs: [plan, package, data-compat]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -183,6 +213,10 @@ jobs:
         with:
           pattern: package-*
           merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        with:
+          name: data-compat
           path: dist
       - name: Create or update the draft
         env:

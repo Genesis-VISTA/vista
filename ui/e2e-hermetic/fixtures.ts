@@ -237,6 +237,19 @@ export const COLLABORATION_STATUS = {
   team_id: null,
 };
 
+/** `GET /api/version` for a development checkout, which never checks for updates. */
+export const VERSION = {
+  version: "dev",
+  commit: "0123456789abcdef0123456789abcdef01234567",
+  checks: "dev_build",
+  checked_at: null,
+  latest: null,
+  notes_url: null,
+  data_reset: null,
+};
+
+export const DOWNLOAD_IDLE = { state: "idle", version: null, bytes: 0, total: 0, error: null };
+
 export const ROUTES: Record<string, unknown> = {
   "GET /api/collaboration/status": COLLABORATION_STATUS,
   "GET /api/settings": SETTINGS,
@@ -261,6 +274,11 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/knowledge-bases/molten-salt-papers/publications": [],
   "GET /api/files/uploads": [],
   "GET /api/files/outputs": [],
+  // A checkout: no update checks, so no marker. `updates.spec.ts` offers one.
+  "GET /api/version": VERSION,
+  "POST /api/updates/check": VERSION,
+  "GET /api/updates/download": DOWNLOAD_IDLE,
+  "GET /api/activity": { chat_runs: [], debates: 0, watched_jobs: [] },
 };
 
 /** The one route that streams instead of returning JSON. */

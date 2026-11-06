@@ -32,6 +32,8 @@ from ..services.collaboration import (
 )
 from ..services.local_settings import LocalSettingsDep
 from ..services.project_agent import project_agent_pool
+from ..services.update_check import update_checker
+from ..services.update_download import clean_cache, update_downloader
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_runs import router as chat_runs_router
@@ -47,6 +49,7 @@ from .projects import router as projects_router
 from .reports import router as reports_router
 from .settings import router as settings_router
 from .skills import router as skills_router
+from .updates import router as updates_router
 
 
 def _report_database_incompatible(refusal: DatabaseIncompatible) -> None:
@@ -123,9 +126,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         logging.getLogger("vista.campaign_monitor").info("Campaign monitor started.")
 
+    # Whether a newer release exists: on start, then daily, unless the researcher
+    # turned checks off or this is a development build (`services/update_check`).
+    update_task = asyncio.create_task(update_checker.run())
+    # A cached download of the version now running is the update that worked.
+    await asyncio.to_thread(clean_cache, settings.version)
+
     try:
         yield
     finally:
+        update_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await update_task
+        await update_downloader.stop()
         if monitor_stop is not None:
             monitor_stop.set()
         if monitor_task is not None:
@@ -227,6 +240,7 @@ app.include_router(reports_router)
 app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(files_router)
 app.include_router(settings_router)
+app.include_router(updates_router)
 
 # PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when

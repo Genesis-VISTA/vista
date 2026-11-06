@@ -631,6 +631,10 @@ class LocalSettingsUpdate(SQLModel):
     """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
     onboarding_tour: OnboardingTourState | None = None
     """ The tour's progress; `null` forgets it, so the tour starts again. """
+    update_checks: bool = True
+    """ Whether the backend checks GitHub for a newer release. """
+    update_prereleases: bool = False
+    """ Whether release candidates are offered as updates. """
     github_token: str | None = None
     """
     The researcher's GitHub token, or what to do with it. Write-only: absent or
@@ -755,6 +759,8 @@ class LocalSettingsPublic(SQLModel):
     `{"status", "step"}` as last written; `null` means the tour never started,
     which is what an upgraded installation has. Plain on the way out.
     """
+    update_checks: bool = True
+    update_prereleases: bool = False
     onboarding_tour_enabled: bool = True
     """
     Whether the installation's configuration allows the tour
@@ -1009,6 +1015,21 @@ class LocalSettingsTable(SQLModel, table=True):
     First-boot tour progress, `{"status": "in_progress" | "finished" | "exited",
     "step": "<id>"}`; `None` means never started. JSON so a new step id never
     needs a schema change.
+    """
+    update_checks: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=true()),
+    )
+    """Whether the backend checks GitHub for a newer release (`services/update_check`)."""
+    update_prereleases: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+    """Whether prereleases (release candidates) are offered as updates."""
+    update_checked_at: str | None = None
+    """
+    When the last successful update check finished (ISO 8601, UTC), so the 24h
+    schedule survives a restart. Not on the API models: the backend writes it.
     """
 
 

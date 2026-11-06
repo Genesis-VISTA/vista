@@ -146,8 +146,34 @@ over SSH. With a terminal launcher, Ctrl-C and closing its terminal stop VISTA t
 
 ## Upgrading and state
 
-Run the installer again to upgrade, with VISTA closed (it refuses while VISTA is running). Your
-state is kept.
+**From inside VISTA.** Settings › About shows the installed version and commit, and once a day
+VISTA asks GitHub whether a newer release is out. It sends nothing about you or your work:
+the request is the same one a browser makes to list the releases. When there is one, a dot
+appears on the Settings button and About offers it:
+
+1. **Update to 0.2.6** downloads the release in the background, while you keep working, and
+   checks every file against the checksum GitHub publishes for it.
+2. **Restart to update** lists what a restart would interrupt (running chats, debates, HPC
+   jobs being watched) and asks before going on. If the new release cannot open your data,
+   it says so here, before anything is installed.
+3. **Restart now** closes VISTA, installs the new version with the same installer as above, and
+   opens it. Your chats and settings are kept.
+
+If the update fails, for example because VISTA did not finish closing, the version you had
+is left in place and opens again, and its startup window says why. The details are in
+`logs/update.log` in the state directory.
+
+Turn **Check for updates** off in About to stop asking GitHub; **Check now** asks straight
+away. **Include prereleases** also offers release candidates (`0.2.6-rc1`). Turning it off
+again never offers an older version: you are offered the next stable release once it is
+newer than yours. A build made from a checkout never checks.
+
+**With the installer.** Run the installer again to upgrade, with VISTA closed (it refuses
+while VISTA is running). Your state is kept. This is also how to recover from an update you
+don't want, or one that broke something: install the version you had with `--version`, as
+in [Install](#install), for example `--version 0.2.5`. A version older than
+the one that last opened your data may not be able to open it; VISTA then offers to back it
+up and reset.
 
 All state lives in the state directory: `vista.db`, uploads, the corpus, the sandbox image
 store, and `logs/` (`mcp.log`, `backend.log`, `ui.log`, `window.log`, `setup.log`). The window's

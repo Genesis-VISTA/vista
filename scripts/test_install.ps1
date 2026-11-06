@@ -146,6 +146,16 @@ try {
   }
   Remove-Item -Recurse -Force $sleeperDir -ErrorAction SilentlyContinue
 
+  # The case above stops at the check before the download. The download takes a
+  # while, and VISTA's update helper only waits for VISTA to close, so the check
+  # runs again between unpacking and moving the old version aside.
+  $source = Get-Content $installer -Raw
+  $unpacked = $source.IndexOf('does not hold $name\vista.cmd')
+  $swap = $source.IndexOf('Move-Item $installDir $old')
+  $again = @([regex]::Matches($source, 'Assert-NotRunning \$installDir') |
+    Where-Object { $_.Index -gt $unpacked -and $_.Index -lt $swap })
+  Check 'the running check runs again just before the swap' ($unpacked -gt 0 -and $swap -gt $unpacked -and $again.Count -eq 1)
+
   $rendered = Join-Path $root 'install.ps1'
   (Get-Content $installer -Raw).Replace('@VISTA_VERSION@', '1.0.0') | Set-Content -Path $rendered -NoNewline
   Remove-Item -Recurse -Force $installDir

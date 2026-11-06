@@ -21,6 +21,16 @@
         </div>
       </header>
 
+      <section id="update-failure" class="failure update-failure" hidden aria-live="assertive" aria-labelledby="update-failure-title">
+        <h2 id="update-failure-title"></h2>
+        <p id="update-failure-message"></p>
+        <div class="actions">
+          <button id="update-continue" class="primary" type="button" hidden>Continue to VISTA</button>
+          <button id="update-open-logs" type="button">Open Logs</button>
+          <button id="update-copy-diagnostics" type="button">Copy Diagnostics</button>
+        </div>
+      </section>
+
       <ol id="activities" class="activities" aria-label="Startup activities">
         <li data-phase="preflight"><span class="indicator"></span><span>Checking this computer</span></li>
         <li data-phase="resources"><span class="indicator"></span><span>Installing bundled resources</span></li>

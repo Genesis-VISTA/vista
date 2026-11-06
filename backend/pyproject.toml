@@ -36,6 +36,7 @@ dependencies = [
     # separate distribution and is deliberately NOT depended on: a
     # 205-instance attack corpus has no business in a production install.
     "palisade==1.0.0",
+    "packaging>=24",
 ]
 
 [project.optional-dependencies]

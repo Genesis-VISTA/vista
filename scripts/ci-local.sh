@@ -302,7 +302,8 @@ install_lint() {
     return 0
   fi
   run_job "install:lint (shellcheck)" 0 shellcheck \
-    "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/test_install.sh" "$REPO_ROOT"/.github/scripts/*.sh
+    "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/test_install.sh" "$REPO_ROOT"/.github/scripts/*.sh \
+    "$REPO_ROOT/electron/update/apply-update.sh"
 }
 
 install_test() {

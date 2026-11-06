@@ -8,6 +8,7 @@ import type { CollaborationStatus, CollaborationView } from "@/lib/collaboration
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
 import type { LocalSettings } from "@/lib/settings";
 import { DEBOUNCE_MS } from "@/lib/settings-autosave";
+import type { VersionInfo } from "@/lib/version";
 
 const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock } = vi.hoisted(() => ({
   fetchSettingsMock: vi.fn(),
@@ -50,6 +51,40 @@ vi.mock("@/lib/collaboration", () => ({
   useCollaboration: useCollaborationMock,
   refreshCollaborationStatus: refreshCollaborationMock,
 }));
+
+const { useVersionMock, checkNowMock, refreshVersionMock, startDownloadMock } = vi.hoisted(() => ({
+  useVersionMock: vi.fn(),
+  checkNowMock: vi.fn(async () => {}),
+  refreshVersionMock: vi.fn(async () => {}),
+  startDownloadMock: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/version", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/version")>()),
+  useVersion: useVersionMock,
+  checkNow: checkNowMock,
+  refreshVersion: refreshVersionMock,
+  startDownload: startDownloadMock,
+}));
+
+function versionView(info: Partial<VersionInfo> = {}) {
+  return {
+    info: {
+      version: "0.2.3",
+      commit: "abc1234def",
+      checks: "on" as const,
+      checked_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      latest: null,
+      notes_url: null,
+      install_command: null,
+      data_reset: null,
+      ...info,
+    },
+    error: null,
+    checking: false,
+    checkedAt: 0,
+    download: null,
+  };
+}
 
 const NOT_SET =
   "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.";
@@ -179,6 +214,10 @@ beforeEach(() => {
   useCollaborationMock.mockReturnValue(collaborationView());
   useHpcStatusMock.mockReturnValue(statusView());
   useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null, modelChoiceRequest: 0 });
+  useVersionMock.mockReturnValue(versionView());
+  checkNowMock.mockClear();
+  refreshVersionMock.mockClear();
+  startDownloadMock.mockClear();
 });
 
 const nav = () => screen.getByRole("navigation", { name: "Settings sections" });
@@ -204,7 +243,7 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists six focused sections and opens on Research profile", async () => {
+  it("lists seven focused sections, About last, and opens on Research profile", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
@@ -219,6 +258,7 @@ describe("UserSettingsModal navigation", () => {
       "Repositories",
       "Collaboration",
       "Compute",
+      "About",
     ]);
 
     expect(entry("Research profile")).toHaveAttribute("aria-current", "page");
@@ -1285,5 +1325,117 @@ describe("UserSettingsModal appearance", () => {
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     await openAppearance();
     expect(radio("System")).toBeChecked();
+  });
+});
+
+describe("UserSettingsModal About", () => {
+  afterEach(() => {
+    delete window.vistaApp;
+  });
+
+  it("shows the version and commit, each copyable, and the release notes", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    expect(within(about).getByRole("textbox", { name: "Installed version" })).toHaveTextContent("0.2.3");
+    expect(within(about).getByRole("textbox", { name: "Commit" })).toHaveTextContent("abc1234def");
+    expect(within(about).getByRole("button", { name: "Copy version" })).toBeInTheDocument();
+    expect(within(about).getByRole("button", { name: "Copy commit" })).toBeInTheDocument();
+    expect(within(about).getByRole("link", { name: "Release notes for 0.2.3" })).toHaveAttribute(
+      "href",
+      "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.3",
+    );
+    expect(within(about).getByText("VISTA is up to date. Checked 3 hours ago.")).toBeInTheDocument();
+    expect(entry("About")).toHaveTextContent("0.2.3");
+    expect(screen.queryByTestId("about-update-marker")).toBeNull();
+  });
+
+  it("checks now on request", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    await userEvent.click(within(about).getByRole("button", { name: "Check now" }));
+    expect(checkNowMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a development build never checks, with no notes link or Check now", async () => {
+    useVersionMock.mockReturnValue(versionView({ version: "dev", checks: "dev_build", checked_at: null }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    expect(within(about).getByText("Update checks are off for development builds.")).toBeInTheDocument();
+    expect(within(about).queryByRole("button", { name: "Check now" })).toBeNull();
+    expect(within(about).queryByRole("link", { name: /Release notes/ })).toBeNull();
+  });
+
+  it("turns checks off at once, saving like every other setting", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: true, update_prereleases: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    const checks = within(about).getByRole("switch", { name: "Check for updates" });
+    const prereleases = within(about).getByRole("switch", { name: "Include prereleases" });
+    expect(checks).toBeChecked();
+    expect(prereleases).not.toBeChecked();
+
+    await userEvent.click(checks);
+
+    expect(checks).not.toBeChecked();
+    expect(prereleases).toBeDisabled();
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ update_checks: false }));
+    await waitFor(() => expect(refreshVersionMock).toHaveBeenCalled());
+    expect(checkNowMock).not.toHaveBeenCalled();
+  });
+
+  it("checks again when prereleases are opted into", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: true, update_prereleases: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    await userEvent.click(within(about).getByRole("switch", { name: "Include prereleases" }));
+
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ update_prereleases: true }));
+    await waitFor(() => expect(checkNowMock).toHaveBeenCalled());
+  });
+
+  it("says checks are off when they are", async () => {
+    useVersionMock.mockReturnValue(versionView({ checks: "off", checked_at: null }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    expect(within(about).getByText("Update checks are off.")).toBeInTheDocument();
+  });
+
+  it("offers an available release with its notes and Update, which starts the download", async () => {
+    useVersionMock.mockReturnValue(
+      versionView({ latest: "0.2.5", notes_url: "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(screen.getByTestId("about-update-marker")).toBeInTheDocument();
+    const about = await openOn("About");
+
+    expect(within(about).getByText(/VISTA 0\.2\.5 is available/)).toBeInTheDocument();
+    expect(within(about).getByRole("link", { name: "Release notes" })).toHaveAttribute(
+      "href",
+      "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5",
+    );
+    await userEvent.click(within(about).getByRole("button", { name: "Update to 0.2.5" }));
+    expect(startDownloadMock).toHaveBeenCalledWith("0.2.5");
+  });
+
+  it("without VISTA's window, Restart now says it needs the window", async () => {
+    useVersionMock.mockReturnValue({
+      ...versionView({ latest: "0.2.5" }),
+      download: { state: "ready", version: "0.2.5", bytes: 1, total: 1, error: null },
+    });
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    await userEvent.click(within(about).getByRole("button", { name: "Restart to update" }));
+    await userEvent.click(await within(about).findByRole("button", { name: "Restart now" }));
+    expect(within(about).getByRole("alert")).toHaveTextContent("Restarting into an update needs VISTA's window.");
   });
 });

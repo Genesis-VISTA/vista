@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Create or update the draft GitHub release for a tag, and attach its packages
-# and its one-line installers.
+# Create or update the draft GitHub release for a tag, and attach its packages,
+# its one-line installers, and its update.json and vista-schema.sqlite.
 #
-#   .github/scripts/draft-release.sh <dir with the archives, .sha256 files and installers> <notes.md>
+#   .github/scripts/draft-release.sh <dir with the archives, .sha256 files, installers and data-compat.sh output> <notes.md>
 #
 # Takes TAG and VERSION from the environment, and GH_TOKEN for `gh`. A tag
 # with a prerelease suffix (v0.2.0-rc1) makes a prerelease. Run again for the
@@ -23,6 +23,12 @@ assets=("$dir"/vista-*.tar.gz "$dir"/vista-*.zip "$dir"/vista-*.sha256)
 for installer in install.sh install.ps1; do
   [[ -f "$dir/$installer" ]] || die "no $installer in $dir; render it with render-installers.sh"
   assets+=("$dir/$installer")
+done
+# What the app's update check reads to say whether an update resets local data,
+# and the empty database the next release checks itself against.
+for record in update.json vista-schema.sqlite; do
+  [[ -f "$dir/$record" ]] || die "no $record in $dir; write it with data-compat.sh"
+  assets+=("$dir/$record")
 done
 
 # GitHub's per-file limit for release assets.

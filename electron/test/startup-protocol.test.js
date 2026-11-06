@@ -12,6 +12,8 @@ import {
   ProtocolError,
   resetAllowed,
   StartupStateMachine,
+  UPDATE_FAILED,
+  updateFailureNotice,
 } from '../src/startup-protocol.js';
 
 /**
@@ -161,4 +163,26 @@ test('a reset is allowed only for incompatible data once the launcher has stoppe
   assert.equal(resetAllowed({ status: 'starting', failure: null }, null), false);
   assert.equal(resetAllowed({ status: 'ready', failure: { code: 'database-incompatible' } }, null), false);
   assert.equal(resetAllowed(null, null), false);
+});
+
+test('a failed update is named, with its reason, and is in the diagnostics', () => {
+  assert.equal(updateFailureNotice(null), null);
+  const notice = updateFailureNotice({
+    version: '0.2.5',
+    reason: 'VISTA did not finish closing within 60 seconds, so nothing was installed.',
+  });
+  assert.deepEqual(notice, {
+    code: UPDATE_FAILED,
+    title: 'Update to 0.2.5 failed',
+    message: 'VISTA did not finish closing within 60 seconds, so nothing was installed. '
+      + 'The version you had is still installed and is starting now.',
+    log: 'update.log',
+  });
+  assert.equal(updateFailureNotice({ version: '', reason: 'x.' })?.title, 'The update failed');
+
+  const text = formatDiagnostics(new StartupStateMachine().snapshot(), { version: '0.2.3', platform: 'darwin', update: notice });
+  assert.match(text, /^VISTA 0\.2\.3$/m);
+  assert.match(text, /^Update: Update to 0\.2\.5 failed: VISTA did not finish closing/m);
+  assert.match(text, /^Update log: update\.log$/m);
+  assert.doesNotMatch(formatDiagnostics(new StartupStateMachine().snapshot(), { version: '0.2.3', platform: 'darwin' }), /Update/);
 });

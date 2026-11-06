@@ -24,8 +24,17 @@ test('preserves the existing URL, development, smoke-test and profile flags', ()
       userDataDir: '/tmp/vista-profile',
       startup: false,
       launcher: null,
+      updateStatus: null,
     },
   );
+});
+
+test('the update status window is its own mode, never startup', () => {
+  for (const platform of /** @type {const} */ (['darwin', 'win32', 'linux'])) {
+    const args = parseArgs(['VISTA', '--update-status=/h/updates/0.2.6'], platform);
+    assert.equal(args.updateStatus, '/h/updates/0.2.6');
+    assert.equal(args.startup, false, platform);
+  }
 });
 
 test('a macOS app launch without a URL selects startup mode', () => {

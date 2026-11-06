@@ -18,7 +18,8 @@ This downloads the package for your computer, checks it, installs it and opens V
 that, open VISTA like any other application: from Spotlight, Launchpad or Finder's
 Applications on macOS, from the app menu on Linux, or from the Start menu on Windows. Run the
 same command again to upgrade from an older version, with VISTA closed; your chats and settings
-are kept.
+are kept. A version that has an Update button in Settings › About updates itself from there
+instead; from an older one, upgrade once with the command above.
 
 VISTA installs into `/Applications/VISTA` on a Mac where your account can write there
 (administrators can), and into `~/Applications/VISTA` otherwise; into `~/.local/share/vista/app`

@@ -9,9 +9,12 @@
 //   electron . --dev --url=http://localhost:3000   development, with DevTools
 //   VISTA --smoke-test --url=...               load once, exit 0 or 1 (B3)
 //   --user-data-dir=<dir>                      separate profile (tests)
+//   VISTA --update-status=<update folder>      the update status window, run by the
+//                                              update helper from a copy (in-app-updates D9)
 
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeTheme, session, shell } from 'electron';
-import { existsSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +28,11 @@ import { LauncherController } from './launcher-controller.js';
 import { writeLogArchive } from './log-archive.js';
 import { resolvePackage } from './package-root.js';
 import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
-import { formatDiagnostics, resetAllowed, StartupStateMachine } from './startup-protocol.js';
+import { formatDiagnostics, resetAllowed, StartupStateMachine, updateFailureNotice } from './startup-protocol.js';
+import { checkRestartRequest, handOff, helperCommand, helperName, takeUpdateFailure } from './update-bridge.js';
+import {
+  copyWindow, dismissStatusWindow, markerPresent, POLL_MS, readStatus, shouldClose, statusView,
+} from './update-status.js';
 
 const SMOKE_TEST_TIMEOUT_MS = 30_000;
 const SOURCE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -50,7 +57,7 @@ if (args.url) {
   } catch {
     fail(`--url must be the http(s) address of the running UI (got "${args.url}")`);
   }
-} else if (!args.startup) {
+} else if (!args.startup && !args.updateStatus) {
   // Only a Linux window opened by hand lands here: its file manager shows no
   // stderr, so say where VISTA opens from instead of vanishing.
   if (process.platform === 'linux' && app.isPackaged) {
@@ -68,6 +75,9 @@ if (args.url) {
 // installed one would contend for one lock. An explicit --user-data-dir wins.
 if (devMode) app.setPath('userData', path.join(app.getPath('appData'), 'VISTA-dev'));
 if (args.userDataDir) app.setPath('userData', path.resolve(args.userDataDir));
+// The status window has the identity of the VISTA about to start: a profile of
+// its own, in the update's folder, keeps it from holding that VISTA's lock.
+if (args.updateStatus) app.setPath('userData', path.join(path.resolve(args.updateStatus), 'window-data'));
 
 // On Linux the launcher adds --no-sandbox where the host blocks Chromium's
 // sandbox (linux-desktop-window D1). This line lands in window.log, so a report
@@ -88,6 +98,15 @@ const webPreferences = {
   nodeIntegration: false,
   webviewTag: false,
   devTools: devMode,
+};
+
+// The one exception (in-app-updates D4): the main window's top frame gets a
+// bridge to restart into a verified update. Child windows keep the plain
+// preferences above, through setWindowOpenHandler.
+/** @type {Electron.WebPreferences} */
+const mainWebPreferences = {
+  ...webPreferences,
+  preload: path.join(SOURCE_DIR, 'main-preload.cjs'),
 };
 
 // VISTA's icon (assets/, made by scripts/make-icons.js). A packaged window
@@ -117,10 +136,28 @@ const allowedWindowCloses = new WeakSet();
 let latestStartupState = null;
 // The package's release, from its manifest; '' when started with --launcher.
 let packageVersion = '';
+// The installed package's folder, which an update replaces; null when VISTA
+// was not started from a package (--launcher, --url), which cannot update.
+/** @type {string | null} */
+let packageRoot = null;
+// VISTA's state directory; updates are cached in its updates/ folder.
+let vistaHome = process.env.VISTA_HOME || path.join(os.homedir(), developmentApp ? '.vista-dev' : '.vista');
+// The last update failed: shown in the startup window, which then waits for
+// Continue before the main window replaces it (in-app-updates D6).
+/** @type {ReturnType<typeof updateFailureNotice>} */
+let updateNotice = null;
+let holdMainWindow = false;
+/** @type {(() => void) | null} */
+let showHeldMainWindow = null;
+let restartingToUpdate = false;
 
 function sendStartupState() {
   if (!latestStartupState || !startupWindow || startupWindow.isDestroyed()) return;
-  startupWindow.webContents.send('startup:state', { ...latestStartupState, notice: sandboxNotice });
+  startupWindow.webContents.send('startup:state', {
+    ...latestStartupState,
+    notice: sandboxNotice,
+    update: updateNotice ? { title: updateNotice.title, message: updateNotice.message } : null,
+  });
 }
 
 /** @param {BrowserWindow} window */
@@ -335,7 +372,7 @@ function createMainWindow(url = args.url, onShown = null) {
     show: false,
     backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     ...windowIcon,
-    webPreferences,
+    webPreferences: mainWebPreferences,
   });
   // The OS can change appearance while VISTA is open (macOS Auto at sunset);
   // the page follows through prefers-color-scheme, and the frame behind it
@@ -345,8 +382,16 @@ function createMainWindow(url = args.url, onShown = null) {
   guardWindowClose(win);
   win.once('ready-to-show', () => {
     if (mainStartupFailed) return;
-    win.show();
-    onShown?.();
+    const show = () => {
+      win.show();
+      onShown?.();
+    };
+    // The startup window is saying the update failed: it opens VISTA on Continue.
+    if (holdMainWindow) {
+      showHeldMainWindow = show;
+      return;
+    }
+    show();
   });
   win.on('closed', () => {
     nativeTheme.off('updated', onThemeUpdated);
@@ -375,7 +420,19 @@ function createStartupWindow(initialBounds = null) {
   const onThemeUpdated = () => win.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors));
   nativeTheme.on('updated', onThemeUpdated);
   guardWindowClose(win);
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    win.show();
+    // An update's status window (D9) stays up until this one is showing. Not
+    // the "Stopping VISTA" window of the VISTA that is handing over to it.
+    if (restartingToUpdate) return;
+    try {
+      if (dismissStatusWindow(path.join(vistaHome, 'updates'))) {
+        console.log('vista-window: closed the update status window');
+      }
+    } catch (error) {
+      console.error(`vista-window: could not close the update status window: ${error instanceof Error ? error.message : error}`);
+    }
+  });
   win.on('closed', () => {
     nativeTheme.off('updated', onThemeUpdated);
     if (startupWindow === win) startupWindow = null;
@@ -419,9 +476,194 @@ function runSmokeTest() {
   });
 }
 
+// ─── the update status window (in-app-updates D9) ──────────────────────────
+
+/**
+ * Show the update helper's progress from <folder>/status.json until the next
+ * VISTA's startup window is showing, which removes our marker. Run from a copy
+ * of the window, never the install folder.
+ *
+ * @param {string} folder
+ */
+function runUpdateStatusWindow(folder) {
+  // The marker sits beside the update's folder (VISTA_HOME/updates/<version>),
+  // so the window finds it from its own argument, whatever its environment says.
+  const cacheRoot = path.dirname(path.resolve(folder));
+  const win = new BrowserWindow({
+    width: 520,
+    height: 230,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: 'Updating VISTA',
+    show: false,
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
+    webPreferences: { ...webPreferences, preload: path.join(SOURCE_DIR, 'update-preload.cjs') },
+  });
+  win.once('ready-to-show', () => win.show());
+  let last = '';
+  let view = statusView(null);
+  let changedAt = Date.now();
+  /** @type {number | null} */
+  let endedAt = null;
+  const send = () => { if (!win.isDestroyed()) win.webContents.send('update:status', view); };
+  ipcMain.on('update:ready', send);
+  // The helper wrote the marker before starting this window and before it opens
+  // any VISTA, so a VISTA that is up before this window is has already removed
+  // it, and this window closes on its first look.
+  const timer = setInterval(async () => {
+    const status = await readStatus(folder);
+    const key = JSON.stringify(status);
+    // A read that fails once a step has shown (Windows locks status.json for a
+    // moment while the helper replaces it) keeps that step rather than flicker.
+    const unreadable = status === null && last !== '' && last !== 'null';
+    if (key !== last && !unreadable) {
+      last = key;
+      changedAt = Date.now();
+      view = statusView(status);
+      if (endedAt === null && (status?.step === 'opening' || status?.step === 'failed')) endedAt = changedAt;
+      send();
+    }
+    const reason = shouldClose({ changedAt, endedAt, now: Date.now(), dismissed: !markerPresent(cacheRoot) });
+    if (reason) {
+      clearInterval(timer);
+      console.log(`vista-window: update status window closing: ${reason}`);
+      dismissStatusWindow(cacheRoot);
+      app.exit(0);
+    }
+  }, POLL_MS);
+  win.loadFile(path.join(SOURCE_DIR, 'update.html'));
+}
+
+// ─── restarting into an update (in-app-updates D4, D5) ─────────────────────
+
+/** What the backend says about the download, through the UI's own proxy. */
+async function downloadStatus() {
+  const response = await fetch(`${origin}/api/updates/download`, {
+    headers: { accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return /** @type {{ state?: unknown, version?: unknown }} */ (await response.json());
+}
+
+/** The helper this window ships: resources/ in a package, update/ in a checkout. */
+function shippedHelper() {
+  const name = helperName(process.platform);
+  return app.isPackaged ? path.join(process.resourcesPath, name) : path.join(app.getAppPath(), 'update', name);
+}
+
+/**
+ * Copy the helper into the update's folder, outside the install the installer
+ * replaces, and start it detached, logging to update.log.
+ *
+ * @param {{ folder: string, version: string, installer: string }} ready
+ * @param {string} root
+ */
+async function spawnUpdateHelper(ready, root) {
+  const helper = path.join(ready.folder, helperName(process.platform));
+  copyFileSync(shippedHelper(), helper);
+  // The status window (D9): a copy of this window, outside the install. Without
+  // it the update still runs, with nothing on screen until VISTA reopens.
+  /** @type {string | null} */
+  let statusWindow = null;
+  try {
+    statusWindow = await copyWindow({ platform: process.platform, packageRoot: root, folder: ready.folder });
+  } catch (error) {
+    console.error(`vista-window: no update status window: ${error instanceof Error ? error.message : error}`);
+  }
+  const logs = path.join(vistaHome, 'logs');
+  mkdirSync(logs, { recursive: true });
+  const log = openSync(path.join(logs, 'update.log'), 'a');
+  try {
+    const run = helperCommand({
+      platform: process.platform,
+      helper,
+      packageRoot: root,
+      version: ready.version,
+      folder: ready.folder,
+      vistaHome,
+      installer: ready.installer,
+      statusWindow,
+    });
+    const child = spawn(run.command, run.args, {
+      cwd: ready.folder,
+      env: run.env,
+      detached: !run.wait,
+      windowsHide: true,
+      stdio: ['ignore', log, log],
+    });
+    if (run.wait) {
+      // Windows: the hop that starts the helper, which takes about half a second.
+      await helperStarted(child);
+    } else {
+      child.unref();
+    }
+  } finally {
+    closeSync(log);
+  }
+}
+
+/**
+ * Wait for the Windows hop to exit, and refuse the restart if it did not start
+ * the helper: VISTA then stays open and says so.
+ *
+ * @param {import('node:child_process').ChildProcess} child
+ */
+function helperStarted(child) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error('the helper took more than 30 seconds to start'));
+    }, 30_000);
+    child.once('error', (error) => { clearTimeout(timer); reject(error); });
+    child.once('exit', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve(undefined);
+      else reject(new Error(`the helper could not be started (status ${code}); update.log says why`));
+    });
+  });
+}
+
+ipcMain.handle('app:restart-to-update', async (event, version) => {
+  if (restartingToUpdate) return { ok: false, reason: 'VISTA is already restarting into an update.' };
+  const decision = await checkRestartRequest({
+    fromMainWindow: Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents),
+    fromMainFrame: Boolean(event.senderFrame && event.senderFrame === event.sender.mainFrame),
+    frameUrl: event.senderFrame?.url ?? '',
+    origin,
+    version,
+    packageRoot,
+    cacheRoot: path.join(vistaHome, 'updates'),
+    platform: process.platform,
+    downloadStatus,
+  });
+  if (!decision.ok) {
+    console.error(`vista-window: refused to restart into an update: ${decision.reason}`);
+    return { ok: false, reason: decision.reason };
+  }
+  const root = /** @type {string} */ (packageRoot);
+  try {
+    await handOff({
+      spawnHelper: () => spawnUpdateHelper(decision, root),
+      notify: () => mainWindow?.webContents.send('app:update-event', { type: 'stopping', version: decision.version }),
+      // After this reply reaches the page, so it can say it is restarting.
+      quit: () => { setTimeout(() => { void requestQuit(); }, 100); },
+    });
+  } catch (error) {
+    const reason = `The update could not start (${error instanceof Error ? error.message : error}).`;
+    console.error(`vista-window: ${reason}`);
+    return { ok: false, reason };
+  }
+  restartingToUpdate = true;
+  console.log(`vista-window: restarting into VISTA ${decision.version}; update.log has the rest`);
+  return { ok: true };
+});
+
 // ─── lifecycle (W5) ─────────────────────────────────────────────────────────
 
-if (!acquireSingleInstanceLock(app, args)) {
+if (!args.updateStatus && !acquireSingleInstanceLock(app, args)) {
   // Another VISTA window is open; it gets the `second-instance` event below.
   console.error('vista-window: VISTA is already open; that window was brought forward.');
   app.exit(EXIT_ALREADY_OPEN);
@@ -447,6 +689,10 @@ for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGHUP'])) {
 }
 
 app.whenReady().then(() => {
+  if (args.updateStatus) {
+    runUpdateStatusWindow(path.resolve(args.updateStatus));
+    return;
+  }
   if (!origin && !args.startup) return;
   configureSession();
   if (args.smokeTest) {
@@ -459,7 +705,7 @@ app.whenReady().then(() => {
     let launcherPath = args.launcher ? path.resolve(args.launcher) : '';
     if (!launcherPath) {
       try {
-        ({ launcherPath, version: packageVersion } = resolvePackage({
+        ({ launcherPath, version: packageVersion, packageRoot } = resolvePackage({
           platform: process.platform,
           execPath: process.execPath,
           resourcesPath: process.resourcesPath,
@@ -481,10 +727,20 @@ app.whenReady().then(() => {
         return;
       }
     }
-    startupWindow = createStartupWindow();
     const stateDirectory = process.env.VISTA_HOME
       || path.join(app.getPath('home'), developmentApp ? '.vista-dev' : '.vista');
     if (developmentApp && !process.env.VISTA_HOME) process.env.VISTA_HOME = stateDirectory;
+    vistaHome = stateDirectory;
+    // The last update failed and this is the version it left in place: say so
+    // first. Read once; the file is removed, so the next start is quiet.
+    try {
+      updateNotice = updateFailureNotice(takeUpdateFailure(path.join(stateDirectory, 'updates')));
+    } catch (error) {
+      console.error(`vista-window: could not read the last update's failure: ${error instanceof Error ? error.message : error}`);
+    }
+    holdMainWindow = Boolean(updateNotice);
+    if (updateNotice) console.log(`vista-window: ${updateNotice.title}`);
+    startupWindow = createStartupWindow();
     const logsDirectory = path.join(stateDirectory, 'logs');
     launcherController = new LauncherController({
       launcherPath,
@@ -588,6 +844,7 @@ app.whenReady().then(() => {
     const diagnostics = () => (launcherController ? formatDiagnostics(launcherController.current, {
       version: packageVersion || app.getVersion(),
       platform: `${process.platform} ${os.release()} ${process.arch}`,
+      update: updateNotice,
     }) : '');
     // The folder opens with a fresh ZIP of its logs selected, so a researcher
     // sends one file; without one, the folder alone.
@@ -606,6 +863,15 @@ app.whenReady().then(() => {
     ipcMain.handle('startup:copy-diagnostics', (event) => {
       if (!fromStartupWindow(event) || !launcherController) return false;
       clipboard.writeText(diagnostics());
+      return true;
+    });
+    // After an update failed: the researcher has read it, so open VISTA.
+    ipcMain.handle('startup:continue', (event) => {
+      if (!fromStartupWindow(event)) return false;
+      holdMainWindow = false;
+      const show = showHeldMainWindow;
+      showHeldMainWindow = null;
+      show?.();
       return true;
     });
     ipcMain.handle('startup:quit', (event) => {

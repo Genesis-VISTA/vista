@@ -280,6 +280,9 @@ export PATH="$PACKAGE/bin:$PACKAGE/node/bin:$PATH"
 # on a machine with no network would fail and take the session with it.
 export UV_NO_SYNC=1
 export VISTA_VERSION="$VERSION"
+# The build's commit, which Settings > About shows beside the version.
+VISTA_COMMIT="$(manifest_field commit)"
+export VISTA_COMMIT
 export VISTA_DATA_DIR="$STATE"
 export VISTA_MCP_SERVERS_PATH="$PACKAGE/app/mcp_servers"
 export VISTA_MCP_LOCAL_HPC_JOBS_DIR="$PACKAGE/app/hpc_jobs"

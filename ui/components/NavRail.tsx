@@ -14,6 +14,7 @@ import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
+import { updateAvailable, useVersion } from "@/lib/version";
 import { UserSettingsModal } from "./UserSettingsModal";
 import { TeamSwitcher } from "./TeamSwitcher";
 import { useTour } from "./TourProvider";
@@ -179,6 +180,7 @@ export function NavRail() {
   const { settings, loading: settingsLoading } = useSettings();
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
   const settingsModal = useSettingsModal();
+  const updateReady = updateAvailable(useVersion().info);
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const storedCollapsed = useSyncExternalStore(
     railSubscribe,
@@ -432,7 +434,7 @@ export function NavRail() {
         className="nav-rail-settings"
         onClick={() => openSettings()}
         disabled={!settings}
-        aria-label="Open settings"
+        aria-label={updateReady ? "Open settings, update available" : "Open settings"}
         data-tour="first-question:settings"
         {...tipProps(settingsHint)}
       >
@@ -443,6 +445,8 @@ export function NavRail() {
           </svg>
         </span>
         {!collapsed && <span className="nav-rail-settings-label">Settings</span>}
+        {/* A newer release: the only place outside About that says so. */}
+        {updateReady && <span className="update-marker" data-testid="settings-update-marker" />}
       </button>
 
       {/* Fixed rather than absolute: the entry list scrolls, and anything

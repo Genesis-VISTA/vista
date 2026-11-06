@@ -96,3 +96,11 @@ def test_a_database_made_before_the_tour_column_passes(conn):
 
     assert schema_problems(conn)  # a strict check still names it
     assert schema_problems(conn, assume_additive=True) == []
+
+
+def test_a_database_made_before_the_update_columns_passes(conn):
+    for column in ("update_checks", "update_prereleases", "update_checked_at"):
+        conn.execute(f"ALTER TABLE local_settings DROP COLUMN {column}")
+
+    assert schema_problems(conn)  # a strict check still names them
+    assert schema_problems(conn, assume_additive=True) == []

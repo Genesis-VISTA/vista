@@ -321,10 +321,31 @@ export class StartupStateMachine {
   }
 }
 
+/** The startup window's state when an update failed and the previous version reopened. */
+export const UPDATE_FAILED = 'update-failed';
+
+/**
+ * What the startup window says when the last update failed (design D6): the
+ * version it was for and why, from the helper's last-failure.json. It shows
+ * above the usual progress, and VISTA goes on starting the installed version.
+ *
+ * @param {{ version: string, reason: string } | null} failure
+ * @returns {{ code: typeof UPDATE_FAILED, title: string, message: string, log: 'update.log' } | null}
+ */
+export function updateFailureNotice(failure) {
+  if (!failure) return null;
+  return {
+    code: UPDATE_FAILED,
+    title: failure.version ? `Update to ${failure.version} failed` : 'The update failed',
+    message: `${failure.reason} The version you had is still installed and is starting now.`,
+    log: 'update.log',
+  };
+}
+
 /**
  * A copyable diagnostic summary made only from normalized, allow-listed state.
  * @param {ReturnType<StartupStateMachine['snapshot']>} snapshot
- * @param {{ version: string, platform: string }} context
+ * @param {{ version: string, platform: string, update?: ReturnType<typeof updateFailureNotice> }} context
  */
 export function formatDiagnostics(snapshot, context) {
   const failure = snapshot.failure;
@@ -334,5 +355,6 @@ export function formatDiagnostics(snapshot, context) {
     `Phase: ${failure?.phase ?? 'unknown'}`,
     `Code: ${failure?.code ?? 'unknown'}`,
     `Log: ${failure?.log || 'window.log'}`,
+    ...(context.update ? [`Update: ${context.update.title}: ${context.update.message}`, `Update log: ${context.update.log}`] : []),
   ].join('\n');
 }

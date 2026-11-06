@@ -609,34 +609,34 @@ wheels = [
 
 [package.optional-dependencies]
 cudart = [
-    { name = "nvidia-cuda-runtime", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-runtime" },
 ]
 cufft = [
-    { name = "nvidia-cufft", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cufft" },
 ]
 cufile = [
-    { name = "nvidia-cufile", marker = "sys_platform == 'linux'" },
+    { name = "nvidia-cufile" },
 ]
 cupti = [
-    { name = "nvidia-cuda-cupti", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-cupti" },
 ]
 curand = [
-    { name = "nvidia-curand", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-curand" },
 ]
 cusolver = [
-    { name = "nvidia-cusolver", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusolver" },
 ]
 cusparse = [
-    { name = "nvidia-cusparse", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cusparse" },
 ]
 nvjitlink = [
-    { name = "nvidia-nvjitlink", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvjitlink" },
 ]
 nvrtc = [
-    { name = "nvidia-cuda-nvrtc", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-cuda-nvrtc" },
 ]
 nvtx = [
-    { name = "nvidia-nvtx", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { name = "nvidia-nvtx" },
 ]
 
 [[package]]
@@ -3620,6 +3620,7 @@ dependencies = [
     { name = "jsonschema" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "packaging" },
     { name = "palisade" },
     { name = "pydantic-ai" },
     { name = "pydantic-ai-shields" },
@@ -3661,6 +3662,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openai", specifier = ">=1.69" },
+    { name = "packaging", specifier = ">=24" },
     { name = "palisade", git = "https://github.com/herronej/palisade_siege_agentic_security.git?tag=v1.0.0" },
     { name = "pydantic-ai", specifier = ">=1.105.0" },
     { name = "pydantic-ai-shields", specifier = ">=0.3.2,<0.4" },

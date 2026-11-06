@@ -61,6 +61,10 @@ export type LocalSettings = {
   technical_depth?: "expert" | "balanced" | "introductory" | null;
   evidence_preference?: "cite_when_available" | "always_cite" | "concise" | null;
   personalize_responses?: boolean;
+  /** Whether the backend checks GitHub for a newer release (Settings > About). */
+  update_checks?: boolean;
+  /** Whether release candidates are offered as updates. */
+  update_prereleases?: boolean;
   nersc_account: string | null;
   nersc_remote_dir: string | null;
   /**
@@ -132,6 +136,8 @@ export type LocalSettingsUpdate = {
   technical_depth?: "expert" | "balanced" | "introductory" | null;
   evidence_preference?: "cite_when_available" | "always_cite" | "concise" | null;
   personalize_responses?: boolean;
+  update_checks?: boolean;
+  update_prereleases?: boolean;
   nersc_account?: string | null;
   nersc_remote_dir?: string | null;
   odo_remote_dir?: string | null;

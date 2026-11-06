@@ -96,10 +96,15 @@ export VISTA_BACKEND_URL="http://localhost:8001"
 COLLAB_CMD=''
 COLLAB_URL=''
 BACKEND_ENV=''
+# The checkout's commit, which Settings > About shows beside `dev`.
+CHECKOUT_COMMIT="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || true)"
+if [[ -n "$CHECKOUT_COMMIT" ]]; then
+  BACKEND_ENV="VISTA_COMMIT='$CHECKOUT_COMMIT' "
+fi
 if [[ "$COLLAB" == true ]]; then
   COLLAB_PORT="${VISTA_COLLAB_PORT:-8002}"
   COLLAB_URL="http://127.0.0.1:$COLLAB_PORT"
-  BACKEND_ENV="VISTA_BACKEND_COLLABORATION_SERVER_URL='$COLLAB_URL' "
+  BACKEND_ENV+="VISTA_BACKEND_COLLABORATION_SERVER_URL='$COLLAB_URL' "
   COLLAB_CMD="
     cd '$REPO_ROOT/collaboration_server' &&
     VISTA_COLLAB_HOST=127.0.0.1 VISTA_COLLAB_PORT='$COLLAB_PORT' VISTA_COLLAB_AUTH_MODE=dev-headers uv run vista-collaboration-server;

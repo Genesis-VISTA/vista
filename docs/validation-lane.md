@@ -281,6 +281,71 @@ and walk-through checks above, then:
 - On Ubuntu, `./launch.sh logs` prints the same sandbox message, and the
   profile turns the sandbox on for it as well.
 
+### In-app update (manual)
+
+**Manual; never in PR CI.** Settings › About's Update and restart, end to end on each platform:
+the check, the download and its verification, the hand-off to the update helper, the release's
+own installer, and the reopen. Two fake releases stand in for GitHub, so nothing is published.
+Both are one build from the branch under test, since the version updated *from* must contain
+the updater too.
+
+1. **Build once** with a release version, so the build is not a development one, which never
+   checks: `VISTA_VERSION=0.0.1 ./scripts/build_local_package.sh --without-citations`.
+2. **Make the releases** with [`scripts/update_e2e/fake_release.py`](../scripts/update_e2e/fake_release.py).
+   It restamps the archive's version only, so a macOS signature still holds. Keep 0.0.1 out
+   of the served folder, and add 0.0.3 only for the failure run. On Windows, run these from
+   Git Bash, with `uv run --no-project python` where there is no `python3`:
+
+   ```bash
+   e2e=/private/tmp/vista-e2e   # any short folder; on Windows, e.g. C:\vista-e2e
+   python3 scripts/update_e2e/fake_release.py make dist/vista-0.0.1-<platform>.<ext> 0.0.1 $e2e/installed
+   python3 scripts/update_e2e/fake_release.py make dist/vista-0.0.1-<platform>.<ext> 0.0.2 $e2e/releases
+   python3 scripts/update_e2e/fake_release.py make dist/vista-0.0.1-<platform>.<ext> 0.0.3 $e2e/later
+   python3 scripts/update_e2e/fake_release.py serve $e2e/releases   # leave running: port 8765
+   ```
+
+3. **Keep the real install out of it.** Give the test its own state, launcher link and
+   menu entry, in the environment VISTA starts with: the helper and the installer inherit it.
+
+   | Variable | Value |
+   | --- | --- |
+   | `VISTA_HOME` | `$e2e/home`, a copy of a real state folder to test with real chats (`cp -Rc` on macOS, then `sqlite3 <db> ".backup …"` for `vista.db`) |
+   | `VISTA_BACKEND_UPDATES__GITHUB_API` | `http://127.0.0.1:8765` |
+   | `VISTA_BIN_DIR` | `$e2e/bin` (macOS, Linux) |
+   | `VISTA_INSTALL_NO_REGISTER` | `1` (macOS) |
+   | `XDG_DATA_HOME` | `$e2e/share` (Linux: the app-menu entry) |
+   | `VISTA_INSTALL_NO_SHORTCUT` | `1` (Windows: the Start-menu entry) |
+
+   On macOS the helper reopens VISTA with `open`, which passes no environment, so set each with
+   `launchctl setenv` for the login session, and `launchctl unsetenv` them afterwards; until
+   then every VISTA opened uses them. On Linux and Windows, export them in the shell that
+   starts VISTA.
+4. **Install 0.0.1** with its own installer into `$e2e/app`:
+   `VISTA_INSTALL_BASE_URL=file://$e2e/installed/v0.0.1 VISTA_INSTALL_DIR=$e2e/app bash $e2e/installed/v0.0.1/install.sh --version 0.0.1 --no-launch`
+   (Windows: `$env:VISTA_INSTALL_BASE_URL`, `$env:VISTA_INSTALL_DIR`, then
+   `install.ps1 -Version 0.0.1 -NoLaunch`). Open it: `open $e2e/app/VISTA.app`,
+   `$e2e/app/app/window/vista-app`, or `$e2e\app\app\window\VISTA.exe --startup`.
+5. **Update.** The Settings button has a dot, and About says 0.0.1 and offers 0.0.2. Click
+   Update to 0.0.2, wait for "Downloaded and verified", then Restart to update. The
+   confirmation lists what is running and warns of no reset. Restart now. VISTA closes and
+   reopens through its startup window as 0.0.2, "up to date", with the same chats.
+   `$VISTA_HOME/logs/update.log` shows each step.
+6. **Fail.** Move `$e2e/later/v0.0.3` into `$e2e/releases`, set
+   `VISTA_INSTALL_MIN_FREE_GB=100000` the same way as step 3, and restart VISTA so it has it.
+   Update to 0.0.3 and Restart now. The installer refuses before changing anything, 0.0.2
+   reopens, and its startup window says "Update to 0.0.3 failed" with the free-space reason,
+   Open logs, Copy diagnostics (which name the failed update), and Continue to VISTA.
+
+| Platform | Date | Commit | Result |
+| --- | --- | --- | --- |
+| macOS 26 (arm64) | 2026-11-04 | `7ead2e63` | Pass. Update: VISTA closed in 1 s, the installer took 1 min 39 s with nothing on screen, 0.0.2 opened with both chats. Failure: refused at once, 0.0.2 reopened with the notice. |
+| macOS 26 (arm64) | 2026-11-04 | `c600bf57` | Status window (D9). Update: it showed from the close (each installer step; unpacking took 1 min 18 s) and closed once 0.0.2's startup window showed. Failure: it showed "failed", but 0.0.2 reopened before it had started, so it missed being closed and stayed up; fixed in `0f6116a2` (the helper writes its marker first), covered by `startup.e2e.js`. |
+| macOS 26 (arm64) | 2026-11-05 | `f00c90d8` | Status window, failure path again (0.0.2 to 0.0.3, disk check forced): it showed waiting, installing and "failed", then closed by itself once 0.0.2's startup window showed. |
+| Windows 11 (x64) | 2026-11-05 | `298bb58c` | Package from GitHub run 42062317176, `windows-update-test.ps1`. Update 0.0.1 to 0.0.2: the marker came on without Check now; the status window appeared about 6 s after Restart now (the freshly copied `VISTA.exe` is slow to start the first time) and showed each installer step (unpacking 2 min 43 s, removing the previous version 2 min 15 s), then closed once 0.0.2's startup window showed; `VERSION` 0.0.2. Failure, 0.0.2 to 0.0.3 (disk check forced): it showed "failed", 0.0.2 reopened and said why, and the window closed by itself; `VERSION` stayed 0.0.2. Before `64a7a9ac` no Windows update ran at all: PowerShell started detached exited before running the helper. |
+| Ubuntu 24.04 (x86_64, Docker under Rosetta on macOS) | 2026-11-05 | `298bb58c` | Package from GitHub run 42062317176, in a container with Xvfb and VNC, non-root, `VISTA_VERIFY_WITHOUT_SANDBOX=1` (no KVM), the window unsandboxed (no user namespaces). Update 0.0.1 to 0.0.2: the status window started at once (`--no-sandbox` from `window-sandbox`), showed each installer step and closed once 0.0.2's startup window showed; `VERSION` 0.0.2, both chats kept. Failure, 0.0.2 to 0.0.3 (disk check forced): it showed "failed", 0.0.2 reopened and said why, and the window closed by itself. VISTA took 11-12 s to close under emulation. |
+| Linux (x86-64) | | | Not run yet |
+| Windows (x64) | | | Not run yet |
+
 ## Weekly / manual real HPC (`hpc_jobs/example`)
 
 ```bash

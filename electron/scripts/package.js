@@ -54,6 +54,8 @@ if (development && platform !== 'darwin') {
 }
 const name = development ? 'VISTA Dev' : 'VISTA';
 
+const UPDATE_HELPERS = [path.join(APP_DIR, 'update', 'apply-update.sh'), path.join(APP_DIR, 'update', 'apply-update.ps1')];
+
 /** @type {import('@electron/packager').Options} */
 const options = {
   dir: APP_DIR,
@@ -71,7 +73,12 @@ const options = {
   // part of the app itself. Of assets/, only icon.png is: Linux has no icon in
   // the executable, so main.js hands it to each window. (icon-mac.png is for
   // development only; a packaged Mac app has icon.icns.)
-  ignore: [/^\/test/, /^\/scripts/, /^\/test-results/, /^\/playwright/, /^\/tsconfig/, /^\/assets\/(?!icon\.png$)/, /^\/linux/],
+  // update/ is the in-app update's helpers: shipped as plain files beside the
+  // app (extraResource below), not inside app.asar, where no shell can read them.
+  ignore: [/^\/test/, /^\/scripts/, /^\/test-results/, /^\/playwright/, /^\/tsconfig/, /^\/assets\/(?!icon\.png$)/, /^\/linux/, /^\/update/],
+  // In resources/ (Contents/Resources on macOS), where main.js finds them and
+  // copies one into the update's folder before running it (in-app-updates D5).
+  extraResource: UPDATE_HELPERS,
 };
 
 if (platform === 'darwin') {
@@ -80,7 +87,7 @@ if (platform === 'darwin') {
   const icon = path.join(APP_DIR, 'assets', 'icon.icns');
   if (existsSync(icon)) options.icon = icon;
   if (development) {
-    options.extraResource = path.join(APP_DIR, 'assets', 'vista-development.json');
+    options.extraResource = [...UPDATE_HELPERS, path.join(APP_DIR, 'assets', 'vista-development.json')];
   }
 }
 

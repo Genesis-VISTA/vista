@@ -19,6 +19,31 @@ vi.mock("@/components/HpcStatusSection", () => ({ HpcStatusSection: () => null }
 vi.mock("@/components/UserSettingsModal", () => ({ UserSettingsModal: () => null }));
 vi.mock("@/components/TeamSwitcher", () => ({ TeamSwitcher: () => null }));
 
+const { useVersionMock } = vi.hoisted(() => ({ useVersionMock: vi.fn() }));
+vi.mock("@/lib/version", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/version")>()),
+  useVersion: useVersionMock,
+}));
+
+function versionInfo(overrides: Record<string, unknown> = {}) {
+  return {
+    info: {
+      version: "0.2.3",
+      commit: "abc1234",
+      checks: "on",
+      checked_at: "2026-11-04T09:00:00Z",
+      latest: null,
+      notes_url: null,
+      data_reset: null,
+      ...overrides,
+    },
+    error: null,
+    checking: false,
+    checkedAt: 0,
+    download: null,
+  };
+}
+
 const KEY = "vista.navRail.collapsed.v1";
 
 function setTouring(running: boolean) {
@@ -28,6 +53,7 @@ function setTouring(running: boolean) {
 beforeEach(() => {
   window.localStorage.setItem(KEY, "true");
   setTouring(false);
+  useVersionMock.mockReturnValue(versionInfo());
 });
 
 afterEach(() => {
@@ -53,5 +79,26 @@ describe("NavRail during the tour", () => {
     rerender(<NavRail />);
     expect(rail()).toHaveClass("collapsed");
     expect(window.localStorage.getItem(KEY)).toBe("true");
+  });
+});
+
+describe("NavRail's update marker", () => {
+  it("marks the settings button while a newer release is available", () => {
+    useVersionMock.mockReturnValue(versionInfo({ latest: "0.2.5" }));
+    render(<NavRail />);
+    expect(screen.getByTestId("settings-update-marker")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open settings, update available" })).toBeInTheDocument();
+  });
+
+  it("shows nothing when VISTA is up to date", () => {
+    render(<NavRail />);
+    expect(screen.queryByTestId("settings-update-marker")).toBeNull();
+    expect(screen.getByRole("button", { name: "Open settings" })).toBeInTheDocument();
+  });
+
+  it("shows nothing once checks are turned off, whatever was found before", () => {
+    useVersionMock.mockReturnValue(versionInfo({ checks: "off", latest: "0.2.5" }));
+    render(<NavRail />);
+    expect(screen.queryByTestId("settings-update-marker")).toBeNull();
   });
 });
