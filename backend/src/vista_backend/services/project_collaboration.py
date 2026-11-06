@@ -569,11 +569,17 @@ async def publish_project(
             if on_top_of is None and not public.modified and base is not None:
                 if _references(base) == _references(new):
                     await reread(session, row)
+                    # An earlier publish may have failed to link the forum.
+                    forum_error = await hosted_forum.link_after_publish(
+                        local, row, public.remote_id
+                    )
+                    await session.refresh(row)
                     return ProjectPublishResult(
                         status="unchanged",
                         project=ProjectPublic.model_validate(row),
                         skills_published=published,
                         knowledge_bases_published=kbs_published,
+                        forum_error=forum_error,
                     )
             try:
                 version = await client.publish_version(

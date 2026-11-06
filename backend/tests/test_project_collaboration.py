@@ -1178,6 +1178,45 @@ async def test_a_new_project_gets_a_hosted_forum_that_follows_it_to_a_teammate(
         await bob.close()
 
 
+async def test_publishing_an_unchanged_project_retries_a_forum_link_that_failed(
+    loopback_server, labs_on, session, monkeypatch
+):
+    """A link that failed on the first publish is retried by the next, though nothing changed."""
+    from vista_backend.services.collaboration import CollaborationError
+
+    await _use_server(session, loopback_server.url)
+    real = CollaborationClient.link_forum
+    calls = 0
+
+    async def flaky(self, forum_id, item_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise CollaborationError("boom")
+        return await real(self, forum_id, item_id)
+
+    monkeypatch.setattr(CollaborationClient, "link_forum", flaky)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        assert created.status_code == 201, created.text
+        await session.commit()
+        first = await client.post("/projects/salt/publish", json={})
+        assert first.status_code == 200, first.text
+        assert first.json()["forum_error"] is not None
+        item_id = uuid.UUID(first.json()["project"]["remote_id"])
+        await session.commit()
+
+        again = await client.post("/projects/salt/publish", json={})
+        assert again.status_code == 200, again.text
+        assert again.json()["status"] == "unchanged"
+        assert again.json()["forum_error"] is None
+        assert calls == 2
+        await session.commit()
+
+    with loopback_server.api(uuid.uuid4(), "Bea") as bea:
+        assert bea.get(f"/items/{item_id}/forum").status_code == 200
+
+
 async def test_a_forum_hosted_for_a_project_nobody_has_published_is_deleted_with_it(
     loopback_server, labs_on, session
 ):
