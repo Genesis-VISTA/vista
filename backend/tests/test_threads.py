@@ -335,6 +335,38 @@ async def test_an_unreachable_forum_keeps_the_list(session, tmp_path, remote):
 
 @needs_git
 @pytest.mark.anyio
+async def test_a_post_published_later_shows_published_on_the_next_sync(
+    session, tmp_path, remote
+):
+    """Publishing leaves the thread's tip where it was; the list must still follow."""
+    project = await _project(session)
+    alice = await _host(tmp_path / "alice", remote)
+    thread_id = await alice.create_thread("t", body="x")
+    await alice.set_remote("http://127.0.0.1:9/forum.git")  # offline
+    await alice.post_as(
+        Participant(identity=ROSTER["proposer"], role="proposer"),
+        thread_id,
+        "written offline",
+        kind=PostKind.PROPOSAL,
+    )
+    await threads.sync_forum(session, project_id=project.id, client=alice)
+    [row] = await threads.list_threads(session, project_id=project.id)
+    assert [p.published for p in await threads.list_posts(session, thread=row)][
+        -1
+    ] is False
+
+    await alice.set_remote(str(remote))
+    await alice.publish(thread_id)
+    outcome = await threads.sync_forum(session, project_id=project.id, client=alice)
+
+    assert outcome.projected == [thread_id]
+    posts = await threads.list_posts(session, thread=row)
+    await session.refresh(posts[-1])
+    assert posts[-1].published is True
+
+
+@needs_git
+@pytest.mark.anyio
 async def test_two_installs_share_a_thread_end_to_end(session, tmp_path, remote):
     """
     The change's whole story on real git (task 4.2). Two installs are two

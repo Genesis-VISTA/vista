@@ -509,13 +509,35 @@ async def _copy_run_posts(
     await session.flush()
 
 
+async def _threads_with_pending_post_state(
+    session: AsyncSession, *, project_id: uuid.UUID, hosted: bool
+) -> set[uuid.UUID]:
+    """Ids of the project's threads with a post whose state may still change."""
+    waiting = col(ForumPostTable.published).is_(False)
+    if hosted:
+        waiting = or_(waiting, col(ForumPostTable.pusher_name).is_(None))
+    rows = await session.exec(
+        select(ForumPostTable.forum_thread_id)
+        .join(
+            ForumThreadTable, col(ForumThreadTable.id) == ForumPostTable.forum_thread_id
+        )
+        .where(ForumThreadTable.project_id == project_id, waiting)
+        .distinct()
+    )
+    return set(rows)
+
+
 async def sync_forum(
     session: AsyncSession, *, project_id: uuid.UUID, client: ForumClient
 ) -> SyncOutcome:
     """
     Bring every thread on the project's forum into the tables (design D3).
 
-    One fetch, then only threads whose tip moved are read. A thread this
+    One fetch, then only threads whose tip moved are read, in the common case.
+    Some per-post state moves without the tip (a push marks our post published
+    and leaves the tip alone; the hosted server's push record may land after
+    our fetch), so a thread is also re-read while a post of it is still marked
+    unpublished, or, on a hosted forum, still has no pusher name. A thread this
     install holds that a successful fetch no longer lists is marked missing.
     Never publishes; a failed fetch reads what is here.
     """
@@ -523,9 +545,17 @@ async def sync_forum(
     reached, tips = await client.thread_tips()
     known = {t.thread_id: t for t in await list_threads(session, project_id=project_id)}
     outcome = SyncOutcome(reached=reached)
+    pending = await _threads_with_pending_post_state(
+        session, project_id=project_id, hosted=getattr(client, "hosted", False)
+    )
     for thread_id, tip in tips.items():
         row = known.get(thread_id)
-        if row is not None and row.tip == tip and not row.thread_missing:
+        if (
+            row is not None
+            and row.tip == tip
+            and not row.thread_missing
+            and row.id not in pending
+        ):
             continue
         try:
             thread = await client.read_thread(thread_id)
