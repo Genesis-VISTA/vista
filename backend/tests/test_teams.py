@@ -377,7 +377,8 @@ async def test_it_needs_a_team_one_is_in_and_stays_in_its_first(collab_server, s
         again = await client.post(
             "/skills/density/publish-to-team", json={"team_id": other["id"]}
         )
-    assert not_member.status_code == 404, not_member.text
+    assert not_member.status_code == 400, not_member.text
+    assert not_member.json()["code"] == "not_in_team"
     assert again.status_code == 400
     assert "in a team already" in again.json()["detail"]
 
@@ -427,6 +428,7 @@ async def test_a_resource_of_a_team_one_has_left_is_published_from_here(
         result = await _publish_to(client, "skills", "density", new["id"])
     assert left.status_code == 204, left.text
     assert plain.status_code == 400, plain.text
+    assert plain.json()["code"] == "not_in_team"
     assert "no longer in" in plain.json()["detail"]
     # The old item is out of reach, so it is published from here.
     assert result["published"][0]["how"] == "published"
@@ -484,12 +486,44 @@ async def test_a_project_whose_own_publish_fails_is_left_in_the_team(
             None,
             True,
         )
-        # In the team now, so an ordinary publish finishes it there.
-        again = await client.post("/projects/lab/publish", json={})
+        # In the team now: publishing it into that team again finishes it,
+        # as a page not yet showing it there would ask.
+        again = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
         listed = (await client.get("/collaboration/projects")).json()
     assert failed.status_code == 503
     assert again.status_code == 200, again.text
     assert [(p["team_id"], p["head_version"]) for p in listed] == [(team["id"], 1)]
+
+
+async def test_a_project_left_in_the_team_is_finished_by_plain_publish_too(
+    collab_server, session, monkeypatch
+):
+    from vista_backend.services import project_collaboration
+    from vista_backend.services.collaboration import CollaborationUnavailable
+
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        team = await _team(client)
+        other = await _team(client, "other")
+        await _project(client, "lab")
+        await session.commit()
+        publish = project_collaboration.publish_project
+
+        async def down(*args, **kwargs):
+            raise CollaborationUnavailable("The server went away.")
+
+        monkeypatch.setattr(project_collaboration, "publish_project", down)
+        await client.post("/projects/lab/publish-to-team", json={"team_id": team["id"]})
+        monkeypatch.setattr(project_collaboration, "publish_project", publish)
+        elsewhere = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": other["id"]}
+        )
+        again = await client.post("/projects/lab/publish", json={})
+    # It is in its team: only that team finishes it.
+    assert elsewhere.status_code == 400, elsewhere.text
+    assert again.status_code == 200, again.text
 
 
 async def test_a_project_publish_that_fails_part_way_puts_back_what_moved(
@@ -527,6 +561,69 @@ async def test_a_project_publish_that_fails_part_way_puts_back_what_moved(
     assert failed.status_code == 503
     assert again.status_code == 200, again.text
     assert str((await _row(session, ProjectTable, name="lab")).team_id) == team["id"]
+
+
+async def test_a_failed_project_publish_removes_what_it_imported_beside(
+    collab_server, session, monkeypatch
+):
+    from vista_backend.services import skill_collaboration
+    from vista_backend.services.collaboration import CollaborationUnavailable
+
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        await _skill(client, "shared")
+        await _skill(client, "second")
+        await _project(client, "lab", skills=["shared", "second"])
+        await _project(client, "other-lab", skills=["shared"])
+        team = await _team(client)
+        await session.commit()
+        publish = skill_collaboration.publish_skill
+
+        async def second_fails(session, local, name, **kwargs):
+            if name == "second":
+                raise CollaborationUnavailable("The server went away.")
+            return await publish(session, local, name, **kwargs)
+
+        monkeypatch.setattr(skill_collaboration, "publish_skill", second_fails)
+        failed = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
+        monkeypatch.setattr(skill_collaboration, "publish_skill", publish)
+        after_failure = sorted(s["name"] for s in (await client.get("/skills")).json())
+        again = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
+        after_retry = sorted(s["name"] for s in (await client.get("/skills")).json())
+    assert failed.status_code == 503
+    # `shared` stayed private for other-lab; its team copy, shared-2, went again.
+    assert "shared-2" not in after_failure
+    assert again.status_code == 200, again.text
+    assert [n for n in after_retry if n.startswith("shared")] == ["shared", "shared-2"]
+
+
+async def test_a_project_publish_asks_for_the_teams_once(
+    collab_server, session, monkeypatch
+):
+    await _use_server(session)
+    await _kb(session, "papers")
+    with api_client(session) as (client, _):
+        await _skill(client, "first")
+        await _skill(client, "second")
+        await _project(
+            client, "lab", skills=["first", "second"], knowledge_bases=["papers"]
+        )
+        team = await _team(client)
+        await session.commit()
+        me = CollaborationClient.me
+        asked = []
+
+        async def counted(self):
+            asked.append(1)
+            return await me(self)
+
+        monkeypatch.setattr(CollaborationClient, "me", counted)
+        await _publish_to(client, "projects", "lab", team["id"])
+    assert len(asked) == 1
 
 
 async def test_a_knowledge_base_made_for_a_project_joins_its_team(

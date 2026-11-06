@@ -72,7 +72,7 @@ from .collaboration import (
     required_url,
     server_url,
 )
-from .teams import require_still_in, require_team, team_of
+from .teams import remembers_teams, require_still_in, require_team, team_of
 from .knowledge_base import (
     get_kb,
     get_kb_optional,
@@ -461,6 +461,7 @@ def _shipped(publications: list[Any]) -> list[Publication]:
     return shipped
 
 
+@remembers_teams
 async def publish_knowledge_base(
     session: AsyncSession,
     local: LocalSettingsPublic,
@@ -540,7 +541,8 @@ async def _publish(
                 if e.status_code != 404:
                     raise
                 raise KnowledgeBaseConflict(
-                    f"{slug} is no longer on the collaboration server at {url}, or is in a team you are no longer in; "
+                    # A team left since is refused before this (`require_still_in`).
+                    f"{slug} is no longer on the collaboration server at {url}: "
                     "publish it as a new knowledge base.",
                     "remote_missing",
                 ) from e

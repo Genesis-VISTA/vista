@@ -519,7 +519,7 @@ export default function SkillsPage() {
           kind="skill"
           name={publishingToTeam.slug}
           onClose={() => setPublishingToTeam(null)}
-          onPublished={() => {
+          onChanged={() => {
             loadSkills();
             refreshHeads();
             void refreshProjects();

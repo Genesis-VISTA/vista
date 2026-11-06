@@ -198,6 +198,23 @@ describe("publishSkill", () => {
     // Every Publish and Import control follows, not only this one.
     await waitFor(() => expect(view.current).toMatchObject({ available: false, reason }));
   });
+
+  it("asks for the teams again when the skill's team was left", async () => {
+    let asked = 0;
+    routes["GET /api/collaboration/status"] = () => {
+      asked += 1;
+      return json(status());
+    };
+    const { result: view } = renderHook(() => useCollaboration());
+    await waitFor(() => expect(view.current.available).toBe(true));
+    const before = asked;
+    routes["POST /api/skills/salt-density/publish"] = () =>
+      json({ detail: "salt-density is in a team you are no longer in.", code: "not_in_team" }, 400);
+    const result = await publishSkill("salt-density");
+    expect(result).toMatchObject({ ok: false, code: "not_in_team" });
+    // So its card offers Publish… into one of their teams.
+    await waitFor(() => expect(asked).toBeGreaterThan(before));
+  });
 });
 
 describe("the Skill Hub", () => {

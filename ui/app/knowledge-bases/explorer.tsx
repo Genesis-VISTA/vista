@@ -714,7 +714,7 @@ function KbDetailView({
   head?: number;
   /** It was published or imported: the list and the server's heads follow. */
   onShared: (kb: KnowledgeBase) => void;
-  /** A private one was published into a team for the first time. */
+  /** A private one was published, or tried to be, into a team for the first time. */
   onPublishedToTeam: () => void;
   onUpdated: (kb: KnowledgeBase) => void;
   onDeleted: () => void;
@@ -1150,7 +1150,7 @@ function KbDetailView({
             name={kb.slug}
             label={kb.name}
             onClose={() => setPublishingToTeam(false)}
-            onPublished={onPublishedToTeam}
+            onChanged={onPublishedToTeam}
           />
         )}
         <PublishConfirmModal

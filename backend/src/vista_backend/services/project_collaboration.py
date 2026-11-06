@@ -78,6 +78,7 @@ from .skill_collaboration import (
 from .skills import get_skill, get_skill_optional
 from .teams import (
     check_references,
+    remembers_teams,
     require_still_in,
     require_team,
     set_team,
@@ -471,13 +472,14 @@ def _stale(
 
 def _gone(name: str, url: str) -> ProjectConflict:
     return ProjectConflict(
-        f"{name} is no longer on the collaboration server at {url}, or is in a "
-        "team you are no longer in; publish it "
+        # A team left since is refused before this (`require_still_in`).
+        f"{name} is no longer on the collaboration server at {url}: publish it "
         "as a new project.",
         "remote_missing",
     )
 
 
+@remembers_teams
 async def publish_project(
     session: AsyncSession,
     local: LocalSettingsPublic,

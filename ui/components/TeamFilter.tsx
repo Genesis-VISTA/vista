@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { teamLabel, useTeams } from "@/lib/collaboration";
 
 /** Every team, or one team's id. */
@@ -22,11 +22,12 @@ export function useTeamFilter(): {
   const [picked, setPicked] = useState<TeamFilterValue>("all");
   const value =
     view.shown && view.teams.length >= 2 && view.teams.some((t) => t.id === picked) ? picked : "all";
-  return {
-    value,
-    setValue: setPicked,
-    matches: (teamId) => value === "all" || value === teamId,
-  };
+  // The same function while the value is, so a listing can memoize on it.
+  const matches = useCallback(
+    (teamId: string | null | undefined) => value === "all" || value === teamId,
+    [value],
+  );
+  return { value, setValue: setPicked, matches };
 }
 
 /**

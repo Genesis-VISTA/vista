@@ -44,7 +44,7 @@ export default function SkillHubPage() {
   const activeProject = useActiveProject();
   const collab = useCollaboration();
   const teamFilter = useTeamFilter();
-  const teamValue = teamFilter.value;
+  const inTeam = teamFilter.matches;
   const [skills, setSkills] = useState<RemoteSkill[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -141,7 +141,7 @@ export default function SkillHubPage() {
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     let list = skills.filter((skill) => {
-      if (teamValue !== "all" && skill.team_id !== teamValue) return false;
+      if (!inTeam(skill.team_id)) return false;
       if (activeTag !== "All" && !tagsOf(skill).includes(activeTag)) return false;
       if (!term) return true;
       return (
@@ -159,7 +159,7 @@ export default function SkillHubPage() {
       );
     }
     return list;
-  }, [skills, search, activeTag, sort, teamValue]);
+  }, [skills, search, activeTag, sort, inTeam]);
 
   return (
     <div className="app-page">

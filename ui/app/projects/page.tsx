@@ -396,7 +396,7 @@ function ProjectsPageContent() {
           kind="project"
           name={publishingToTeam.name}
           onClose={() => setPublishingToTeam(null)}
-          onPublished={() => {
+          onChanged={() => {
             // The project and what it uses joined the team, or were imported
             // beside the originals: every list here may have changed.
             refreshSkillCatalog();

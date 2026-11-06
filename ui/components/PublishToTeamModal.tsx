@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   publishAudience,
   publishToTeam,
+  refreshCollaborationStatus,
   teamLabel,
   useCollaboration,
   useTeams,
@@ -41,7 +42,7 @@ export function PublishToTeamModal({
   name,
   label,
   onClose,
-  onPublished,
+  onChanged,
 }: {
   kind: PublishKind;
   /** Its name here (a knowledge base's slug), which the route takes. */
@@ -49,8 +50,12 @@ export function PublishToTeamModal({
   /** What to call it, when that is not `name`. */
   label?: string;
   onClose: () => void;
-  /** After it was published, so the page can list the resources again. */
-  onPublished: (result: TeamPublishResult) => void;
+  /**
+   * After a publish, whether it worked or not, so the page lists the
+   * resources again: one that failed part way can have left a project in
+   * the team, to be finished by Publish.
+   */
+  onChanged: () => void;
 }) {
   const view = useTeams();
   const collab = useCollaboration();
@@ -71,10 +76,12 @@ export function PublishToTeamModal({
     try {
       const published = await publishToTeam(kind, name, target);
       setResult(published);
-      onPublished(published);
     } catch (e) {
       setError(e instanceof Error ? e.message : "It could not be published.");
+      // A team left since the teams were read, for one: offer the ones they are in.
+      void refreshCollaborationStatus();
     } finally {
+      onChanged();
       setBusy(false);
     }
   }

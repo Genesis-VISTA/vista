@@ -66,6 +66,25 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState("");
 
+  // Escape with focus outside this dialog (on the page, or left there when the
+  // focused button went disabled while busy) is this dialog's too, never
+  // Settings' below: caught on the way down, and marked handled. Inside it,
+  // the dialog's own handler has it (after the people list's).
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (e.target instanceof Node && dialogRef.current?.contains(e.target)) return;
+      e.preventDefault();
+      if (!busyRef.current) onCloseRef.current();
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   const loadMembers = useCallback(async (id: string) => {
     try {
       setLoaded({ teamId: id, members: await listMembers(id), error: null });

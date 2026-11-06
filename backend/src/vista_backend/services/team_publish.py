@@ -21,6 +21,7 @@ knowledge bases first, then the project itself, published into the team as a
 new item naming them.
 """
 
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -43,7 +44,16 @@ from .project import get_project_by_name
 from .project_agent import invalidate_agents
 from .skill_collaboration import reread
 from .skills import get_skill
-from .teams import Teamed, set_team, team_of, usable_in
+from .teams import (
+    Teamed,
+    remembers_teams,
+    require_in_team,
+    set_team,
+    team_of,
+    usable_in,
+)
+
+logger = logging.getLogger(__name__)
 
 Kind = Literal["project", "skill", "knowledge-base"]
 How = Literal["published", "imported"]
@@ -83,6 +93,8 @@ class _Kind:
         [AsyncSession, LocalSettingsPublic, uuid.UUID, str], Awaitable[str]
     ]
     free: Callable[[AsyncSession, str], Awaitable[str]]
+    delete: Callable[[AsyncSession, str], Awaitable[None]]
+    """ Remove one here, its files too: a copy imported beside an original, on rollback. """
 
 
 async def _publish_skill(session, local, name) -> None:
@@ -123,6 +135,19 @@ async def _free_kb(session, base) -> str:
     return await _free_slug(session, base)
 
 
+async def _delete_skill(session, name) -> None:
+    from .skills import delete_skill
+
+    await delete_skill(session, name)
+
+
+async def _delete_kb(session, slug) -> None:
+    # The route's deletion: the row, its PDFs and its store, under its lock.
+    from ..api.knowledge_bases import delete_knowledge_base
+
+    await delete_knowledge_base(slug, session)
+
+
 SKILL = _Kind(
     kind="skill",
     label="skill",
@@ -132,6 +157,7 @@ SKILL = _Kind(
     publish=_publish_skill,
     import_as=_import_skill,
     free=_free_skill,
+    delete=_delete_skill,
 )
 KNOWLEDGE_BASE = _Kind(
     kind="knowledge-base",
@@ -142,26 +168,26 @@ KNOWLEDGE_BASE = _Kind(
     publish=_publish_kb,
     import_as=_import_kb,
     free=_free_kb,
+    delete=_delete_kb,
 )
 
 
-async def _my_teams(local: LocalSettingsPublic, team_id: uuid.UUID) -> set[uuid.UUID]:
+async def _my_teams(
+    local: LocalSettingsPublic, team_id: uuid.UUID
+) -> frozenset[uuid.UUID]:
     """
     The teams the researcher is in; refuses `team_id` when it is not one of
-    them, before anything is sent.
+    them (`teams.NotInTeam`), before anything is sent.
     """
     async with client_for(local) as client:
-        me = await client.me()
-        base_url = client.base_url
-    mine = {t.id for t in me.teams}
-    if team_id not in mine:
-        raise HTTPException(
-            status_code=404, detail=f"You are not in that team on {base_url}."
+        return await require_in_team(
+            client, team_id, f"You are not in that team on {client.base_url}."
         )
-    return mine
 
 
-def _team_here(row: Teamed, url: str | None, mine: set[uuid.UUID]) -> uuid.UUID | None:
+def _team_here(
+    row: Teamed, url: str | None, mine: frozenset[uuid.UUID]
+) -> uuid.UUID | None:
     """
     `row`'s team, for publishing: None, as if private, when it is a team the
     researcher has left, where it can no longer be published.
@@ -171,7 +197,7 @@ def _team_here(row: Teamed, url: str | None, mine: set[uuid.UUID]) -> uuid.UUID 
 
 
 def _require_private(
-    label: str, row: Teamed, url: str | None, mine: set[uuid.UUID]
+    label: str, row: Teamed, url: str | None, mine: frozenset[uuid.UUID]
 ) -> None:
     """
     Refuse (400) to publish `row` into a team when it is in one already: an
@@ -287,6 +313,7 @@ async def _publish_one(
     return TeamPublishResult(team_id=team_id, published=[published])
 
 
+@remembers_teams
 async def publish_skill_to_team(
     session: AsyncSession, local: LocalSettingsPublic, name: str, team_id: uuid.UUID
 ) -> TeamPublishResult:
@@ -294,6 +321,7 @@ async def publish_skill_to_team(
     return await _publish_one(session, local, SKILL, name, team_id)
 
 
+@remembers_teams
 async def publish_knowledge_base_to_team(
     session: AsyncSession, local: LocalSettingsPublic, slug: str, team_id: uuid.UUID
 ) -> TeamPublishResult:
@@ -301,6 +329,7 @@ async def publish_knowledge_base_to_team(
     return await _publish_one(session, local, KNOWLEDGE_BASE, slug, team_id)
 
 
+@remembers_teams
 async def publish_project_to_team(
     session: AsyncSession, local: LocalSettingsPublic, name: str, team_id: uuid.UUID
 ) -> TeamPublishResult:
@@ -314,9 +343,11 @@ async def publish_project_to_team(
     project switched to that.
 
     If publishing what it uses fails, what joined `team_id` here is made
-    private again (its items stay on the server, unreferenced), so the project
-    is as it was. If the project's own publish fails after that, it is left in
-    the team with what it uses, to publish again.
+    private again, and what was imported beside an original is removed (their
+    items stay on the server, unreferenced), so the project is as it was. If
+    the project's own publish fails after that, it is left in the team with
+    what it uses; publishing it into `team_id` again (or plain Publish)
+    finishes it there.
     """
     from .knowledge_base_collaboration import require_idle
     from .project_collaboration import publish_project
@@ -326,7 +357,11 @@ async def publish_project_to_team(
     # Read now: every publish below commits, expiring the row.
     project_id = project.id
     mine = await _my_teams(local, team_id)
-    _require_private(f"The project {name}", project, url, mine)
+    # Left in `team_id`, never published there, by a publish whose last step
+    # failed: this finishes it, everything it uses being there already.
+    resuming = _team_here(project, url, mine) == team_id and project.remote_id is None
+    if not resuming:
+        _require_private(f"The project {name}", project, url, mine)
     plan: list[tuple[_Kind, str]] = []
     for kind in (SKILL, KNOWLEDGE_BASE):
         for key in dict.fromkeys(kind.uses(project)):
@@ -352,8 +387,10 @@ async def publish_project_to_team(
             plan.append((kind, key))
 
     published: list[PublishedResource] = []
-    # What each row that joined the team was before, to put back if a later one fails.
+    # What each row that joined the team was before, to put back if a later one
+    # fails; and each copy imported beside an original, to remove then.
     moved: list[tuple[_Kind, str, tuple]] = []
+    imported: list[tuple[_Kind, str]] = []
     try:
         for kind, key in plan:
             row = await kind.get(session, key)
@@ -363,7 +400,9 @@ async def publish_project_to_team(
             was = _link(row)
             result = await _place(session, local, kind, key, team_id, keep=keep)
             published.append(result)
-            if result.local_name == key:
+            if result.how == "imported":
+                imported.append((kind, result.local_name))
+            else:
                 moved.append((kind, key, was))
     except BaseException:
         for kind, key, was in moved:
@@ -371,6 +410,17 @@ async def publish_project_to_team(
             _restore_link(row, was)
             session.add(row)
         await session.commit()
+        # Nothing uses them yet, and a retry would import them again.
+        for kind, local_name in imported:
+            try:
+                await kind.delete(session, local_name)
+            except Exception:  # noqa: BLE001 - the publish's own error is the one to raise
+                logger.warning(
+                    "Could not remove %s %s, imported for a publish that failed",
+                    kind.label,
+                    local_name,
+                    exc_info=True,
+                )
         raise
 
     renamed = {(c.kind, c.name): c.local_name for c in published}

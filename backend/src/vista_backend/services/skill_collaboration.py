@@ -62,7 +62,13 @@ from .collaboration import (
     required_url,
     server_url,
 )
-from .teams import require_still_in, require_team, set_team, team_of
+from .teams import (
+    remembers_teams,
+    require_still_in,
+    require_team,
+    set_team,
+    team_of,
+)
 from .skills import (
     build_skill_row,
     commit_skill_files,
@@ -322,6 +328,7 @@ async def list_remote_skills(
 # ---------------------------------------------------------------------------
 
 
+@remembers_teams
 async def publish_skill(
     session: AsyncSession,
     local: LocalSettingsPublic,
@@ -380,7 +387,8 @@ async def publish_skill(
                 if e.status_code != 404:
                     raise
                 raise SkillConflict(
-                    f"{name} is no longer on the collaboration server at {url}, or is in a team you are no longer in; "
+                    # A team left since is refused before this (`require_still_in`).
+                    f"{name} is no longer on the collaboration server at {url}: "
                     "publish it as a new skill.",
                     "remote_missing",
                 ) from e

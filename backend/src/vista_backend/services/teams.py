@@ -20,8 +20,11 @@ The teams themselves, and who is in them, are the collaboration server's
 (`collaboration.CollaborationClient`).
 """
 
+import functools
 import uuid
-from typing import TYPE_CHECKING, Protocol
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
 from fastapi import HTTPException
 from sqlmodel import col, select
@@ -77,22 +80,84 @@ def require_team(team_id: uuid.UUID | None, label: str) -> uuid.UUID:
     return team_id
 
 
+class NotInTeam(Exception):
+    """
+    The researcher is not, or no longer, in the team a publish would go to.
+    The API answers 400 with code `not_in_team`, so the interface asks for
+    their teams again and offers the ones they are in.
+    """
+
+    def __init__(self, detail: str):
+        super().__init__(detail)
+        self.detail = detail
+
+
+# The researcher's teams, asked once per publish (`remembers_teams`): a project
+# publish publishes each skill and knowledge base it uses, and each checks.
+_membership: ContextVar[dict[str, frozenset[uuid.UUID]] | None] = ContextVar(
+    "team_membership", default=None
+)
+
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def remembers_teams(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
+    """
+    Ask the server for the researcher's teams at most once while `fn` runs,
+    however many publishes it makes (`my_teams`). The outermost call owns
+    what was asked, and forgets it when it returns.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        if _membership.get() is not None:
+            return await fn(*args, **kwargs)
+        token = _membership.set({})
+        try:
+            return await fn(*args, **kwargs)
+        finally:
+            _membership.reset(token)
+
+    return wrapper
+
+
+async def my_teams(client: "CollaborationClient") -> frozenset[uuid.UUID]:
+    """The teams the researcher is in, asked once per publish (`remembers_teams`)."""
+    known = _membership.get()
+    if known is not None and "teams" in known:
+        return known["teams"]
+    teams = frozenset(t.id for t in (await client.me()).teams)
+    if known is not None:
+        known["teams"] = teams
+    return teams
+
+
+async def require_in_team(
+    client: "CollaborationClient", team_id: uuid.UUID, detail: str
+) -> frozenset[uuid.UUID]:
+    """The researcher's teams; refuses (`NotInTeam`, with `detail`) when `team_id` is not one."""
+    mine = await my_teams(client)
+    if team_id not in mine:
+        raise NotInTeam(detail)
+    return mine
+
+
 async def require_still_in(
     client: "CollaborationClient", team_id: uuid.UUID, label: str
 ) -> None:
     """
-    Refuse (400) to publish a new version of `label` to `team_id` when the
+    Refuse to publish a new version of `label` to `team_id` when the
     researcher has left that team: the server would refuse it as missing.
     Like a private one, it is published into another of their teams instead
     (`team_publish`). Asked before anything is uploaded.
     """
-    me = await client.me()
-    if team_id not in {t.id for t in me.teams}:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{label} is in a team you are no longer in: choose one of "
-            "your teams to publish it to.",
-        )
+    await require_in_team(
+        client,
+        team_id,
+        f"{label} is in a team you are no longer in: choose one of your teams "
+        "to publish it to.",
+    )
 
 
 async def team_for_new(

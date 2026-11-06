@@ -269,6 +269,26 @@ describe("managing teams", () => {
     }
   });
 
+  it("keeps Escape from Settings even with focus outside it", async () => {
+    const onClose = vi.fn();
+    const below = vi.fn();
+    const settings = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) below();
+    };
+    window.addEventListener("keydown", settings);
+    try {
+      render(<TeamsModal onClose={onClose} />);
+      await screen.findByRole("list", { name: "Members" });
+      // As when the focused button goes disabled while busy: focus falls to the page.
+      (document.activeElement as HTMLElement | null)?.blur();
+      document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      expect(onClose).toHaveBeenCalledOnce();
+      expect(below).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("keydown", settings);
+    }
+  });
+
   it("is drawn at the top of the page, not inside what opened it", async () => {
     const { container } = render(<TeamsModal onClose={() => {}} />);
     const dialog = await screen.findByRole("dialog", { name: "Teams" });
@@ -454,7 +474,7 @@ describe("the Skill Hub", () => {
 describe("publishing a private one into a team", () => {
   it("offers every team, the public one first, and picks none", async () => {
     const user = userEvent.setup();
-    render(<PublishToTeamModal kind="skill" name="salt" onClose={() => {}} onPublished={() => {}} />);
+    render(<PublishToTeamModal kind="skill" name="salt" onClose={() => {}} onChanged={() => {}} />);
     const select = await screen.findByRole("combobox", { name: "Team" });
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
       "Choose a team…",
@@ -481,9 +501,9 @@ describe("publishing a private one into a team", () => {
           { kind: "project", name: "salt-work", local_name: "salt-work", how: "published" },
         ],
       });
-    const onPublished = vi.fn();
+    const onChanged = vi.fn();
     const user = userEvent.setup();
-    render(<PublishToTeamModal kind="project" name="salt-work" onClose={() => {}} onPublished={onPublished} />);
+    render(<PublishToTeamModal kind="project" name="salt-work" onClose={() => {}} onChanged={onChanged} />);
     expect(await screen.findByText(/published into the\s+same team with it/)).toBeInTheDocument();
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Team" }), "Alpha");
@@ -502,26 +522,30 @@ describe("publishing a private one into a team", () => {
       url: "/api/projects/salt-work/publish-to-team",
       body: { team_id: ALPHA },
     });
-    expect(onPublished).toHaveBeenCalledOnce();
+    expect(onChanged).toHaveBeenCalledOnce();
   });
 
   it("does not explain a project's skills for a skill", async () => {
-    render(<PublishToTeamModal kind="skill" name="salt" onClose={() => {}} onPublished={() => {}} />);
+    render(<PublishToTeamModal kind="skill" name="salt" onClose={() => {}} onChanged={() => {}} />);
     await screen.findByRole("combobox", { name: "Team" });
     expect(screen.queryByText(/same team with it/)).not.toBeInTheDocument();
   });
 
-  it("shows the backend's sentence when it is refused", async () => {
+  it("shows the backend's sentence when it is refused, and has the page and teams asked again", async () => {
     routes["POST /api/knowledge-bases/salt-papers/publish-to-team"] = () =>
       json({ detail: "The knowledge base salt-papers is in a team already." }, 400);
-    const onPublished = vi.fn();
+    const onChanged = vi.fn();
     const user = userEvent.setup();
     render(
-      <PublishToTeamModal kind="knowledge-base" name="salt-papers" label="Salt papers" onClose={() => {}} onPublished={onPublished} />,
+      <PublishToTeamModal kind="knowledge-base" name="salt-papers" label="Salt papers" onClose={() => {}} onChanged={onChanged} />,
     );
     await user.selectOptions(await screen.findByRole("combobox", { name: "Team" }), "Alpha");
     await user.click(screen.getByRole("button", { name: "Publish" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("is in a team already.");
-    expect(onPublished).not.toHaveBeenCalled();
+    // It may have left something in the team part way: the page lists again.
+    expect(onChanged).toHaveBeenCalledOnce();
+    await waitFor(() =>
+      expect(calls.filter((c) => c.url === "/api/collaboration/status").length).toBeGreaterThan(1),
+    );
   });
 });
