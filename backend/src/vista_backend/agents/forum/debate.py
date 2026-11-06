@@ -73,6 +73,33 @@ def identity_for(role: DebateRole, run_id: uuid.UUID) -> str:
     return f"vista-{role}-{str(run_id)[:8]}"
 
 
+ANNOUNCED_RUN_ENDED = "This run could not start on this install; it has ended."
+""" The Referee's BLOCKED for a run announced and then abandoned. No cause: it is shared. """
+
+
+async def end_run_on_forum(
+    client: ForumClient,
+    thread_id: str,
+    referee_identity: str,
+    exc: BaseException,
+) -> None:
+    """
+    Post the Referee's BLOCKED straight through the forum client, with no
+    database session: for a failure that may have broken the session, or that
+    is a cancellation. Best effort — it logs its own failure and never raises.
+    """
+    logger.warning("thread %s: ending its announced run: %r", thread_id, exc)
+    try:
+        await client.post_as(
+            Participant(identity=referee_identity, role="referee"),
+            thread_id,
+            ANNOUNCED_RUN_ENDED,
+            kind=PostKind.BLOCKED,
+        )
+    except BaseException:  # noqa: BLE001
+        logger.warning("thread %s: could not end its announced run", thread_id)
+
+
 def _participant_of(row) -> Participant:
     """The client's view of a recorded participant row."""
     return Participant(identity=row.identity, role=row.forum_role)
@@ -142,6 +169,9 @@ class DebateOrchestrator:
         model_names: dict[str, str] | None = None,
     ) -> None:
         self.client = client
+        # Set by `run` when its own crash handler is in force: from then on a
+        # failure ends the run's RUN itself, and a caller must not.
+        self.run_in_charge = False
         self.roles = roles or RoleAgents()
         self.on_post = on_post
         self.checkpoint = checkpoint
@@ -325,6 +355,7 @@ class DebateOrchestrator:
         await debate_service.record_granted_tools(
             session, run_id=run_id, granted=granted
         )
+        self.run_in_charge = True
         try:
             if not announced:
                 await self._announce_run(session, run_id, roster)
@@ -623,19 +654,26 @@ class DebateOrchestrator:
             )
 
     async def end_announced_run(
-        self, session: AsyncSession, run_id: uuid.UUID, exc: Exception
+        self, session: AsyncSession, run_id: uuid.UUID, exc: BaseException
     ) -> None:
         """
-        End a run whose RUN is on the forum but which will never reach `run`
-        (a hosted Continue that failed in its setup): the Referee's BLOCKED, the
-        same note `run` writes for a crash, so no install sees a live run with
-        nothing behind it. Best effort — it never raises.
+        End a run whose RUN is on the forum but which will never reach `run`'s
+        loop (a hosted Continue that failed in its setup): the Referee's BLOCKED,
+        so no install sees a live run with nothing behind it. Best effort — it
+        never raises. The cause stays in the local log, not on the shared thread.
         """
+        logger.warning("debate %s: ending its announced run: %r", run_id, exc)
         try:
             run = await debate_service.require_debate(session, run_id)
             roster = await self._participants(session, run_id)
             if "referee" in roster:
-                await self._blocked(session, run, roster["referee"], None, exc)
+                await self._post(
+                    session,
+                    run,
+                    roster["referee"],
+                    ANNOUNCED_RUN_ENDED,
+                    kind=PostKind.BLOCKED,
+                )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "debate %s: could not end its announced run", run_id, exc_info=True

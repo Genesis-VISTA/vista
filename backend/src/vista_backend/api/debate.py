@@ -25,12 +25,11 @@ from sse_starlette.sse import EventSourceResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.forum import simulation
-from ..agents.forum.debate import ROSTER
+from ..agents.forum.debate import ROSTER, end_run_on_forum
 from ..agents.forum.project_forum import build_client_for, forum_url_of, lab_enabled
 from ..agents.forum.roles import Verdict
 from ..agents.forum.wiring import (
     continue_debate_task,
-    end_announced_run,
     models_for,
     run_debate_task,
 )
@@ -687,17 +686,20 @@ async def continue_thread(
         require_inference_credential(local, chosen.get(role))
 
     announced = False
+    referee_identity: str | None = None
     if getattr(client, "hosted", False):
         # A hosted forum's server decides who may run, so the RUN is posted now,
         # before this answers: a refusal is a 409 and nothing is scheduled. (A
         # forge keeps its order: the run announces itself, local-first.)
         members = await debate_service.list_active_participants(session, run_id=ours.id)
         if members:
+            roster = {m.debate_role: m.identity for m in members}
+            referee_identity = roster.get("referee")
             try:
                 await client.start_run(
                     thread_id,
                     rounds=max(1, ours.rounds + body.rounds - ours.rounds_done),
-                    roster={m.debate_role: m.identity for m in members},
+                    roster=roster,
                     expiry_seconds=settings.forum.run_expiry_seconds,
                 )
             except RunRefused:
@@ -716,10 +718,12 @@ async def continue_thread(
             if announced
             else continue_debate_task(run_id, body.rounds)
         )
-    except Exception as exc:
-        if announced:
-            # The RUN is on the server and nothing will run behind it.
-            await end_announced_run(session, run_id, exc, client)
+    except BaseException as exc:
+        if announced and referee_identity:
+            # The RUN is on the server and nothing will run behind it. Ended
+            # through the client alone: the session may be what failed, and a
+            # cancelled request is not an `Exception`.
+            await end_run_on_forum(client, thread_id, referee_identity, exc)
         raise
     _spawn(task)
     return payload

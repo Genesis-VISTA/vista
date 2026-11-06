@@ -502,10 +502,7 @@ def _toolsets(grounding: Grounding):
 
 
 async def end_announced_run(
-    session: AsyncSession,
-    run_id: uuid.UUID,
-    exc: Exception,
-    client: ForumClient | None = None,
+    session: AsyncSession, run_id: uuid.UUID, exc: BaseException
 ) -> None:
     """
     A hosted Continue posted its RUN and then failed before `run()` took over:
@@ -513,10 +510,9 @@ async def end_announced_run(
     expires. Best effort — it logs and swallows its own failure.
     """
     try:
-        if client is None:
-            client = await client_for_run(
-                session, await debate_service.require_debate(session, run_id)
-            )
+        client = await client_for_run(
+            session, await debate_service.require_debate(session, run_id)
+        )
         await DebateOrchestrator(client=client).end_announced_run(session, run_id, exc)
         await session.commit()
     except Exception:  # noqa: BLE001
@@ -542,7 +538,7 @@ async def continue_debate_task(
     would be a way to buy more cluster time a round at a time.
     """
     async with AsyncSession(get_engine()) as session:
-        resumed = False
+        orchestrator = None
         try:
             run = await debate_service.require_debate(session, run_id)
 
@@ -561,8 +557,6 @@ async def continue_debate_task(
                 knowledge_bases=await knowledge_bases_for(session, run),
                 models=await models_for(session, run),
             )
-            # From here `run()`'s own handler ends an announced run that crashes.
-            resumed = True
             await orchestrator.resume(
                 session, run=run, extra_rounds=extra_rounds, announced=announced
             )
@@ -570,7 +564,9 @@ async def continue_debate_task(
         except Exception as exc:
             logger.exception("debate %s: could not continue", run_id)
             await session.rollback()
-            if announced and not resumed:
+            if announced and not (orchestrator and orchestrator.run_in_charge):
+                # `run()`'s own handler has not taken over (it sets
+                # `run_in_charge`), so nothing else will end the announced RUN.
                 await end_announced_run(session, run_id, exc)
             try:
                 await debate_service.set_status(session, run_id=run_id, status="failed")

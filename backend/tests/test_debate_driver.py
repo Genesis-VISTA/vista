@@ -1330,7 +1330,8 @@ async def test_an_announced_continue_that_fails_in_setup_ends_its_run(
     thread = await client.read_thread(thread_id)
     last = thread.posts[-1]
     assert last.kind == PostKind.BLOCKED
-    assert "no grounding today" in last.body
+    assert "no grounding today" not in last.body, "the cause stays in the log"
+    assert "could not start on this install" in last.body
     assert _live(thread.posts) is None
     session.expire_all()
     run = await debate_service.require_debate(session, run_id)
@@ -1392,3 +1393,118 @@ async def test_our_own_run_being_latest_is_not_superseded(client, session):
     await orch.run(session, run)
     kinds = [p.kind for p in (await client.read_thread(thread_id)).posts]
     assert PostKind.BLOCKED not in kinds and PostKind.DONE in kinds
+
+
+async def _announced_continue_with_a_working_setup(
+    client, session, engine, monkeypatch, *, break_it
+):
+    """
+    An announced Continue whose setup succeeds, so that `resume` and `run` are
+    what fail. `break_it` patches the failure in once the run has finished.
+    """
+    from types import SimpleNamespace
+
+    from vista_backend.agents.forum import wiring
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id, thread_id = run.id, run.thread_id
+    members = await debate_service.list_active_participants(session, run_id=run_id)
+    await client.start_run(
+        thread_id, rounds=1, roster={m.debate_role: m.identity for m in members}
+    )
+    before = len((await client.read_thread(thread_id)).posts)
+
+    async def forum(*_a, **_k):
+        return client
+
+    async def grounding(*_a, **_k):
+        return SimpleNamespace(simulation=None)
+
+    async def simulation(*_a, **_k):
+        return None, {}
+
+    async def nothing(*_a, **_k):
+        return []
+
+    async def no_models(*_a, **_k):
+        return {}
+
+    async def settings_(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(wiring, "get_engine", lambda: engine)
+    monkeypatch.setattr(wiring, "client_for_run", forum)
+    monkeypatch.setattr(wiring, "build_run_grounding", grounding)
+    monkeypatch.setattr(wiring, "build_simulation", simulation)
+    monkeypatch.setattr(wiring, "knowledge_bases_for", nothing)
+    monkeypatch.setattr(wiring, "models_for", no_models)
+    monkeypatch.setattr(wiring.local_settings, "get_public", settings_)
+    monkeypatch.setattr(
+        wiring,
+        "build_orchestrator",
+        lambda c, **_k: DebateOrchestrator(
+            client=c, roles=_roles(), checkpoint=_committing
+        ),
+    )
+    break_it(monkeypatch)
+    await wiring.continue_debate_task(run_id, 1, announced=True)
+    thread = await client.read_thread(thread_id)
+    return thread, thread.posts[before:]
+
+
+def _fail_once(monkeypatch, owner, name):
+    real = getattr(owner, name)
+    calls = []
+
+    async def failing(*a, **k):
+        if not calls:
+            calls.append(1)
+            raise RuntimeError("secret internal detail")
+        return await real(*a, **k)
+
+    monkeypatch.setattr(owner, name, failing)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "owner, name",
+    [
+        (debate_service, "update_debate"),  # in resume, before run
+        (debate_service, "record_granted_tools"),  # in run, before its try
+    ],
+)
+async def test_an_announced_continue_ends_its_run_whatever_fails_before_the_loop(
+    client, session, engine, monkeypatch, owner, name
+):
+    thread, new = await _announced_continue_with_a_working_setup(
+        client,
+        session,
+        engine,
+        monkeypatch,
+        break_it=lambda mp: _fail_once(mp, owner, name),
+    )
+    blocked = [p for p in new if p.kind == PostKind.BLOCKED]
+    assert len(blocked) == 1, "exactly one Referee BLOCKED"
+    assert blocked[0].role == "referee"
+    assert "secret internal detail" not in blocked[0].body
+    assert _live(thread.posts) is None
+
+
+@pytest.mark.anyio
+async def test_a_crash_inside_the_loop_is_ended_once_by_run_alone(
+    client, session, engine, monkeypatch
+):
+    from vista_backend.agents.forum import debate as debate_mod
+
+    def break_round(mp):
+        async def boom(*_a, **_k):
+            raise RuntimeError("round exploded")
+
+        mp.setattr(debate_mod.DebateOrchestrator, "run_round", boom)
+
+    thread, new = await _announced_continue_with_a_working_setup(
+        client, session, engine, monkeypatch, break_it=break_round
+    )
+    assert [p.kind for p in new].count(PostKind.BLOCKED) == 1, "no double BLOCKED"
+    assert _live(thread.posts) is None
