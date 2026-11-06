@@ -726,9 +726,10 @@ function ProjectModal({
         .filter((s) => s.length > 0);
 
     // Signed in, the dialog's choice decides; otherwise a blank URL is no forum, as ever.
-    const forum = chooser
-      ? forumRequest(forumChoice, forumRepoUrl)
-      : { forumRepoUrl: forumRepoUrl.trim(), hostedForumWanted: true };
+    const forum = forumRequest(
+      chooser ? forumChoice : forumRepoUrl.trim() ? "url" : "none",
+      forumRepoUrl,
+    );
     if (chooser && forumChoice === "url" && !forum.forumRepoUrl) {
       setError("Enter the repository's URL, or choose another forum.");
       return;

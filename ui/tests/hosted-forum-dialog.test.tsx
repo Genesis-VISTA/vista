@@ -174,8 +174,21 @@ describe("the create dialog's forum choice", () => {
     expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Create" }));
     await waitFor(() => expect(push).toHaveBeenCalled());
-    expect(created().url).toBe("/api/projects");
+    expect(created().url).toBe("/api/projects?hosted_forum_wanted=false");
     expect(created().body.forum_repo_url).toBeNull();
+  });
+
+  it("without the choice, a typed URL is that repository", async () => {
+    collab = status({ signed_in: false, sign_in_required: true, reason: "Sign in." });
+    const { user, dialog } = await openCreate("plain-url");
+    await user.type(
+      within(dialog).getByPlaceholderText(/github.com\/your-org/),
+      "https://code.example.org/g/forum.git",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect(created().url).toBe("/api/projects");
+    expect(created().body.forum_repo_url).toBe("https://code.example.org/g/forum.git");
   });
 });
 
