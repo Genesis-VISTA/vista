@@ -1250,3 +1250,57 @@ async def test_creating_a_project_never_fails_on_the_server(
             res = await client.post("/projects", json=_new_project("d", str(forge)))
             assert (res.status_code, res.json()["forum_repo_url"]) == (201, str(forge))
             assert res.json()["forum_notice"] is None
+
+
+async def test_a_reimport_keeps_the_hosted_forum_when_the_lookup_fails(
+    loopback_server, labs_on, session, tmp_path, monkeypatch
+):
+    """
+    A newer version whose forum cannot be looked up leaves the project the
+    forum it had, and says why.
+    """
+    from harness.hosted import make_install
+
+    await _use_server(session, loopback_server.url)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        url = created.json()["forum_repo_url"]
+        await session.commit()
+        published = await client.post("/projects/salt/publish", json={})
+        assert published.status_code == 200, published.text
+        item_id = uuid.UUID(published.json()["project"]["remote_id"])
+        await session.commit()
+        await _put(
+            client,
+            session,
+            "salt",
+            {**_body((await client.get("/projects/salt")).json()), "description": "v2"},
+        )
+        again = await client.post("/projects/salt/publish", json={})
+        assert again.status_code == 200, again.text
+
+    bob = await make_install(tmp_path, "Bob", loopback_server.url)
+    try:
+        async with bob.active() as bob_session:
+            local = await local_settings.get_public(bob_session)
+            first = await project_collaboration.import_project(
+                bob_session, local, item_id, version=1
+            )
+            assert first.project.forum_repo_url == url
+
+            async def lookup_fails(client, item_id):
+                return None, "The project's forum could not be found: down"
+
+            monkeypatch.setattr(
+                project_collaboration.hosted_forum, "forum_of_item", lookup_fails
+            )
+            second = await project_collaboration.import_project(
+                bob_session, local, item_id, version=2
+            )
+            assert second.status == "updated"
+            assert second.project.description == "v2"
+            assert second.project.forum_repo_url == url
+            assert second.forum_error is not None
+            assert "down" in second.forum_error
+    finally:
+        await bob.close()

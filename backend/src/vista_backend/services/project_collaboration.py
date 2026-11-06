@@ -938,6 +938,10 @@ async def import_project(
         if existing.modified and not replace_modified:
             raise _changed_here(existing, number)
         name, before = existing.name, project_content(existing)
+        # A lookup that failed leaves the forum the project already has.
+        hosted_url = hosted_url or (
+            existing.forum_repo_url if hosted_error is not None else None
+        )
     else:
         chosen = (rename_to or "").strip()
         name = chosen or item.name
@@ -1004,7 +1008,7 @@ async def import_project(
     try:
         await ensure_forum(row, await local_settings.get(session))
     except ForumSetupError as e:
-        forum_error = str(e)
+        forum_error = f"{hosted_error} {e}" if hosted_error else str(e)
     await session.refresh(row)
     return ProjectImportResult(
         status=status,
