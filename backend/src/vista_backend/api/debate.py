@@ -1,59 +1,65 @@
 """
-Debate API — open a debate, watch it argue, join it, end it.
+Hypothesis Lab API — list a project's threads, open one, watch it, join it.
 
-Debates are scoped under a project (`project_service.get_project_by_name` 404s an
-unknown one), matching the campaign routes.
-Routes stay thin: the lifecycle is in `services/debate.py` and the argument is in
-`agents/forum/`.
+Scoped under a project (`project_service.get_project_by_name` 404s an unknown
+one), and keyed by forum thread rather than by this install's run
+(openspec/changes/archive/2026-11-05-forum-shared-threads, design D8): a thread may have been
+opened by another install, and may hold runs from several. Routes stay thin:
+what the forum holds is copied by `services/threads.py`, this install's runs are
+`services/debate.py`, and the argument is in `agents/forum/`.
 
-Opening a debate returns as soon as the thread and its roster exist. The argument
-itself then runs in the background for minutes, and the client follows it on the
-event stream — a request that blocked until the Referee ruled would be a request
-nobody could sensibly time out.
+Opening a thread or continuing one returns as soon as the run exists. The
+argument then runs in the background for minutes, and the client follows it on
+the event stream.
 """
 
 import asyncio
 import json
 import logging
 import uuid
-from typing import AsyncIterator, Literal
+from typing import Any, AsyncIterator, Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sse_starlette.sse import EventSourceResponse
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.forum import simulation
-from ..agents.forum.project_forum import (
-    build_client_for,
-    forum_url_of,
-    lab_enabled,
+from ..agents.forum.debate import ROSTER, end_run_on_forum
+from ..agents.forum.project_forum import build_client_for, forum_url_of, lab_enabled
+from ..agents.forum.roles import Verdict
+from ..agents.forum.wiring import (
+    continue_debate_task,
+    models_for,
+    run_debate_task,
 )
-from ..agents.forum.debate import ROSTER
-from ..agents.forum.wiring import continue_debate_task, models_for, run_debate_task
 from ..agents.inference import require_inference_credential
+from ..config import settings
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
     DebateCreate,
     DebateParticipantPublic,
-    DebatePostPublic,
     DebateRoleName,
     DebateRunPublic,
-    DebateStatePublic,
+    DebateRunTable,
+    ForumThreadTable,
     clean_role_models,
 )
 from ..services import debate as debate_service, local_settings
 from ..services import project as project_service
-from ..services.local_settings import LocalSettingsDep
+from ..services import threads as thread_service
 from ..services.forum_git import (
     POSTABLE_KINDS,
     ForumClient,
     ForumDisabled,
     PostKind,
+    RunRefused,
     ThreadClosed,
     ThreadMissing,
 )
 from ..services.git_check import git_status
-from sqlmodel.ext.asyncio.session import AsyncSession
+from ..services.local_settings import LocalSettingsDep
+from ..services.threads import ThreadPost
 
 
 logger = logging.getLogger(__name__)
@@ -61,15 +67,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["debates"])
 
 
+# --------------------------------------------------------------------------- #
+# Forum status
+# --------------------------------------------------------------------------- #
+
+
 class PublishError(BaseModel):
     """Why posts did not reach the forum, for the lab page to explain (design D7)."""
 
-    reason: Literal["refused", "unreachable", "failed"]
-    """`refused`: the credential was turned away. `unreachable`: the forge was not reached."""
-    credential: Literal["settings-github", "settings-gitlab", "system-git"]
-    """Which credential was sent, so the page can say which one to fix."""
+    reason: Literal["refused", "no_access", "rule", "unreachable", "failed"]
+    """
+    `refused`: the credential was turned away. `no_access`: a hosted forum's
+    server has no forum this account may use (deleted, or not in its team).
+    `rule`: a hosted forum's server
+    refused the push under one of its rules, which `message` names.
+    `unreachable`: the forge was not reached.
+    """
+    credential: Literal[
+        "settings-github", "settings-gitlab", "system-git", "collaboration"
+    ]
+    """
+    Which credential was sent, so the page can say which one to fix:
+    `collaboration` is the sign-in for a forum hosted on the collaboration server.
+    """
     message: str
-    """Git's own message; it never holds the token, which git gets from the environment."""
+    """
+    Git's own message, or for a hosted forum the server's rule or what to do
+    about its sign-in; it never holds the token, which git gets from the environment.
+    """
     at: str
 
 
@@ -98,11 +123,6 @@ class ForumStatus(BaseModel):
 async def forum_status(project_name: str, session: SessionDep) -> ForumStatus:
     """
     This project's forum state, for the page to explain itself with.
-
-    Project-scoped because the repository is: a project with no forum URL has no
-    Hypothesis Lab, and `enabled: false` is how the page knows to say so rather
-    than offering a debate that has nowhere to publish. `git_ok: false` is the
-    other reason the lab can be off, and `git_reason` says what to do about it.
 
     Never raises on a forum that is off or unreachable: this endpoint exists to
     report bad states, so failing on one would defeat it.
@@ -147,15 +167,156 @@ def _publish_error(record: dict | None) -> PublishError | None:
         return None
 
 
+# --------------------------------------------------------------------------- #
+# What the lab is sent
+# --------------------------------------------------------------------------- #
+
+
+class LiveRunPublic(BaseModel):
+    """A run going on in the thread right now, worked out from the thread."""
+
+    post_id: str
+    ours: bool
+    """ Started by this install. Otherwise the origin is a peer's claim. """
+    origin: str | None
+    rounds: int
+    posts: int
+    started_at: str
+    last_post_at: str
+
+
+class VerdictPublic(BaseModel):
+    """The thread's current verdict: its latest DONE post, whoever wrote it."""
+
+    post_id: str
+    ours: bool
+    """ Written by this install's Referee. """
+    sender: str
+    body: str
+    """ The verdict as the Referee wrote it out: always there. """
+    verdict: dict[str, Any] | None = None
+    """ The structured verdict, when the post carried a valid one. """
+
+
+class ThreadPublic(BaseModel):
+    """One thread on the project's forum, as the lab's list shows it."""
+
+    id: uuid.UUID
+    thread_id: str
+    title: str
+    framing: str | None = None
+    created_by: str
+    opened_here: bool
+    """ This install opened it, so this install may close it. """
+    opened_at: str
+    status: str
+    """ The forum's status: open, done, blocked or closed. """
+    thread_missing: bool
+    current_verdict: VerdictPublic | None = None
+    live_run: LiveRunPublic | None = None
+    run: DebateRunPublic | None = None
+    """ This install's run in the thread, if it has argued in it. """
+
+
+class ThreadStatePublic(BaseModel):
+    """A thread, its posts, and this install's part in it."""
+
+    thread: ThreadPublic
+    participants: list[DebateParticipantPublic]
+    """ This install's roster in the thread; empty when it has not argued here. """
+    posts: list[ThreadPost]
+    simulations: list[dict[str, Any]] = []
+
+
+def _verdict_public(
+    current: thread_service.CurrentVerdict | None,
+) -> VerdictPublic | None:
+    if current is None:
+        return None
+    structured = None
+    if current.verdict is not None:
+        try:
+            structured = Verdict.model_validate(current.verdict).model_dump()
+        except ValueError:
+            structured = None
+    return VerdictPublic(
+        post_id=current.post_id,
+        ours=current.vouch_lane == "host-observed",
+        sender=current.sender,
+        body=current.body,
+        verdict=structured,
+    )
+
+
+async def _thread_public(
+    session: AsyncSession, row: ForumThreadTable, *, host_id: str
+) -> ThreadPublic:
+    posts = await thread_service.list_posts(session, thread=row)
+    live = thread_service.live_run_of(posts, expiry=settings.forum.run_expiry_seconds)
+    runs = await thread_service.runs_of(session, thread=row)
+    return ThreadPublic(
+        id=row.id,
+        thread_id=row.thread_id,
+        title=row.title,
+        framing=row.framing,
+        created_by=row.created_by,
+        opened_here=row.created_by == host_id,
+        opened_at=row.opened_at,
+        status=row.status,
+        thread_missing=row.thread_missing,
+        current_verdict=_verdict_public(thread_service.current_verdict(posts)),
+        live_run=LiveRunPublic(
+            post_id=live.post_id,
+            ours=live.origin == host_id,
+            origin=live.origin,
+            rounds=live.rounds,
+            posts=live.posts,
+            started_at=live.started_at,
+            last_post_at=live.last_post_at,
+        )
+        if live is not None
+        else None,
+        run=DebateRunPublic.model_validate(runs[-1]) if runs else None,
+    )
+
+
+async def _state(
+    session: AsyncSession, row: ForumThreadTable, *, host_id: str
+) -> ThreadStatePublic:
+    runs = await thread_service.runs_of(session, thread=row)
+    participants = (
+        await debate_service.list_participants(session, run_id=runs[-1].id)
+        if runs
+        else []
+    )
+    simulations: list[dict[str, Any]] = []
+    for run in runs:
+        simulations += [
+            record.model_dump()
+            for record in await simulation.commissioned_runs(
+                session, debate_run_id=run.id
+            )
+        ]
+    return ThreadStatePublic(
+        thread=await _thread_public(session, row, host_id=host_id),
+        participants=[DebateParticipantPublic.model_validate(p) for p in participants],
+        posts=await thread_service.posts_with_notes(session, thread=row),
+        simulations=simulations,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Syncing with the forum
+# --------------------------------------------------------------------------- #
+
+
 def stream_session_factory() -> AsyncSession:
     """
     The session the event stream reads through.
 
     A module-level factory rather than the request's session, because the
-    generator outlives the handler that created it — and rather than a direct
-    `AsyncSession(get_engine())`, because that hardcodes the production engine
-    into a code path tests need to point somewhere else. Same shape the campaign
-    monitor uses.
+    generator outlives the handler that created it, and so tests can point it
+    elsewhere. Same shape the campaign monitor uses.
     """
     return AsyncSession(get_engine())
 
@@ -168,8 +329,7 @@ def _spawn(coro) -> asyncio.Task:
     Run a debate in the background, holding a reference to its task.
 
     asyncio keeps only a weak reference to a running task, so a task nobody
-    holds can be garbage-collected mid-run. Debates take minutes; dropping one
-    would look like a debate that silently stopped arguing.
+    holds can be garbage-collected mid-run.
     """
     task = asyncio.create_task(coro)
     _BACKGROUND.add(task)
@@ -177,77 +337,119 @@ def _spawn(coro) -> asyncio.Task:
     return task
 
 
+FORUM_LIST_SECONDS = 30.0
+"""
+How often the lab's list re-reads the whole forum (design D3). One fetch of
+every thread, so slower than a watched thread's refresh.
+"""
+
 FORUM_REFRESH_SECONDS = 10.0
 """
-How often a watched debate is re-read from the forum itself.
-
-Much slower than the DB poll below, and deliberately. A forum read runs git
-and, on a shared remote, a fetch — cheap locally, not free across a network. Our own agents' posts reach the projection through the debate
-task without any of this; the refresh is what makes a *peer's* comment appear, and ten
-seconds is fast enough for a human conversation.
+How often a watched thread is re-read from the forum. What makes a peer's post
+appear; ten seconds is fast enough for a conversation.
 """
-
 
 _last_refresh: dict[str, float] = {}
 _refresh_locks: dict[str, asyncio.Lock] = {}
 
 
-async def _client(session: AsyncSession, project) -> ForumClient:
+async def _throttled(key: str, interval: float, fn) -> bool:
     """
-    This project's forum client, sending the token the forum should use.
-
-    Loads the settings row because the tokens are only there, not on the public
-    model. Raises `ForumDisabled` like `build_client_for`.
+    Run `fn` at most once per `interval` across all callers, and never twice at
+    once. Returns whether it ran: it commits or rolls back, which expires every
+    object the session holds, so the caller re-reads what it needs.
     """
-    return build_client_for(project, await local_settings.get(session))
-
-
-async def _maybe_refresh(session: AsyncSession, run, client: ForumClient) -> bool:
-    """
-    Re-read one debate from the forum, at most once per interval across all viewers.
-
-    Both halves matter with several people watching a debate: the lock stops
-    concurrent fetches of the same thread, and the timestamp stops the queue
-    behind it from each doing the fetch again the moment it is released.
-
-    Returns whether it ended the transaction, committed or rolled back, because
-    either expires every object the session holds — the caller's `run` included
-    — and reading a field off it afterwards is async IO in a context that cannot
-    await. The rollback counts too: a failed refresh is survived, so its caller
-    goes on to read `run`.
-    """
-    key, run_id = run.thread_id, run.id
     lock = _refresh_locks.setdefault(key, asyncio.Lock())
     if lock.locked():
         return False
     async with lock:
         now = asyncio.get_running_loop().time()
-        if now - _last_refresh.get(key, 0.0) < FORUM_REFRESH_SECONDS:
+        if now - _last_refresh.get(key, 0.0) < interval:
             return False
         _last_refresh[key] = now
+        await fn()
+        return True
+
+
+async def _sync_list(session: AsyncSession, project_id: uuid.UUID, client) -> None:
+    async def sync() -> None:
         try:
-            await debate_service.refresh_from_forum(session, client, run)
+            await thread_service.sync_forum(
+                session, project_id=project_id, client=client
+            )
             await session.commit()
-            return True
-        except Exception:  # noqa: BLE001 — a stream must survive a bad fetch
-            logger.warning("debate %s: forum refresh failed", run_id, exc_info=True)
+        except Exception:  # noqa: BLE001 — the list survives a failed sync
+            logger.warning("forum: could not sync the thread list", exc_info=True)
             await session.rollback()
-            return True
+
+    await _throttled(f"list:{project_id}", FORUM_LIST_SECONDS, sync)
+
+
+async def refresh_thread(
+    session: AsyncSession, row: ForumThreadTable, client: ForumClient
+) -> None:
+    """
+    Re-read one thread and fold it into the tables: the shared copy, and each
+    of this install's runs in it (whose status a peer's close can end).
+    Publishes our own posts an earlier push could not.
+    """
+    if row.thread_missing:
+        return
+    try:
+        thread = await client.read_thread(row.thread_id)
+    except ThreadMissing:
+        await thread_service.mark_thread_missing(session, thread=row)
+        for run in await thread_service.runs_of(session, thread=row):
+            await debate_service.mark_thread_missing(session, run_id=run.id)
+        return
+    if any(not ok for ok in thread.published.values()):
+        try:
+            await client.publish(row.thread_id)
+            thread = await client.read_thread(row.thread_id)
+        except Exception:  # noqa: BLE001 — unpublished posts publish next time
+            pass
+    await thread_service.project_forum_thread(
+        session, project_id=row.project_id, thread=thread
+    )
+    for run in await thread_service.runs_of(session, thread=row):
+        await debate_service.project_thread(session, run_id=run.id, thread=thread)
+        if thread.is_closed and run.status in debate_service.ACTIVE_STATUSES:
+            await debate_service.set_status(session, run_id=run.id, status="closed")
+
+
+async def _maybe_refresh(
+    session: AsyncSession, project_id: uuid.UUID, thread_id: str, client
+) -> bool:
+    async def refresh() -> None:
+        try:
+            row = await thread_service.require_thread(
+                session, project_id=project_id, thread_id=thread_id
+            )
+            await refresh_thread(session, row, client)
+            await session.commit()
+        except Exception:  # noqa: BLE001 — a stream must survive a bad fetch
+            logger.warning("thread %s: forum refresh failed", thread_id, exc_info=True)
+            await session.rollback()
+
+    return await _throttled(f"thread:{thread_id}", FORUM_REFRESH_SECONDS, refresh)
+
+
+async def _client(session: AsyncSession, project) -> ForumClient:
+    """This project's forum client, sending the token the forum should use."""
+    return build_client_for(project, await local_settings.get(session))
 
 
 STREAM_POLL_SECONDS = 1.0
-"""
-How often the event stream looks for new posts.
+""" How often the event stream looks for new posts in the tables. """
 
-The stream reads the DB projection rather than subscribing to the orchestrator in
-memory, so it keeps working when the debate runs in a different worker from the
-one serving the stream, and a reconnecting client resumes from a post id instead
-of from a subscription it lost.
-"""
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
 
 
 class HumanPost(BaseModel):
-    """What the human says into a live debate."""
+    """What the researcher says into a thread."""
 
     body: str
     kind: PostKind = PostKind.ASK
@@ -255,174 +457,13 @@ class HumanPost(BaseModel):
     @field_validator("kind")
     @classmethod
     def _postable(cls, kind: PostKind) -> PostKind:
-        """
-        Refuse a kind the operator may not post.
-
-        `TASK`, `CLOSED` and the votes are real kinds that appear in threads but
-        are written by their own verbs. Rejecting here makes that a 422 rather
-        than a forum error.
-        """
+        """`TASK`, `CLOSED`, `RUN` and the votes are written by their own verbs."""
         if kind not in POSTABLE_KINDS:
             raise ValueError(
                 f"{kind} cannot be posted; use one of "
                 f"{', '.join(sorted(str(k) for k in POSTABLE_KINDS))}"
             )
         return kind
-
-
-@router.post("/{project_name}/debates")
-async def open_debate(
-    project_name: str, body: DebateCreate, session: SessionDep, local: LocalSettingsDep
-) -> DebateRunPublic:
-    """
-    Open a thread, attach the roster, and start arguing in the background.
-    """
-    project = await project_service.get_project_by_name(session, project_name)
-    # Before anything is opened on the forum: without a key the debate could not
-    # argue, and a 409 naming the setting beats a 500 from inside the provider.
-    # Each role's own model counts, so a role can name one where there is no default.
-    for role in ROSTER:
-        require_inference_credential(local, body.models.get(role))
-
-    from ..agents.forum.wiring import build_orchestrator
-
-    try:
-        run = await build_orchestrator(
-            await _client(session, project), local=local, models=body.models
-        ).start(
-            session,
-            project_id=project.id,
-            topic=body.topic,
-            framing=body.framing,
-            rounds=body.rounds,
-        )
-    except ForumDisabled as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-
-    # Read everything off the ORM object *before* committing. `commit()` expires
-    # it, so a later attribute access tries to refresh it — which is async IO in
-    # a context that cannot await, and fails with MissingGreenlet rather than
-    # anything that names the real problem.
-    run_id = run.id
-    payload = DebateRunPublic.model_validate(run)
-
-    # Commit before handing the run to a task with its own session, or that task
-    # would look for a run this one has not written yet.
-    await session.commit()
-    _spawn(run_debate_task(run_id))
-    return payload
-
-
-@router.get("/{project_name}/debates")
-async def list_debates(project_name: str, session: SessionDep) -> list[DebateRunPublic]:
-    project = await project_service.get_project_by_name(session, project_name)
-    runs = await debate_service.list_debates(session, project_id=project.id)
-    return [DebateRunPublic.model_validate(r) for r in runs]
-
-
-@router.get("/{project_name}/debates/{run_id}")
-async def get_debate(
-    project_name: str, run_id: uuid.UUID, session: SessionDep
-) -> DebateStatePublic:
-    project = await project_service.get_project_by_name(session, project_name)
-    project_id = project.id  # the refresh below commits, which expires `project`
-    # Built before the refresh, for the same reason: a commit expires the project
-    # row, and a client cannot be made from an expired one.
-    lab = await _client(session, project) if lab_enabled(project) else None
-    run = await _require(session, run_id, project_id)
-
-    # Read the forum here too, not only from the event stream.
-    #
-    # The stream ends the moment a run reaches a terminal status, and the UI does
-    # not open one for a run that is already finished — so for a debate that has
-    # argued itself out, the stream refresh never runs again. That is precisely
-    # when an outside reviewer is most likely to comment: there is a hypothesis
-    # on the table worth objecting to. Without this, their post never appeared at
-    # all. The throttle is shared with the stream, so watching a live debate does
-    # not fetch twice.
-    if lab is not None and await _maybe_refresh(session, run, lab):
-        run = await _require(session, run_id, project_id)
-
-    return DebateStatePublic(
-        run=DebateRunPublic.model_validate(run),
-        participants=[
-            DebateParticipantPublic.model_validate(p)
-            for p in await debate_service.list_participants(session, run_id=run.id)
-        ],
-        posts=[
-            DebatePostPublic.model_validate(p)
-            for p in await debate_service.list_posts(session, run_id=run.id)
-        ],
-        simulations=[
-            record.model_dump()
-            for record in await simulation.commissioned_runs(
-                session, debate_run_id=run_id
-            )
-        ],
-    )
-
-
-@router.post("/{project_name}/debates/{run_id}/posts")
-async def post_to_debate(
-    project_name: str,
-    run_id: uuid.UUID,
-    body: HumanPost,
-    session: SessionDep,
-    local: LocalSettingsDep,
-) -> DebatePostPublic:
-    """
-    Say something into a live debate, as the human.
-
-    Attributed to `human`, which is exactly right here and exactly wrong for an
-    agent. The agents pick it up when they next read the thread — there is no
-    separate inbox, because the thread already is one.
-
-    A closed thread takes no more posts, from anyone: readers ignore anything
-    after the first CLOSED, so a post there would be written and never shown.
-    A thread no longer on the forum takes none either.
-    """
-    project = await project_service.get_project_by_name(session, project_name)
-    run = await _require(session, run_id, project.id)
-    if run.thread_missing:
-        raise HTTPException(status_code=409, detail=THREAD_MISSING)
-
-    client = await _client(session, project)
-    try:
-        post = await client.post_as_human(run.thread_id, body.body, kind=body.kind)
-    except ForumDisabled as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
-    except ThreadClosed:
-        raise HTTPException(status_code=409, detail="This thread is closed.")
-    except ThreadMissing:
-        await debate_service.mark_thread_missing(session, run_id=run.id)
-        await session.commit()
-        raise HTTPException(status_code=409, detail=THREAD_MISSING)
-
-    thread = await client.read_thread(run.thread_id)
-    await debate_service.project_thread(session, run_id=run.id, thread=thread)
-
-    row = next(
-        (
-            p
-            for p in await debate_service.list_posts(session, run_id=run.id)
-            if p.post_id == post.id
-        ),
-        None,
-    )
-    if row is None:
-        raise HTTPException(status_code=500, detail="The post did not reach the thread")
-
-    # We know who this was: the researcher at this installation. The forum cannot
-    # carry that — the post says `human` and has nowhere to put a name — so it is
-    # recorded here, on the one path where it is knowledge rather than a claim.
-    # Only when Settings names them; otherwise there is nothing to record. Never
-    # the email: that is for notifications, and nothing says it would be shown.
-    if local.display_name:
-        await debate_service.record_author(
-            session, run_id=run.id, post_id=post.id, authored_by=local.display_name
-        )
-    await session.refresh(row)
-    return DebatePostPublic.model_validate(row)
 
 
 class ContinueDebate(BaseModel):
@@ -435,196 +476,346 @@ class ContinueDebate(BaseModel):
     _clean_models = field_validator("models")(clean_role_models)
 
 
-@router.post("/{project_name}/debates/{run_id}/continue")
-async def continue_debate(
-    project_name: str,
-    run_id: uuid.UUID,
-    body: ContinueDebate,
-    session: SessionDep,
-) -> DebateRunPublic:
-    """
-    Argue a finished debate for a few more rounds.
+THREAD_MISSING = "This thread is no longer on the forum."
+THREAD_CLOSED = "This thread is closed; it accepts no further posts."
 
-    The case this is for: a debate concluded, and then someone — a peer reviewer,
-    or the operator reading the verdict — raised an objection the agents never
-    answered. Opening a fresh debate would lose the argument that produced the
-    objection; this keeps the thread and picks it up.
 
-    Refused on a debate that is still arguing, on a closed one — a closed thread
-    takes no more posts, so a roster there could not speak — and on one whose
-    thread is no longer on the forum.
-    """
+async def _lab(session: AsyncSession, project_name: str):
+    """The project and its forum client, or 503 when it has no lab."""
     project = await project_service.get_project_by_name(session, project_name)
-    run = await _require(session, run_id, project.id)
-
-    if run.thread_missing:
-        raise HTTPException(status_code=409, detail=THREAD_MISSING)
-    if run.status in debate_service.ACTIVE_STATUSES:
-        raise HTTPException(status_code=409, detail="This debate is still arguing.")
-    # A concluded run keeps its status when a peer closes the thread afterwards,
-    # so the CLOSED post is what says the thread takes no more rounds.
-    closed = run.status == "closed" or debate_service.closed_by(
-        await debate_service.list_posts(session, run_id=run.id)
-    )
-    if closed:
-        raise HTTPException(
-            status_code=409,
-            detail="This thread is closed; it accepts no further posts.",
-        )
+    # The client first: when git is missing it says so, which is the reason a
+    # researcher can act on, rather than "has no lab".
+    try:
+        client = await _client(session, project)
+    except ForumDisabled as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
     if not lab_enabled(project):
         raise HTTPException(
-            status_code=503,
-            detail=f"Project {project.name!r} has no Hypothesis Lab.",
+            status_code=503, detail=f"Project {project.name!r} has no Hypothesis Lab."
         )
-    # The rounds run on the installation's settings, so its credential has to be there.
-    if body.models:
-        changes: dict[str, str | None] = {str(r): m for r, m in body.models.items()}
-        await debate_service.set_participant_models(
-            session, run_id=run.id, models=changes
-        )
-    local = await local_settings.get_public(session)
-    chosen = await models_for(session, run)
-    for role in ROSTER:
-        require_inference_credential(local, chosen.get(role))
+    return project, client
 
-    payload = DebateRunPublic.model_validate(run)
-    extra = body.rounds
+
+async def _require(
+    session: AsyncSession, project_id: uuid.UUID, thread_id: str
+) -> ForumThreadTable:
+    try:
+        return await thread_service.require_thread(
+            session, project_id=project_id, thread_id=thread_id
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Thread not found")
+
+
+@router.get("/{project_name}/threads")
+async def list_threads(project_name: str, session: SessionDep) -> list[ThreadPublic]:
+    """
+    Every thread on the project's forum, newest first, whoever opened it.
+
+    Fetches the forum at most every 30 seconds per project; the lab polls this
+    while it is open, and nothing fetches while no lab is open (design D3).
+    """
+    project = await project_service.get_project_by_name(session, project_name)
+    project_id = project.id
+    if not lab_enabled(project):
+        return []
+    client = await _client(session, project)
+    await _sync_list(session, project_id, client)
+    return [
+        await _thread_public(session, row, host_id=client.host_id)
+        for row in await thread_service.list_threads(session, project_id=project_id)
+    ]
+
+
+@router.post("/{project_name}/threads")
+async def open_thread(
+    project_name: str, body: DebateCreate, session: SessionDep, local: LocalSettingsDep
+) -> ThreadPublic:
+    """Open a thread, attach this install's roster, and start arguing."""
+    project, client = await _lab(session, project_name)
+    for role in ROSTER:
+        require_inference_credential(local, body.models.get(role))
+
+    from ..agents.forum.wiring import build_orchestrator
+
+    try:
+        run = await build_orchestrator(client, local=local, models=body.models).start(
+            session,
+            project_id=project.id,
+            topic=body.topic,
+            framing=body.framing,
+            rounds=body.rounds,
+        )
+    except ForumDisabled as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    run_id, project_id, thread_id = run.id, run.project_id, run.thread_id
+    row = await _require(session, project_id, thread_id)
+    payload = await _thread_public(session, row, host_id=client.host_id)
+    # Commit before handing the run to a task with its own session.
     await session.commit()
-    _spawn(continue_debate_task(run_id, extra))
+    _spawn(run_debate_task(run_id))
     return payload
 
 
-@router.post("/{project_name}/debates/{run_id}/close")
-async def close_debate(
-    project_name: str, run_id: uuid.UUID, session: SessionDep
-) -> DebateRunPublic:
-    """
-    End a debate early.
-
-    Closing is the forum's, not the orchestrator's: it writes a CLOSED post, and
-    the next agent post is refused, so the running loop finds out by being told
-    no. The status is set here so a client sees the change immediately rather
-    than waiting for the loop to notice.
-    """
+@router.get("/{project_name}/threads/{thread_id}")
+async def get_thread(
+    project_name: str, thread_id: str, session: SessionDep
+) -> ThreadStatePublic:
     project = await project_service.get_project_by_name(session, project_name)
-    run = await _require(session, run_id, project.id)
-    if run.thread_missing:
-        raise HTTPException(status_code=409, detail=THREAD_MISSING)
+    project_id = project.id  # a refresh commits, which expires `project`
+    client = await _client(session, project) if lab_enabled(project) else None
+    await _require(session, project_id, thread_id)
+    if client is not None:
+        await _maybe_refresh(session, project_id, thread_id, client)
+    row = await _require(session, project_id, thread_id)
+    host_id = client.host_id if client is not None else ""
+    return await _state(session, row, host_id=host_id)
 
+
+@router.post("/{project_name}/threads/{thread_id}/posts")
+async def post_to_thread(
+    project_name: str,
+    thread_id: str,
+    body: HumanPost,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> ThreadPost:
+    """
+    Say something into a thread, as this install's researcher: any thread that
+    is not closed, whoever opened it and whoever's run is live. It starts no
+    agent turn; a live run's agents read it at their next turn.
+    """
+    project, client = await _lab(session, project_name)
+    row = await _require(session, project.id, thread_id)
+    if row.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
     try:
-        await (await _client(session, project)).close_thread(run.thread_id)
-    except ForumDisabled as exc:
-        raise HTTPException(status_code=503, detail=str(exc))
+        post = await client.post_as_human(thread_id, body.body, kind=body.kind)
+    except ThreadClosed:
+        raise HTTPException(status_code=409, detail="This thread is closed.")
     except ThreadMissing:
-        await debate_service.mark_thread_missing(session, run_id=run.id)
+        await thread_service.mark_thread_missing(session, thread=row)
         await session.commit()
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
 
-    run = await debate_service.set_status(session, run_id=run.id, status="closed")
-    return DebateRunPublic.model_validate(run)
+    await refresh_thread(session, row, client)
+    # We know who this was: the researcher at this installation, on the one path
+    # where that is knowledge rather than a claim. Never the email.
+    if local.display_name:
+        await thread_service.record_author(
+            session, thread=row, post_id=post.id, authored_by=local.display_name
+        )
+        for run in await thread_service.runs_of(session, thread=row):
+            await debate_service.record_author(
+                session, run_id=run.id, post_id=post.id, authored_by=local.display_name
+            )
+    shown = next(
+        (
+            p
+            for p in await thread_service.posts_with_notes(session, thread=row)
+            if p.post_id == post.id
+        ),
+        None,
+    )
+    if shown is None:
+        raise HTTPException(status_code=500, detail="The post did not reach the thread")
+    await session.commit()
+    return shown
 
 
-@router.get("/{project_name}/debates/{run_id}/events")
-async def debate_events(
-    project_name: str, run_id: uuid.UUID, session: SessionDep
+@router.post("/{project_name}/threads/{thread_id}/runs")
+async def continue_thread(
+    project_name: str,
+    thread_id: str,
+    body: ContinueDebate,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> ThreadPublic:
+    """
+    Argue a thread for a few more rounds with this install's own agents.
+
+    Any thread that is not closed, whoever opened it. Refused while a run is
+    live in it, this install's or anyone's (one run at a time). A thread this
+    install has not argued in is adopted first: it gets a run and roster of
+    this install's own.
+    """
+    project, client = await _lab(session, project_name)
+    project_id = project.id
+    row = await _require(session, project_id, thread_id)
+    if row.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
+    # Read the thread now, not from the last poll: the check below is only as
+    # fresh as this read.
+    await refresh_thread(session, row, client)
+    row = await _require(session, project_id, thread_id)
+    if row.thread_missing:
+        await session.commit()
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
+    if row.status == "closed":
+        raise HTTPException(status_code=409, detail=THREAD_CLOSED)
+
+    runs = await thread_service.runs_of(session, thread=row)
+    ours: DebateRunTable | None = runs[-1] if runs else None
+    if ours is not None and ours.status in debate_service.ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="This debate is still arguing.")
+    live = thread_service.live_run_of(
+        await thread_service.list_posts(session, thread=row),
+        expiry=settings.forum.run_expiry_seconds,
+    )
+    if live is not None:
+        who = (
+            "This install's earlier run"
+            if live.origin == client.host_id
+            else "Another user"
+        )
+        raise HTTPException(status_code=409, detail=f"{who} is continuing this debate.")
+
+    from ..agents.forum.wiring import build_orchestrator
+
+    if ours is None:
+        ours = await build_orchestrator(client, local=local, models=body.models).adopt(
+            session, thread=row
+        )
+    elif body.models:
+        changes: dict[str, str | None] = {str(r): m for r, m in body.models.items()}
+        await debate_service.set_participant_models(
+            session, run_id=ours.id, models=changes
+        )
+    chosen = await models_for(session, ours)
+    for role in ROSTER:
+        require_inference_credential(local, chosen.get(role))
+
+    announced = False
+    referee_identity: str | None = None
+    if getattr(client, "hosted", False):
+        # A hosted forum's server decides who may run, so the RUN is posted now,
+        # before this answers: a refusal is a 409 and nothing is scheduled. (A
+        # forge keeps its order: the run announces itself, local-first.)
+        members = await debate_service.list_active_participants(session, run_id=ours.id)
+        if members:
+            roster = {m.debate_role: m.identity for m in members}
+            referee_identity = roster.get("referee")
+            try:
+                await client.start_run(
+                    thread_id,
+                    rounds=max(1, ours.rounds + body.rounds - ours.rounds_done),
+                    roster=roster,
+                    expiry_seconds=settings.forum.run_expiry_seconds,
+                )
+            except RunRefused:
+                await session.rollback()
+                raise HTTPException(
+                    status_code=409, detail="Another user is continuing this debate."
+                )
+            announced = True
+
+    run_id = ours.id
+    try:
+        payload = await _thread_public(session, row, host_id=client.host_id)
+        await session.commit()
+        task = (
+            continue_debate_task(run_id, body.rounds, announced=True)
+            if announced
+            else continue_debate_task(run_id, body.rounds)
+        )
+    except BaseException as exc:
+        if announced and referee_identity:
+            # The RUN is on the server and nothing will run behind it. Ended
+            # through the client alone: the session may be what failed, and a
+            # cancelled request is not an `Exception`.
+            await end_run_on_forum(client, thread_id, referee_identity, exc)
+        raise
+    _spawn(task)
+    return payload
+
+
+@router.post("/{project_name}/threads/{thread_id}/close")
+async def close_thread(
+    project_name: str, thread_id: str, session: SessionDep
+) -> ThreadPublic:
+    """
+    End a thread early: write its CLOSED post. Only the install that opened
+    the thread may (`created_by` is its host id); anyone else gets 403.
+    """
+    project, client = await _lab(session, project_name)
+    row = await _require(session, project.id, thread_id)
+    if row.created_by != client.host_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the researcher who opened a thread can close it.",
+        )
+    if row.thread_missing:
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
+    try:
+        await client.close_thread(thread_id)
+    except ThreadMissing:
+        await thread_service.mark_thread_missing(session, thread=row)
+        await session.commit()
+        raise HTTPException(status_code=409, detail=THREAD_MISSING)
+    for run in await thread_service.runs_of(session, thread=row):
+        if run.status in debate_service.ACTIVE_STATUSES:
+            await debate_service.set_status(session, run_id=run.id, status="closed")
+    await refresh_thread(session, row, client)
+    payload = await _thread_public(session, row, host_id=client.host_id)
+    await session.commit()
+    return payload
+
+
+@router.get("/{project_name}/threads/{thread_id}/events")
+async def thread_events(
+    project_name: str, thread_id: str, session: SessionDep
 ) -> EventSourceResponse:
     """
-    Follow a debate as it argues.
+    Follow a thread: its posts, this install's run's activity, and the thread
+    itself (status, live run, verdict).
 
-    Emits a post whenever its payload changes — on arrival, and again each time
-    something on it moves. A client that reconnects gets everything again from the
-    start of the thread, which is cheap here and simpler than resumable cursors —
-    a debate is a few dozen posts, not a log.
-
-    Re-emitting is not a nicety. Only `body` is fixed once a post exists; the rest
-    of the row is written afterwards. Provenance arrives a beat late by
-    construction — the forum records what was said and has no field for how the
-    agent got there, so `record_post_tools` writes it onto a row the projection
-    has already created — and a vote tally moves for as long as the thread is
-    open, because a peer can upvote something from three rounds ago. Sending each
-    post once meant a post the stream happened to catch inside that gap read
-    "based on model alone" for the rest of the connection, and only corrected when
-    the run ended and the client went back to fetching whole states.
+    Emits a post whenever its payload changes, since provenance and tallies are
+    written after a post exists. Stays open while the thread is viewed and not
+    closed, so a teammate's run streams in as well as ours; a reconnecting
+    client gets everything again.
     """
     project = await project_service.get_project_by_name(session, project_name)
-    await _require(session, run_id, project.id)
     project_id = project.id
-    # Resolved once, outside the generator: the project row belongs to the
-    # request's session, which closes as soon as the response starts streaming.
-    # `None` when this project has no lab — the stream still runs, it just has no
-    # forum to re-read for peer posts.
+    await _require(session, project_id, thread_id)
     forum = await _client(session, project) if lab_enabled(project) else None
+    host_id = forum.host_id if forum is not None else ""
 
     async def events() -> AsyncIterator[dict]:
-        # post_id -> the payload last sent for it. The payload itself is the
-        # fingerprint, deliberately: a hand-written list of "the fields that can
-        # change" is a list to forget to update, and forgetting means the field
-        # added next is silently invisible to every live viewer. This cannot miss
-        # one, and it re-sends only when something really moved.
         sent: dict[str, str] = {}
-        last_activity: str | None | object = object()  # never equal to a real value
-        # Its own session: this generator outlives the request handler, and the
-        # request's session is closed as soon as the response starts streaming.
-        async with stream_session_factory() as stream_session:
+        last_activity: object = object()
+        last_thread: str | None = None
+        async with stream_session_factory() as stream:
             while True:
-                run = await debate_service.require_debate_in_project(
-                    stream_session, run_id=run_id, project_id=project_id
+                if forum is not None:
+                    await _maybe_refresh(stream, project_id, thread_id, forum)
+                row = await thread_service.require_thread(
+                    stream, project_id=project_id, thread_id=thread_id
                 )
-                # Peers publish to the remote, not to us. Something has to look.
-                if forum is not None and await _maybe_refresh(
-                    stream_session, run, forum
-                ):
-                    run = await debate_service.require_debate_in_project(
-                        stream_session, run_id=run_id, project_id=project_id
-                    )
-                posts = await debate_service.list_posts(stream_session, run_id=run_id)
-                for post in posts:
-                    payload = DebatePostPublic.model_validate(post).model_dump_json()
-                    if sent.get(post.post_id) == payload:
-                        continue
-                    sent[post.post_id] = payload
-                    yield {"event": "post", "data": payload}
+                for post in await thread_service.posts_with_notes(stream, thread=row):
+                    payload = post.model_dump_json()
+                    if sent.get(post.post_id) != payload:
+                        sent[post.post_id] = payload
+                        yield {"event": "post", "data": payload}
 
-                # Emit the activity line whenever it changes. Without it the
-                # page shows a thread that stops growing and no indication that
-                # anything is still happening — which is indistinguishable from
-                # a crash, and now that a role can wait on a cluster job the
-                # silence lasts minutes.
-                if run.activity != last_activity:
-                    last_activity = run.activity
+                public = await _thread_public(stream, row, host_id=host_id)
+                activity = public.run.activity if public.run else None
+                since = public.run.activity_since if public.run else None
+                if activity != last_activity:
+                    last_activity = activity
                     yield {
                         "event": "activity",
-                        "data": json.dumps(
-                            {
-                                "activity": run.activity,
-                                "since": run.activity_since,
-                            }
-                        ),
+                        "data": json.dumps({"activity": activity, "since": since}),
                     }
+                encoded = public.model_dump_json()
+                if encoded != last_thread:
+                    last_thread = encoded
+                    yield {"event": "thread", "data": encoded}
 
-                if run.status not in debate_service.ACTIVE_STATUSES:
-                    yield {
-                        "event": "status",
-                        "data": DebateRunPublic.model_validate(run).model_dump_json(),
-                    }
+                if row.status == "closed" or row.thread_missing:
                     return
-
-                # SQLite/SQLAlchemy caches within a transaction, so the next poll
-                # would re-read this one's snapshot and never see the background
-                # task's writes.
-                await stream_session.rollback()
+                # SQLite caches within a transaction: without this the next poll
+                # would re-read this one's snapshot.
+                await stream.rollback()
                 await asyncio.sleep(STREAM_POLL_SECONDS)
 
     return EventSourceResponse(events())
-
-
-THREAD_MISSING = "This thread is no longer on the forum."
-
-
-async def _require(session, run_id: uuid.UUID, project_id: uuid.UUID):
-    try:
-        return await debate_service.require_debate_in_project(
-            session, run_id=run_id, project_id=project_id
-        )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Debate not found")

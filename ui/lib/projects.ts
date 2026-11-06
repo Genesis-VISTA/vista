@@ -283,16 +283,55 @@ async function extractError(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
-export async function createProject(input: ProjectCreate): Promise<Project> {
-  const res = await fetch("/api/projects", {
+/**
+ * What the Hypothesis Lab's forum is for a new project, as the dialog offers it
+ * to someone signed in to the collaboration server.
+ */
+export type ForumChoice = "hosted" | "url" | "none";
+
+/**
+ * How a choice goes to `POST /projects`: hosted sends a blank URL, a repository
+ * sends it, and none sends a blank URL with `hosted_forum_wanted=false`.
+ */
+export function forumRequest(
+  choice: ForumChoice,
+  url: string,
+): { forumRepoUrl: string; hostedForumWanted: boolean } {
+  if (choice === "url") return { forumRepoUrl: url.trim(), hostedForumWanted: true };
+  return { forumRepoUrl: "", hostedForumWanted: choice === "hosted" };
+}
+
+/** A created project, and why it has no hosted forum when it was to get one. */
+export type CreatedProject = Project & { forumNotice: string | null };
+
+export async function createProject(
+  input: ProjectCreate,
+  { hostedForumWanted = true }: { hostedForumWanted?: boolean } = {},
+): Promise<CreatedProject> {
+  const res = await fetch(`/api/projects${hostedForumWanted ? "" : "?hosted_forum_wanted=false"}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(await extractError(res));
-  const created = (await res.json()) as ProjectPublic;
+  const created = (await res.json()) as ProjectPublic & { forum_notice?: string | null };
   await refreshProjects();
-  return fromPublic(created);
+  return { ...fromPublic(created), forumNotice: created.forum_notice ?? null };
+}
+
+/**
+ * Move the project's forum onto the collaboration server: its threads are
+ * copied and the old repository is left as it was. Slow (it pushes every
+ * thread); a failure carries the server's sentence and leaves the old forum.
+ */
+export async function hostForum(name: string): Promise<Project> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/forum/host`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  const moved = (await res.json()) as ProjectPublic;
+  await refreshProjects();
+  return fromPublic(moved);
 }
 
 export async function updateProject(

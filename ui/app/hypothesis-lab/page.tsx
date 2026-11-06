@@ -9,11 +9,13 @@ import { RoleModelSelects } from "@/components/RoleModelSelects";
 import {
   DEBATE_ROLES,
   DebatePost,
-  DebateRun,
   DebateState,
   ForumStatus,
+  ForumThread,
   RoleModels,
   acceptsPosts,
+  canClose,
+  canContinue,
   changedModels,
   chosenModels,
   closeDebate,
@@ -23,26 +25,37 @@ import {
   fetchDebate,
   forumWebUrl,
   isActive,
+  isArguing,
+  liveRunLine,
   modelsOf,
   noRoleModels,
+  hostedForumServer,
+  readablePosts,
+  runnerName,
   simulationStanding,
-  watchesForPeerPosts,
+  threadStatusLabel,
   listDebates,
   openDebate,
   postToDebate,
   publishErrorNotice,
 } from "@/lib/debates";
 import { useAgentSettings } from "@/lib/agent-settings";
+import { useCollaboration } from "@/lib/collaboration";
 import { displayModelName } from "@/lib/models";
 import { useActiveProject } from "@/lib/projects";
 
-const FINISHED_POLL_MS = 15_000;
+const LIST_POLL_MS = 30_000;
 /**
- * How often a finished-but-open debate is re-read.
- *
- * Comfortably above the backend's own forum-refresh interval, so a poll finds
- * either fresh news or a cheap cache hit rather than forcing a git fetch of its
- * own. A peer's comment on a concluded debate is not a live conversation.
+ * How often the list of threads is re-read while the lab is open, so a thread a
+ * teammate opens appears without a reload. The backend fetches the forum at most
+ * this often per project, and not at all while no lab is open.
+ */
+
+const QUIET_POLL_MS = 15_000;
+/**
+ * How often an open thread nobody is arguing in is re-read, for a teammate's
+ * comment or run. Above the backend's per-thread refresh interval, so a poll
+ * finds fresh news or a cheap cache hit.
  */
 
 const FORUM_STATUS_POLL_MS = 15_000;
@@ -52,65 +65,32 @@ const FORUM_STATUS_POLL_MS = 15_000;
  * copy of the forum, never the remote.
  */
 
-const STATUS_LABEL: Record<DebateRun["status"], string> = {
-  setting_up: "Setting up",
-  debating: "Arguing",
-  converged: "Concluded",
-  closed: "Ended early",
-  failed: "Failed",
-};
-
-/**
- * The run's status, said accurately.
- *
- * "Ended early" reads as *you* ended it. On a shared forum anyone with push
- * access can close a thread they did not open, so who closed it has to come from
- * the record rather than from the status alone.
- */
-function statusLabel(run: DebateRun, posts: DebatePost[]): string {
-  if (run.thread_missing) return "No longer on the forum";
-  const closer = closedBy(posts);
-  if (run.status !== "closed") {
-    // Concluded, then closed afterwards: the verdict stands, and so does the close.
-    if (closer === "peer") return `${STATUS_LABEL[run.status]} · closed by a peer`;
-    if (closer === "operator") return `${STATUS_LABEL[run.status]} · closed`;
-    return STATUS_LABEL[run.status];
-  }
-  return closer === "peer" ? "Ended by a peer" : "Ended early";
-}
-
 /* ---------------------------------------------------------------------- */
 /*  Live updates                                                           */
 /* ---------------------------------------------------------------------- */
 
 /**
- * Follow a running debate over SSE, falling back to what the page already had.
+ * Follow the open thread over SSE: its posts, this install's run's activity, and
+ * the thread itself (status, a live run, the current verdict).
  *
- * Posts arrive one at a time and are keyed by `post_id`, so a reconnect that
- * replays the thread from the beginning converges instead of duplicating it —
- * the stream deliberately replays rather than resuming from a cursor, because a
- * debate is a few dozen posts and a resumable cursor is a thing to get wrong.
+ * Open while someone is arguing in the thread, here or on another install, so
+ * a teammate's run arrives live as well as ours. Posts are
+ * keyed by `post_id`, so a reconnect that replays the thread converges.
  */
-function useDebateStream(
+function useThreadStream(
   projectName: string | null,
-  run: DebateRun | null,
+  threadId: string | null,
+  open: boolean,
   // Both callers wrap these in `useCallback`, so they are stable and can sit in
-  // the dependency array directly. Stashing them in refs would mean writing a
-  // ref during render, which React forbids for good reason.
+  // the dependency array directly.
   onPost: (post: DebatePost) => void,
-  onStatus: (run: DebateRun) => void,
+  onThread: (thread: ForumThread) => void,
   onActivity: (activity: string | null, since: string | null) => void
 ) {
-  const runId = run?.id ?? null;
-  const active = run ? isActive(run.status) : false;
-
   useEffect(() => {
-    if (!projectName || !runId || !active) return;
+    if (!projectName || !threadId || !open) return;
 
-    const params = new URLSearchParams({
-      project_name: projectName,
-      run_id: runId,
-    });
+    const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
     const source = new EventSource(`/api/debates/events?${params}`);
 
     source.addEventListener("post", (event) => {
@@ -128,35 +108,25 @@ function useDebateStream(
         /* as above */
       }
     });
-    source.addEventListener("status", (event) => {
+    source.addEventListener("thread", (event) => {
       try {
-        onStatus(JSON.parse((event as MessageEvent).data));
+        onThread(JSON.parse((event as MessageEvent).data));
       } catch {
         /* as above */
       }
-      source.close();
     });
 
     return () => source.close();
-  }, [projectName, runId, active, onPost, onStatus, onActivity]);
+  }, [projectName, threadId, open, onPost, onThread, onActivity]);
 }
 
 /**
- * What the debate is doing, and for how long.
+ * What this install's run is doing, and for how long.
  *
- * The elapsed count is the part that carries the weight. "Proposer is thinking"
- * alone is still ambiguous after two minutes — it could be a stuck request — and
- * a number that keeps moving is the difference between waiting and wondering.
- * Ticks on its own interval rather than on stream events, because the whole point
- * is to keep changing when nothing is arriving.
+ * The elapsed count is the part that carries the weight: a number that keeps
+ * moving is the difference between waiting and wondering.
  */
-function Working({
-  activity,
-  since,
-}: {
-  activity: string;
-  since: string | null;
-}) {
+function Working({ activity, since }: { activity: string; since: string | null }) {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -182,6 +152,27 @@ function Working({
   );
 }
 
+/** Another install's run, as the thread shows it; re-said every half minute. */
+function PeerRun({ thread, posts }: { thread: ForumThread; posts: DebatePost[] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  if (!thread.live_run || thread.live_run.ours) return null;
+  return (
+    <p className="debate-working" aria-live="polite">
+      <span className="debate-working__pulse" aria-hidden="true" />
+      {liveRunLine(thread.live_run, now, runnerName(thread.live_run, posts))}
+    </p>
+  );
+}
+
+/** "round 2/5" for this install's run in the thread, or nothing. */
+function roundsOf(thread: ForumThread): string {
+  return thread.run ? ` · round ${thread.run.rounds_done}/${thread.run.rounds}` : "";
+}
+
 /* ---------------------------------------------------------------------- */
 /*  Page                                                                   */
 /* ---------------------------------------------------------------------- */
@@ -190,7 +181,7 @@ function DebatesPage() {
   const activeProject = useActiveProject();
   const projectName = activeProject?.name ?? null;
 
-  const [runs, setRuns] = useState<DebateRun[]>([]);
+  const [threads, setThreads] = useState<ForumThread[]>([]);
   const [state, setState] = useState<DebateState | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -203,38 +194,52 @@ function DebatesPage() {
   const [rounds, setRounds] = useState(5);
   const [message, setMessage] = useState("");
   const { settings: agentSettings } = useAgentSettings();
+  const collab = useCollaboration();
   /** A model per role for the debate being opened; null is the default. */
   const [roleModels, setRoleModels] = useState<RoleModels>(noRoleModels);
-  /** The same for Continue, starting from the models the selected debate used. */
+  /** The same for Continue, starting from the models this install last used here. */
   const [continueModels, setContinueModels] = useState<RoleModels>(noRoleModels);
 
-  const refresh = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!projectName) return;
-      try {
-        const list = await listDebates(projectName, signal);
-        setRuns(list);
-        setSelectedId((current) => current ?? list[0]?.id ?? null);
-      } catch (err) {
-        if (!signal?.aborted) setError(String(err));
-      }
-    },
-    [projectName]
-  );
+  /** Put a thread's latest copy everywhere it is shown. */
+  const showThread = useCallback((thread: ForumThread) => {
+    setThreads((current) =>
+      current.some((t) => t.thread_id === thread.thread_id)
+        ? current.map((t) => (t.thread_id === thread.thread_id ? thread : t))
+        : [thread, ...current]
+    );
+    setState((current) =>
+      current && current.thread.thread_id === thread.thread_id
+        ? { ...current, thread }
+        : current
+    );
+  }, []);
 
+  // Every thread on the forum, re-read while the lab is open: a thread a
+  // teammate opens appears within a poll. The backend fetches the forum at
+  // most every 30 s per project however many tabs ask.
   useEffect(() => {
+    if (!projectName) return;
     const controller = new AbortController();
-    void refresh(controller.signal);
-    return () => controller.abort();
-  }, [refresh]);
+    const load = async () => {
+      try {
+        const list = await listDebates(projectName, controller.signal);
+        setThreads(list);
+        setSelectedId((current) => current ?? list[0]?.thread_id ?? null);
+      } catch (err) {
+        if (!controller.signal.aborted) setError(String(err));
+      }
+    };
+    void load();
+    const timer = setInterval(load, LIST_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      controller.abort();
+    };
+  }, [projectName]);
 
-  // The forum's status, kept current while the page is open.
-  //
-  // Read once, it went stale exactly when it mattered: a debate's first push is
-  // refused seconds after the page loads, so the notice saying why would appear
-  // only after a reload. So it is re-read on an interval, and at once whenever
-  // the open debate's count of unpublished posts changes, which is when a push
-  // has just been tried. A failed read keeps what is shown.
+  // The forum's status, kept current while the page is open, and re-read at
+  // once whenever the open thread's count of unpublished posts changes, which is
+  // when a push has just been tried. A failed read keeps what is shown.
   const unpublishedHere =
     state?.posts.filter((post) => post.published === false).length ?? 0;
   useEffect(() => {
@@ -271,20 +276,16 @@ function DebatesPage() {
     return () => controller.abort();
   }, [projectName, selectedId]);
 
-  // Keep watching a finished debate for posts from outside.
-  //
-  // A live debate is followed by the event stream. A concluded one is not — the
-  // stream ends at a terminal status and none is opened for a run that is
-  // already finished — yet its thread is still open and a peer reviewer can
-  // still post to it. Without this the page would sit on a stale projection
-  // until someone reloaded it by hand.
-  //
-  // Re-fetching is what makes the server read the forum; the backend throttles
-  // that to one fetch per thread per interval however many people are watching.
-  const watched = state ? watchesForPeerPosts(state.run, state.posts) : false;
+  // Someone arguing in the thread, here or on another install: follow it live.
+  const streaming = state
+    ? acceptsPosts(state.thread, state.posts) && isArguing(state.thread)
+    : false;
+  // Nobody arguing, but the thread is still open: a teammate may comment or
+  // start a run, so re-read it now and then. Re-fetching is what makes the
+  // server read the forum; it throttles that per thread however many watch.
+  const quiet = state ? acceptsPosts(state.thread, state.posts) && !streaming : false;
   useEffect(() => {
-    if (!projectName || !selectedId || !watched) return;
-
+    if (!projectName || !selectedId || !quiet) return;
     const controller = new AbortController();
     const timer = setInterval(() => {
       fetchDebate(projectName, selectedId, controller.signal)
@@ -292,17 +293,17 @@ function DebatesPage() {
         .catch(() => {
           /* a failed poll should not disturb a page that is already readable */
         });
-    }, FINISHED_POLL_MS);
-
+    }, QUIET_POLL_MS);
     return () => {
       clearInterval(timer);
       controller.abort();
     };
-  }, [projectName, selectedId, watched]);
+  }, [projectName, selectedId, quiet]);
 
-  useDebateStream(
+  useThreadStream(
     projectName,
-    state?.run ?? null,
+    state?.thread.thread_id ?? null,
+    streaming,
     useCallback((post: DebatePost) => {
       setState((current) => {
         if (!current) return current;
@@ -310,33 +311,43 @@ function DebatesPage() {
           // A replayed post can still carry a newer vote tally.
           return {
             ...current,
-            posts: current.posts.map((p) =>
-              p.post_id === post.post_id ? post : p
-            ),
+            posts: current.posts.map((p) => (p.post_id === post.post_id ? post : p)),
           };
         }
         return { ...current, posts: [...current.posts, post] };
       });
     }, []),
-    useCallback((run: DebateRun) => {
-      setState((current) => (current ? { ...current, run } : current));
-      setRuns((current) => current.map((r) => (r.id === run.id ? run : r)));
-    }, []),
+    showThread,
     useCallback((activity: string | null, since: string | null) => {
       setState((current) =>
-        current
-          ? { ...current, run: { ...current.run, activity, activity_since: since } }
+        current && current.thread.run
+          ? {
+              ...current,
+              thread: {
+                ...current.thread,
+                run: { ...current.thread.run, activity, activity_since: since },
+              },
+            }
           : current
       );
     }, [])
   );
+
+  const reload = async (threadId: string) => {
+    if (!projectName) return;
+    try {
+      setState(await fetchDebate(projectName, threadId));
+    } catch {
+      /* the stream will catch up */
+    }
+  };
 
   const handleOpen = async () => {
     if (!projectName || !topic.trim()) return;
     setBusy(true);
     setError(null);
     try {
-      const run = await openDebate(projectName, {
+      const thread = await openDebate(projectName, {
         topic: topic.trim(),
         framing: framing.trim() || null,
         rounds,
@@ -345,8 +356,8 @@ function DebatesPage() {
       setTopic("");
       setFraming("");
       setRoleModels(noRoleModels());
-      setRuns((current) => [run, ...current]);
-      setSelectedId(run.id);
+      showThread(thread);
+      setSelectedId(thread.thread_id);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -358,7 +369,7 @@ function DebatesPage() {
     if (!projectName || !state || !message.trim()) return;
     setBusy(true);
     try {
-      const post = await postToDebate(projectName, state.run.id, {
+      const post = await postToDebate(projectName, state.thread.thread_id, {
         body: message.trim(),
         kind: "ASK",
       });
@@ -379,9 +390,8 @@ function DebatesPage() {
     if (!projectName || !state) return;
     setBusy(true);
     try {
-      const run = await closeDebate(projectName, state.run.id);
-      setState((current) => (current ? { ...current, run } : current));
-      setRuns((current) => current.map((r) => (r.id === run.id ? run : r)));
+      showThread(await closeDebate(projectName, state.thread.thread_id));
+      await reload(state.thread.thread_id);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -392,33 +402,35 @@ function DebatesPage() {
   const handleContinue = async () => {
     if (!projectName || !state) return;
     setBusy(true);
+    setError(null);
     try {
-      const run = await continueDebate(
+      const thread = await continueDebate(
         projectName,
-        state.run.id,
+        state.thread.thread_id,
         moreRounds,
         changedModels(continueModels, participantModels)
       );
-      // The response is the run as it stood when the request returned; the
-      // orchestrator raises the budget from its own session a moment later. Show
-      // it as arguing so the stream opens and the rest arrives live.
-      const arguing = { ...run, status: "debating" as const };
-      setState((current) => (current ? { ...current, run: arguing } : current));
-      setRuns((current) => current.map((r) => (r.id === run.id ? arguing : r)));
+      // The response is the thread as it stood when the request returned; the
+      // run raises its budget from its own session a moment later. Show it as
+      // arguing, and re-read so this install's new roster appears.
+      showThread(
+        thread.run ? { ...thread, run: { ...thread.run, status: "debating" } } : thread
+      );
+      await reload(state.thread.thread_id);
     } catch (err) {
-      setError(String(err));
+      // The server's own sentence for a refused Continue (409), not "Error: ".
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
   };
 
-  const posts = useMemo(
-    () => [...(state?.posts ?? [])].sort((a, b) => a.ts.localeCompare(b.ts)),
-    [state]
-  );
+  // In the order the forum accepted them, which is the order the backend sends.
+  const allPosts = useMemo(() => state?.posts ?? [], [state]);
+  const posts = useMemo(() => readablePosts(allPosts), [allPosts]);
 
-  // The models the selected debate's roster recorded. Continue starts from
-  // them, so leaving the form alone keeps them.
+  // The models this install's roster recorded here. Continue starts from them,
+  // or from the defaults in a thread this install has not argued in.
   const participantModels = useMemo(
     () => modelsOf(state?.participants ?? []),
     [state?.participants]
@@ -426,44 +438,57 @@ function DebatesPage() {
   const participantModelsKey = JSON.stringify(participantModels);
   useEffect(() => {
     setContinueModels(participantModels);
-    // Only when the debate or its recorded models change, not on every re-read.
+    // Only when the thread or its recorded models change, not on every re-read.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state?.run.id, participantModelsKey]);
+  }, [state?.thread.thread_id, participantModelsKey]);
 
-  /** "Proposer <m> · Reviewer <m> · Referee <m>"; a role on the default says so. */
-  const rosterLine = DEBATE_ROLES.filter((role) =>
-    state?.participants.some((p) => p.debate_role === role)
-  )
-    .map((role) => {
-      const model = participantModels[role];
-      const shown = model
-        ? displayModelName(model)
-        : `Default (${agentSettings?.model ? displayModelName(agentSettings.model) : "default"})`;
-      return `${role[0].toUpperCase()}${role.slice(1)} ${shown}`;
-    })
-    .join(" · ");
+  /**
+   * This install's agents in the thread, one row per role, in role order: its
+   * model (a role on the default says so) and the tools it may use. A thread
+   * this install has not argued in has none, and shows no roster.
+   */
+  const roster = DEBATE_ROLES.flatMap((role) => {
+    const participant = state?.participants.find((p) => p.debate_role === role);
+    if (!participant) return [];
+    const model = participantModels[role];
+    const shown = model
+      ? displayModelName(model)
+      : `Default (${agentSettings?.model ? displayModelName(agentSettings.model) : "default"})`;
+    return [{ role, participant, model: shown }];
+  });
 
   // Why posts are not reaching the forum. An error, so it is drawn as one, and
-  // it sits on the open debate, whose posts are the ones marked "not yet
-  // published", rather than at the top of the page where it read as one more
-  // note about the lab. With no debate open it falls back to the top.
-  const publishNotice = forum?.publish_error ? (
+  // it sits on the open thread, whose posts are the ones marked "not yet
+  // published". With no thread open it falls back to the top.
+  const unpublishedCount = forum?.unpublished ?? 0;
+  const publishDetails = forum?.publish_error
+    ? publishErrorNotice(
+        forum.publish_error,
+        hostedForumServer(forum.remote) ?? collab.status?.url ?? null,
+      )
+    : null;
+  const publishNotice = publishDetails ? (
     <p className="debate-publish-error" role="alert">
-      <strong>{publishErrorNotice(forum.publish_error).headline}</strong>{" "}
-      {publishErrorNotice(forum.publish_error).detail}
-      {forum.unpublished > 0 && (
+      <strong>{publishDetails.headline}</strong> {publishDetails.detail}
+      {publishDetails.link && (
         <>
           {" "}
-          {forum.unpublished === 1 ? "1 post is" : `${forum.unpublished} posts are`} kept here,
+          <a href={publishDetails.link.href} target="_blank" rel="noreferrer">
+            {publishDetails.link.label}
+          </a>
+          .
+        </>
+      )}
+      {unpublishedCount > 0 && (
+        <>
+          {" "}
+          {unpublishedCount === 1 ? "1 post is" : `${unpublishedCount} posts are`} kept here,
           marked <em>not yet published</em>, until it works.
         </>
       )}
     </p>
   ) : null;
 
-  // And when it works, say so and say where: the remote has every post written
-  // here. The URL is the forum's own remote, so this is also where to look. A
-  // plain note, not a success colour: only the failure needs to stand out.
   const syncedTo =
     forum && forum.shared && forum.remote && !forum.publish_error && forum.unpublished === 0
       ? forum.remote
@@ -489,9 +514,7 @@ function DebatesPage() {
   }
 
   // No git on this machine turns every project's lab off, and the fix is on the
-  // machine rather than in the project, so it gets its own message: telling
-  // someone to add a repository they already added would send them the wrong
-  // way. `git_reason` is written for the reader and shown as it is.
+  // machine rather than in the project, so it gets its own message.
   if (forum !== null && !forum.enabled && !forum.git_ok) {
     return (
       <main className="debate-page">
@@ -513,9 +536,7 @@ function DebatesPage() {
   }
 
   // A project with no forum repository has no lab, and the honest thing is to
-  // say so and point at the one place it can be turned on. Rendering the opener
-  // would offer a debate with nowhere to publish — a private argument with
-  // nobody to check it, which is the opposite of what this is for.
+  // say so and point at the one place it can be turned on.
   if (forum !== null && !forum.enabled) {
     return (
       <main className="debate-page">
@@ -541,30 +562,28 @@ function DebatesPage() {
     );
   }
 
+  const thread = state?.thread ?? null;
+  const othersRun = thread?.live_run && !thread.live_run.ours ? thread.live_run : null;
+
   return (
     <main className="debate-page">
       <header className="debate-page__header">
         <h1>Hypothesis Lab</h1>
         <p className="debate-page__lede">
-          Three local agents — a Proposer, a Reviewer whose job is to falsify it, and a Referee who rules — argue a topic until a hypothesis survives. You can join the thread at any point, or end it.
+          Three local agents — a Proposer, a Reviewer whose job is to falsify it, and a Referee who rules — argue a topic until a hypothesis survives. You can join any thread on the forum, continue it with your own agents, or end a thread you opened.
         </p>
-        {/* The invitation is conditional on the forum actually publishing
-            somewhere. Saying "invite your colleagues" on a deployment whose
-            forum is a local git repository would be describing a capability
-            nobody outside this machine can reach. */}
         {/* `forum` is null until the status fetch lands, and null is "not known
-            yet" rather than "not shared" — keyed off `forum?.shared` alone, a
-            shared lab flashed "on this machine only" on first paint. */}
+            yet" rather than "not shared". */}
         {forum === null ? null : forum.shared ? (
           <p className="debate-page__lede">
-            The forum lives in a user-managed git repository this deployment publishes to. Give someone access and they can read the
-            debate and post into it — an outside domain expert from their machine, or their own agents under their identities.
+            The forum lives in a git repository this deployment publishes to. Everyone
+            with access sees every thread here, can post into it, and can continue it
+            with their own agents.
           </p>
         ) : (
           <p className="debate-page__lede debate-page__lede--muted">
-            This lab is on this machine only. Point it at a git remote to share a
-            thread with outside experts and their agents — see the hosting
-            runbook.
+            This lab is on this machine only. Point it at a git remote to share
+            threads with colleagues and their agents — see the hosting runbook.
           </p>
         )}
       </header>
@@ -636,18 +655,21 @@ function DebatesPage() {
 
       <div className="debate-layout">
         <aside className="debate-list">
-          {runs.length === 0 && <p>No debates yet.</p>}
-          {runs.map((run) => (
+          {threads.length === 0 && <p>No debates yet.</p>}
+          {threads.map((item) => (
             <button
-              key={run.id}
+              key={item.thread_id}
               className={`debate-list__item${
-                run.id === selectedId ? " debate-list__item--active" : ""
+                item.thread_id === selectedId ? " debate-list__item--active" : ""
               }`}
-              onClick={() => setSelectedId(run.id)}
+              onClick={() => setSelectedId(item.thread_id)}
             >
-              <span className="debate-list__topic">{run.topic}</span>
+              <span className="debate-list__topic">{item.title}</span>
               <span className="debate-list__status">
-                {STATUS_LABEL[run.status]} · round {run.rounds_done}/{run.rounds}
+                {threadStatusLabel(item, [])}
+                {roundsOf(item)}
+                {" · "}
+                {item.opened_here ? "opened here" : "opened by another install"}
               </span>
             </button>
           ))}
@@ -655,20 +677,21 @@ function DebatesPage() {
 
         <section className="debate-detail">
           {!state && <p>Select a debate.</p>}
-          {state && (
+          {state && thread && (
             <>
               <div className="debate-detail__head">
-                <h2>{state.run.topic}</h2>
+                <h2>{thread.title}</h2>
                 <span className="debate-detail__status">
-                  {statusLabel(state.run, posts)} · round {state.run.rounds_done}/
-                  {state.run.rounds}
+                  {threadStatusLabel(thread, allPosts)}
+                  {thread.run && isActive(thread.run.status) ? roundsOf(thread) : ""}
+                  {thread.opened_here ? "" : " · opened by another install"}
                 </span>
-                {isActive(state.run.status) && !state.run.thread_missing && (
+                {canClose(thread, allPosts) && (
                   <button onClick={handleClose} disabled={busy}>
                     End this debate
                   </button>
                 )}
-                {watchesForPeerPosts(state.run, posts) && (
+                {canContinue(thread, allPosts) && (
                   <span className="debate-detail__continue">
                     <label>
                       <input
@@ -687,12 +710,14 @@ function DebatesPage() {
                       onClick={handleContinue}
                       disabled={busy}
                       title={
-                        "Argues on in the same thread with the same roster, so " +
-                        "an objection raised after the verdict gets answered " +
-                        "against the argument that produced it."
+                        thread.run
+                          ? "Your agents argue on in the same thread with the roster " +
+                            "they used here, reading everything posted since."
+                          : "Your own Proposer, Reviewer and Referee argue in this " +
+                            "thread, reading everything in it, and your Referee rules."
                       }
                     >
-                      Continue the debate
+                      {thread.run ? "Continue the debate" : "Continue with your agents"}
                     </button>
                     <RoleModelSelects
                       value={continueModels}
@@ -704,7 +729,15 @@ function DebatesPage() {
 
               {forumNotice}
 
-              {state.run.thread_missing && (
+              {othersRun && (
+                <p className="debate-note">
+                  Another user&rsquo;s agents are arguing in this thread. You
+                  can post into it now; you can continue it with your own agents
+                  once their run ends.
+                </p>
+              )}
+
+              {thread.thread_missing && (
                 <p className="debate-warning">
                   <strong>This thread is no longer on the forum.</strong>{" "}
                   It was
@@ -740,46 +773,52 @@ function DebatesPage() {
                 </ul>
               )}
 
-              {rosterLine && <p className="debate-roster__models">{rosterLine}</p>}
-              <ul className="debate-roster">
-                {state.participants.map((participant) => (
-                  <li key={participant.id}>
-                    <strong>{participant.debate_role}</strong>{" "}
-                    <span>{participant.identity}</span>{" "}
-                    <span className="debate-roster__tools">
-                      {participant.granted_tools.length > 0
-                        ? `may use: ${participant.granted_tools.join(", ")}`
-                        : "no tools granted"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              {roster.length > 0 && (
+                <ul className="debate-roster">
+                  {roster.map(({ role, participant, model }) => (
+                    <li key={participant.id} title={participant.identity}>
+                      <strong>{role}</strong>{" "}
+                      <span className="debate-roster__model">{model}</span>
+                      {" · "}
+                      <span className="debate-roster__tools">
+                        {participant.granted_tools.length > 0
+                          ? `may use: ${participant.granted_tools.join(", ")}`
+                          : "no tools granted"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
-              <DebateVerdict run={state.run} />
-              {state.run.activity && (
+              <DebateVerdict
+                current={thread.current_verdict}
+                endedEarly={thread.status === "closed" || closedBy(allPosts) !== null}
+              />
+              {thread.run?.activity && (
                 <Working
-                  activity={state.run.activity}
-                  since={state.run.activity_since}
+                  activity={thread.run.activity}
+                  since={thread.run.activity_since}
                 />
               )}
+              <PeerRun thread={thread} posts={allPosts} />
 
               <DebateThread posts={posts} />
 
-              {acceptsPosts(state.run, posts) && (
-              <div className="debate-say">
-                <label>
-                  Say something into this debate
-                  <textarea
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    rows={3}
-                    placeholder="Constrain this to 1 bar; ignore pressure effects."
-                  />
-                </label>
-                <button onClick={handlePost} disabled={busy || !message.trim()}>
-                  Post as you
-                </button>
-              </div>
+              {acceptsPosts(thread, allPosts) && (
+                <div className="debate-say">
+                  <label>
+                    Say something into this debate
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      rows={3}
+                      placeholder="Constrain this to 1 bar; ignore pressure effects."
+                    />
+                  </label>
+                  <button onClick={handlePost} disabled={busy || !message.trim()}>
+                    Post as you
+                  </button>
+                </div>
               )}
             </>
           )}

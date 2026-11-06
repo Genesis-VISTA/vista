@@ -1084,3 +1084,262 @@ async def test_a_knowledge_base_that_needs_a_choice_stops_the_import(
         "name_taken",
     )
     assert await _project(session, "salt-lab") is None
+
+
+# ---------------------------------------------------------------------------
+# A project's forum hosted on the server (a real server on loopback, real git)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def labs_on(monkeypatch, git_ok):
+    """Hypothesis Labs on, with a usable git, as a deployment that runs them."""
+    from vista_backend.config import ForumSettings
+
+    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=True, timeout=60.0))
+
+
+def _new_project(name: str = "salt", forum_repo_url: str | None = None) -> dict:
+    return {
+        "name": name,
+        "description": None,
+        "system_prompt": None,
+        "skills": [],
+        "knowledge_bases": [],
+        "forum_repo_url": forum_repo_url,
+        "tools": [],
+        "usage_limits": {},
+    }
+
+
+def _forum_id(url: str) -> str:
+    return url.rsplit("/", 1)[-1].removesuffix(".git")
+
+
+async def test_a_new_project_gets_a_hosted_forum_that_follows_it_to_a_teammate(
+    loopback_server, labs_on, session, tmp_path
+):
+    """
+    Create makes the forum; the first publish links it to the item; the manifest
+    says `hosted`, never the URL; an import resolves it from the server.
+    """
+    from harness.hosted import make_install
+
+    await _use_server(session, loopback_server.url)
+    local = await local_settings.get_public(session)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        assert created.status_code == 201, created.text
+        assert created.json()["forum_notice"] is None
+        url = created.json()["forum_repo_url"]
+        assert url == f"{loopback_server.url}/git/{_forum_id(url)}.git"
+        await session.commit()
+        # Not linked yet: the forum is Ada's alone, and a teammate cannot see it.
+        other = uuid.uuid4()
+        assert loopback_server.forum_exists(local.install_id, _forum_id(url))
+        assert not loopback_server.forum_exists(other, _forum_id(url))
+
+        published = await client.post("/projects/salt/publish", json={})
+        assert published.status_code == 200, published.text
+        assert published.json()["forum_error"] is None
+        item_id = uuid.UUID(published.json()["project"]["remote_id"])
+        await session.commit()
+
+        # Published: linked to the item, so the item's team (everyone, here) has it.
+        assert loopback_server.forum_exists(other, _forum_id(url))
+        with loopback_server.api(other, "Bea") as bea:
+            assert bea.get(f"/items/{item_id}/forum").json()["git_url"] == url
+            manifest = bea.get(f"/items/{item_id}/versions/1").json()["manifest"]
+        assert manifest["forum"] == "hosted"
+        assert manifest["forum_repo_url"] is None, (
+            "not the URL: a copy carries the manifest"
+        )
+
+        # A new version keeps the same forum; linking again is not an error.
+        await _put(
+            client,
+            session,
+            "salt",
+            {**_body((await client.get("/projects/salt")).json()), "description": "v2"},
+        )
+        again = await client.post("/projects/salt/publish", json={})
+        assert again.status_code == 200, again.text
+        assert again.json()["forum_error"] is None
+
+    bob = await make_install(tmp_path, "Bob", loopback_server.url)
+    try:
+        async with bob.active() as bob_session:
+            imported = await project_collaboration.import_project(
+                bob_session, await local_settings.get_public(bob_session), item_id
+            )
+            assert imported.forum_error is None
+            assert imported.project.forum_repo_url == url
+    finally:
+        await bob.close()
+
+
+async def test_publishing_an_unchanged_project_retries_a_forum_link_that_failed(
+    loopback_server, labs_on, session, monkeypatch
+):
+    """A link that failed on the first publish is retried by the next, though nothing changed."""
+    from vista_backend.services.collaboration import CollaborationError
+
+    await _use_server(session, loopback_server.url)
+    real = CollaborationClient.link_forum
+    calls = 0
+
+    async def flaky(self, forum_id, item_id):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise CollaborationError("boom")
+        return await real(self, forum_id, item_id)
+
+    monkeypatch.setattr(CollaborationClient, "link_forum", flaky)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        assert created.status_code == 201, created.text
+        await session.commit()
+        first = await client.post("/projects/salt/publish", json={})
+        assert first.status_code == 200, first.text
+        assert first.json()["forum_error"] is not None
+        item_id = uuid.UUID(first.json()["project"]["remote_id"])
+        await session.commit()
+
+        again = await client.post("/projects/salt/publish", json={})
+        assert again.status_code == 200, again.text
+        assert again.json()["status"] == "unchanged"
+        assert again.json()["forum_error"] is None
+        assert calls == 2
+        await session.commit()
+
+    with loopback_server.api(uuid.uuid4(), "Bea") as bea:
+        assert bea.get(f"/items/{item_id}/forum").status_code == 200
+
+
+async def test_a_forum_hosted_for_a_project_nobody_has_published_is_deleted_with_it(
+    loopback_server, labs_on, session
+):
+    await _use_server(session, loopback_server.url)
+    local = await local_settings.get_public(session)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project("draft"))
+        forum = _forum_id(created.json()["forum_repo_url"])
+        await session.commit()
+        assert loopback_server.forum_exists(local.install_id, forum)
+
+        assert (await client.delete("/projects/draft")).status_code == 204
+        await session.commit()
+    assert not loopback_server.forum_exists(local.install_id, forum)
+
+
+async def test_deleting_a_published_project_leaves_its_forum_for_the_team(
+    loopback_server, labs_on, session
+):
+    await _use_server(session, loopback_server.url)
+    local = await local_settings.get_public(session)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        forum = _forum_id(created.json()["forum_repo_url"])
+        await session.commit()
+        assert (await client.post("/projects/salt/publish", json={})).status_code == 200
+        await session.commit()
+
+        assert (await client.delete("/projects/salt")).status_code == 204, (
+            "the server's 409 is not a failure"
+        )
+        await session.commit()
+    assert loopback_server.forum_exists(local.install_id, forum)
+
+
+async def test_creating_a_project_never_fails_on_the_server(
+    loopback_server, labs_on, session, tmp_path
+):
+    """No server, one that does not answer, a URL from the dialog: always created."""
+    import shutil
+    import subprocess
+
+    from harness.hosted import free_port
+
+    with api_client(session) as (client, _):
+        # No server configured: no forum, nothing to say.
+        res = await client.post("/projects", json=_new_project("a"))
+        assert res.status_code == 201
+        assert (res.json()["forum_repo_url"], res.json()["forum_notice"]) == (
+            None,
+            None,
+        )
+
+        # One that does not answer: no forum, and why.
+        await _use_server(session, f"http://127.0.0.1:{free_port()}")
+        res = await client.post("/projects", json=_new_project("b"))
+        assert res.status_code == 201, res.text
+        assert res.json()["forum_repo_url"] is None
+        assert "not answering" in res.json()["forum_notice"]
+
+        # The server up, but the dialog chose no forum, or a repository of its own.
+        await _use_server(session, loopback_server.url)
+        res = await client.post(
+            "/projects?hosted_forum_wanted=false", json=_new_project("c")
+        )
+        assert (res.status_code, res.json()["forum_repo_url"]) == (201, None)
+        if shutil.which("git"):
+            forge = tmp_path / "forge.git"
+            subprocess.run(["git", "init", "-q", "--bare", str(forge)], check=True)
+            res = await client.post("/projects", json=_new_project("d", str(forge)))
+            assert (res.status_code, res.json()["forum_repo_url"]) == (201, str(forge))
+            assert res.json()["forum_notice"] is None
+
+
+async def test_a_reimport_keeps_the_hosted_forum_when_the_lookup_fails(
+    loopback_server, labs_on, session, tmp_path, monkeypatch
+):
+    """
+    A newer version whose forum cannot be looked up leaves the project the
+    forum it had, and says why.
+    """
+    from harness.hosted import make_install
+
+    await _use_server(session, loopback_server.url)
+    with api_client(session) as (client, _):
+        created = await client.post("/projects", json=_new_project())
+        url = created.json()["forum_repo_url"]
+        await session.commit()
+        published = await client.post("/projects/salt/publish", json={})
+        assert published.status_code == 200, published.text
+        item_id = uuid.UUID(published.json()["project"]["remote_id"])
+        await session.commit()
+        await _put(
+            client,
+            session,
+            "salt",
+            {**_body((await client.get("/projects/salt")).json()), "description": "v2"},
+        )
+        again = await client.post("/projects/salt/publish", json={})
+        assert again.status_code == 200, again.text
+
+    bob = await make_install(tmp_path, "Bob", loopback_server.url)
+    try:
+        async with bob.active() as bob_session:
+            local = await local_settings.get_public(bob_session)
+            first = await project_collaboration.import_project(
+                bob_session, local, item_id, version=1
+            )
+            assert first.project.forum_repo_url == url
+
+            async def lookup_fails(client, item_id):
+                return None, "The project's forum could not be found: down"
+
+            monkeypatch.setattr(
+                project_collaboration.hosted_forum, "forum_of_item", lookup_fails
+            )
+            second = await project_collaboration.import_project(
+                bob_session, local, item_id, version=2
+            )
+            assert second.status == "updated"
+            assert second.project.description == "v2"
+            assert second.project.forum_repo_url == url
+            assert second.forum_error is not None
+            assert "down" in second.forum_error
+    finally:
+        await bob.close()

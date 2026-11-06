@@ -32,6 +32,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import logging
 import os
 import re
@@ -45,9 +46,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 
+import httpx
 from pydantic import BaseModel, Field
 
 from ..config import ForumSettings, settings
+from . import collaboration
+from .collaboration import _private_channel, sign_in_message
 
 logger = logging.getLogger(__name__)
 
@@ -147,8 +151,9 @@ class PostKind(StrEnum):
     Every kind a thread can hold.
 
     Some are written only by specific verbs — `create_thread` writes TASK,
-    `close_thread` writes CLOSED, `vote` writes UPVOTE/DOWNVOTE — so this set is
-    wider than what a role may post. See `POSTABLE_KINDS`.
+    `close_thread` writes CLOSED, `start_run` writes RUN, `vote` writes
+    UPVOTE/DOWNVOTE — so this set is wider than what a role may post. See
+    `POSTABLE_KINDS`.
     """
 
     ASK = "ASK"
@@ -161,6 +166,8 @@ class PostKind(StrEnum):
     DONE = "DONE"
     TASK = "TASK"
     CLOSED = "CLOSED"
+    RUN = "RUN"
+    """ An install starting N rounds of its own agents in the thread; see `live_run`. """
     UPVOTE = "UPVOTE"
     DOWNVOTE = "DOWNVOTE"
 
@@ -249,6 +256,14 @@ class ForumCommandError(ForumError):
         )
 
 
+class RunRefused(ForumError):
+    """
+    A hosted forum refused this install's `RUN` post under its rules, because a
+    run is already live in the thread. The post was dropped and nothing is
+    waiting to publish: the debate must not start.
+    """
+
+
 class ThreadClosed(ForumError):
     """
     The thread holds a CLOSED post — ours or a peer's — so nothing more may be
@@ -272,6 +287,60 @@ class InvalidKind(ForumError, ValueError):
 # --------------------------------------------------------------------------- #
 
 
+class RunSpec(BaseModel):
+    """
+    What a RUN post announces: how many rounds, and the roster that will argue
+    them. `roster` maps a debate role to the identity it posts under.
+    """
+
+    rounds: int
+    roster: dict[str, str]
+    expiry_seconds: float | None = None
+    """
+    The run expiry of the install that started it (`ForumSettings.run_expiry_seconds`),
+    so a reader whose own is shorter does not call a long-waiting run dead.
+    Optional: a RUN from an older VISTA has none. See `live_run`.
+    """
+
+    @property
+    def referee(self) -> str | None:
+        return self.roster.get("referee")
+
+
+def _parse_run(value: object) -> RunSpec | None:
+    """A RUN post's `run` object, or None when it is not one we can use."""
+    if not isinstance(value, dict):
+        return None
+    rounds, roster = value.get("rounds"), value.get("roster")
+    if not isinstance(rounds, int) or isinstance(rounds, bool) or rounds < 1:
+        return None
+    if not isinstance(roster, dict) or not roster:
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in roster.items()):
+        return None
+    return RunSpec(
+        rounds=rounds,
+        roster=roster,
+        expiry_seconds=_usable_expiry(value.get("expiry_seconds")),
+    )
+
+
+def _usable_expiry(value: object) -> float | None:
+    """
+    A stated run expiry as a float, or None when it is not a finite positive
+    number (a bool, a string, NaN, infinity, a negative, an int too large for a
+    float): the reader then uses its own. Never raises, so a bad value cannot
+    keep a thread from being read.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
 class Post(BaseModel):
     """
     One post, as read from its file.
@@ -293,6 +362,21 @@ class Post(BaseModel):
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     denied: str | None = None
     """ Kept for the projection's shape. Nothing in the git format records a refusal. """
+    run: RunSpec | None = None
+    """ On a RUN post: the rounds and roster it starts. """
+    verdict: dict[str, Any] | None = None
+    """
+    On a DONE post: the Referee's structured verdict, as the poster wrote it.
+    Not validated here: the debate service checks its shape and falls back to
+    the body.
+    """
+    verified_name: str | None = None
+    """
+    On a hosted forum: the name of the account the collaboration server recorded
+    as pushing this post (`ForumClient.pusher_names`). Not in the post file, so
+    nothing a poster wrote: None on a forge, and for a post copied onto the
+    forum when a project moved there.
+    """
 
     @property
     def is_vote(self) -> bool:
@@ -314,7 +398,7 @@ class Post(BaseModel):
     @property
     def agent_authored(self) -> bool:
         """False for the framing and closing posts, which nobody argued."""
-        return self.kind not in (PostKind.TASK, PostKind.CLOSED)
+        return self.kind not in (PostKind.TASK, PostKind.CLOSED, PostKind.RUN)
 
 
 class ThreadHeader(BaseModel):
@@ -409,6 +493,111 @@ def thread_status(posts: Sequence[Post]) -> str:
     if said and said[-1].kind == PostKind.BLOCKED:
         return "blocked"
     return "open"
+
+
+class LiveRun(BaseModel):
+    """A thread's run that is still going, as any reader works it out from git."""
+
+    post_id: str
+    """ The RUN post that started it. """
+    origin: str | None
+    """ The host id that posted the RUN. A claim, like every origin. """
+    rounds: int
+    roster: dict[str, str]
+    started_at: str
+    posts: int
+    """ Posts its roster has made since the RUN. """
+    last_post_at: str
+    """ The newest `ts` of the RUN and its roster's posts. """
+
+
+def _parse_ts(value: str) -> datetime | None:
+    try:
+        ts = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
+
+
+MAX_STATED_RUN_EXPIRY = 3 * 3600.0
+"""
+The longest run expiry a RUN post may ask a reader to honour, in seconds.
+Three hours covers a job-wait setting of up to about 2 3/4 hours plus the
+15-minute margin, while a single RUN by any team member can hold a thread
+against Continue for at most 3 hours, not a day. Must match the collaboration
+server's `forum_hook.MAX_STATED_RUN_EXPIRY`.
+"""
+
+
+def effective_run_expiry(own: float, stated: float | None) -> float:
+    """
+    The expiry to judge a run by: the reader's own, or the starter's if longer
+    (capped at `MAX_STATED_RUN_EXPIRY`, so a post cannot hold a thread forever).
+    A stated expiry never shortens the reader's. The collaboration server's
+    `forum_hook.effective_run_expiry` is the same rule.
+    """
+    if stated is None:
+        return own
+    return max(own, min(stated, MAX_STATED_RUN_EXPIRY))
+
+
+def live_run(posts: Sequence[Post], *, now: datetime, expiry: float) -> LiveRun | None:
+    """
+    The thread's live run, or None.
+
+    `posts` are a thread's visible posts, in order (`Thread.posts`). The live
+    run is the latest RUN, unless the thread is closed, the RUN's Referee has
+    since posted DONE or BLOCKED, or nothing (neither the RUN nor a post by its
+    roster) is newer than `expiry` seconds before `now`. A RUN that states a
+    longer expiry of its own keeps it (`effective_run_expiry`).
+
+    Only the latest RUN counts: a later RUN means someone judged the earlier
+    one over, which is what a reader would conclude too.
+
+    Expiry reads the posts' own `ts`, so a skewed clock on the poster shifts it
+    by that skew; the window (the job-wait limit plus a margin) is long enough
+    for minutes not to matter. A RUN whose `ts` cannot be read counts as
+    expired, so a malformed marker never blocks a thread.
+    """
+    if any(p.kind == PostKind.CLOSED for p in posts):
+        return None
+    start = next(
+        (i for i in range(len(posts) - 1, -1, -1) if posts[i].kind == PostKind.RUN),
+        None,
+    )
+    if start is None:
+        return None
+    marker = posts[start]
+    if marker.run is None:  # `_parse_post` drops a RUN without one
+        return None
+    roster = set(marker.run.roster.values())
+    referee = marker.run.referee
+    newest = _parse_ts(marker.ts)
+    if newest is None:
+        return None
+    last = marker.ts
+    count = 0
+    for post in posts[start + 1 :]:
+        if post.sender not in roster:
+            continue
+        if post.sender == referee and post.kind in (PostKind.DONE, PostKind.BLOCKED):
+            return None
+        count += 1
+        ts = _parse_ts(post.ts)
+        if ts is not None and ts > newest:
+            newest, last = ts, post.ts
+    expiry = effective_run_expiry(expiry, marker.run.expiry_seconds)
+    if (now - newest).total_seconds() > expiry:
+        return None
+    return LiveRun(
+        post_id=marker.id,
+        origin=marker.origin,
+        rounds=marker.run.rounds,
+        roster=dict(marker.run.roster),
+        started_at=marker.ts,
+        posts=count,
+        last_post_at=last,
+    )
 
 
 class ThreadSummary(BaseModel):
@@ -761,12 +950,39 @@ _UNREACHABLE = (
 )
 """What git says when it never reached the forge, lowercased."""
 
+PUSHERS_FILE = "pushers.json"
+"""
+The hosted forum's push records this install has read (post id to the name the
+server recorded), beside the outbox. A cache: lose it and it is read again.
+"""
+
 LAST_PUBLISH_FILE = "last-publish.json"
 """
 Why publishing last failed, beside the outbox and for the same reason: the forum
 is written from inside open app-DB transactions (design D7). Gone once a push
 succeeds.
 """
+
+
+COLLABORATION_CREDENTIAL = "collaboration"
+"""`ForumSettings.remote_token_source` of a forum hosted on the collaboration server."""
+
+_RULE_MESSAGES = ("Refused ", "The server could not check this push")
+
+
+def rule_refusal(text: str) -> str | None:
+    """
+    What a hosted forum's hooks said when they refused a push, from the
+    `remote:` lines git relays (`collaboration_server/.../forum_hook.py`), or None
+    when none of them is one of the server's own rule messages.
+    """
+    said = []
+    for line in text.splitlines():
+        if line.startswith("remote:"):
+            body = line.removeprefix("remote:").strip()
+            if body.startswith(_RULE_MESSAGES):
+                said.append(body)
+    return " ".join(said) or None
 
 
 def classify_git_failure(text: str) -> str:
@@ -815,6 +1031,13 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
         if not isinstance(data.get(key), str):
             logger.warning("forum: skipping %s: %s is not a string", where, key)
             return None
+    run = None
+    if data["kind"] == PostKind.RUN:
+        run = _parse_run(data.get("run"))
+        if run is None:
+            logger.warning("forum: skipping %s: RUN without a usable run object", where)
+            return None
+    verdict = data.get("verdict") if data["kind"] == PostKind.DONE else None
     origin = data.get("origin")
     reply_to = data.get("reply_to")
     attachments = data.get("attachments") or []
@@ -831,6 +1054,8 @@ def _parse_post(raw: bytes, *, thread: str, stem: str, where: str) -> Post | Non
         attachments=[a for a in attachments if isinstance(a, dict)]
         if isinstance(attachments, list)
         else [],
+        run=run,
+        verdict=verdict if isinstance(verdict, dict) else None,
     )
 
 
@@ -849,31 +1074,57 @@ access token. So one name serves both.
 """
 
 
+HOSTED_FORUM_PATH = re.compile(r"/git/([0-9a-fA-F-]{36})\.git/?$")
+"""The tail of a forum URL on the collaboration server (`/git/<forum id>.git`)."""
+
+
+def hosted_server(url: str | None) -> str | None:
+    """
+    The collaboration server's address a hosted forum's URL is under, or None
+    for a URL that is not shaped like one. Whether the server is *the
+    configured one* is `project_forum`'s to decide.
+    """
+    match = HOSTED_FORUM_PATH.search(url or "")
+    return url[: match.start()] if match and url else None
+
+
 def _token_config(env: dict[str, str], config: ForumSettings) -> dict[str, str]:
     """
-    The environment that makes git send the forum's token to its remote, or none.
+    The environment that makes git send the forum's credential to its remote, or none.
 
     Passed as `GIT_CONFIG_*` variables, not as a `-c` argument or inside the URL:
     an argument is visible to every process on the machine and lands in
     `ForumCommandError`, and a URL is written into the repository's config in
     plain text. Scoped to the remote's URL, so the header is sent only there.
-    Only over `https://` — plain HTTP would send the token in the clear, and SSH
-    has its own keys.
+    A forge's token only over `https://` -- plain HTTP would send it in the
+    clear, and SSH has its own keys. A forum hosted on the collaboration server
+    gets the sign-in headers instead (`remote_headers`), over `https://` or to
+    this machine, as the collaboration client sends them; never a forge token.
 
     Appended after any `GIT_CONFIG_*` entries the environment already holds.
     """
     token, url = config.remote_token, config.remote_url
-    if token is None or url is None or not url.startswith("https://"):
+    if url is None:
         return {}
-    basic = base64.b64encode(
-        f"{TOKEN_USERNAME}:{token.get_secret_value()}".encode()
-    ).decode()
+    if config.remote_headers:
+        if not _private_channel(url):
+            return {}
+        headers = [
+            f"{k}: {v.get_secret_value()}" for k, v in config.remote_headers.items()
+        ]
+    elif token is not None and url.startswith("https://"):
+        basic = base64.b64encode(
+            f"{TOKEN_USERNAME}:{token.get_secret_value()}".encode()
+        ).decode()
+        headers = [f"Authorization: Basic {basic}"]
+    else:
+        return {}
     n = int(env.get("GIT_CONFIG_COUNT", "0") or "0")
-    return {
-        "GIT_CONFIG_COUNT": str(n + 1),
-        f"GIT_CONFIG_KEY_{n}": f"http.{url}.extraHeader",
-        f"GIT_CONFIG_VALUE_{n}": f"Authorization: Basic {basic}",
-    }
+    out = {"GIT_CONFIG_COUNT": str(n + len(headers))}
+    for offset, header in enumerate(headers):
+        out[f"GIT_CONFIG_KEY_{n + offset}"] = f"http.{url}.extraHeader"
+        out[f"GIT_CONFIG_VALUE_{n + offset}"] = header
+    return out
 
 
 @dataclass
@@ -1084,8 +1335,39 @@ class ForumClient:
             except ForumCommandError as exc:
                 self._record_failure(exc.stderr or exc.stdout)
                 raise
+        self._clear_unreachable()
 
     # -- why publishing last failed ---------------------------------------- #
+
+    @property
+    def hosted(self) -> bool:
+        """The forum is on the collaboration server, and is reached with its sign-in."""
+        return self.config.remote_token_source == COLLABORATION_CREDENTIAL
+
+    def _hosted_failure(self, message: str) -> tuple[str, str] | None:
+        """
+        (reason, message) for a failure of a hosted forum that is the server's
+        to explain: its sign-in refused (`401`), or a rule of its hooks
+        (`remote: Refused ...`). None for anything else, which is told as git
+        tells it. Never holds the token: git was given it in the environment.
+        """
+        rule = rule_refusal(message)
+        if rule is not None:
+            return "rule", rule
+        lowered = message.lower()
+        server = hosted_server(self.config.remote_url) or ""
+        if "returned error: 401" in lowered:
+            return (
+                "refused",
+                f"The collaboration sign-in was refused. {sign_in_message(server)}",
+            )
+        if "returned error: 404" in lowered or "not found" in lowered:
+            return (
+                "no_access",
+                "The collaboration server has no forum your account may use here: "
+                "it was deleted, or you are not in the team that owns it.",
+            )
+        return None
 
     def _record_failure(self, message: str) -> None:
         """Remember why the remote turned us away, and with which credential."""
@@ -1095,6 +1377,8 @@ class ForumClient:
             "message": _collapse(message.strip())[:500],
             "at": _now(),
         }
+        if self.hosted and (told := self._hosted_failure(message)) is not None:
+            record["reason"], record["message"] = told
         try:
             (self.repo_root / LAST_PUBLISH_FILE).write_text(
                 json.dumps(record), encoding="utf-8"
@@ -1106,6 +1390,24 @@ class ForumClient:
 
     def _clear_failure(self) -> None:
         (self.repo_root / LAST_PUBLISH_FILE).unlink(missing_ok=True)
+
+    def _clear_unreachable(self) -> None:
+        """
+        Forget a failure that said the remote could not be reached, once a fetch
+        has reached it. Only that one: a fetch proves the remote answers, not
+        that the credential may push (a read-only token fetches fine), so a
+        refusal stays until a push succeeds. Without this, a forum that went
+        away while nothing was waiting to publish read as unreachable until the
+        next post.
+        """
+        try:
+            data = json.loads(
+                (self.repo_root / LAST_PUBLISH_FILE).read_text(encoding="utf-8")
+            )
+        except OSError, ValueError:
+            return
+        if isinstance(data, dict) and data.get("reason") == "unreachable":
+            self._clear_failure()
 
     async def publish_error(self) -> dict[str, str] | None:
         """
@@ -1511,6 +1813,28 @@ class ForumClient:
             )
         return sorted(rows, key=lambda r: r.header.created_at, reverse=True)
 
+    async def thread_tips(self) -> tuple[bool, dict[str, str]]:
+        """
+        Fetch every thread once, bring each local ref up to date, and return
+        whether the fetch reached the remote and each thread's tip.
+
+        For a reader that keeps its own copy: a thread whose tip has not moved
+        since it last looked needs no reading. Never pushes. A thread missing
+        from the remote, or without a readable header, is left out.
+        """
+        await self.ensure_repo()
+        fetched = await self._try_fetch()
+        tips: dict[str, str] = {}
+        for thread in await self._thread_ids():
+            async with _thread_lock(self.repo, thread):
+                try:
+                    history = await self._integrate(thread, fetched=fetched)
+                except ThreadMissing:
+                    continue
+            if history.header is not None:
+                tips[thread] = history.tip
+        return fetched, tips
+
     async def read_thread(self, thread: str) -> Thread:
         """
         Read a thread, fetching first. A failed fetch reads what is here.
@@ -1537,6 +1861,14 @@ class ForumClient:
             else:
                 vouch[post.id] = VouchLane.UNATTRIBUTED.value
         published = await self.outbox.published(ours)
+        # On a hosted forum, who the server says pushed each post it has.
+        names = await self.pusher_names(
+            p.id for p in visible if p.id not in ours or p.id in published
+        )
+        visible = [
+            p.model_copy(update={"verified_name": names[p.id]}) if p.id in names else p
+            for p in visible
+        ]
         return Thread(
             header=history.header,
             status=thread_status(visible),
@@ -1565,9 +1897,11 @@ class ForumClient:
         reply_to: str | None,
         attachments: list[dict[str, Any]],
         post_id: str | None = None,
+        extra: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         post_id = post_id or str(uuid.uuid7())
         return post_id, {
+            **(extra or {}),
             "v": FORMAT_VERSION,
             "id": post_id,
             "thread": thread,
@@ -1612,10 +1946,13 @@ class ForumClient:
         reply_to: str | None = None,
         attachment: str | None = None,
         attachment_kind: str | None = None,
+        verdict: dict[str, Any] | None = None,
     ) -> Post:
         """
         Post as a role. Returns once the post is committed locally; publishing
         is attempted straight after and its failure never fails the post.
+
+        `verdict` goes into a DONE post's file as its structured verdict.
         """
         _validate_kind(kind)
         staged = None
@@ -1625,8 +1962,51 @@ class ForumClient:
                 raise ForumError(f"no staged attachment {attachment!r} on this client")
             if attachment_kind:
                 staged.kind = attachment_kind
+        if verdict is not None and kind != PostKind.DONE:
+            raise InvalidKind("only a DONE post carries a verdict")
         return await self._post(
-            thread, participant, kind, body, reply_to=reply_to, staged=staged
+            thread,
+            participant,
+            kind,
+            body,
+            reply_to=reply_to,
+            staged=staged,
+            extra={"verdict": verdict} if verdict is not None else None,
+        )
+
+    async def start_run(
+        self,
+        thread: str,
+        *,
+        rounds: int,
+        roster: dict[str, str],
+        expiry_seconds: float | None = None,
+    ) -> Post:
+        """
+        Announce that this install's agents are about to argue `rounds` rounds
+        in `thread` under `roster` (debate role → identity). Posted as the
+        operator, who asked for the run, and published at once when the remote
+        answers, so other installs see the run before its first turn.
+
+        On a hosted forum the server decides who may run: the post is published
+        before this returns, and one the server refuses because a run is live
+        is dropped, with nothing left to publish later, and raises `RunRefused`.
+
+        `expiry_seconds` is this install's run expiry, recorded in the post so
+        other installs and the server keep the run live as long as we would.
+        """
+        if rounds < 1 or not roster:
+            raise ValueError("a run needs at least one round and a roster")
+        spec = RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry_seconds)
+        return await self._post(
+            thread,
+            HUMAN,
+            PostKind.RUN,
+            "",
+            reply_to=None,
+            staged=None,
+            extra={"run": spec.model_dump(exclude_none=True)},
+            claim=self.hosted,
         )
 
     async def vote(
@@ -1648,6 +2028,8 @@ class ForumClient:
         reply_to: str | None,
         staged: StagedAttachment | None,
         target: str | None = None,
+        extra: dict[str, Any] | None = None,
+        claim: bool = False,
     ) -> Post:
         self._check_thread_id(thread)
         await self.ensure_repo()
@@ -1674,7 +2056,9 @@ class ForumClient:
                     )
                 )
                 meta.append(info)
-            _, doc = self._post_doc(thread, who, kind, body, reply_to, meta, post_id)
+            _, doc = self._post_doc(
+                thread, who, kind, body, reply_to, meta, post_id, extra
+            )
             entries.append(
                 ("100644", "blob", await self._blob(_dump(doc)), f"{post_id}.json")
             )
@@ -1693,12 +2077,46 @@ class ForumClient:
                 try:
                     await self._publish_locked(thread, fetched=True)
                 except (ForumCommandError, ForumError) as exc:
+                    if claim and (
+                        told := await self._drop_refused(thread, post_id, exc)
+                    ):
+                        raise RunRefused(told) from exc
                     logger.info(
                         "forum: thread %s stays unpublished for now: %s", thread, exc
                     )
         post = _parse_post(_dump(doc), thread=thread, stem=post_id, where="new post")
         assert post is not None
         return post
+
+    async def _drop_refused(
+        self, thread: str, post_id: str, error: Exception
+    ) -> str | None:
+        """
+        If the server refused the push under one of its rules, take our post
+        back out of the thread (its commit is the tip, or a replay of it is) and
+        forget it, so it is neither shown nor published later. Returns the
+        rule's message, or None when this was not a rule refusal and nothing
+        was changed. Thread lock held.
+        """
+        if not isinstance(error, ForumCommandError):
+            return None
+        told = rule_refusal(error.stderr)
+        if told is None:
+            return None
+        ref = THREAD_PREFIX + thread
+        tip = await self._rev(ref)
+        if tip is None:
+            return None
+        # Our RUN is the newest commit: posted last, under this thread's lock,
+        # and a replay keeps the subject.
+        subject = await self._text("show", "-s", "--format=%s", tip)
+        parent = await self._rev(f"{tip}^")
+        if subject != f"{PostKind.RUN} {post_id}" or parent is None:
+            return None
+        await self._cas(ref, parent, tip)
+        await self.outbox.forget([post_id])
+        self._clear_failure()
+        return told
 
     def _bound(
         self, post_id: str, staged: StagedAttachment
@@ -1738,6 +2156,119 @@ class ForumClient:
     async def unpublished(self, thread: str | None = None) -> int:
         """How many of this install's posts the remote does not have yet."""
         return await self.outbox.unpublished_count(thread)
+
+    # -- hosted forums ----------------------------------------------------- #
+
+    async def push_threads_for_import(self) -> int:
+        """
+        Push every local thread to the remote with the `vista-import` push
+        option, which lets a hosted forum take threads it does not have yet,
+        with their whole history, recorded as imported (the move onto a hosted
+        forum). Never forced; the remote's rules judge a thread it already has
+        as usual. Returns how many threads were sent. Raises
+        `ForumCommandError` when the remote refuses, with nothing recorded as
+        the forum's failure to publish: this is not a publish.
+        """
+        await self.ensure_repo()
+        url = self.config.remote_url
+        if url is None:
+            raise ForumDisabled("this forum has no remote")
+        threads = await self._thread_ids()
+        refs = [
+            THREAD_PREFIX + t for t in threads if await self._rev(THREAD_PREFIX + t)
+        ]
+        if refs:
+            await self._git(
+                "push",
+                "--quiet",
+                "-o",
+                "vista-import",
+                url,
+                *(f"{ref}:{ref}" for ref in refs),
+                network=True,
+            )
+        return len(refs)
+
+    def _pushers_path(self) -> Path:
+        return self.repo_root / PUSHERS_FILE
+
+    def _load_pushers(self, forum_id: str) -> dict[str, Any]:
+        """The cached push records: `{forum, after, names}`, empty when unusable."""
+        try:
+            data = json.loads(self._pushers_path().read_text(encoding="utf-8"))
+        except OSError, ValueError:
+            data = None
+        if (
+            not isinstance(data, dict)
+            or data.get("forum") != forum_id
+            or not isinstance(data.get("names"), dict)
+            or not isinstance(data.get("after"), int)
+        ):
+            return {"forum": forum_id, "after": 0, "names": {}}
+        return data
+
+    async def pusher_names(self, post_ids: Iterable[str]) -> dict[str, str]:
+        """
+        The verified name of each of `post_ids` the hosted forum's server has a
+        record for: the account that pushed it, from the server's own records
+        (`GET /forums/{id}/pushes`), never from the post file. Empty for a
+        forge. A post copied onto the forum when a project moved there has no
+        name, as one the server has not recorded yet (unpublished, or not yet
+        written). Asks the server only for records after the last it holds, and
+        only when a post asked about is not known yet; a server that cannot be
+        asked leaves the names there are.
+        """
+        url = self.config.remote_url
+        match = HOSTED_FORUM_PATH.search(url or "")
+        if not self.hosted or url is None or match is None:
+            return {}
+        forum_id, base = match.group(1), url[: match.start()]
+        wanted = set(post_ids)
+        cache = self._load_pushers(forum_id)
+        names: dict[str, str | None] = cache["names"]
+        if wanted - names.keys():
+            try:
+                await self._fetch_pushers(base, forum_id, cache)
+            except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+                logger.info("forum: could not read who pushed what: %s", exc)
+        return {p: n for p, n in names.items() if n and p in wanted}
+
+    async def _fetch_pushers(
+        self, base: str, forum_id: str, cache: dict[str, Any]
+    ) -> None:
+        headers = {
+            k: v.get_secret_value()
+            for k, v in (self.config.remote_headers or {}).items()
+        }
+        if not _private_channel(base):
+            return  # the sign-in is not sent here, so there is nothing to ask with
+        limit = 1000
+        async with httpx.AsyncClient(
+            base_url=base,
+            headers=headers,
+            timeout=httpx.Timeout(15.0, connect=5.0),
+            transport=collaboration.transport,
+        ) as http:
+            while True:
+                res = await http.get(
+                    f"/forums/{forum_id}/pushes",
+                    params={"after": cache["after"], "limit": limit},
+                )
+                res.raise_for_status()
+                rows = res.json()
+                for row in rows:
+                    cache["after"] = max(cache["after"], int(row["seq"]))
+                    if row["kind"] == "THREAD":
+                        continue  # the root's record: who opened the thread, no post
+                    name = None if row.get("imported") else row.get("pusher_name")
+                    cache["names"][str(row["post_id"])] = name
+                if len(rows) < limit:
+                    break
+        try:
+            self.repo_root.mkdir(parents=True, exist_ok=True)
+            self._pushers_path().write_text(json.dumps(cache), encoding="utf-8")
+        except OSError:
+            logger.info("forum: could not cache who pushed what", exc_info=True)
 
 
 # --------------------------------------------------------------------------- #

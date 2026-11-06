@@ -152,8 +152,26 @@ const post = (role: string, kind: string, model: string | null) => ({
   tools_used: [] as unknown[],
 });
 
-const DEBATE = {
+const THREAD_ID = "thread-1";
+
+/** The thread as the lab lists it: concluded here, nobody arguing now. */
+const THREAD = {
+  id: "00000000-0000-4000-8000-0000000000e1",
+  thread_id: THREAD_ID,
+  title: RUN.topic,
+  framing: null,
+  created_by: "a".repeat(32),
+  opened_here: true,
+  opened_at: NOW,
+  status: "done",
+  thread_missing: false,
+  current_verdict: null,
+  live_run: null,
   run: RUN,
+};
+
+const DEBATE = {
+  thread: THREAD,
   participants: [
     participant("proposer", null),
     participant("reviewer", "openai:gpt-5-mini"),
@@ -179,16 +197,24 @@ test.describe("hypothesis lab role models", () => {
   test("the roster line, each post and Continue show the models in use", async ({ page }) => {
     stub = await installStub(page, {
       ...ROUTES,
-      "GET /api/debates": by("run_id", { default: [RUN], [RUN_ID]: DEBATE }),
+      "GET /api/debates": by("thread_id", { default: [THREAD], [THREAD_ID]: DEBATE }),
       "GET /api/forum/status": STATUS,
     });
     await openLab(page);
     await page.locator(".debate-list__item").filter({ hasText: RUN.topic }).click();
 
     // A role on the default says so, and names what that is today.
-    await expect(page.locator(".debate-roster__models")).toHaveText(
-      "Proposer Default (claude-sonnet) · Reviewer gpt-5-mini · Referee gpt-5",
-    );
+    // One row per role, in role order, with its model and tools.
+    await expect(page.locator(".debate-roster__model")).toHaveText([
+      "Default (claude-sonnet)",
+      "gpt-5-mini",
+      "gpt-5",
+    ]);
+    await expect(page.locator(".debate-roster li strong")).toHaveText([
+      "proposer",
+      "reviewer",
+      "referee",
+    ]);
     // Each post names the model that wrote it.
     await expect(page.locator(".debate-post__model")).toHaveText(["claude-sonnet", "gpt-5-mini"]);
 
@@ -219,5 +245,156 @@ test.describe("hypothesis lab role models", () => {
         form.getByRole("button", { name: new RegExp(`^${role} model: Default \\(claude-sonnet\\)\\. `) }),
       ).toBeVisible();
     }
+  });
+});
+
+/**
+ * A thread another install opened (openspec change forum-shared-threads, 5.2):
+ * listed as theirs, joinable with your own agents, and not yours to close.
+ */
+const PEER_THREAD = {
+  ...THREAD,
+  id: "00000000-0000-4000-8000-0000000000e2",
+  thread_id: "thread-2",
+  title: "Does blowing on coffee cool it by evaporation?",
+  created_by: "b".repeat(32),
+  opened_here: false,
+  run: null,
+};
+
+test.describe("hypothesis lab shared threads", () => {
+  let stub: Stub | null = null;
+
+  test.afterEach(async () => {
+    if (stub) {
+      expect(await stub.unstubbed(), "page asked for a route with no fixture").toEqual([]);
+    }
+    stub = null;
+  });
+
+  test("a teammate's thread can be continued with your agents but not closed", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": by("thread_id", {
+        default: [PEER_THREAD],
+        "thread-2": { thread: PEER_THREAD, participants: [], posts: [], simulations: [] },
+      }),
+      "GET /api/forum/status": STATUS,
+    });
+    await openLab(page);
+    const item = page.locator(".debate-list__item").filter({ hasText: PEER_THREAD.title });
+    await expect(item).toContainText("opened by another install");
+    await item.click();
+
+    await expect(page.getByRole("button", { name: "Continue with your agents" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "End this debate" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Post as you" })).toBeVisible();
+    // No agents of this install in the thread: no roster, not an empty box.
+    await expect(page.locator(".debate-roster")).toHaveCount(0);
+  });
+});
+
+/**
+ * A forum hosted on the collaboration server (openspec change
+ * forum-collab-hosting, 3.3): a post the server recorded a pusher for shows that
+ * name as verified, and a refused sign-in links to the server's sign-in page.
+ */
+const HOSTED_SERVER = "https://obsidian.example.org/vista/api";
+const HOSTED_STATUS = {
+  ...STATUS,
+  remote: `${HOSTED_SERVER}/git/11111111-2222-4333-8444-555555555555.git`,
+};
+
+test.describe("hypothesis lab on a hosted forum", () => {
+  let stub: Stub | null = null;
+
+  test.afterEach(async () => {
+    if (stub) {
+      expect(await stub.unstubbed(), "page asked for a route with no fixture").toEqual([]);
+    }
+    stub = null;
+  });
+
+  test("a post with a verified name shows it, and one without stays unverified", async ({
+    page,
+  }) => {
+    const verified = {
+      ...post("proposer", "FINDING", null),
+      id: "row-peer-1",
+      post_id: "post-peer-1",
+      sender: "human",
+      vouch_lane: "peer-claimed",
+      run_id: null,
+      pusher_name: "Ada Lovelace",
+    };
+    const unnamed = {
+      ...post("reviewer", "RISK", null),
+      id: "row-peer-2",
+      post_id: "post-peer-2",
+      sender: "human",
+      vouch_lane: "peer-claimed",
+      run_id: null,
+      pusher_name: null,
+    };
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": by("thread_id", {
+        default: [THREAD],
+        [THREAD_ID]: { ...DEBATE, posts: [verified, unnamed] },
+      }),
+      "GET /api/forum/status": HOSTED_STATUS,
+    });
+    await openLab(page);
+    await page.locator(".debate-list__item").filter({ hasText: RUN.topic }).click();
+
+    await expect(page.locator(".debate-post__verified")).toHaveText("Ada Lovelace · verified");
+    await expect(page.locator(".debate-post__unverified")).toHaveCount(1);
+  });
+
+  test("a refused sign-in is explained, with a link to the server's sign-in page", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": [],
+      "GET /api/forum/status": {
+        ...HOSTED_STATUS,
+        unpublished: 1,
+        publish_error: {
+          reason: "refused",
+          credential: "collaboration",
+          message: `The collaboration sign-in was refused. Get a token from ${HOSTED_SERVER}/sign-in and paste it under Settings → Collaboration.`,
+          at: "2026-11-05T16:00:00+00:00",
+        },
+      },
+    });
+    await openLab(page);
+
+    const notice = page.getByRole("alert").filter({ hasText: "sign-in was refused" });
+    await expect(notice).toBeVisible();
+    await expect(notice.getByRole("link", { name: "Open the sign-in page" })).toHaveAttribute(
+      "href",
+      `${HOSTED_SERVER}/sign-in`,
+    );
+  });
+
+  test("a rule the server enforced is shown by its message", async ({ page }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/debates": [],
+      "GET /api/forum/status": {
+        ...HOSTED_STATUS,
+        publish_error: {
+          reason: "rule",
+          credential: "collaboration",
+          message: "Only the user who opened this thread may close it.",
+          at: "2026-11-05T16:00:00+00:00",
+        },
+      },
+    });
+    await openLab(page);
+    await expect(page.getByText("Only the user who opened this thread may close it.")).toBeVisible();
   });
 });

@@ -32,6 +32,7 @@ from vista_backend.services.forum_git import (
     Participant,
     Post,
     PostKind,
+    RunSpec,
     SyncResult,
     Thread,
     ThreadClosed,
@@ -211,6 +212,14 @@ class FakeForumClient:
             )
         return sorted(rows, key=lambda r: r.header.created_at, reverse=True)
 
+    async def thread_tips(self) -> tuple[bool, dict[str, str]]:
+        """Each thread's "tip": its last post id, or the thread id when empty."""
+        reached = self.forum.remote is not None and self.forum.online
+        return reached, {
+            tid: (t.entries[-1].post.id if t.entries else tid)
+            for tid, t in self.forum.threads.items()
+        }
+
     async def close_thread(self, thread: str) -> None:
         t = self._thread(thread)
         if any(e.post.kind == PostKind.CLOSED for e in t.entries):
@@ -230,16 +239,21 @@ class FakeForumClient:
         attachments: list[dict[str, Any]] | None = None,
         ours: bool = True,
         origin: str | None = None,
+        run: RunSpec | None = None,
+        verdict: dict[str, Any] | None = None,
+        ts: str | None = None,
     ) -> Post:
         t = self._thread(thread)
         post = Post(
+            run=run,
+            verdict=verdict,
             id=str(uuid.uuid7()),
             thread=thread,
             kind=str(kind),
             body=body,
             sender=who.identity,
             role=who.role,
-            ts=_now(),
+            ts=ts or _now(),
             origin=origin if not ours else self.host_id,
             reply_to=reply_to,
             attachments=attachments or [],
@@ -281,8 +295,11 @@ class FakeForumClient:
         reply_to: str | None = None,
         attachment: str | None = None,
         attachment_kind: str | None = None,
+        verdict: dict[str, Any] | None = None,
     ) -> Post:
         _validate(kind)
+        if verdict is not None and kind != PostKind.DONE:
+            raise InvalidKind("only a DONE post carries a verdict")
         self._refuse_closed(thread)
         meta = []
         staged = None
@@ -300,11 +317,36 @@ class FakeForumClient:
                 }
             ]
         post = self._append(
-            thread, participant, kind, body, reply_to=reply_to, attachments=meta
+            thread,
+            participant,
+            kind,
+            body,
+            reply_to=reply_to,
+            attachments=meta,
+            verdict=verdict,
         )
         if staged is not None:
             self.forum.attachments[post.id] = (staged[0], staged[1])
         return post
+
+    async def start_run(
+        self,
+        thread: str,
+        *,
+        rounds: int,
+        roster: dict[str, str],
+        expiry_seconds: float | None = None,
+    ) -> Post:
+        if rounds < 1 or not roster:
+            raise ValueError("a run needs at least one round and a roster")
+        self._refuse_closed(thread)
+        return self._append(
+            thread,
+            HUMAN,
+            PostKind.RUN,
+            "",
+            run=RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry_seconds),
+        )
 
     async def vote(
         self, participant: Participant, thread: str, post_id: str, *, up: bool = True
@@ -332,6 +374,9 @@ class FakeForumClient:
         role: str = "reviewer",
         origin: str | None = PEER_HOST_ID,
         reply_to: str | None = None,
+        run: RunSpec | None = None,
+        verdict: dict[str, Any] | None = None,
+        ts: str | None = None,
     ) -> Post:
         """A post that arrived over the remote from another install."""
         return self._append(
@@ -342,7 +387,41 @@ class FakeForumClient:
             reply_to=reply_to,
             ours=False,
             origin=origin,
+            run=run,
+            verdict=verdict,
+            ts=ts,
         )
+
+    def peer_thread(self, title: str, *, body: str | None = None) -> str:
+        """A thread another install opened."""
+        thread = str(uuid.uuid7())
+        self.forum.threads[thread] = _Thread(
+            ThreadHeader(
+                id=thread, title=title, created_at=_now(), created_by=PEER_HOST_ID
+            )
+        )
+        if body is not None:
+            self.peer_post(thread, body, kind="TASK", identity="human", role="human")
+        return thread
+
+    def peer_run(
+        self, thread: str, *, rounds: int = 3, ts: str | None = None
+    ) -> dict[str, str]:
+        """Another install starting a run in `thread`; returns its roster."""
+        roster = {
+            role: f"vista-{role}-99999999"
+            for role in ("proposer", "reviewer", "referee")
+        }
+        self.peer_post(
+            thread,
+            "",
+            kind="RUN",
+            identity="human",
+            role="human",
+            run=RunSpec(rounds=rounds, roster=roster),
+            ts=ts,
+        )
+        return roster
 
     def peer_close(self, thread: str) -> Post:
         return self.peer_post(thread, "", kind="CLOSED", identity="human", role="human")

@@ -214,6 +214,16 @@ class RemoteVersion(BaseModel):
     created_at: str
 
 
+class RemoteForum(BaseModel):
+    """A forum hosted on the server, and the URL git fetches and pushes it at."""
+
+    id: uuid.UUID
+    git_url: str
+    item_id: uuid.UUID | None = None
+    """ The project item it belongs to, once it is linked; None while it is only its owner's. """
+    created_at: str
+
+
 class _Blob(BaseModel):
     blob_ref: str
 
@@ -443,6 +453,31 @@ class CollaborationClient:
         if name is not None:
             body["name"] = name
         return await self._call(RemoteItem, "POST", f"/items/{item_id}/copy", json=body)
+
+    async def create_forum(self) -> RemoteForum:
+        """A new, empty forum owned by this account."""
+        return await self._call(RemoteForum, "POST", "/forums")
+
+    async def link_forum(self, forum_id: uuid.UUID, item_id: uuid.UUID) -> RemoteForum:
+        """
+        Link the account's unlinked forum to a project item, once: the item's
+        team is the forum's from then on. `CollaborationRefused` (409) when it
+        is linked already.
+        """
+        return await self._call(
+            RemoteForum,
+            "PUT",
+            f"/forums/{forum_id}/item",
+            json={"item_id": str(item_id)},
+        )
+
+    async def item_forum(self, item_id: uuid.UUID) -> RemoteForum:
+        """The forum linked to a project item; `CollaborationRefused` (404) when it has none."""
+        return await self._call(RemoteForum, "GET", f"/items/{item_id}/forum")
+
+    async def delete_forum(self, forum_id: uuid.UUID) -> None:
+        """Delete the account's forum, which must not be linked (409 when it is)."""
+        await self._request("DELETE", f"/forums/{forum_id}")
 
     async def create_team(self, name: str) -> RemoteTeam:
         return await self._call(RemoteTeam, "POST", "/teams", json={"name": name})

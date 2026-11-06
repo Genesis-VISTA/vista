@@ -624,3 +624,21 @@ async def test_an_h5i_era_thread_id_reads_as_missing(session, forum_client):
     run = await _make_run(session)  # thread_id "t1": not a thread here
     result = await debate_service.refresh_from_forum(session, forum_client, run)
     assert result.thread_missing
+
+
+@pytest.mark.anyio
+async def test_a_verified_name_does_not_make_a_post_ours(session):
+    """
+    A hosted forum's server names who pushed a post. The projection keeps what
+    this install knows (`vouch_lane`) apart from that: a teammate's post stays
+    `peer-claimed`, and only this install's own posts are `host-observed`.
+    """
+    run = await _make_run(session)
+    bobs = _post("p1", "FINDING", "claim", "human", "human")
+    thread = _thread(bobs, lanes={"p1": "peer-claimed"})
+    thread.posts[0] = thread.posts[0].model_copy(update={"verified_name": "Bob"})
+
+    await debate_service.project_thread(session, run_id=run.id, thread=thread)
+
+    (stored,) = await debate_service.list_posts(session, run_id=run.id)
+    assert stored.vouch_lane == "peer-claimed"

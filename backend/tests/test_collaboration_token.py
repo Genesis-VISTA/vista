@@ -173,3 +173,45 @@ async def test_the_token_is_write_only(session):
         assert "secret-t" not in res.text
         removed = await client.put("/settings", json={"collaboration_token": ""})
     assert removed.json()["has_collaboration_token"] is False
+
+
+async def test_the_sign_in_git_sends_to_a_hosted_forum_is_the_one_the_server_accepts(
+    oidc_server, session, monkeypatch, git_ok
+):
+    """
+    A hosted forum's URL is under the server's address, and git gets the same
+    sign-in the collaboration client sends: the pasted token as a bearer. Checked
+    against a server in `oidc` mode, which believes nothing else.
+    """
+    from vista_backend.agents.forum.project_forum import (
+        forum_config_for,
+        hosted_forum_id,
+        sign_in_headers,
+    )
+    from vista_backend.config import ForumSettings, settings as app_settings
+    from vista_backend.db.schemas import ProjectTable
+    from vista_backend.services.local_settings import get
+
+    # The lab is off unless the deployment turns it on; a developer's `.env`
+    # usually does, CI does not.
+    monkeypatch.setattr(app_settings, "forum", ForumSettings(enabled=True))
+
+    forum = "11111111-2222-4333-8444-555555555555"
+    url = f"{URL}/git/{forum}.git"
+    token = oidc_server.token()
+    await _save(session, collaboration_server_url=URL, collaboration_token=token)
+    row = await get(session)
+    assert str(hosted_forum_id(url, row)) == forum
+
+    config = forum_config_for(ProjectTable(name="p", forum_repo_url=url), row)
+    assert config is not None and config.remote_token is None
+    assert config.remote_token_source == "collaboration"
+    sent = {k: v.get_secret_value() for k, v in sign_in_headers(row).items()}
+    assert sent["Authorization"] == f"Bearer {token}"
+
+    async with httpx.AsyncClient(
+        transport=collaboration.transport, base_url=URL
+    ) as http:
+        assert (await http.get("/me", headers=sent)).status_code == 200
+        wrong = {**sent, "Authorization": "Bearer not-the-token"}
+        assert (await http.get("/me", headers=wrong)).status_code == 401

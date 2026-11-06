@@ -21,12 +21,20 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
+from typing import Any
+from urllib.parse import quote
 
 from pydantic import SecretStr
 
 from ...config import ForumSettings, settings
 from ...db.schemas import LocalSettingsTable, ProjectTable
-from ...services.forum_git import ForumClient, ForumDisabled
+from ...services.collaboration import DISPLAY_NAME_HEADER, INSTALL_ID_HEADER
+from ...services.forum_git import (
+    COLLABORATION_CREDENTIAL,
+    HOSTED_FORUM_PATH,
+    ForumClient,
+    ForumDisabled,
+)
 from ...services.git_check import git_status
 from ...services.repo_tokens import repo_token
 
@@ -67,6 +75,49 @@ def forum_url_of(project: ProjectTable) -> str | None:
     return url or None
 
 
+def collaboration_server_in_effect(local: Any) -> str | None:
+    """
+    The collaboration server's address in effect: the researcher's (from
+    Settings), else the installation's, as `services.collaboration.server_url`
+    decides. `local` is the settings row or the public model.
+    """
+    url = (
+        getattr(local, "collaboration_server_url", None)
+        or settings.collaboration_server_url
+    )
+    return url.rstrip("/") if url else None
+
+
+def hosted_forum_id(url: str | None, local: Any) -> uuid.UUID | None:
+    """
+    The forum's id when `url` is a forum hosted on the configured collaboration
+    server (`<server>/git/<id>.git`), else None: a forge's URL, or a hosted one
+    of any other server, is an ordinary remote.
+    """
+    server = collaboration_server_in_effect(local) if local is not None else None
+    match = HOSTED_FORUM_PATH.search(url or "")
+    if server is None or match is None or (url or "")[: match.start()] != server:
+        return None
+    try:
+        return uuid.UUID(match.group(1))
+    except ValueError:
+        return None
+
+
+def sign_in_headers(local: Any) -> dict[str, SecretStr]:
+    """
+    What the collaboration client sends to identify this install: the bearer
+    token pasted from the server's sign-in page when there is one, and the
+    install's id and name (which a development server believes instead).
+    """
+    headers = {INSTALL_ID_HEADER: str(local.install_id)}
+    if local.display_name:
+        headers[DISPLAY_NAME_HEADER] = quote(local.display_name, safe="")
+    if local.collaboration_token:
+        headers["Authorization"] = f"Bearer {local.collaboration_token}"
+    return {k: SecretStr(v) for k, v in headers.items()}
+
+
 def forum_config_for(
     project: ProjectTable, local: LocalSettingsTable | None = None
 ) -> ForumSettings | None:
@@ -81,21 +132,30 @@ def forum_config_for(
     forum.
 
     The token is `repo_token`'s choice for the forum's URL: the Settings token
-    for the host, if any. Without `local` there is no token
-    at all, which only `lab_enabled` relies on — it asks whether a lab exists,
-    and never talks to the remote.
+    for the host, if any. A URL under the configured collaboration server's
+    address is a hosted forum instead: it gets that server's sign-in
+    (`remote_headers`) and never a forge token. Without `local` there is no
+    credential at all, which only `lab_enabled` relies on — it asks whether a
+    lab exists, and never talks to the remote.
     """
     url = forum_url_of(project)
     if url is None or not settings.forum.enabled or not git_status().ok:
         return None
-    token = repo_token(url, local) if local is not None else None
-    return settings.forum.model_copy(
-        update={
-            "repo_root": forum_root(project.id),
-            "remote_url": url,
+    if local is not None and hosted_forum_id(url, local) is not None:
+        credential: dict[str, Any] = {
+            "remote_token": None,
+            "remote_token_source": COLLABORATION_CREDENTIAL,
+            "remote_headers": sign_in_headers(local),
+        }
+    else:
+        token = repo_token(url, local) if local is not None else None
+        credential = {
             "remote_token": SecretStr(token.value) if token else None,
             "remote_token_source": token.source if token else None,
+            "remote_headers": None,
         }
+    return settings.forum.model_copy(
+        update={"repo_root": forum_root(project.id), "remote_url": url, **credential}
     )
 
 

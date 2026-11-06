@@ -137,6 +137,18 @@ class ForumSettings(BaseModel):
     this bounds the stall rather than deciding whether the evidence is used.
     """
 
+    run_expiry_margin_seconds: float = 900.0
+    """ How much longer than a turn's longest job wait a silent run is still live. """
+
+    @property
+    def run_expiry_seconds(self) -> float:
+        """
+        How long a run may go without a post before others may Continue the
+        thread: the longest a turn may wait for a simulation, plus a margin.
+        A run waiting on a job posts nothing for that long and is not dead.
+        """
+        return self.max_job_wait_seconds + self.run_expiry_margin_seconds
+
     job_poll_seconds: float = 15.0
     """
     How often a waiting role re-checks its job.
@@ -173,9 +185,21 @@ class ForumSettings(BaseModel):
 
     remote_token_source: str | None = None
     """
-    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or None
-    when there is none and git uses the system's credentials. A failed publish
-    names it, so the person knows which token to fix. Not configuration.
+    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or
+    `collaboration` for a forum hosted on the collaboration server (see
+    `remote_headers`), or None when there is none and git uses the system's
+    credentials. A failed publish names it, so the person knows which credential
+    to fix. Not configuration.
+    """
+
+    remote_headers: dict[str, SecretStr] | None = None
+    """
+    For a forum hosted on the collaboration server: the sign-in headers git
+    sends to `remote_url` instead of a forge token (the bearer token, and the
+    installation's id and name, as the collaboration client sends them). Set by
+    `forum_config_for` and only for a URL under the server's address; a forge
+    URL never has them, and a hosted one never has `remote_token`. Not
+    configuration.
     """
 
     max_simulations: int = 2

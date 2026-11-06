@@ -1,3 +1,4 @@
+import { hostedForumServer } from "./debates";
 import type { LocalSettings } from "./settings";
 
 /**
@@ -16,12 +17,17 @@ export type SettingsTokens = Pick<LocalSettings, "has_github_token" | "has_gitla
  * Settings token for the forum's host, else the system git's credentials. Only
  * `https://` gets a token, so an SSH or plain-HTTP remote always uses the system
  * git. Null for an empty URL, where there is no forum.
+ *
+ * A forum hosted on the collaboration server (`collaborationServer`, the one in
+ * effect) is reached with the collaboration sign-in and no forge token.
  */
 export function forumCredential(
   repoUrl: string,
   tokens: SettingsTokens,
-): "settings-github" | "settings-gitlab" | "system-git" | null {
+  collaborationServer?: string | null,
+): "settings-github" | "settings-gitlab" | "system-git" | "collaboration" | null {
   if (!repoUrl.trim()) return null;
+  if (collaborationServer && hostedForumServer(repoUrl, collaborationServer)) return "collaboration";
   let parsed: URL;
   try {
     parsed = new URL(repoUrl.trim());

@@ -74,6 +74,16 @@ cat /sw/holly/apps/vista/vista/collaboration_server/deploy/holly/vista-collab.se
 sudo systemctl daemon-reload && sudo systemctl enable --now vista-collab
 ```
 
+## Hosted forums
+
+Hosted Hypothesis Lab forums need **git 2.34 or later** on Holly (the server finds out at
+startup; without it forum routes answer `503` and items keep working) and a gateway that streams
+git's requests (large POST bodies, no response buffering, generous timeouts) and passes on the
+public scheme and `/vista/api` prefix, since the forum URLs the server hands out are built from
+them. Neither has been checked on this deployment yet: that is task 4.1 of the
+`forum-collab-hosting` change. See
+[Forums](../../../docs/collaboration-server.md#forums).
+
 ## Follow-ups
 
 - **Renewable sign-ins.** A token from `/sign-in` cannot be renewed: researchers fetch a new
