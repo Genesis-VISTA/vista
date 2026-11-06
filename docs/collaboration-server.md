@@ -140,7 +140,7 @@ forum route answers `503` and items go on working.
 | Route | |
 |---|---|
 | `POST /forums` | a new, empty forum owned by the caller: `{id, git_url, item_id, created_at}` (`201`) |
-| `PUT /forums/{id}/item` | `{item_id}`: link the caller's forum to a `project` item they can see. `403` for a member who is not the owner, `409` when the forum is linked already, the item already has a forum, or the item is not a project |
+| `PUT /forums/{id}/item` | `{item_id}`: link the caller's forum to a `project` item they created. `403` for a member who is not the forum's owner or did not create the item, `409` when the forum is linked already, the item already has a forum, or the item is not a project |
 | `GET /items/{id}/forum` | the forum linked to an item the caller can see; `404` when it has none |
 | `DELETE /forums/{id}` | delete an unlinked forum and its repository (`204`). `403` for a non-owner who can see it, `409` once it is linked |
 | `GET /forums/{id}/pushes?after=&limit=` | the push records with a `seq` above `after` (default 0), at most `limit` (default 1000, up to 5000), oldest first |

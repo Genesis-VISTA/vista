@@ -659,6 +659,22 @@ def test_a_forum_is_linked_once_by_its_owner(live):
 
 
 @needs_git
+def test_only_an_items_creator_links_a_forum_to_it(live):
+    with live.api() as ada, live.api(OTHER_INSTALL_ID, "Grace") as grace:
+        item = ada.post(
+            "/items",
+            json={"kind": "project", "name": "p", "team_id": PUBLIC, "manifest": {}},
+        ).json()
+        theirs = grace.post("/forums").json()
+        res = grace.put(f"/forums/{theirs['id']}/item", json={"item_id": item["id"]})
+        assert res.status_code == 403, res.text
+        assert "created" in res.json()["detail"]
+        mine = ada.post("/forums").json()
+        res = ada.put(f"/forums/{mine['id']}/item", json={"item_id": item["id"]})
+        assert res.status_code == 200, res.text
+
+
+@needs_git
 def test_an_unlinked_forum_is_deleted_and_a_linked_one_stays(forum, live):
     with live.api() as ada, live.api(OTHER_INSTALL_ID, "Grace") as grace:
         assert ada.delete(f"/forums/{forum.id}").status_code == 409

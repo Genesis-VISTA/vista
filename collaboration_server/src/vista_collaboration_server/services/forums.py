@@ -164,8 +164,8 @@ async def link(
     session: AsyncSession, forum_id: uuid.UUID, item_id: uuid.UUID, user: User
 ) -> ForumTable:
     """
-    Link the forum to a `project` item `user` can see, once. Owner only: `403`
-    for anyone else who can see the forum. A forum already linked, or an item
+    Link the forum to a `project` item `user` created, once. Owner only: `403`
+    for anyone else who can see the forum, and for an item someone else created. A forum already linked, or an item
     that already has a forum, is `Conflict`.
     """
     from .items import get_item
@@ -176,6 +176,11 @@ async def link(
             status_code=403, detail="Only the forum's owner can do this."
         )
     item = await get_item(session, item_id, user)
+    if item.created_by != user.sub:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the user who created an item can link a forum to it.",
+        )
     if item.kind != "project":
         raise Conflict("A forum can be linked only to a project.")
     try:
