@@ -31,6 +31,7 @@ traceback in it.
 """
 
 import json
+import math
 import os
 import re
 import sqlite3
@@ -157,8 +158,13 @@ def _usable_run(value: object) -> dict[str, object] | None:
     return value
 
 
-MAX_STATED_RUN_EXPIRY = 24 * 3600.0
-""" The longest run expiry a RUN post may ask for, in seconds. """
+MAX_STATED_RUN_EXPIRY = 3 * 3600.0
+"""
+The longest run expiry a RUN post may ask for, in seconds. Three hours covers
+a job-wait setting of up to about 2 3/4 hours plus the 15-minute margin, while
+a single RUN by any team member can hold a thread against Continue for at most
+3 hours, not a day. Must match the backend's `forum_git.MAX_STATED_RUN_EXPIRY`.
+"""
 
 
 def effective_run_expiry(own: float, run: dict[str, object]) -> float:
@@ -169,9 +175,15 @@ def effective_run_expiry(own: float, run: dict[str, object]) -> float:
     `own`. The backend's `forum_git.effective_run_expiry` is the same rule.
     """
     stated = run.get("expiry_seconds")
-    if isinstance(stated, bool) or not isinstance(stated, int | float) or stated <= 0:
+    if isinstance(stated, bool) or not isinstance(stated, int | float):
         return own
-    return max(own, min(float(stated), MAX_STATED_RUN_EXPIRY))
+    try:
+        number = float(stated)
+    except OverflowError:
+        return own
+    if not math.isfinite(number) or number <= 0:
+        return own
+    return max(own, min(number, MAX_STATED_RUN_EXPIRY))
 
 
 def entries(revs: list[str], thread_id: str) -> list[Entry]:

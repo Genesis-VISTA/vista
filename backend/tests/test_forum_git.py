@@ -1194,10 +1194,42 @@ def test_a_run_may_state_a_longer_expiry_than_the_readers():
     )
 
 
-def test_a_stated_expiry_is_capped():
-    absurd = _run(expiry_seconds=10**9)
-    now = T0 + timedelta(hours=25)
-    assert forum_git.live_run([absurd], now=now, expiry=EXPIRY) is None
+def test_a_stated_expiry_is_capped_at_three_hours():
+    assert forum_git.MAX_STATED_RUN_EXPIRY == 3 * 3600
+    ten_hours = _run(expiry_seconds=10 * 3600)
+    assert (
+        forum_git.live_run(
+            [ten_hours], now=T0 + timedelta(hours=2, minutes=59), expiry=EXPIRY
+        )
+        is not None
+    )
+    assert (
+        forum_git.live_run(
+            [ten_hours], now=T0 + timedelta(hours=3, minutes=1), expiry=EXPIRY
+        )
+        is None
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "stated",
+    [10**400, "soon", True, -5, 0, None, [1], float("inf"), float("nan")],
+    ids=repr,
+)
+async def test_an_unusable_stated_expiry_never_blocks_a_thread(a, remote, stated):
+    thread = await a.create_thread("t")
+    peer_post(
+        remote,
+        thread,
+        kind="RUN",
+        run={"rounds": 2, "roster": ROSTER, "expiry_seconds": stated},
+    )
+    read = await a.read_thread(thread)
+    [marker] = read.posts
+    assert marker.run is not None and marker.run.expiry_seconds is None
+    at = datetime.fromisoformat(marker.ts) + timedelta(hours=2)
+    assert forum_git.live_run(read.posts, now=at, expiry=EXPIRY) is None
 
 
 @pytest.mark.anyio

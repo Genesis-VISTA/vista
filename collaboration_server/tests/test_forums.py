@@ -24,7 +24,7 @@ import uvicorn
 
 from vista_collaboration_server.api.app import create_app
 from vista_collaboration_server.config import CollabSettings
-from vista_collaboration_server.services import forums
+from vista_collaboration_server.services import forum_hook, forums
 from vista_collaboration_server.services.identity import (
     DISPLAY_NAME_HEADER,
     INSTALL_ID_HEADER,
@@ -490,12 +490,47 @@ def test_a_run_stays_live_for_the_expiry_its_starter_stated(forum):
 @needs_git
 def test_a_stated_expiry_is_capped_and_a_bad_one_ignored(forum):
     forum.ada.open_thread("t1")
-    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=10**9))
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=10 * 3600))
     _ok(forum.ada.push(forum.url, "t1"))
-    old = datetime.now(UTC) - timedelta(hours=30)
+    old = datetime.now(UTC) - timedelta(hours=4)
     for p in forum.live.pushes(forum.id):
         forum.set_received_at(p["post_id"], old)
     forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=-5))
+    _ok(forum.ada.push(forum.url, "t1"))
+
+
+@pytest.mark.parametrize(
+    "stated", [10**400, float("inf"), float("nan"), True, -5, "x", None, [1]]
+)
+def test_an_unusable_stated_expiry_is_the_servers_own(stated):
+    assert forum_hook.effective_run_expiry(2700, {"expiry_seconds": stated}) == 2700
+
+
+def test_a_stated_expiry_is_capped_at_three_hours():
+    assert forum_hook.MAX_STATED_RUN_EXPIRY == 3 * 3600
+    got = forum_hook.effective_run_expiry(2700, {"expiry_seconds": 10 * 3600})
+    assert got == 3 * 3600
+
+
+@needs_git
+def test_a_run_with_an_oversized_expiry_does_not_stop_the_thread(forum):
+    forum.ada.open_thread("t1")
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=10**400))
+    _ok(forum.ada.push(forum.url, "t1"))
+    # Live: a second RUN is refused, judged normally rather than crashing.
+    forum.ada.post("t1", "RUN", **_run_post())
+    _refused(forum.ada.push(forum.url, "t1"), "run is already live")
+
+
+@needs_git
+def test_an_expired_run_with_an_oversized_expiry_lets_the_thread_go_on(forum):
+    forum.ada.open_thread("t1")
+    forum.ada.post("t1", "RUN", **_run_post(expiry_seconds=10**400))
+    _ok(forum.ada.push(forum.url, "t1"))
+    old = datetime.now(UTC) - timedelta(hours=1)
+    for p in forum.live.pushes(forum.id):
+        forum.set_received_at(p["post_id"], old)
+    forum.ada.post("t1", "RUN", **_run_post())
     _ok(forum.ada.push(forum.url, "t1"))
 
 

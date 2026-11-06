@@ -32,6 +32,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import math
 import logging
 import os
 import re
@@ -317,10 +318,27 @@ def _parse_run(value: object) -> RunSpec | None:
         return None
     if not all(isinstance(k, str) and isinstance(v, str) for k, v in roster.items()):
         return None
-    expiry = value.get("expiry_seconds")
-    if isinstance(expiry, bool) or not isinstance(expiry, int | float) or expiry <= 0:
-        expiry = None
-    return RunSpec(rounds=rounds, roster=roster, expiry_seconds=expiry)
+    return RunSpec(
+        rounds=rounds,
+        roster=roster,
+        expiry_seconds=_usable_expiry(value.get("expiry_seconds")),
+    )
+
+
+def _usable_expiry(value: object) -> float | None:
+    """
+    A stated run expiry as a float, or None when it is not a finite positive
+    number (a bool, a string, NaN, infinity, a negative, an int too large for a
+    float): the reader then uses its own. Never raises, so a bad value cannot
+    keep a thread from being read.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) and number > 0 else None
 
 
 class Post(BaseModel):
@@ -501,8 +519,14 @@ def _parse_ts(value: str) -> datetime | None:
     return ts if ts.tzinfo is not None else ts.replace(tzinfo=UTC)
 
 
-MAX_STATED_RUN_EXPIRY = 24 * 3600.0
-""" The longest run expiry a RUN post may ask a reader to honour, in seconds. """
+MAX_STATED_RUN_EXPIRY = 3 * 3600.0
+"""
+The longest run expiry a RUN post may ask a reader to honour, in seconds.
+Three hours covers a job-wait setting of up to about 2 3/4 hours plus the
+15-minute margin, while a single RUN by any team member can hold a thread
+against Continue for at most 3 hours, not a day. Must match the collaboration
+server's `forum_hook.MAX_STATED_RUN_EXPIRY`.
+"""
 
 
 def effective_run_expiry(own: float, stated: float | None) -> float:
