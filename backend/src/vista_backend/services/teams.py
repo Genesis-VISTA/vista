@@ -3,7 +3,7 @@ Teams, from this installation's side: which team a new project, skill or
 knowledge base joins, what a project may use, and what may be published.
 
 Every project, skill and knowledge base here is either private (on this
-computer only, as everything made with Private selected is, and everything
+computer only, as everything made outside a team's project is, and everything
 VISTA seeds or bundles) or in one team on a collaboration server. A team
 means something only on its own server, so a row records both (`team_id`,
 `team_server`), and is in its team only while that server is the one in
@@ -12,21 +12,25 @@ when its server is. Nothing is erased by changing servers.
 
 A project uses only skills and knowledge bases of its own team, so that
 whoever can see the project can see everything it uses: checked whenever it
-gains one, not only when it is published. A private one is not published; it
-is copied to a team (`team_copy`).
+gains one, not only when it is published. A private one joins a team when it
+is first published, into the team the researcher chooses (`team_publish`);
+from then on it stays in that team.
 
 The teams themselves, and who is in them, are the collaboration server's
 (`collaboration.CollaborationClient`).
 """
 
 import uuid
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from fastapi import HTTPException
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
+
+if TYPE_CHECKING:
+    from .collaboration import CollaborationClient
 
 
 class Teamed(Protocol):
@@ -67,29 +71,42 @@ def require_team(team_id: uuid.UUID | None, label: str) -> uuid.UUID:
     if team_id is None:
         raise HTTPException(
             status_code=400,
-            detail=f"{label} is private, on this computer only: copy it to a "
-            "team to share it.",
+            detail=f"{label} is private, on this computer only: choose a team "
+            "to publish it to.",
         )
     return team_id
+
+
+async def require_still_in(
+    client: "CollaborationClient", team_id: uuid.UUID, label: str
+) -> None:
+    """
+    Refuse (400) to publish a new version of `label` to `team_id` when the
+    researcher has left that team: the server would refuse it as missing.
+    Like a private one, it is published into another of their teams instead
+    (`team_publish`). Asked before anything is uploaded.
+    """
+    me = await client.me()
+    if team_id not in {t.id for t in me.teams}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{label} is in a team you are no longer in: choose one of "
+            "your teams to publish it to.",
+        )
 
 
 async def team_for_new(
     session: AsyncSession, project: ProjectTable | None = None
 ) -> tuple[uuid.UUID | None, str | None]:
     """
-    The team a new skill or knowledge base joins, and its server: the
-    project's, when it is made for one (so the project can use it), else the
-    team selected here.
+    The team a new project, skill or knowledge base joins, and its server: the
+    project's, when it is made for one (so the project can use it), else none:
+    it is private until it is first published.
     """
-    from . import local_settings
-    from .collaboration import server_url
-
-    row = await local_settings.get(session)
-    url, _ = server_url(local_settings.to_public(row))
-    if project is not None:
-        team = team_of(project, url)
-    else:
-        team = await local_settings.selected_team(session, row)
+    if project is None:
+        return None, None
+    url = await current_url(session)
+    team = team_of(project, url)
     return team, url if team is not None else None
 
 
@@ -100,7 +117,7 @@ def _refusal(project: str, kind: str, names: list[str]) -> HTTPException:
         detail=f"{project} cannot use the {kind}{'s' if many else ''} "
         f"{', '.join(names)}: {'they are' if many else 'it is'} in another team. "
         "A project uses only its own team's skills and knowledge bases (a "
-        "private project, only private ones); copy them to its team first.",
+        "private project, only private ones).",
     )
 
 

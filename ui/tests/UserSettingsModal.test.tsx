@@ -47,10 +47,16 @@ const { useCollaborationMock, refreshCollaborationMock } = vi.hoisted(() => ({
   useCollaborationMock: vi.fn(),
   refreshCollaborationMock: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/collaboration", () => ({
-  useCollaboration: useCollaborationMock,
-  refreshCollaborationStatus: refreshCollaborationMock,
-}));
+vi.mock("@/lib/collaboration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/collaboration")>();
+  return {
+    useCollaboration: useCollaborationMock,
+    refreshCollaborationStatus: refreshCollaborationMock,
+    teamLabel: actual.teamLabel,
+    // The teams of whatever status the test's collaboration view holds.
+    useTeams: () => actual.teamsView({ status: useCollaborationMock().status, error: null }),
+  };
+});
 
 const { useVersionMock, checkNowMock, refreshVersionMock, startDownloadMock } = vi.hoisted(() => ({
   useVersionMock: vi.fn(),
@@ -109,7 +115,6 @@ function collaborationView(
           sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
           user: null,
           teams: [],
-          team_id: null,
           ...status,
         };
   const available = Boolean(full?.reachable && full.signed_in);
@@ -499,6 +504,38 @@ describe("UserSettingsModal collaboration", () => {
     const section = await openOn("Collaboration");
     expect(within(section).getByLabelText(/^Collaboration server/)).toHaveValue("http://127.0.0.1:8002");
     expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
+  });
+
+  it("lists the teams once signed in, and manages them from here", async () => {
+    const teamOf = (id: string, name: string, isPublic = false) => ({
+      id,
+      name,
+      public: isPublic,
+      created_by: "me",
+      created_by_name: "Me",
+      created_at: "2026-10-01T00:00:00Z",
+    });
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "settings",
+        server_version: "0.1.0",
+        teams: [
+          teamOf("00000000-0000-4000-8000-000000000000", "public", true),
+          teamOf("aaaaaaaa-0000-4000-8000-000000000001", "Alpha"),
+        ],
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Teams: Public, Alpha.");
+    await userEvent.click(within(section).getByRole("button", { name: "Manage teams…" }));
+    expect(await screen.findByRole("dialog", { name: "Teams" })).toBeInTheDocument();
   });
 
   it("shows why a configured server is unreachable, and checks again on request", async () => {

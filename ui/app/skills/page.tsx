@@ -18,10 +18,10 @@ import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
-import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishToTeamModal } from "@/components/PublishToTeamModal";
 import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { TeamBadge } from "@/components/TeamBadge";
 import { useTour } from "@/components/TourProvider";
 import { TOUR_SKILL } from "@/lib/default-project";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
@@ -46,7 +46,8 @@ export default function SkillsPage() {
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
 
-  const [copying, setCopying] = useState<SkillSummary | null>(null);
+  /** A private skill being published for the first time, into a team picked for it. */
+  const [publishingToTeam, setPublishingToTeam] = useState<SkillSummary | null>(null);
 
   const loadSkills = useCallback(() => {
     fetch("/api/skills")
@@ -187,11 +188,10 @@ export default function SkillsPage() {
     () => skills.filter((s) => loadedSlugs.has(s.slug) && matches(s)),
     [skills, loadedSlugs, matches]
   );
-  // The loaded ones are the project's, whatever team is selected; the others
-  // are the selected team's alone (Private's: those on this computer only).
+  // Every skill here, whatever its team; each card says which.
   const otherSkills = useMemo(
-    () => skills.filter((s) => !loadedSlugs.has(s.slug) && teams.show(s.teamId) && matches(s)),
-    [skills, loadedSlugs, matches, teams]
+    () => skills.filter((s) => !loadedSlugs.has(s.slug) && matches(s)),
+    [skills, loadedSlugs, matches]
   );
 
   // The cards the tour points at: the tour's skill (loaded first, else among the
@@ -209,11 +209,10 @@ export default function SkillsPage() {
     const onServer = isOnServer(skill, serverUrl);
     const head = skill.remoteId ? heads[skill.remoteId] : undefined;
     const behind = onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
-    // A private skill is shared by copying it to a team; one in a team
-    // publishes new versions to it.
-    // A bundled one too, once copied: it is then its team's copy of it.
-    const canPublish = Boolean(skill.teamId) && (!onServer || skill.modified);
-    const canCopy = teams.shown && copyTargets(teams.teams, skill.teamId).length > 0;
+    // A private one (or one of a team left since) is first published into a
+    // team picked for it; one in a team publishes its new versions there.
+    const team = teams.teamOf(skill.teamId);
+    const canPublish = team ? !onServer || skill.modified : teams.shown;
     // A project loads only skills of exactly its own team.
     const usable = usableInProject(skill.teamId, activeProject?.teamId);
     return (
@@ -263,30 +262,19 @@ export default function SkillsPage() {
               disabled={busy || !collab.available}
               onClick={(e) => {
                 e.stopPropagation();
-                if (onServer) void publish(skill);
+                if (!team) setPublishingToTeam(skill);
+                else if (onServer) void publish(skill);
                 else setPendingPublish(skill);
               }}
               title={
-                collab.available
-                  ? "Publish this skill to its team"
-                  : (collab.reason ?? undefined)
+                !collab.available
+                  ? (collab.reason ?? undefined)
+                  : team
+                    ? `Publish this skill to ${teams.teamName(team) ?? "its team"}`
+                    : "Choose a team to publish this skill to"
               }
             >
-              {onServer ? "Publish changes" : "Publish"}
-            </button>
-          )}
-          {canCopy && (
-            <button
-              type="button"
-              className="button ghost button-sm"
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCopying(skill);
-              }}
-              title="Copy this skill to a team"
-            >
-              Copy to team…
+              {!team ? "Publish…" : onServer ? "Publish changes" : "Publish"}
             </button>
           )}
           {behind && (
@@ -526,13 +514,12 @@ export default function SkillsPage() {
         />
       )}
 
-      {copying && (
-        <CopyToTeamModal
+      {publishingToTeam && (
+        <PublishToTeamModal
           kind="skill"
-          name={copying.slug}
-          teamId={copying.teamId}
-          onClose={() => setCopying(null)}
-          onCopied={() => {
+          name={publishingToTeam.slug}
+          onClose={() => setPublishingToTeam(null)}
+          onPublished={() => {
             loadSkills();
             refreshHeads();
             void refreshProjects();

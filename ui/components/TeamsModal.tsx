@@ -1,14 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   addMember,
   createTeam,
   leaveTeam,
   listMembers,
+  refreshCollaborationStatus,
   searchUsers,
-  selectTeam,
-  teamLabel,
   useTeams,
   type CollaborationUser,
   type TeamMember,
@@ -23,17 +23,36 @@ function displayName(user: CollaborationUser): string {
 }
 
 /**
- * Managing collaboration teams: the selected team's members, adding someone
- * to it, leaving it, and making a new team. A new team is selected once made,
- * since making one is nearly always the first step of working in it.
+ * Managing collaboration teams: one team's members (picked here), adding
+ * someone to it, leaving it, and making a new team, which is picked once made.
+ * Picking a team here only chooses which one to manage: what a project, skill
+ * or knowledge base is in is chosen when it is first published.
  *
  * Private is not a team, and the public team has no member list: everyone
  * who signs in is in it, and nobody can leave it.
+ *
+ * It opens over Settings, so it is drawn at the top of the page (a portal),
+ * not inside Settings' scrolling pane, and takes Escape for itself: Escape
+ * closes this, leaving Settings open.
  */
 export function TeamsModal({ onClose }: { onClose: () => void }) {
   const view = useTeams();
-  const team = view.selected;
-  const teamId = team && !team.public ? team.id : null;
+  const ownTeams = view.teams.filter((t) => !t.public);
+  const [picked, setPicked] = useState<string | null>(null);
+  /** The team just made here, until the researcher's teams, asked again, list it. */
+  const [made, setMade] = useState<{ id: string; name: string } | null>(null);
+  const awaitingMade = made !== null && picked === made.id && !ownTeams.some((t) => t.id === made.id);
+  // The first of their own teams until one is picked, or when the picked one is
+  // gone (left); never another team while the one just made is not listed yet,
+  // where members added would go to the wrong team.
+  const team = awaitingMade ? null : (ownTeams.find((t) => t.id === picked) ?? ownTeams[0] ?? null);
+  const teamId = team?.id ?? null;
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // Into this dialog, so Escape and Tab start here rather than in Settings below.
+    dialogRef.current?.focus();
+  }, []);
   // Kept with the team they are of, so switching teams never shows the last
   // team's members while the new list loads.
   const [loaded, setLoaded] = useState<
@@ -71,9 +90,10 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
     setNotice(null);
     try {
       const made = await createTeam(name);
-      await selectTeam(made.id);
+      setMade({ id: made.id, name: made.name });
+      setPicked(made.id);
       setNewName("");
-      setNotice(`Made the team ${made.name}, and selected it. New projects, skills and knowledge bases join it.`);
+      setNotice(`Made the team ${made.name}. Add its members below; publish something to share it with them.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "The team could not be made.");
     } finally {
@@ -100,7 +120,7 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
   async function leave() {
     if (!teamId || !team) return;
     const ok = window.confirm(
-      `Leave ${team.name}? Its projects, skills and knowledge bases stay on this computer, but you can no longer publish or update them, and you see none of its items on the server. Only a member can add you back.`,
+      `Leave ${team.name}? Its projects, skills and knowledge bases stay on this computer, but you can no longer publish or update them there, and you see none of its items on the server. Here they count as private again, and can be published into another team. Only a member can add you back.`,
     );
     if (!ok) return;
     setBusy(true);
@@ -108,7 +128,8 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
     setNotice(null);
     try {
       await leaveTeam(teamId);
-      setNotice(`You left ${team.name}. Private is selected.`);
+      setPicked(null);
+      setNotice(`You left ${team.name}.`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "You could not leave the team.");
     } finally {
@@ -118,11 +139,26 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
 
   const memberSubs = new Set((members ?? []).map((m) => m.sub));
 
-  return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
+  return createPortal(
+    <div
+      className="modal-backdrop"
+      onClick={(e) => {
+        // React carries the click up to Settings through the portal; it is this dialog's.
+        e.stopPropagation();
+        if (!busy) onClose();
+      }}
+    >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className="modal teams-modal"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key !== "Escape") return;
+          // Marked handled, so Settings' own Escape leaves Settings open.
+          e.preventDefault();
+          if (!busy) onClose();
+        }}
         role="dialog"
         aria-label="Teams"
       >
@@ -144,23 +180,49 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
+          <p className="teams-modal-note">
+            What you make here is private, on this computer only, until you
+            publish it: the first time, you choose its team, where it then stays.
+            Everyone who signs in to the collaboration server is in the public
+            team, so anyone there can see and import what is in it; a team of
+            your own is for only its members.
+          </p>
+
           <section className="teams-modal-section">
-            <h3 className="teams-modal-heading">{teamLabel(team)}</h3>
-            {!team ? (
+            {awaitingMade ? (
+              <div className="teams-modal-note">
+                {made.name} is made, but your list of teams could not be read again
+                yet, so its members cannot be shown.{" "}
+                <button
+                  type="button"
+                  className="button ghost button-xs"
+                  onClick={() => void refreshCollaborationStatus()}
+                >
+                  Check again
+                </button>
+              </div>
+            ) : !team ? (
               <p className="teams-modal-note">
-                Private is this computer only: what is made while it is selected,
-                and VISTA&rsquo;s own projects, skills and knowledge bases, are
-                not on the server, and cannot be published. Copy one to a team to
-                share it.
-              </p>
-            ) : !teamId ? (
-              <p className="teams-modal-note">
-                Everyone who signs in to the collaboration server is in the public
-                team, so what is in it, anyone there can see and import. Select or
-                make a team to work with only its members.
+                You are in no team of your own yet. Make one below to work with
+                only its members.
               </p>
             ) : (
               <>
+                <label className="project-modal-label">
+                  Team
+                  <select
+                    className="input"
+                    value={team.id}
+                    disabled={busy}
+                    onChange={(e) => setPicked(e.target.value)}
+                  >
+                    {ownTeams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <p className="teams-modal-note">
                   Only its members see its projects, skills and knowledge bases on
                   the server. Any member can add anyone who has signed in there.
@@ -223,7 +285,8 @@ export function TeamsModal({ onClose }: { onClose: () => void }) {
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -305,7 +368,11 @@ export function MemberPicker({
             setOpen(true);
           }}
           onKeyDown={(e) => {
-            if (e.key === "Escape") setOpen(false);
+            // Escape closes the open list first; with none open, the dialog.
+            if (e.key === "Escape" && open) {
+              e.stopPropagation();
+              setOpen(false);
+            }
           }}
         />
       </label>

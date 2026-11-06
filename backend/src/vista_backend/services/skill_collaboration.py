@@ -62,7 +62,7 @@ from .collaboration import (
     required_url,
     server_url,
 )
-from .teams import require_team, set_team, team_of
+from .teams import require_still_in, require_team, set_team, team_of
 from .skills import (
     build_skill_row,
     commit_skill_files,
@@ -353,6 +353,7 @@ async def publish_skill(
     team_id = require_team(team_of(row, url), name)
     edited_at = row.updated_at
     async with client_for(local) as client, work_dir() as tmp:
+        await require_still_in(client, team_id, name)
         archive = tmp / ARCHIVE_NAME
         manifest = await asyncio.to_thread(_pack_for_publish, row, archive)
         blob_ref = await client.upload_blob(archive)

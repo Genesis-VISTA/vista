@@ -147,12 +147,15 @@ empty; the server holds no seeds. The server chooses every item's id, and copies
 another team as a new one sharing its blob (`POST /items/{id}/copy`). Every item query filters
 through `teams.visible_teams`, as a condition rather than a set read first, so a publish
 checks it in its compare-and-set. On the backend every project, skill and knowledge base has a
-`team_id`, None being private (this computer only: everything made with Private selected, and
-everything VISTA seeds or bundles; `services/teams.py` there). A new one joins the selected
-team (`collaboration_team_id`), or its project's when made for one; an import joins its item's;
-a project uses only its own team's; a private one is not published but copied to a team
-(`services/team_copy.py`, recursively for a project). A row records its team's server too
-(`team_server`): on another server it is private, until that one is in effect again.
+`team_id`, None being private (this computer only: everything made here outside a team's
+project, and everything VISTA seeds or bundles; `services/teams.py` there). There is no team
+selector: a new one is private, or its project's team when made for one; an import joins its
+item's; a project uses only its own team's. A private one joins a team when it is first
+published, into a team the researcher picks (`POST /…/publish-to-team`,
+`services/team_publish.py`, recursively for a project), and stays in it: Publish sends its new
+versions there. One in a team the researcher has left counts as private for that. A row
+records its team's server too (`team_server`): on another server it is private, until that one
+is in effect again. The server's `POST /items/{id}/copy` is unused by VISTA.
 ```bash
 ./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
 cd collaboration_server && uv run vista-collaboration-server

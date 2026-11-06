@@ -214,10 +214,14 @@ Without one that answers, Publish and Import say why and do nothing.
 
 **Publishing.** Each card on `/projects` says where the project stands (*Not
 published*, *Version 2*, *Differs here from version 2*, *Version 3
-available*), and **Publish** sends it. The skills it loads go first: each one
-that is not on the server, or has changed since its version, is published, and
-the project's version names them by item and version. Skills bundled with
-VISTA are named as bundled and never published. The knowledge bases it
+available*), and **Publish** sends it. A new project is private; the first
+time, **Publish…** asks which team to publish it to, and brings its skills and
+knowledge bases into that team with it (one another project here also uses, or
+a skill bundled with VISTA, stays private, and the team's copy is imported
+beside it for this project). After that it stays in its team, and **Publish**
+sends new versions there. The skills it loads go first: each one that is not on
+the server, or has changed since its version, is published, and the project's
+version names them by item and version. The knowledge bases it
 searches go next, the same way, each with its PDFs and its index (see
 [Knowledge bases](#knowledge-bases-on-the-collaboration-server) below). A
 project that loads a skill or searches a knowledge base not on this computer is
@@ -313,9 +317,11 @@ the Next.js proxies in [ui/app/api/projects/](../ui/app/api/projects).
 | `PUT`    | `/projects/{name}`            | Full overwrite. 409 if the new name collides with another row.   |
 | `DELETE` | `/projects/{name}`            | Hard delete. 204 on success.                                     |
 | `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills and knowledge bases first. |
+| `POST`   | `/projects/{name}/publish-to-team` | First publish of a private project into a team (`{team_id}`), with its skills and knowledge bases. |
 | `GET`    | `/collaboration/projects`     | The server's projects, with any copy here.                       |
 | `POST`   | `/collaboration/projects/{id}/import` | Import with its skills and knowledge bases (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/knowledge-bases/{slug}/publish` | Publish a knowledge base's PDFs and index (`{on_top_of?, as_new?}`). |
+| `POST`   | `/knowledge-bases/{slug}/publish-to-team` | First publish of a private knowledge base into a team (`{team_id}`). |
 | `GET`    | `/collaboration/knowledge-bases` | The server's knowledge bases, with any copy here.            |
 | `POST`   | `/collaboration/knowledge-bases/{id}/import` | Import one (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/projects/{name}/agent/run`  | Run one agent turn (stateless; pass `message_history`).           |

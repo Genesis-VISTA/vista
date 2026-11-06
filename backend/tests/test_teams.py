@@ -1,9 +1,9 @@
 """
-Teams, from this installation's side: Private and the selected team, what a new
-project, skill or knowledge base joins, that a project uses only its own team's,
-that a private one is copied to a team rather than published, and Copy to team
-itself (`services/team_copy.py`). Against a real collaboration server mounted
-in-process (`collab_server` in conftest).
+Teams, from this installation's side: that a new project, skill or knowledge
+base is private unless made for a team's project, that a project uses only its
+own team's, that a private one joins a team only when first published into it
+(`services/team_publish.py`), and stays there. Against a real collaboration
+server mounted in-process (`collab_server` in conftest).
 """
 
 import uuid
@@ -21,7 +21,7 @@ from vista_backend.db.schemas import (
     SkillTable,
 )
 from vista_backend.services import local_settings
-from vista_backend.services.collaboration import PUBLIC_TEAM_ID, CollaborationClient
+from vista_backend.services.collaboration import CollaborationClient
 
 pytestmark = pytest.mark.anyio
 
@@ -62,12 +62,13 @@ async def _team(client, name: str = "salts") -> dict:
     return res.json()
 
 
-async def _select(client, team_id) -> None:
-    res = await client.put(
-        "/settings",
-        json={"collaboration_team_id": None if team_id is None else str(team_id)},
+async def _publish_to(client, kind: str, name: str, team_id) -> dict:
+    """First publish of private `name` (a `kind` route: skills, projects, knowledge-bases) into `team_id`."""
+    res = await client.post(
+        f"/{kind}/{name}/publish-to-team", json={"team_id": str(team_id)}
     )
     assert res.status_code == 200, res.text
+    return res.json()
 
 
 async def _skill(client, name: str, project: str | None = None):
@@ -98,39 +99,17 @@ async def _kb(session, slug: str, team_id=None) -> KnowledgeBaseTable:
 
 
 # ---------------------------------------------------------------------------
-# Private, and the selected team
+# The status, and leaving a team
 # ---------------------------------------------------------------------------
 
 
-async def test_the_status_lists_the_teams_and_the_one_selected(collab_server, session):
+async def test_the_status_lists_the_teams(collab_server, session):
     await _use_server(session)
     with api_client(session) as (client, _):
-        private = (await client.get("/collaboration/status")).json()
-        team = await _team(client)
-        await _select(client, team["id"])
-        selected = (await client.get("/collaboration/status")).json()
-        await _select(client, PUBLIC_TEAM_ID)
-        public = (await client.get("/collaboration/status")).json()
-    assert private["team_id"] is None
-    assert [t["name"] for t in selected["teams"]] == ["public", "salts"]
-    assert selected["team_id"] == team["id"]
-    assert public["team_id"] == str(PUBLIC_TEAM_ID)
-
-
-async def test_leaving_the_selected_team_selects_private(collab_server, session):
-    await _use_server(session)
-    async with _bea() as bea:
-        await bea.me()  # signed in once, so Ada can add her
-    with api_client(session) as (client, _):
-        team = await _team(client)
-        await client.post(
-            f"/collaboration/teams/{team['id']}/members", json={"sub": str(BEA)}
-        )
-        await _select(client, team["id"])
-        left = await client.delete(f"/collaboration/teams/{team['id']}/members/me")
-        now = (await client.get("/settings")).json()
-    assert left.status_code == 204, left.text
-    assert now["collaboration_team_id"] is None
+        await _team(client)
+        status = (await client.get("/collaboration/status")).json()
+    assert [t["name"] for t in status["teams"]] == ["public", "salts"]
+    assert "team_id" not in status
 
 
 async def test_users_are_found_to_add(collab_server, session):
@@ -150,11 +129,10 @@ async def test_another_server_makes_everything_here_private_until_back(
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
-        await _select(client, team["id"])
         await _skill(client, "teamed")
         await session.commit()
+        await _publish_to(client, "skills", "teamed", team["id"])
     await _use_server(session, "http://elsewhere.test:8002")
-    assert (await local_settings.get(session)).collaboration_team_id is None
     row = await _row(session, SkillTable, name="teamed")
     assert team_of(row, await current_url(session)) is None
     # Nothing was erased: back on its server, it is in its team again.
@@ -163,78 +141,52 @@ async def test_another_server_makes_everything_here_private_until_back(
     assert str(team_of(row, await current_url(session))) == team["id"]
 
 
-async def test_clearing_the_address_back_to_the_same_default_keeps_the_team(
-    collab_server, session, monkeypatch
-):
-    monkeypatch.setattr(settings, "collaboration_server_url", URL)
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        team = await _team(client)
-        await _select(client, team["id"])
-    await _use_server(session, None)
-    assert str((await local_settings.get(session)).collaboration_team_id) == team["id"]
-
-
-async def test_a_selected_team_one_is_no_longer_in_is_cleared(collab_server, session):
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        await _select(client, uuid.uuid4())
-        status = (await client.get("/collaboration/status")).json()
-        now = (await client.get("/settings")).json()
-    assert status["team_id"] is None
-    assert now["collaboration_team_id"] is None
-
-
 # ---------------------------------------------------------------------------
 # What a new resource joins, and what a project may use
 # ---------------------------------------------------------------------------
 
 
-async def test_new_resources_are_private_until_a_team_is_selected(
+async def test_new_resources_are_private_unless_made_for_a_teams_project(
     collab_server, session
 ):
     await _use_server(session)
     with api_client(session) as (client, _):
-        private = await _skill(client, "private-skill")
         team = await _team(client)
-        await _select(client, team["id"])
-        skill = await _skill(client, "team-skill")
-        project = await _project(client, "team-project")
+        skill = await _skill(client, "new-skill")
+        project = await _project(client, "new-project")
         kb = await client.post(
-            "/knowledge-bases", json={"slug": "team-papers", "name": "Papers"}
+            "/knowledge-bases", json={"slug": "new-papers", "name": "Papers"}
         )
-    assert private.json()["team_id"] is None
-    assert skill.json()["team_id"] == team["id"]
-    assert project.json()["team_id"] == team["id"]
+        await session.commit()
+        await _publish_to(client, "projects", "new-project", team["id"])
+        for_team = await _skill(client, "for-team", project="new-project")
+    assert skill.json()["team_id"] is None
+    assert project.json()["team_id"] is None
     assert kb.status_code == 201, kb.text
-    assert kb.json()["team_id"] == team["id"]
+    assert kb.json()["team_id"] is None
+    assert for_team.status_code == 201, for_team.text
+    assert for_team.json()["team_id"] == team["id"]
 
 
 async def test_a_project_uses_only_its_own_teams(collab_server, session):
     await _use_server(session)
     with api_client(session) as (client, _):
-        await _skill(client, "private-skill")
-        await _project(client, "private-lab", skills=["private-skill"])
         team = await _team(client)
-        await _select(client, team["id"])
-        await _skill(client, "team-skill")
-        mixed = await _project(client, "mixed", skills=["private-skill"])
+        await _skill(client, "private-skill")
         await _project(client, "team-lab")
+        await session.commit()
+        await _publish_to(client, "projects", "team-lab", team["id"])
+        await _skill(client, "team-skill", project="team-lab")
         update = await client.put(
             "/projects/team-lab", json={"name": "team-lab", "skills": ["private-skill"]}
         )
-        await _select(client, None)
         private_mixed = await _project(client, "private-mixed", skills=["team-skill"])
-        # Made for a project, a skill joins its team, whatever is selected.
-        made_here = await _skill(client, "for-team", project="team-lab")
-    for refused in (mixed, update, private_mixed):
+    for refused in (update, private_mixed):
         assert refused.status_code == 400, refused.text
         assert "another team" in refused.json()["detail"]
-    assert made_here.status_code == 201, made_here.text
-    assert made_here.json()["team_id"] == team["id"]
 
 
-async def test_a_private_resource_is_copied_not_published(collab_server, session):
+async def test_a_private_resource_needs_a_team_to_publish(collab_server, session):
     await _use_server(session)
     await _kb(session, "papers")
     with api_client(session) as (client, _):
@@ -247,9 +199,18 @@ async def test_a_private_resource_is_copied_not_published(collab_server, session
         ]
     for res in refusals:
         assert res.status_code == 400, res.text
-        assert "private" in res.json()["detail"]
+        assert "choose a team" in res.json()["detail"]
     async with _bea() as bea:
         assert await bea.list_items() == []
+
+
+async def test_the_copy_routes_are_gone(collab_server, session):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        team = await _team(client)
+        await _skill(client, "density")
+        res = await client.post("/skills/density/copy", json={"team_id": team["id"]})
+    assert res.status_code in (404, 405)
 
 
 # ---------------------------------------------------------------------------
@@ -257,17 +218,21 @@ async def test_a_private_resource_is_copied_not_published(collab_server, session
 # ---------------------------------------------------------------------------
 
 
-async def test_a_resource_publishes_to_its_own_team(collab_server, session):
+async def test_new_versions_publish_to_its_own_team(collab_server, session):
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
-        await _select(client, team["id"])
         await _skill(client, "team-skill")
+        await session.commit()
+        await _publish_to(client, "skills", "team-skill", team["id"])
+        await client.patch("/skills/team-skill", json={"description": "Changed."})
         await session.commit()
         res = await client.post("/skills/team-skill/publish", json={})
         listed = (await client.get("/collaboration/skills")).json()
     assert res.status_code == 200, res.text
-    assert [(s["name"], s["team_id"]) for s in listed] == [("team-skill", team["id"])]
+    assert [(s["name"], s["team_id"], s["head_version"]) for s in listed] == [
+        ("team-skill", team["id"], 2)
+    ]
     async with _bea() as bea:
         assert await bea.list_items() == []  # Bea is not in the team
 
@@ -292,14 +257,8 @@ async def test_an_import_joins_its_items_team(collab_server, session):
 
 
 # ---------------------------------------------------------------------------
-# Copy to team
+# Publishing a private one into a team
 # ---------------------------------------------------------------------------
-
-
-async def _copy(client, kind: str, name: str, team_id) -> dict:
-    res = await client.post(f"/{kind}/{name}/copy", json={"team_id": str(team_id)})
-    assert res.status_code == 200, res.text
-    return res.json()
 
 
 async def test_a_private_skill_is_published_into_the_team(collab_server, session):
@@ -308,8 +267,8 @@ async def test_a_private_skill_is_published_into_the_team(collab_server, session
         await _skill(client, "density")
         team = await _team(client)
         await session.commit()
-        result = await _copy(client, "skills", "density", team["id"])
-    assert result["copied"] == [
+        result = await _publish_to(client, "skills", "density", team["id"])
+    assert result["published"] == [
         {
             "kind": "skill",
             "name": "density",
@@ -327,65 +286,15 @@ async def test_a_private_skill_is_published_into_the_team(collab_server, session
         assert await bea.list_items() == []
 
 
-async def test_an_unchanged_skill_is_copied_by_the_server(
-    collab_server, session, monkeypatch
-):
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        first = await _team(client, "first")
-        second = await _team(client, "second")
-        await _select(client, first["id"])
-        await _skill(client, "density")
-        await session.commit()
-        await client.post("/skills/density/publish", json={})
-        original = (await _row(session, SkillTable, name="density")).remote_id
-
-        async def no_upload(*args, **kwargs):
-            raise AssertionError("an unchanged copy uploads nothing")
-
-        monkeypatch.setattr(CollaborationClient, "upload_blob", no_upload)
-        result = await _copy(client, "skills", "density", second["id"])
-        listed = (await client.get("/collaboration/skills")).json()
-    assert result["copied"][0]["how"] == "copied"
-    row = await _row(session, SkillTable, name="density")
-    assert str(row.team_id) == second["id"] and row.remote_id != original
-    by_team = {s["team_id"]: s["id"] for s in listed}
-    # The original stays, for the first team.
-    assert by_team == {first["id"]: str(original), second["id"]: str(row.remote_id)}
-
-
-async def test_a_changed_skill_is_copied_with_its_change(collab_server, session):
-    await _use_server(session)
-    with api_client(session) as (client, _):
-        first = await _team(client, "first")
-        second = await _team(client, "second")
-        await _select(client, first["id"])
-        await _skill(client, "density")
-        await session.commit()
-        await client.post("/skills/density/publish", json={})
-        await client.patch("/skills/density", json={"description": "Changed here."})
-        await session.commit()
-        result = await _copy(client, "skills", "density", second["id"])
-    assert result["copied"][0]["how"] == "published"
-    row = await _row(session, SkillTable, name="density")
-    remote_id, modified = row.remote_id, row.modified
-    async with CollaborationClient(
-        URL, install_id=uuid.UUID(await _ada_id(session)), display_name="Ada"
-    ) as ada:
-        version = await ada.get_version(remote_id, 1)
-    assert version.manifest["description"] == "Changed here."
-    assert modified is False
-
-
-async def test_a_skill_a_project_uses_is_copied_beside_it(collab_server, session):
+async def test_a_skill_a_project_uses_is_imported_beside_it(collab_server, session):
     await _use_server(session)
     with api_client(session) as (client, _):
         await _skill(client, "density")
         await _project(client, "lab", skills=["density"])
         team = await _team(client)
         await session.commit()
-        result = await _copy(client, "skills", "density", team["id"])
-    assert result["copied"] == [
+        result = await _publish_to(client, "skills", "density", team["id"])
+    assert result["published"] == [
         {
             "kind": "skill",
             "name": "density",
@@ -400,7 +309,7 @@ async def test_a_skill_a_project_uses_is_copied_beside_it(collab_server, session
     assert (await _row(session, ProjectTable, name="lab")).skills == ["density"]
 
 
-async def test_a_project_is_copied_with_everything_it_uses(collab_server, session):
+async def test_a_project_is_published_with_everything_it_uses(collab_server, session):
     await _use_server(session)
     await _kb(session, "papers")
     with api_client(session) as (client, _):
@@ -408,8 +317,8 @@ async def test_a_project_is_copied_with_everything_it_uses(collab_server, sessio
         await _project(client, "lab", skills=["density"], knowledge_bases=["papers"])
         team = await _team(client)
         await session.commit()
-        result = await _copy(client, "projects", "lab", team["id"])
-    assert [(c["kind"], c["name"], c["how"]) for c in result["copied"]] == [
+        result = await _publish_to(client, "projects", "lab", team["id"])
+    assert [(c["kind"], c["name"], c["how"]) for c in result["published"]] == [
         ("skill", "density", "published"),
         ("knowledge-base", "papers", "published"),
         ("project", "lab", "published"),
@@ -434,7 +343,7 @@ async def test_a_project_is_copied_with_everything_it_uses(collab_server, sessio
     ]
 
 
-async def test_a_shared_dependency_is_copied_beside_the_original(
+async def test_a_shared_dependency_stays_private_for_its_other_project(
     collab_server, session
 ):
     await _use_server(session)
@@ -444,33 +353,38 @@ async def test_a_shared_dependency_is_copied_beside_the_original(
         await _project(client, "other-lab", skills=["density"])
         team = await _team(client)
         await session.commit()
-        result = await _copy(client, "projects", "lab", team["id"])
-    assert result["copied"][0]["local_name"] == "density-2"
+        result = await _publish_to(client, "projects", "lab", team["id"])
+    assert result["published"][0]["local_name"] == "density-2"
     assert (await _row(session, ProjectTable, name="lab")).skills == ["density-2"]
     other = await _row(session, ProjectTable, name="other-lab")
     assert (other.skills, other.team_id) == (["density"], None)
     assert (await _row(session, SkillTable, name="density")).team_id is None
 
 
-async def test_a_copy_needs_a_team_one_is_in_and_another_team(collab_server, session):
+async def test_it_needs_a_team_one_is_in_and_stays_in_its_first(collab_server, session):
     await _use_server(session)
     async with _bea() as bea:
         theirs = await bea.create_team("theirs")
     with api_client(session) as (client, _):
         await _skill(client, "density")
         mine = await _team(client)
+        other = await _team(client, "other")
         await session.commit()
         not_member = await client.post(
-            "/skills/density/copy", json={"team_id": str(theirs.id)}
+            "/skills/density/publish-to-team", json={"team_id": str(theirs.id)}
         )
-        await _copy(client, "skills", "density", mine["id"])
-        again = await client.post("/skills/density/copy", json={"team_id": mine["id"]})
+        await _publish_to(client, "skills", "density", mine["id"])
+        again = await client.post(
+            "/skills/density/publish-to-team", json={"team_id": other["id"]}
+        )
     assert not_member.status_code == 404, not_member.text
     assert again.status_code == 400
-    assert "already" in again.json()["detail"]
+    assert "in a team already" in again.json()["detail"]
 
 
-async def test_a_project_using_what_is_not_here_is_not_copied(collab_server, session):
+async def test_a_project_using_what_is_not_here_is_not_published(
+    collab_server, session
+):
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
@@ -480,14 +394,16 @@ async def test_a_project_using_what_is_not_here_is_not_copied(collab_server, ses
     session.add(project)
     await session.commit()
     with api_client(session) as (client, _):
-        res = await client.post("/projects/lab/copy", json={"team_id": team["id"]})
+        res = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
     assert res.status_code == 400
     assert "absent" in res.json()["detail"]
     async with _bea() as bea:
         assert await bea.list_items() == []
 
 
-async def test_a_resource_of_a_team_one_has_left_is_copied_from_here(
+async def test_a_resource_of_a_team_one_has_left_is_published_from_here(
     collab_server, session
 ):
     await _use_server(session)
@@ -499,18 +415,25 @@ async def test_a_resource_of_a_team_one_has_left_is_copied_from_here(
         await client.post(
             f"/collaboration/teams/{old['id']}/members", json={"sub": str(BEA)}
         )
-        await _select(client, old["id"])
         await _skill(client, "density")
         await session.commit()
-        await client.post("/skills/density/publish", json={})
-        await client.delete(f"/collaboration/teams/{old['id']}/members/me")
-        result = await _copy(client, "skills", "density", new["id"])
-    # The old item is out of reach, so the copy is published from here.
-    assert result["copied"][0]["how"] == "published"
+        await _publish_to(client, "skills", "density", old["id"])
+        left = await client.delete(f"/collaboration/teams/{old['id']}/members/me")
+        await client.patch("/skills/density", json={"description": "Changed."})
+        await session.commit()
+        # Its new versions cannot go to the team it has left...
+        plain = await client.post("/skills/density/publish", json={})
+        # ...so it is published into another, as a private one is.
+        result = await _publish_to(client, "skills", "density", new["id"])
+    assert left.status_code == 204, left.text
+    assert plain.status_code == 400, plain.text
+    assert "no longer in" in plain.json()["detail"]
+    # The old item is out of reach, so it is published from here.
+    assert result["published"][0]["how"] == "published"
     assert str((await _row(session, SkillTable, name="density")).team_id) == new["id"]
 
 
-async def test_a_bundled_skill_stays_private_when_its_project_is_copied(
+async def test_a_bundled_skill_stays_private_when_its_project_is_published(
     collab_server, session
 ):
     await _use_server(session)
@@ -523,8 +446,8 @@ async def test_a_bundled_skill_stays_private_when_its_project_is_copied(
         await _project(client, "lab", skills=["salt-analysis"])
         team = await _team(client)
         await session.commit()
-        result = await _copy(client, "projects", "lab", team["id"])
-    assert result["copied"][0] == {
+        result = await _publish_to(client, "projects", "lab", team["id"])
+    assert result["published"][0] == {
         "kind": "skill",
         "name": "salt-analysis",
         "local_name": "salt-analysis-2",
@@ -534,7 +457,7 @@ async def test_a_bundled_skill_stays_private_when_its_project_is_copied(
     assert (await _row(session, ProjectTable, name="lab")).skills == ["salt-analysis-2"]
 
 
-async def test_a_failed_project_copy_is_never_published_to_its_old_team(
+async def test_a_project_whose_own_publish_fails_is_left_in_the_team(
     collab_server, session, monkeypatch
 ):
     from vista_backend.services import project_collaboration
@@ -542,36 +465,34 @@ async def test_a_failed_project_copy_is_never_published_to_its_old_team(
 
     await _use_server(session)
     with api_client(session) as (client, _):
-        old = await _team(client, "old")
-        new = await _team(client, "new")
-        await _select(client, old["id"])
+        team = await _team(client)
         await _project(client, "lab")
         await session.commit()
-        await client.post("/projects/lab/publish", json={})
         publish = project_collaboration.publish_project
 
         async def down(*args, **kwargs):
             raise CollaborationUnavailable("The server went away.")
 
         monkeypatch.setattr(project_collaboration, "publish_project", down)
-        failed = await client.post("/projects/lab/copy", json={"team_id": new["id"]})
+        failed = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
         monkeypatch.setattr(project_collaboration, "publish_project", publish)
         row = await _row(session, ProjectTable, name="lab")
         assert (str(row.team_id), row.remote_id, row.modified) == (
-            new["id"],
+            team["id"],
             None,
             True,
         )
+        # In the team now, so an ordinary publish finishes it there.
         again = await client.post("/projects/lab/publish", json={})
         listed = (await client.get("/collaboration/projects")).json()
     assert failed.status_code == 503
     assert again.status_code == 200, again.text
-    # The retry is a new item in the new team; the old team's is as it was.
-    by_team = {p["team_id"]: p["head_version"] for p in listed}
-    assert by_team == {old["id"]: 1, new["id"]: 1}
+    assert [(p["team_id"], p["head_version"]) for p in listed] == [(team["id"], 1)]
 
 
-async def test_a_project_copy_that_fails_part_way_puts_back_what_moved(
+async def test_a_project_publish_that_fails_part_way_puts_back_what_moved(
     collab_server, session, monkeypatch
 ):
     from vista_backend.services import skill_collaboration
@@ -592,13 +513,17 @@ async def test_a_project_copy_that_fails_part_way_puts_back_what_moved(
             return await publish(session, local, name, **kwargs)
 
         monkeypatch.setattr(skill_collaboration, "publish_skill", second_fails)
-        failed = await client.post("/projects/lab/copy", json={"team_id": team["id"]})
+        failed = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
         first = await _row(session, SkillTable, name="first")
         assert (first.team_id, first.remote_id) == (None, None)
         project = await _row(session, ProjectTable, name="lab")
         assert (project.team_id, project.skills) == (None, ["first", "second"])
         monkeypatch.setattr(skill_collaboration, "publish_skill", publish)
-        again = await client.post("/projects/lab/copy", json={"team_id": team["id"]})
+        again = await client.post(
+            "/projects/lab/publish-to-team", json={"team_id": team["id"]}
+        )
     assert failed.status_code == 503
     assert again.status_code == 200, again.text
     assert str((await _row(session, ProjectTable, name="lab")).team_id) == team["id"]
@@ -610,9 +535,9 @@ async def test_a_knowledge_base_made_for_a_project_joins_its_team(
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
-        await _select(client, team["id"])
         await _project(client, "team-lab")
-        await _select(client, None)
+        await session.commit()
+        await _publish_to(client, "projects", "team-lab", team["id"])
         res = await client.post(
             "/knowledge-bases",
             json={"slug": "lab-papers", "name": "Papers", "project": "team-lab"},
@@ -630,9 +555,9 @@ async def test_a_team_on_another_server_is_sent_as_private(collab_server, sessio
     await _use_server(session)
     with api_client(session) as (client, _):
         team = await _team(client)
-        await _select(client, team["id"])
         await _skill(client, "teamed")
         await session.commit()
+        await _publish_to(client, "skills", "teamed", team["id"])
     await _use_server(session, "http://elsewhere.test:8002")
     with api_client(session) as (client, _):
         elsewhere = (await client.get("/skills")).json()

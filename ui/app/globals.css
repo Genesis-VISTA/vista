@@ -584,93 +584,9 @@ main {
   outline-offset: -2px;
 }
 
-/* ---------- Team switcher (top of the nav rail) ---------------------- */
+/* ---------- Teams --------------------------------------------------- */
 
-/* Reuses the project switcher's menu and options; only the button, which sits
-   in the rail rather than a crumb, and the menu's placement are its own. */
-.team-switcher {
-  position: relative;
-  margin: 0 12px 8px;
-}
-
-.team-switcher.collapsed {
-  margin: 0 auto 4px;
-}
-
-.team-switcher-button {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-control);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.team-switcher.collapsed .team-switcher-button {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  justify-content: center;
-  gap: 0;
-}
-
-.team-switcher-button:hover,
-.team-switcher-button[aria-expanded="true"] {
-  background: var(--surface-active);
-}
-
-.team-switcher-button:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 1px;
-}
-
-.team-switcher-text {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.team-switcher-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.team-switcher-name {
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.team-switcher-error {
-  margin-top: 4px;
-  font-size: 11px;
-  color: var(--danger-ink);
-}
-
-.team-switcher-menu {
-  left: 0;
-  top: calc(100% + 4px);
-}
-
-/* Collapsed, the rail is too narrow to hold the menu, so it opens beside it. */
-.team-switcher.collapsed .team-switcher-menu {
-  left: calc(100% + 8px);
-  top: 0;
-}
-
-/* A resource's team, beside its name, when it is not the public team. */
+/* A resource's team, beside its name, when it is in one. */
 .team-badge {
   display: inline-block;
   margin-left: 6px;

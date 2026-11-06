@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { refreshProjects, useActiveProject } from "@/lib/projects";
 import { setSkillLoaded } from "@/lib/loaded-skills";
-import { emptyTeamNote, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
+import { usableInProject, useCollaboration } from "@/lib/collaboration";
 import {
   importAction,
   importRemoteSkill,
@@ -12,8 +12,9 @@ import {
 } from "@/lib/skill-sharing";
 import { AppTopBar } from "@/components/AppTopBar";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { TeamBadge } from "@/components/TeamBadge";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { TeamFilter, useTeamFilter } from "@/components/TeamFilter";
 
 const TAG_FILTERS = [
   "All",
@@ -36,13 +37,14 @@ function tagsOf(skill: RemoteSkill): string[] {
 /**
  * The Skill Hub: the skills published to the collaboration server, to import
  * into this computer (and load into the active project). Without a server that
- * answers, the page says why and lists nothing. It lists the selected team's
- * skills alone; with Private selected, there are none.
+ * answers, the page says why and lists nothing. It lists the skills of every
+ * team the researcher is in, each with its team, and can be narrowed to one.
  */
 export default function SkillHubPage() {
   const activeProject = useActiveProject();
   const collab = useCollaboration();
-  const teams = useTeams();
+  const teamFilter = useTeamFilter();
+  const teamValue = teamFilter.value;
   const [skills, setSkills] = useState<RemoteSkill[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -139,7 +141,7 @@ export default function SkillHubPage() {
   const visible = useMemo(() => {
     const term = search.trim().toLowerCase();
     let list = skills.filter((skill) => {
-      if (!teams.show(skill.team_id)) return false;
+      if (teamValue !== "all" && skill.team_id !== teamValue) return false;
       if (activeTag !== "All" && !tagsOf(skill).includes(activeTag)) return false;
       if (!term) return true;
       return (
@@ -157,7 +159,7 @@ export default function SkillHubPage() {
       );
     }
     return list;
-  }, [skills, search, activeTag, sort, teams]);
+  }, [skills, search, activeTag, sort, teamValue]);
 
   return (
     <div className="app-page">
@@ -189,6 +191,7 @@ export default function SkillHubPage() {
                 }
               }}
             />
+            <TeamFilter value={teamFilter.value} onChange={teamFilter.setValue} />
             <select
               className="hub-sort"
               value={sort}
@@ -227,9 +230,7 @@ export default function SkillHubPage() {
                   <div className="hub-empty">
                     {skills.length === 0 && !loading
                       ? "No skills have been published yet. Publish one from the Skills page."
-                      : !skills.some((skill) => teams.show(skill.team_id))
-                        ? emptyTeamNote(teams, "skills")
-                        : "No skills match your filters."}
+                      : "No skills match your filters."}
                   </div>
                 ) : (
                   visible.map((skill) => {

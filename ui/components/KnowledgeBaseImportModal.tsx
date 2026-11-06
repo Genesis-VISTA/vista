@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { emptyTeamNote, useCollaboration, useTeams } from "@/lib/collaboration";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { useCollaboration } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamBadge";
+import { TeamFilter, useTeamFilter } from "@/components/TeamFilter";
 import { importAction } from "@/lib/skill-sharing";
 import {
   formatSize,
@@ -30,7 +31,7 @@ export function KnowledgeBaseImportModal({
   onImported: (result: KnowledgeBaseImported) => void;
 }) {
   const collab = useCollaboration();
-  const teams = useTeams();
+  const teamFilter = useTeamFilter();
   const [kbs, setKbs] = useState<RemoteKnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,8 +96,8 @@ export function KnowledgeBaseImportModal({
     else void runImport(kb);
   }
 
-  // Only the selected team's: Private has nothing on the server.
-  const shownKbs = kbs.filter((kb) => teams.show(kb.team_id));
+  // Every team's, each with its team, unless narrowed to one.
+  const shownKbs = kbs.filter((kb) => teamFilter.matches(kb.team_id));
 
   const renameError = renaming ? slugError(renaming.slug.trim()) : null;
 
@@ -131,10 +132,11 @@ export function KnowledgeBaseImportModal({
                   {error}
                 </div>
               )}
+              <TeamFilter value={teamFilter.value} onChange={teamFilter.setValue} className="input" />
               {loading && shownKbs.length === 0 && <div className="hub-count">Loading…</div>}
               {!loading && shownKbs.length === 0 && !error && (
                 <div className="hub-empty">
-                  {kbs.length > 0 ? emptyTeamNote(teams, "knowledge bases") : "No knowledge bases have been published yet. Publish one from its page."}
+                  {kbs.length > 0 ? "None of them is in that team." : "No knowledge bases have been published yet. Publish one from its page."}
                 </div>
               )}
               {shownKbs.map((kb) => {

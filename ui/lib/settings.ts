@@ -28,12 +28,6 @@ export type LocalSettings = {
    * name one: see `lib/collaboration.ts`).
    */
   collaboration_server_url: string | null;
-  /**
-   * The collaboration team selected here, which new projects, skills and
-   * knowledge bases join; null for Private. Cleared by the backend
-   * when the server's address changes.
-   */
-  collaboration_team_id?: string | null;
   /** Where campaign notifications go. */
   email: string | null;
   /** Clusters left out of the NavRail's HPC section. `[]` shows them all. */
@@ -118,8 +112,6 @@ export type LocalSettingsUpdate = {
   display_name?: string | null;
   /** An `http(s)://` address; `null` or `""` clears it. */
   collaboration_server_url?: string | null;
-  /** Select a team (`lib/collaboration.ts:selectTeam`); null for Private. */
-  collaboration_team_id?: string | null;
   email?: string | null;
   inference_model?: string | null;
   inference_base_url?: string | null;

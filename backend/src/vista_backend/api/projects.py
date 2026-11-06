@@ -9,9 +9,9 @@ from ..services import (
     project as project_service,
     project_collaboration,
 )
-from ..services import team_copy
+from ..services import team_publish
 from ..services.local_settings import LocalSettingsDep
-from .skills import TeamCopyRequest
+from .skills import TeamPublishRequest
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -85,19 +85,23 @@ class ProjectPublishRequest(BaseModel):
     """ Publish as a new project on the server, not as a version of its own. """
 
 
-@router.post("/{project_name}/copy")
-async def copy_project(
+@router.post("/{project_name}/publish-to-team")
+async def publish_project_to_team(
     project_name: str,
-    body: TeamCopyRequest,
+    body: TeamPublishRequest,
     session: SessionDep,
     local: LocalSettingsDep,
-) -> team_copy.TeamCopyResult:
+) -> team_publish.TeamPublishResult:
     """
-    Copy the project, and every skill and knowledge base it uses, to a team on
-    the collaboration server (`team_copy`). One another project here also uses
-    is imported beside the original, and this project switched to the copy.
+    Publish a private project, and every skill and knowledge base it uses,
+    into a team on the collaboration server, its first publish
+    (`team_publish`). 400 for one in a team already. One another project here
+    also uses stays private for it: the team's item is imported beside it, and
+    this project switched to that.
     """
-    return await team_copy.copy_project(session, local, project_name, body.team_id)
+    return await team_publish.publish_project_to_team(
+        session, local, project_name, body.team_id
+    )
 
 
 @router.post("/{project_name}/publish")

@@ -72,7 +72,7 @@ from .collaboration import (
     required_url,
     server_url,
 )
-from .teams import require_team, team_of
+from .teams import require_still_in, require_team, team_of
 from .knowledge_base import (
     get_kb,
     get_kb_optional,
@@ -480,7 +480,7 @@ async def publish_knowledge_base(
     nothing here. One published there with no change since is not published
     again (`unchanged`), unless `on_top_of` or `as_new` asks. A change made
     while it is published leaves it modified. A private knowledge base is not
-    published: it is copied to a team (`team_copy`).
+    published here: it is first published into a team (`team_publish`).
     """
     url = required_url(local)
     async with kb_lock(slug):
@@ -514,6 +514,7 @@ async def _publish(
     )
 
     async with client_for(local) as client, _incoming() as tmp:
+        await require_still_in(client, team_id, f"{row.name} ({slug})")
         manifest, archive = await pack(row, tmp)
         blob_ref = await client.upload_large_blob(archive)
         if linked:

@@ -8,9 +8,9 @@ import { AppTopBar } from "@/components/AppTopBar";
 import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
 import { forumCredential, type SettingsTokens } from "@/lib/forum-credential";
-import { fetchSettings, type LocalSettings } from "@/lib/settings";
+import { fetchSettings } from "@/lib/settings";
 import { publishAudience, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { TeamBadge } from "@/components/TeamBadge";
 import {
   importRemoteProject,
   importSummary,
@@ -23,7 +23,7 @@ import {
 } from "@/lib/project-sharing";
 import type { SharingRefusal } from "@/lib/skill-sharing";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
-import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishToTeamModal } from "@/components/PublishToTeamModal";
 import { PublishConflictModal } from "@/components/PublishConflictModal";
 import { ProjectImportModal } from "@/components/ProjectImportModal";
 import { HELLO_OLCF_PROJECT_NAME } from "@/lib/default-project";
@@ -81,9 +81,6 @@ function ProjectsPageContent() {
   const collab = useCollaboration();
   const teams = useTeams();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;
-  // Only the selected team's projects (Private's: those on this computer only); the rest are a team switch away.
-  const shownProjects = projects.filter((p) => teams.show(p.teamId));
-  const hiddenCount = projects.length - shownProjects.length;
   const [notice, setNotice] = useState<{
     text: string;
     skill?: string;
@@ -95,7 +92,8 @@ function ProjectsPageContent() {
     null
   );
   const [showImport, setShowImport] = useState(false);
-  const [copying, setCopying] = useState<Project | null>(null);
+  /** A private project being published for the first time, into a team picked for it. */
+  const [publishingToTeam, setPublishingToTeam] = useState<Project | null>(null);
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
 
@@ -278,13 +276,6 @@ function ProjectsPageContent() {
         </div>
       )}
 
-      {hiddenCount > 0 && (
-        <div className="hub-count" style={{ marginBottom: 12 }}>
-          {hiddenCount === 1 ? "1 project is" : `${hiddenCount} projects are`} in another
-          team. Switch team in the sidebar to see {hiddenCount === 1 ? "it" : "them"}.
-        </div>
-      )}
-
       <div className="projects-panel">
         {!loading && projects.length === 0 ? (
           <div className="projects-empty">
@@ -307,7 +298,7 @@ function ProjectsPageContent() {
           {loading && projects.length === 0 && (
             <div className="chat-bubble">Loading projects…</div>
           )}
-          {shownProjects.map((project) => (
+          {projects.map((project) => (
             <ProjectCard
               key={project.id}
               project={project}
@@ -321,13 +312,16 @@ function ProjectsPageContent() {
               onServer={isProjectOnServer(project, serverUrl)}
               publishing={busyName === project.name}
               publishDisabledReason={collab.available ? null : collab.reason}
-              copyable={teams.shown && copyTargets(teams.teams, project.teamId).length > 0}
-              onCopy={() => setCopying(project)}
+              inTeam={teams.teamOf(project.teamId) !== null}
+              teamsShown={teams.shown}
               onOpen={() => open(project)}
               onEdit={() => setModal({ mode: "edit", project })}
               onDelete={() => void removeProject(project)}
               onPublish={() => {
-                if (isProjectOnServer(project, serverUrl)) void publish(project);
+                // A private one (or one of a team left since) first goes to a
+                // team picked for it; one in a team publishes there.
+                if (teams.teamOf(project.teamId) === null) setPublishingToTeam(project);
+                else if (isProjectOnServer(project, serverUrl)) void publish(project);
                 else setPendingPublish(project);
               }}
             />
@@ -397,13 +391,12 @@ function ProjectsPageContent() {
         />
       )}
 
-      {copying && (
-        <CopyToTeamModal
+      {publishingToTeam && (
+        <PublishToTeamModal
           kind="project"
-          name={copying.name}
-          teamId={copying.teamId}
-          onClose={() => setCopying(null)}
-          onCopied={() => {
+          name={publishingToTeam.name}
+          onClose={() => setPublishingToTeam(null)}
+          onPublished={() => {
             // The project and what it uses joined the team, or were imported
             // beside the originals: every list here may have changed.
             refreshSkillCatalog();
@@ -430,8 +423,8 @@ function ProjectCard({
   onServer,
   publishing,
   publishDisabledReason,
-  copyable,
-  onCopy,
+  inTeam,
+  teamsShown,
   onOpen,
   onEdit,
   onDelete,
@@ -447,9 +440,10 @@ function ProjectCard({
   publishing: boolean;
   /** Why Publish is off; null when it can be used. */
   publishDisabledReason: string | null;
-  /** A team to copy it to exists, and the server answers. */
-  copyable: boolean;
-  onCopy: () => void;
+  /** It is in one of the researcher's teams, which Publish sends it to. */
+  inTeam: boolean;
+  /** The researcher's teams are known, so a private one can be published into one. */
+  teamsShown: boolean;
   onOpen: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -507,34 +501,30 @@ function ProjectCard({
         <button type="button" className="button ghost button-sm" onClick={onEdit}>
           Edit
         </button>
-        {/* A private project is shared by copying it to a team; one in a team
-            publishes new versions to it. */}
-        {project.teamId && (
+        {/* A private project is first published into a team picked for it;
+            one in a team publishes its new versions there. */}
+        {(inTeam || teamsShown) && (
           <button
             type="button"
             className="button ghost button-sm"
             disabled={publishing || publishDisabledReason !== null}
-            title={publishDisabledReason ?? "Publish this project and its skills to its team"}
+            title={
+              publishDisabledReason ??
+              (inTeam
+                ? "Publish this project and its skills to its team"
+                : "Choose a team to publish this project and its skills to")
+            }
             onClick={onPublish}
           >
             {publishing
               ? "Publishing…"
-              : !onServer
-                ? "Publish"
-                : project.modified
-                  ? "Publish changes"
-                  : "Republish"}
-          </button>
-        )}
-        {copyable && (
-          <button
-            type="button"
-            className="button ghost button-sm"
-            disabled={publishing}
-            title="Copy this project, with its skills and knowledge bases, to a team"
-            onClick={onCopy}
-          >
-            Copy to team…
+              : !inTeam
+                ? "Publish…"
+                : !onServer
+                  ? "Publish"
+                  : project.modified
+                    ? "Publish changes"
+                    : "Republish"}
           </button>
         )}
         <button type="button" className="button ghost button-sm" onClick={onDelete}>
@@ -560,6 +550,31 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
           ))
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Why some skills or knowledge bases are not offered: they are in another
+ * team, and a project uses only its own team's. Nothing when none are hidden.
+ */
+function TeamRuleNote({
+  hidden,
+  noun,
+  projectTeam,
+}: {
+  hidden: number;
+  /** Singular and plural. */
+  noun: [string, string];
+  projectTeam: string | null;
+}) {
+  if (hidden <= 0) return null;
+  const what = `${hidden} ${hidden === 1 ? noun[0] : noun[1]} ${hidden === 1 ? "is" : "are"}`;
+  return (
+    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+      {projectTeam
+        ? `${what} not listed, being private or in another team: a project uses only its own team's.`
+        : `${what} not listed, being in a team: a private project uses only private ones. Publish it to a team to use that team's.`}
     </div>
   );
 }
@@ -605,9 +620,7 @@ function ProjectModal({
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
   // Which Settings tokens exist, to say which credential the forum publishes with.
-  const [settingsTokens, setSettingsTokens] = useState<
-    (SettingsTokens & Pick<LocalSettings, "collaboration_team_id">) | null
-  >(null);
+  const [settingsTokens, setSettingsTokens] = useState<SettingsTokens | null>(null);
   useEffect(() => {
     let live = true;
     fetchSettings()
@@ -620,10 +633,9 @@ function ProjectModal({
   // Unknown until Settings has loaded: saying "system git" meanwhile would be
   // wrong for anyone with a token saved.
   const credential = settingsTokens ? forumCredential(forumRepoUrl, settingsTokens) : null;
-  // The project's team, which decides what it may use: its own when editing,
-  // else the one selected in Settings, which a new project joins.
-  const projectTeam =
-    mode === "edit" ? (initial?.teamId ?? null) : (settingsTokens?.collaboration_team_id ?? null);
+  // The project's team, which decides what it may use: its own when editing;
+  // a new project is private until it is first published.
+  const projectTeam = mode === "edit" ? (initial?.teamId ?? null) : null;
   // Only what the project can use is offered, the rule the backend enforces on
   // save. One it already has from another team stays listed, flagged, so it
   // can be removed.
@@ -776,6 +788,7 @@ function ProjectModal({
                 ))
               )}
             </div>
+            <TeamRuleNote hidden={skillCatalog.length - offeredSkills.length} noun={["skill", "skills"]} projectTeam={projectTeam} />
           </div>
 
           <div className="project-modal-label">
@@ -810,6 +823,7 @@ function ProjectModal({
                 ))
               )}
             </div>
+            <TeamRuleNote hidden={kbCatalog.length - offeredKbs.length} noun={["knowledge base", "knowledge bases"]} projectTeam={projectTeam} />
           </div>
 
           <label className="project-modal-label">

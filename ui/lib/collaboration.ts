@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useSyncExternalStore } from "react";
-import { extractError, updateSettings } from "@/lib/settings";
+import { extractError } from "@/lib/settings";
 
 /**
  * Whether publishing and importing can work right now, from
@@ -15,12 +15,12 @@ import { extractError, updateSettings } from "@/lib/settings";
  *
  * It also carries the researcher's teams. Here a project, skill or knowledge
  * base is either private (`team_id` null: on this computer only, as everything
- * made without a server, and VISTA's own seeds, is) or in one team on the
- * server: the public team, which everyone is in, or one they made or were
- * added to, whose items only its members see. What is selected here (`team_id`,
- * the backend's `collaboration_team_id`; null for Private) is where new
- * projects, skills and knowledge bases go, and the one thing every page lists
- * (`useTeams`). A private one reaches a team by Copy to team (`copyToTeam`).
+ * made here is, unless made for a team's project, and VISTA's own seeds) or in
+ * one team on the server: the public team, which everyone is in, or one they
+ * made or were added to, whose items only its members see. Every page lists
+ * all of them, each with its team. A private one joins a team when it is first
+ * published, into the team the researcher picks (`publishToTeam`), and stays
+ * there: Publish sends its new versions to that team.
  */
 
 /** The public team's id, the same on every server. It is a team like any other, listed in `teams`. */
@@ -73,11 +73,6 @@ export type CollaborationStatus = {
   user: CollaborationUser | null;
   /** The researcher's teams, the public team first; empty unless signed in. */
   teams: CollaborationTeam[];
-  /**
-   * The team selected here, the public team included, when it is one of
-   * `teams`; null for Private (or a selected team they are no longer in).
-   */
-  team_id: string | null;
 };
 
 type Snapshot = {
@@ -206,8 +201,9 @@ export function useCollaboration(): CollaborationView {
  * of `knownTeamIds`, the researcher's current teams (the public team among
  * them), else null, Private. A team not known is one they have left, or one on
  * a server they no longer use: what is in it here is on this computer only in
- * all but name, and hiding it from every view would lose it. The team itself
- * is unchanged, and still decides what a project may use (`usableInProject`).
+ * all but name, and is published into a team as a private one is. The team
+ * itself is unchanged, and still decides what a project may use
+ * (`usableInProject`).
  */
 export function effectiveTeam(
   resourceTeamId: string | null | undefined,
@@ -217,24 +213,10 @@ export function effectiveTeam(
 }
 
 /**
- * Whether a project, skill or knowledge base is listed while `selectedTeamId`
- * is selected (null: Private): it is in exactly that team. Nothing is mixed
- * in, not even the public team's. The unknown-team rule is `effectiveTeam`'s,
- * so the caller passes the researcher's current teams. Pure, for testing.
- */
-export function inSelectedTeam(
-  resourceTeamId: string | null | undefined,
-  selectedTeamId: string | null,
-  knownTeamIds: ReadonlySet<string>,
-): boolean {
-  return effectiveTeam(resourceTeamId, knownTeamIds) === selectedTeamId;
-}
-
-/**
  * Whether a project of `projectTeamId` can use a skill or knowledge base of
  * `resourceTeamId`: only one of exactly its own team, a private project only
  * private ones, the rule the backend enforces (`services/teams.usable_in`).
- * Unlike the listings, a team the researcher is not in is not treated as
+ * Unlike publishing, a team the researcher is not in is not treated as
  * private here: the backend would refuse it.
  */
 export function usableInProject(
@@ -247,18 +229,19 @@ export function usableInProject(
 export type TeamsView = {
   /**
    * Teams can be shown: a server answered and signed this installation in.
-   * When false everything here is Private's, and nothing is filtered.
+   * When false everything here is treated as private.
    */
   shown: boolean;
   /** The researcher's teams, the public team first. Private is not one of them. */
   teams: CollaborationTeam[];
-  /** The selected team's id; null for Private. */
-  selectedId: string | null;
-  /** The selected team; null for Private. */
-  selected: CollaborationTeam | null;
   user: CollaborationUser | null;
-  /** Whether a resource of this team is listed under the selected team; always true when not `shown`. */
-  show: (resourceTeamId: string | null | undefined) => boolean;
+  /**
+   * A resource's team as this installation treats it (`effectiveTeam`): null,
+   * private, when it is not one of `teams`. Until the teams are known (no
+   * server answered, or not signed in) it is the team the resource records,
+   * as the backend falls back to, so Publish stays offered with its reason.
+   */
+  teamOf: (resourceTeamId: string | null | undefined) => string | null;
   /** A known team's name ("Public" for the public team); null for Private or one not known. */
   teamName: (resourceTeamId: string | null | undefined) => string | null;
 };
@@ -275,33 +258,28 @@ export function teamsView(s: Pick<Snapshot, "status" | "error">): TeamsView {
   const teams = status?.teams ?? [];
   const shown = availability(s).available && teams.length > 0;
   const known = new Set(teams.map((t) => t.id));
-  const selectedId = shown ? effectiveTeam(status?.team_id, known) : null;
-  const selected = teams.find((t) => t.id === selectedId) ?? null;
   const names = new Map(teams.map((t) => [t.id, teamLabel(t)]));
   return {
     shown,
     teams,
-    selectedId,
-    selected,
     user: status?.user ?? null,
-    show: (teamId) => !shown || inSelectedTeam(teamId, selectedId, known),
+    teamOf: (teamId) => (shown ? effectiveTeam(teamId, known) : (teamId ?? null)),
     teamName: (teamId) => (teamId ? (names.get(teamId) ?? null) : null),
   };
 }
 
-/** The researcher's teams and the selected one, which every listing filters by. */
+/** The researcher's teams. */
 export function useTeams(): TeamsView {
   const s = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   return useMemo(() => teamsView(s), [s]);
 }
 
 /**
- * Where publishing a new version of a resource of `teamId` puts it, for its
- * confirmation: its own team. A private one is not published at all: it is
- * copied to a team instead.
+ * Where publishing a resource of `teamId` puts it, for its confirmation: its
+ * own team, or for a private one the team picked for its first publish.
  */
 export function publishAudience(teamId: string | null | undefined, view: TeamsView): string {
-  if (!teamId) return "It is private, on this computer only: copy it to a team to share it.";
+  if (!teamId) return "It is private, on this computer only: choose a team to publish it to.";
   if (teamId === PUBLIC_TEAM_ID) {
     return "It is published to the public team, visible to everyone who signs in to that server.";
   }
@@ -310,40 +288,28 @@ export function publishAudience(teamId: string | null | undefined, view: TeamsVi
   return "It belongs to a team you are not in on that server, which will refuse it.";
 }
 
-/**
- * Why a server listing shows nothing although the server has some (`noun`,
- * plural): none is in the selected team, and Private, this computer only, has
- * none there at all.
- */
-export function emptyTeamNote(view: TeamsView, noun: string): string {
-  if (!view.selected) {
-    return `Private is this computer only, so it has no ${noun} on the server. Select a team in the sidebar to see its ${noun}.`;
-  }
-  return `There are no ${noun} in ${teamLabel(view.selected)} on the server.`;
-}
+/** What can be published into a team (backend `team_publish.Kind`). */
+export type PublishKind = "project" | "skill" | "knowledge-base";
 
-/** What Copy to team copies (backend `team_copy.Kind`). */
-export type CopyKind = "project" | "skill" | "knowledge-base";
-
-/** One thing a copy to a team copied (backend `CopiedResource`). */
-export type CopiedResource = {
-  kind: CopyKind;
-  /** Its name (a knowledge base's slug) here before the copy. */
+/** One thing a first publish into a team published (backend `PublishedResource`). */
+export type PublishedResource = {
+  kind: PublishKind;
+  /** Its name (a knowledge base's slug) here before the publish. */
   name: string;
   /**
-   * The team's copy's name here: `name`, the resource having become the copy,
-   * or a new one, the copy imported beside an original that another project
-   * here still uses.
+   * The team's item's name here: `name`, the resource having joined the team,
+   * or a new one, the team's item imported beside an original that another
+   * project here still uses, or that VISTA bundles, which stays private.
    */
   local_name: string;
-  /** Copied by the server, published from here as a new item, or imported beside the original. */
-  how: "copied" | "published" | "imported";
+  /** The resource joined the team, or stayed private with the team's item imported beside it. */
+  how: "published" | "imported";
 };
 
-/** Backend `TeamCopyResult`: what was copied, a project last. */
-export type TeamCopyResult = {
+/** Backend `TeamPublishResult`: what was published, a project last. */
+export type TeamPublishResult = {
   team_id: string;
-  copied: CopiedResource[];
+  published: PublishedResource[];
 };
 
 /** A refused team request, with the backend's sentence. */
@@ -362,23 +328,6 @@ async function teamRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   }
   if (!res.ok) throw new TeamRequestError(await extractError(res));
   return (res.status === 204 ? undefined : await res.json()) as T;
-}
-
-/**
- * Select a team (null: Private), where new projects, skills and
- * knowledge bases go and what every page lists. Every subscriber follows at
- * once; the status is then asked again for the backend's word on it.
- */
-export async function selectTeam(teamId: string | null): Promise<void> {
-  const before = snapshot.status;
-  if (before) set({ status: { ...before, team_id: teamId } });
-  try {
-    await updateSettings({ collaboration_team_id: teamId });
-  } catch (e) {
-    if (before && snapshot.status?.team_id === teamId) set({ status: before });
-    throw new TeamRequestError(e instanceof Error ? e.message : "The team could not be selected.");
-  }
-  await refreshCollaborationStatus();
 }
 
 /** Make a team, with the researcher as its first member. 409 when the name is taken, in any case. */
@@ -405,8 +354,8 @@ export function addMember(teamId: string, sub: string): Promise<TeamMember> {
 }
 
 /**
- * Leave a team; refused for its last member. Its resources here stay. Selected
- * here, Private is selected instead (by the backend).
+ * Leave a team; refused for its last member. Its resources here stay, and can
+ * be published into another team, as private ones are.
  */
 export async function leaveTeam(teamId: string): Promise<void> {
   await teamRequest<void>(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members/me`, {
@@ -421,20 +370,21 @@ export function searchUsers(q: string, signal?: AbortSignal): Promise<Collaborat
   return teamRequest<CollaborationUser[]>(`/api/collaboration/users${query}`, { signal });
 }
 
-const COPY_BASE: Record<CopyKind, string> = {
+const PUBLISH_BASE: Record<PublishKind, string> = {
   project: "/api/projects",
   skill: "/api/skills",
   "knowledge-base": "/api/knowledge-bases",
 };
 
 /**
- * Copy a project, skill or knowledge base (by name; a knowledge base by slug)
- * to a team the researcher is in. A project brings its skills and knowledge
- * bases. Refused (404) for a team they are not in, and (400) for one it is in
- * already, or a project using something missing or of another team.
+ * Publish a private project, skill or knowledge base (by name; a knowledge
+ * base by slug) for the first time, into a team the researcher is in. A
+ * project brings its skills and knowledge bases. Refused (404) for a team they
+ * are not in, and (400) for one in a team already, or a project using
+ * something missing or in a team.
  */
-export function copyToTeam(kind: CopyKind, name: string, teamId: string): Promise<TeamCopyResult> {
-  return teamRequest<TeamCopyResult>(`${COPY_BASE[kind]}/${encodeURIComponent(name)}/copy`, {
+export function publishToTeam(kind: PublishKind, name: string, teamId: string): Promise<TeamPublishResult> {
+  return teamRequest<TeamPublishResult>(`${PUBLISH_BASE[kind]}/${encodeURIComponent(name)}/publish-to-team`, {
     method: "POST",
     body: JSON.stringify({ team_id: teamId }),
   });

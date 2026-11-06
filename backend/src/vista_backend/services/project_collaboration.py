@@ -76,7 +76,13 @@ from .skill_collaboration import (
     reread,
 )
 from .skills import get_skill, get_skill_optional
-from .teams import check_references, require_team, set_team, team_of
+from .teams import (
+    check_references,
+    require_still_in,
+    require_team,
+    set_team,
+    team_of,
+)
 
 
 PROJECT_KIND = "project"
@@ -507,6 +513,7 @@ async def publish_project(
     )
 
     async with client_for(local) as client:
+        await require_still_in(client, team_id, name)
         parent: int | None = None
         # The version this one is built on, if this VISTA reads it.
         base: ProjectManifest | None = None
