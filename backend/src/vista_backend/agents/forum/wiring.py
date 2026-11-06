@@ -501,6 +501,32 @@ def _toolsets(grounding: Grounding):
     return build_toolsets(grounding)
 
 
+async def end_announced_run(
+    session: AsyncSession,
+    run_id: uuid.UUID,
+    exc: Exception,
+    client: ForumClient | None = None,
+) -> None:
+    """
+    A hosted Continue posted its RUN and then failed before `run()` took over:
+    end that run with the Referee's BLOCKED rather than leave it live until it
+    expires. Best effort — it logs and swallows its own failure.
+    """
+    try:
+        if client is None:
+            client = await client_for_run(
+                session, await debate_service.require_debate(session, run_id)
+            )
+        await DebateOrchestrator(client=client).end_announced_run(session, run_id, exc)
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        logger.warning("debate %s: could not end its announced run", run_id)
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def continue_debate_task(
     run_id: uuid.UUID, extra_rounds: int, announced: bool = False
 ) -> None:
@@ -516,6 +542,7 @@ async def continue_debate_task(
     would be a way to buy more cluster time a round at a time.
     """
     async with AsyncSession(get_engine()) as session:
+        resumed = False
         try:
             run = await debate_service.require_debate(session, run_id)
 
@@ -524,7 +551,7 @@ async def continue_debate_task(
             commissioner, runnable = await build_simulation(session, run)
             grounding.simulation = commissioner
 
-            await build_orchestrator(
+            orchestrator = build_orchestrator(
                 client,
                 local=await local_settings.get_public(session),
                 checkpoint=_commit,
@@ -533,11 +560,18 @@ async def continue_debate_task(
                 job_usage=simulation.usage_for(runnable, settings.hpc_jobs_catalog),
                 knowledge_bases=await knowledge_bases_for(session, run),
                 models=await models_for(session, run),
-            ).resume(session, run=run, extra_rounds=extra_rounds, announced=announced)
+            )
+            # From here `run()`'s own handler ends an announced run that crashes.
+            resumed = True
+            await orchestrator.resume(
+                session, run=run, extra_rounds=extra_rounds, announced=announced
+            )
             await session.commit()
-        except Exception:
+        except Exception as exc:
             logger.exception("debate %s: could not continue", run_id)
             await session.rollback()
+            if announced and not resumed:
+                await end_announced_run(session, run_id, exc)
             try:
                 await debate_service.set_status(session, run_id=run_id, status="failed")
                 await session.commit()

@@ -608,6 +608,25 @@ class DebateOrchestrator:
                 "debate %s: could not post a BLOCKED note", run.id, exc_info=True
             )
 
+    async def end_announced_run(
+        self, session: AsyncSession, run_id: uuid.UUID, exc: Exception
+    ) -> None:
+        """
+        End a run whose RUN is on the forum but which will never reach `run`
+        (a hosted Continue that failed in its setup): the Referee's BLOCKED, the
+        same note `run` writes for a crash, so no install sees a live run with
+        nothing behind it. Best effort — it never raises.
+        """
+        try:
+            run = await debate_service.require_debate(session, run_id)
+            roster = await self._participants(session, run_id)
+            if "referee" in roster:
+                await self._blocked(session, run, roster["referee"], None, exc)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "debate %s: could not end its announced run", run_id, exc_info=True
+            )
+
     def _turn_deps(
         self, run: DebateRunTable, round_index: int, participant: Participant
     ) -> DebateDeps:

@@ -1287,3 +1287,61 @@ async def test_a_run_announces_itself_unless_its_continue_already_did(client, se
     await orch.resume(session, run=run, extra_rounds=1, announced=True)
     kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
     assert kinds.count(PostKind.RUN) == 2, "its Continue had posted it"
+
+
+async def _announced_continue_that_fails_in_setup(
+    client, session, engine, monkeypatch, *, announced
+):
+    """A debate that has finished, a Continue whose setup then raises."""
+    from vista_backend.agents.forum import wiring
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id, thread_id = run.id, run.thread_id
+    members = await debate_service.list_active_participants(session, run_id=run_id)
+    if announced:
+        await client.start_run(
+            thread_id,
+            rounds=1,
+            roster={m.debate_role: m.identity for m in members},
+        )
+    posts_before = len((await client.read_thread(thread_id)).posts)
+
+    async def forum(_session, _run):
+        return client
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("no grounding today")
+
+    monkeypatch.setattr(wiring, "get_engine", lambda: engine)
+    monkeypatch.setattr(wiring, "client_for_run", forum)
+    monkeypatch.setattr(wiring, "build_run_grounding", broken)
+    await wiring.continue_debate_task(run_id, 1, announced=announced)
+    return run_id, thread_id, posts_before
+
+
+@pytest.mark.anyio
+async def test_an_announced_continue_that_fails_in_setup_ends_its_run(
+    client, session, engine, monkeypatch
+):
+    run_id, thread_id, _ = await _announced_continue_that_fails_in_setup(
+        client, session, engine, monkeypatch, announced=True
+    )
+    thread = await client.read_thread(thread_id)
+    last = thread.posts[-1]
+    assert last.kind == PostKind.BLOCKED
+    assert "no grounding today" in last.body
+    assert _live(thread.posts) is None
+    session.expire_all()
+    run = await debate_service.require_debate(session, run_id)
+    assert run.status == "failed"
+
+
+@pytest.mark.anyio
+async def test_a_forge_continue_that_fails_in_setup_posts_nothing(
+    client, session, engine, monkeypatch
+):
+    _, thread_id, before = await _announced_continue_that_fails_in_setup(
+        client, session, engine, monkeypatch, announced=False
+    )
+    assert len((await client.read_thread(thread_id)).posts) == before

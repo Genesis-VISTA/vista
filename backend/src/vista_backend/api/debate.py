@@ -28,7 +28,12 @@ from ..agents.forum import simulation
 from ..agents.forum.debate import ROSTER
 from ..agents.forum.project_forum import build_client_for, forum_url_of, lab_enabled
 from ..agents.forum.roles import Verdict
-from ..agents.forum.wiring import continue_debate_task, models_for, run_debate_task
+from ..agents.forum.wiring import (
+    continue_debate_task,
+    end_announced_run,
+    models_for,
+    run_debate_task,
+)
 from ..agents.inference import require_inference_credential
 from ..config import settings
 from ..db.db import SessionDep, get_engine
@@ -703,13 +708,20 @@ async def continue_thread(
             announced = True
 
     run_id = ours.id
-    payload = await _thread_public(session, row, host_id=client.host_id)
-    await session.commit()
-    _spawn(
-        continue_debate_task(run_id, body.rounds, announced=True)
-        if announced
-        else continue_debate_task(run_id, body.rounds)
-    )
+    try:
+        payload = await _thread_public(session, row, host_id=client.host_id)
+        await session.commit()
+        task = (
+            continue_debate_task(run_id, body.rounds, announced=True)
+            if announced
+            else continue_debate_task(run_id, body.rounds)
+        )
+    except Exception as exc:
+        if announced:
+            # The RUN is on the server and nothing will run behind it.
+            await end_announced_run(session, run_id, exc, client)
+        raise
+    _spawn(task)
     return payload
 
 

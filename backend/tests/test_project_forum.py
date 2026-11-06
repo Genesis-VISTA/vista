@@ -1068,3 +1068,31 @@ async def test_a_hosted_continue_posts_its_run_before_it_answers(
         (run,) = [p for p in read.posts if p.kind == "RUN"]
         assert run.run is not None and run.run.rounds == 2
         assert set(run.run.roster) == {"proposer", "reviewer", "referee"}
+
+
+async def test_a_hosted_continue_that_fails_after_its_run_ends_it(
+    installs, loopback_server, in_public_team, monkeypatch
+):
+    """The RUN is on the server; if the handler then fails, the Referee ends it."""
+    from harness import api_client
+    from vista_backend.api import debate as debate_api
+    from vista_backend.services.forum_git import live_run
+    from datetime import UTC, datetime
+
+    _, bob = installs
+    thread = await _alice_and_bob_on_a_published_forum(installs, loopback_server)
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("could not build the reply")
+
+    monkeypatch.setattr(debate_api, "_thread_public", broken)
+    async with bob.active() as session:
+        with api_client(session) as (api, _):
+            with pytest.raises(RuntimeError, match="could not build the reply"):
+                await api.post(
+                    f"/projects/salt/threads/{thread}/runs", json={"rounds": 1}
+                )
+        _, b_client = await _forum_of(bob, "salt")
+        read = await b_client.read_thread(thread)
+        assert read.posts[-1].kind == "BLOCKED"
+        assert live_run(read.posts, now=datetime.now(UTC), expiry=2700.0) is None
