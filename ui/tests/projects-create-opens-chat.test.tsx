@@ -51,7 +51,8 @@ beforeEach(() => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const method = init?.method ?? "GET";
-    if (url === "/api/projects" && method === "POST") {
+    // A create may carry `?hosted_forum_wanted=false` (no forum chosen).
+    if (url.split("?")[0] === "/api/projects" && method === "POST") {
       if (failCreate) return json({ detail: failCreate }, 400);
       const body = JSON.parse(String(init?.body)) as { name: string };
       const created = row(body.name);
