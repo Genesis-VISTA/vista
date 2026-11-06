@@ -48,16 +48,16 @@
 ## 6. Backend pass-through
 
 - [x] 6.1 Add `constraint` and `reservation` to the `HpcTools.submit` protocol and `McpHpcTools.submit`, forwarding each only when not `None`. Update `tests/harness/fake_mcp.py`. Leave `agents/forum/simulation.py` unchanged. Verify with a backend test that `McpHpcTools.submit(..., reservation="r")` passes `reservation` and omits it when `None`. Run `./scripts/ci-local.sh backend test`.
-- [ ] 6.2 Let a campaign supply both, as it supplies `cluster`: add optional `constraint` and `reservation` to the campaign agent's `dispatch_cycle` tool (`agents/campaign/agent_tools.py`), to `CampaignPlanner.dispatch_candidate` and to `SubAgentOrder`, and have `SubAgent.dispatch` pass them to `hpc.submit`. Mention them in `dispatch_cycle`'s docstring, without claiming Odo or Frontier refuse a constraint or naming other clusters. Verify with a backend test that dispatching a cycle with `reservation="train1"` submits every role's job with it, and that a cycle without one sends neither.
+- [x] 6.2 Let a campaign supply both, as it supplies `cluster`: add optional `constraint` and `reservation` to the campaign agent's `dispatch_cycle` tool (`agents/campaign/agent_tools.py`), to `CampaignPlanner.dispatch_candidate` and to `SubAgentOrder`, and have `SubAgent.dispatch` pass them to `hpc.submit`. Mention them in `dispatch_cycle`'s docstring, without claiming Odo or Frontier refuse a constraint or naming other clusters. Verify with a backend test that dispatching a cycle with `reservation="train1"` submits every role's job with it, and that a cycle without one sends neither.
 
 ## 7. Docs and prompts
 
-- [ ] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, the per-cluster mapping, and that Odo and Frontier report what Slurm recorded and never cancel. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping, with no per-cluster caveat. Verify with the docs link checker.
+- [x] 7.1 Document both arguments in `docs/hpc-jobs.md`: that the constraint replaces the default, the per-cluster mapping, and that Odo and Frontier report what Slurm recorded and never cancel. Add `-C` → `iri.constraint` / the `constraint` argument and `--reservation` → the `reservation` argument to `hpc-skill-author/SKILL.md`'s `#SBATCH` mapping, with no per-cluster caveat. Verify with the docs link checker.
 - [x] 7.2 Correct `backend/src/vista_backend/db/system_prompts/molten-salt.md:8` to the real signature: `submit_hpc_job(job, cluster?, node_count?, duration?, script_args?, constraint?, reservation?)`. Verify by reading the prompt, and with any bundled-prompt test.
 
 ## 8. Acceptance
 
-- [ ] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
+- [x] 8.1 Run `./scripts/ci-local.sh mcp` and `./scripts/ci-local.sh backend`, lint and test, and verify both pass.
 - [x] 8.2 Manual, before merge, through VISTA's own `submit_hpc_job` on Odo with Sam's tokens:
   - `example` with `constraint="nvme"`: expect a `ToolError` naming OLCF and a cancelled job, which also confirms a just-queued job's Slurm record has `constraints`. If the result is "unverified" instead, record it and raise the follow-up in design.md's Risks.
   - `example` with a fake reservation: expect Slurm's "Requested reservation is invalid".

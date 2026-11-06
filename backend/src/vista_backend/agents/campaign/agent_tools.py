@@ -162,8 +162,8 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
         """Dispatch the subagents (per the manifest) for each candidate in a cycle. Returns job ids.
 
         `constraint` replaces each job's default Slurm constraint and `reservation` names a
-        Slurm reservation; both apply to every job in the cycle. Odo and Frontier may refuse a
-        constraint (the submit fails, naming Perlmutter and Lux).
+        Slurm reservation; both apply to every job in the cycle. Leave either out to use the
+        job's defaults.
         """
         session = _session()
         run = await _require_run(session, run_id)

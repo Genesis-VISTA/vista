@@ -104,23 +104,22 @@ Per-cluster submission defaults: one section per cluster the job runs on (`odo`,
 - `reservation` names a Slurm reservation, or several comma-separated. It comes only from
   the submission; it is not a job default, so `cluster_defaults.json` has no field for it.
 
-Both are refused before anything is submitted, a dry run included, if they hold anything
-but letters, digits and `_ . : , -` (a constraint may also use `* & | [ ] ( )`).
+Both are refused before anything is submitted, a dry run included, if they are empty or
+hold whitespace or a control character, so neither can start a new `#SBATCH` line. Slurm
+judges everything else.
 
 | Cluster | How they are sent |
 |---|---|
 | Lux | `#SBATCH -C <constraint>` and `#SBATCH --reservation=<name>` |
 | Perlmutter, Odo, Frontier | over IRI, as `custom_attributes.constraint` and `reservation_id`, only when set |
 
-On Odo and Frontier VISTA then reads Slurm's record of the job once. If Slurm did not record
-a requested constraint, the job is cancelled and the tool fails, saying OLCF did not pass it
-to Slurm and naming Perlmutter and Lux. A reservation never cancels the job: OLCF passes
-reservations (Slurm refuses an unknown one at submit), so a record showing none only marks
-it unverified. Each value is judged on its own, so an unverified reservation never hides a
-dropped constraint. Whenever a value cannot be confirmed and no constraint was dropped, the
-job is kept and the summary says `verified: no (<reason>)`. OLCF honours reservations but currently drops
-constraints, so a constrained submit to Odo or Frontier fails today; use Perlmutter or Lux.
-The summary adds `constraint:`, `reservation:` and `verified:` lines where they apply.
+On Odo and Frontier VISTA then reads Slurm's record of the job once and reports what it
+found; it never cancels the job. If Slurm recorded no constraint for a requested one, the
+summary says `dropped: constraint '<value>' (Slurm recorded none; the job runs without it)`.
+If a value cannot be confirmed, because the record shows no reservation or cannot be read,
+the summary says `verified: no (<reason>)`. Each value is judged on its own, so an
+unverified reservation never hides a dropped constraint. The summary adds `constraint:`,
+`reservation:`, `dropped:` and `verified:` lines where they apply.
 
 A campaign's `dispatch_cycle` takes the same two arguments and applies them to every job in
 that cycle.
