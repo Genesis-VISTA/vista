@@ -36,17 +36,17 @@ credentials and stay out of PR CI.
 
 ## 6. Lux on IRI; SSH path removed (MCP)
 
-- [ ] 6.1 Add `lux_s3m_token` to `UserConfig`; `require_s3m_token("lux")`; `require_globus_token("lux")` → Frontier pair; `globus.Cluster` gains `lux` with the Frontier collection; verify `tests/test_per_cluster_s3m_tokens.py` and `tests/test_globus_token_resolution.py` additions
-- [ ] 6.2 Add Lux's `ClusterProfile` (partition → queue, gpus_per_node → GPUs per process, `RUN_DIR_Lux`, `job.lux.slurm`, `setup_lux.sh`); rewrite `tests/test_lux_submit.py` for IRI: spec, account from introspection, writable-out check, Globus source sync
-- [ ] 6.3 Lux status/outputs/cancel through the shared OLCF paths; add Lux to `tests/test_dry_run.py`
-- [ ] 6.4 Accept `lux` in `transfer_mcp.py`; verify `tests/test_transfer_tools.py` (Lux list/upload through the Frontier collection, `perlmutter` still refused)
-- [ ] 6.5 Delete `lib/slurm_ssh.py`, `_lux_conn`, `_sync_job_sources_ssh`, `_get_lux_job_*` and their tests; keep `lib/ssh.py` for agenthpc; verify `rg -n "slurm_ssh|lux_ssh|_lux_conn" mcp_servers` is empty and `./scripts/ci-local.sh mcp` passes
+- [x] 6.1 Add `lux_s3m_token` to `UserConfig` (and drop `lux_account`/`require_lux_account`); `require_s3m_token("lux")`; `require_globus_token("lux")` → Frontier pair; `globus.Cluster` gains `lux` with the Frontier collection; verify `tests/test_per_cluster_s3m_tokens.py` and `tests/test_globus_token_resolution.py` additions
+- [x] 6.2 Add Lux's `ClusterProfile` (partition → queue (`queue_is_partition`, checked before anything is contacted), gpus_per_node → GPUs per process (`_iri_resources`, which refuses a count that does not divide among the processes), `RUN_DIR_Lux`, `job.lux.slurm`, `setup_lux.sh` inside the job); rewrite `tests/test_lux_submit.py` for IRI: spec, account from introspection, writable-out check, Globus source sync; `test_skill_jobs.py`, `test_hello_skills.py` and `test_forge_pretrain_job.py` move their Lux cases to the IRI and Globus fakes
+- [x] 6.3 Lux status/outputs/cancel through the shared OLCF paths; add Lux to `tests/test_dry_run.py`
+- [x] 6.4 Accept `lux` in `transfer_mcp.py`; verify `tests/test_transfer_tools.py` (Lux list/upload through the Frontier collection, `perlmutter` still refused)
+- [x] 6.5 Delete `lib/slurm_ssh.py`, `_lux_conn`, `_sync_job_sources_ssh`, `_get_lux_job_*`, `lux_proxy`, `tests/fakes/ssh.py` and their tests; keep `lib/ssh.py` for agenthpc; verify `rg -n "slurm_ssh|lux_ssh|_lux_conn" mcp_servers` finds only MCP `lux_ssh_hosts`, which the backend's SSH probe reads until 7.3 removes both, and `./scripts/ci-local.sh mcp` passes
 
 ## 7. Backend and UI
 
 - [ ] 7.1 Add `lux_s3m_token` (`EncryptedStr`, nullable) to `local_settings`, the settings update/public models (write-only) and the MCP metadata; verify a test that a DB already holding the column starts without a schema problem, and that the token never appears in a settings dump
 - [ ] 7.2 Normalize `lux` → `frontier` in Globus credential selection and the `/settings/globus/{cluster}` OAuth routes; verify connecting from Lux stores the Frontier pair and rechecks both
-- [ ] 7.3 Readiness by resource id at each cluster's API version (v2 OLCF, v1 Perlmutter) in `services/hpc_status.py`; Lux facility/credential/Globus checks; drop the Lux account from the settings check; delete the SSH probe and backend `lux_ssh_hosts`; remove `odo_compute_resource_id`, `frontier_machine` and `nersc_machine` from both settings classes; verify `backend/tests/test_hpc_status*.py` per the hpc-availability delta scenarios; update the MCP-call comment in `agents/agents.py`; `./scripts/ci-local.sh backend` passes
+- [ ] 7.3 Readiness by resource id at each cluster's API version (v2 OLCF, v1 Perlmutter) in `services/hpc_status.py`; Lux facility/credential/Globus checks; drop the Lux account from the settings check; delete the SSH probe and `lux_ssh_hosts` (backend and MCP); remove `odo_compute_resource_id`, `frontier_machine` and `nersc_machine` from both settings classes; verify `backend/tests/test_hpc_status*.py` per the hpc-availability delta scenarios; update the MCP-call comment in `agents/agents.py`; `./scripts/ci-local.sh backend` passes
 - [ ] 7.4 UI: Lux section in `ui/components/UserSettingsModal.tsx` (S3M token, remote directory, shared Globus note, no account field), `ui/lib/settings.ts`; Lux card details in `HpcStatusSection.tsx` / `ui/lib/hpc-status.ts`; verify `ui/tests/UserSettingsModal.test.tsx`, `ui/tests/HpcStatusSection.test.tsx`, `ui/tests/hpc-status.test.ts`; `./scripts/ci-local.sh ui` passes
 
 ## 8. Drop amscrot

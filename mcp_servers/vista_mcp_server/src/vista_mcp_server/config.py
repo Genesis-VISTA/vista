@@ -132,15 +132,9 @@ class AppSettings(BaseSettings):
 
     lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
     """
-    SSH hop chain to a Lux login node, ending at the login node. Lux has no IRI
-    service, so its jobs are submitted with `sbatch` over SSH. Lux is reached
-    directly; a jump host can still be listed first. Each hop asks the researcher
-    for their own PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
-    """
-    lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
-    """
-    HTTP(S) proxy exported to Lux setup scripts and jobs, which have no direct
-    outbound network (e.g. to clone a repo). None to export nothing.
+    Lux's login node. Read only by the backend's SSH greeting probe
+    (`HpcClusterSettings`, kept in step by its parity test) until that probe is
+    replaced by an IRI check; jobs no longer reach Lux over SSH.
     """
 
     perlmutter_iri_url: A[

@@ -83,7 +83,7 @@ def test_per_job_queue_delay_snapshot(monkeypatch, clock):
 
 def test_cancel_all_clusters(monkeypatch, clock):
     monkeypatch.setattr(settings, "hpc_queue_delay_s", 300.0)
-    for cluster in ("odo", "frontier", "perlmutter"):
+    for cluster in ("odo", "frontier", "lux", "perlmutter"):
         dry_run.reset()
         job_id = dry_run.record_submit(cluster, "example", 1, 3600)
         dry_run.cancel(job_id)
@@ -91,9 +91,9 @@ def test_cancel_all_clusters(monkeypatch, clock):
         assert "STATE=CANCELLED" in dry_run.status_text(job_id)
 
 
-def test_submit_perlmutter_and_frontier_complete(monkeypatch, clock):
+def test_submit_perlmutter_frontier_and_lux_complete(monkeypatch, clock):
     monkeypatch.setattr(settings, "hpc_queue_delay_s", 0.0)
-    for cluster in ("perlmutter", "frontier"):
+    for cluster in ("perlmutter", "frontier", "lux"):
         job_id = dry_run.record_submit(cluster, "example", nodes=1, duration_s=600)
         assert job_id.startswith("dry-")
         assert dry_run.state(job_id) == "COMPLETED"

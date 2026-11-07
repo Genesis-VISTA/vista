@@ -1,7 +1,7 @@
 """
 hpc_jobs/forge-pretrain: the merged-config generator, the Lux job script's
 argument handling (run under bash with the cluster commands stubbed out), and
-a submission of the real job dir through the Lux dispatcher.
+submissions of the real job dir to Lux and Frontier.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ import yaml
 
 import vista_mcp_server.submit_job_mcp as m
 from vista_mcp_server.config import settings
-from fakes import FakeSshConn
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 JOB_DIR = REPO_ROOT / "hpc_jobs" / "forge-pretrain"
@@ -512,52 +511,69 @@ def test_setup_lux_fails_on_missing_env_script(cluster):
 
 
 @pytest.mark.anyio
-async def test_real_job_dir_submits_on_lux(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
-    monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
-    conn = FakeSshConn(tmp_path)
-    conn.on("sbatch --parsable", (0, "99\n", ""))
-
-    async def fake_conn(ctx, tool, **kw):
-        return conn
-
-    monkeypatch.setattr(m, "_lux_conn", fake_conn)
-
+async def test_real_job_dir_submits_on_lux(monkeypatch):
+    """
+    The real job dir through Lux's IRI path. setup_lux.sh (the checkout and the
+    data checks) now runs inside the allocation, through the proxy, so it is in
+    the job's body rather than run on a login node first.
+    """
+    from fakes import FakeGlobusClient, FakeIriClient
     from vista_mcp_server.lib.user_config import UserConfig
 
-    job_id, _, _, out_dir, nodes, duration = await m._submit_lux_job(
-        None,
-        UserConfig(lux_remote_dir="/lustre/vista", lux_account="stf218"),
-        "forge-pretrain",
-        None,
-        None,
-        "MODEL=forge-m",
+    base = "/lustre/orion/stf218/proj-shared/vista"
+    monkeypatch.setattr(settings, "local_hpc_jobs_dir", JOB_DIR.parent)
+    monkeypatch.setattr(m, "AVAILABLE_JOBS", m.get_available_jobs())
+    iri, globus = FakeIriClient(job_id="99"), FakeGlobusClient(cluster="lux")
+    globus.seed_remote_dir(base)
+
+    async def introspect(token, *, introspect_url):
+        return "stf218"
+
+    monkeypatch.setattr(m, "get_s3m_token_project", introspect)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
+    monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
+
+    cfg = UserConfig(
+        lux_s3m_token="lux-token",
+        lux_remote_dir=base,
+        frontier_globus_token="g-transfer",
+        frontier_globus_https_token="g-https",
+    )
+    job_id, _, _, out_dir, nodes, duration = await m._submit_job(
+        "lux", cfg, "forge-pretrain", None, None, "MODEL=forge-m"
     )
     assert (job_id, nodes, duration) == ("99", 16, 1800)
-    assert out_dir == "/lustre/vista.out/99"
-    src = "/lustre/vista.researcher.jobs/forge-pretrain/src"
-    assert sorted(conn.puts) == [
+    assert out_dir == f"{base}.out/99"
+    src = f"{base}.researcher.jobs/forge-pretrain/src"
+    assert sorted(path for _, path in globus.uploads) == [
         f"{src}/forge_common.sh",
         f"{src}/make_config.py",
         f"{src}/prepare_forge.sh",
     ]
 
-    [(setup, _)] = conn.ran("prepare_forge.sh")
-    assert "export FORGE_BRANCH=lux" in setup
+    [(spec, _)] = iri.submitted
+    assert spec["attributes"] == {
+        "queue_name": "batch",
+        "account": "stf218",
+        "duration": 1800,
+    }
+    # 8 processes per node with 8 GPUs: one GPU each, as forge's job.sb binds them.
+    assert spec["resources"]["node_count"] == 16
+    assert spec["resources"]["processes_per_node"] == 8
+    assert spec["resources"]["gpu_cores_per_process"] == 1
+    env = spec["environment"]
+    assert env["FORGE_BRANCH"] == "lux"
+    assert env["FORGE_DATA_DIR"] == DATA
     # The forge checkout lives where the job's own user can write it.
-    assert "export VISTA_JOB_DIR=/lustre/vista.out/forge-pretrain" in setup
-
-    [(_, script)] = conn.ran("sbatch --parsable")
-    assert "#SBATCH -A stf218" in script  # the researcher's Lux account setting
-    assert "#SBATCH -N 16" in script
-    assert "#SBATCH -t 0:30:00" in script
-    # As forge's job.sb: without tasks per node the batch env has no
-    # SLURM_NTASKS for DeepSpeed's srun --export=ALL to hand the ranks.
-    assert "#SBATCH --ntasks-per-node=8" in script
-    assert "#SBATCH --gpus-per-node=8" in script
-    assert f"export FORGE_DATA_DIR={DATA}" in script
-    assert "set -- MODEL=forge-m" in script
-    assert 'forge_launch lux.yml "${RUN_DIR_Lux}"' in script
+    assert env["VISTA_JOB_DIR"] == f"{base}.out/forge-pretrain"
+    body = spec["arguments"][2]
+    setup = (JOB_DIR / "setup_lux.sh").read_text(encoding="utf-8")
+    assert (
+        body.index("export https_proxy=")
+        < body.index(setup[:40])
+        < body.index("set -- MODEL=forge-m")
+    )
+    assert 'forge_launch lux.yml "${RUN_DIR_Lux}"' in body
 
 
 @pytest.mark.anyio

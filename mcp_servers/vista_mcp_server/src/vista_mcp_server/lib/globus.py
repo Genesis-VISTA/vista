@@ -54,7 +54,8 @@ from ..config import settings
 from .types import GlobusTokens
 
 
-Cluster = Literal["odo", "frontier"]
+Cluster = Literal["odo", "frontier", "lux"]
+""" Lux is reached through Frontier's collection; the name is only for messages. """
 
 _CHUNK_BYTES = 1024 * 1024
 """ Streaming read size for `download_file` -- how much is held at once, not
