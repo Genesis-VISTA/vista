@@ -88,6 +88,30 @@ class IriDefaults(BaseModel):
     iri: IriAttributes = IriAttributes()
 
 
+def _match_compute_resource(compute: list, machine: str, *, profile: str):
+    """
+    The discovered compute resource that is `machine`, or an error naming what
+    was found instead.
+
+    Two shapes match, ignoring case: NERSC groups resources under the machine
+    (group `perlmutter`, name `compute`), and OLCF names each resource for its
+    machine (`Frontier`, `Lux`). Anything else is refused rather than replaced:
+    picking the first listed resource is how Frontier jobs were sent to Lux,
+    once the moderate enclave began listing Lux first.
+    """
+    want = machine.lower()
+    for c in compute:
+        group = str((c.data or {}).get("group") or "").lower()
+        name = str(c.name or "").lower()
+        if name == want or (group == want and name == "compute"):
+            return c
+    found = ", ".join(repr(c.name) for c in compute) or "none"
+    raise RuntimeError(
+        f"IRI ({profile}) lists no compute resource for {machine!r} "
+        f"(found {found}). Refusing to submit to a different machine."
+    )
+
+
 class IriClient:
     """
     Submits jobs and accesses files on a NERSC IRI facility (Perlmutter) via amscrot.
@@ -132,8 +156,8 @@ class IriClient:
         )
 
     def _resolve_resources(self) -> None:
-        # A pre-pinned compute id means no discovery at all: the only pinning
-        # caller (Odo) does its file ops through Globus, never IRI storage, so
+        # A pre-pinned compute id means no discovery at all: the pinning callers
+        # (Odo, Frontier) do their file ops through Globus, never IRI storage, so
         # the discover() roundtrip would add latency to every tool call for a
         # storage id that is never used.
         if self._compute_resource_id:
@@ -146,20 +170,9 @@ class IriClient:
                 f"(check token validity / endpoint)"
             )
 
-        # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
-        # grouped under the facility (site); the entry with group=<machine> & name="compute"
-        # is the right one. Fall back to the first compute resource if no exact match.
-        compute_res = None
-        for c in discovery.compute:
-            if (c.data and c.data.get("group") == self.machine and c.name == "compute") or c.name == self.machine:
-                compute_res = c
-                break
-        if not compute_res:
-            compute_res = discovery.compute[0]
-            logging.warning(
-                f"IRI: no exact compute match for '{self.machine}', using fallback {compute_res.name!r}"
-            )
-        self._compute_resource_id = compute_res.data.get("id")
+        self._compute_resource_id = _match_compute_resource(
+            discovery.compute, self.machine, profile=self.profile,
+        ).data.get("id")
 
         # Storage: prefer one with "home" in its name (mirrors IriServiceClient._get_storage_resource_id).
         for s in discovery.storage:
@@ -312,14 +325,18 @@ async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
     Reuses the user's S3M token — the same bearer that authenticates against Odo's
     S3M endpoint also works against the OLCF moderate-enclave IRI service. The
     token's `iri-frontend-moderate` scope authorizes compute discovery/submit but
-    NOT storage; the caller must handle file ops out-of-band (SSH) since
+    NOT storage; the caller must handle file ops out-of-band (Globus) since
     `storage_resource_id` will raise on use.
+
+    Pins the compute resource id from settings, as Odo does: the moderate
+    enclave lists Lux before Frontier, so discovery is not trusted here.
     """
     client = IriClient(
         api_endpoint=settings.frontier_iri_url,
         api_key=iri_token,
         machine=settings.frontier_machine,
         profile="olcf-iri",
+        compute_resource_id=settings.frontier_compute_resource_id,
     )
     await client.init_resources()
     return client

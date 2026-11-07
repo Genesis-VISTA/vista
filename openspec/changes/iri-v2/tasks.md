@@ -6,9 +6,9 @@ credentials and stay out of PR CI.
 
 ## 1. Frontier never goes to Lux (v1 hotfix, can ship alone)
 
-- [ ] 1.1 Pin Frontier's v1 compute resource id in MCP `config.py` (`frontier_compute_resource_id`, `5173cdb4-d82f-5c81-8ef0-598997c12813`) and pass it from `create_olcf_iri_client`, as Odo does; verify a new test in `mcp_servers/vista_mcp_server/tests/test_submit_job_spec.py` that Frontier's spec carries that id
-- [ ] 1.2 Make `IriClient._resolve_resources` match names case-insensitively and raise instead of falling back to `compute[0]`; verify with a fake discovery listing Lux before Frontier in a new `tests/test_iri_resolve.py`
-- [ ] 1.3 `./scripts/ci-local.sh mcp` passes
+- [x] 1.1 Pin Frontier's v1 compute resource id in MCP `config.py` (`frontier_compute_resource_id`, `5173cdb4-d82f-5c81-8ef0-598997c12813`) and pass it from `create_olcf_iri_client`, as Odo does; verified by `tests/test_iri_resolve.py::test_frontier_client_is_pinned_to_frontier` and live (`create_olcf_iri_client` now resolves `5173cdb4-…`, was Lux's `7fd317bd-…`)
+- [x] 1.2 Make `IriClient._resolve_resources` match names case-insensitively and raise instead of falling back to `compute[0]`; verify with a fake discovery listing Lux before Frontier in a new `tests/test_iri_resolve.py`
+- [x] 1.3 `./scripts/ci-local.sh mcp` passes
 
 ## 2. Recorded facility responses
 

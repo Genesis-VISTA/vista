@@ -108,6 +108,13 @@ class AppSettings(BaseSettings):
     """ Same as `odo_introspect_url`, for Frontier tokens. """
     frontier_machine: str = "frontier"
     """ OLCF compute resource group name (used to match the IRI discovery result). """
+    frontier_compute_resource_id: str = "5173cdb4-d82f-5c81-8ef0-598997c12813"
+    """
+    Pinned IRI compute resource UUID for Frontier, as `odo_compute_resource_id`
+    is for Odo. The moderate enclave also lists Lux, first, so discovery cannot
+    be trusted to pick Frontier: its fallback sent Frontier jobs to Lux. Look up
+    via `GET <frontier_iri_url>/api/v1/status/resources` if OLCF rotates ids.
+    """
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
     """
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
