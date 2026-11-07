@@ -575,6 +575,8 @@ class HpcClusterSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, open enclave. """
+    odo_iri_api_version: Literal["v1", "v2"] = "v2"
+    odo_iri_resource_id: str = "odo"
     odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
     """
     Odo's IRI compute resource. Matched by id, not name: the open enclave lists
@@ -585,6 +587,8 @@ class HpcClusterSettings(BaseSettings):
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, moderate enclave. """
+    frontier_iri_api_version: Literal["v1", "v2"] = "v2"
+    frontier_iri_resource_id: str = "frontier"
     frontier_machine: str = "frontier"
     """ Frontier's resource name in the IRI status list, compared case-insensitively. """
     frontier_introspect_url: str = (
@@ -592,9 +596,24 @@ class HpcClusterSettings(BaseSettings):
     )
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
 
-    nersc_iri_url: str = "https://api.iri.nersc.gov"
+    perlmutter_iri_url: A[
+        str,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_MCP_PERLMUTTER_IRI_URL", "VISTA_MCP_NERSC_IRI_URL"
+            )
+        ),
+    ] = "https://api.iri.nersc.gov"
+    """ NERSC's IRI API. `VISTA_MCP_NERSC_IRI_URL`, its earlier name, still sets it. """
+    perlmutter_iri_api_version: Literal["v1", "v2"] = "v1"
+    perlmutter_iri_resource_id: str = "94351904-6dba-4c16-b5cd-fbd280d8615b"
+    perlmutter_iri_storage_id: str = "65b28619-c3b6-4942-8da1-044a3b3a2a9e"
     nersc_machine: str = "perlmutter"
     """ The IRI status group Perlmutter's `compute` resource sits in. """
+
+    lux_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    lux_iri_api_version: Literal["v1", "v2"] = "v2"
+    lux_iri_resource_id: str = "lux"
 
     lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
     """

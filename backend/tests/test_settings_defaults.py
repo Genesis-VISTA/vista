@@ -232,13 +232,42 @@ from vista_backend.config import hpc_settings as h
 print(json.dumps({
     "odo": h.odo_iri_url,
     "frontier": h.frontier_iri_url,
-    "nersc": h.nersc_iri_url,
+    "nersc": h.perlmutter_iri_url,
+    "targets": {
+        c: [getattr(h, f"{c}_iri_api_version"), getattr(h, f"{c}_iri_resource_id")]
+        for c in ("odo", "frontier", "lux", "perlmutter")
+    },
 }))
 """,
     )
     assert result["odo"] == "https://amsc-open.s3m.olcf.ornl.gov"
     assert result["frontier"] == "https://amsc-moderate.s3m.olcf.ornl.gov"
     assert result["nersc"] == "https://api.iri.nersc.gov"
+    # Each cluster is its own resource at its own version: Perlmutter stays on
+    # v1 because NERSC's v2 refuses the tokens researchers hold.
+    assert result["targets"] == {
+        "odo": ["v2", "odo"],
+        "frontier": ["v2", "frontier"],
+        "lux": ["v2", "lux"],
+        "perlmutter": ["v1", "94351904-6dba-4c16-b5cd-fbd280d8615b"],
+    }
+
+
+@pytest.mark.parametrize(
+    "name", ["VISTA_MCP_PERLMUTTER_IRI_URL", "VISTA_MCP_NERSC_IRI_URL"]
+)
+def test_perlmutter_iri_url_also_reads_its_old_name(tmp_path: Path, name: str) -> None:
+    """A `.env` written before the rename still points both services at its NERSC URL."""
+    result = _probe(
+        tmp_path,
+        """
+import json
+from vista_backend.config import hpc_settings as h
+print(json.dumps({"url": h.perlmutter_iri_url}))
+""",
+        extra={**_clean_env(), name: "https://nersc.example"},
+    )
+    assert result["url"] == "https://nersc.example"
 
 
 def test_hpc_cluster_settings_read_the_mcp_servers_variables(tmp_path: Path) -> None:

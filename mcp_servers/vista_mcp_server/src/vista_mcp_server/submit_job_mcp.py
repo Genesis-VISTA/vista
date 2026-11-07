@@ -502,7 +502,7 @@ async def submit_hpc_job(
     target = {
         "odo": "odo",
         "frontier": "frontier",
-        "perlmutter": f"{settings.nersc_machine} (NERSC)",
+        "perlmutter": "perlmutter (NERSC)",
         "lux": "lux",
     }[cluster]
 
@@ -568,8 +568,8 @@ async def _submit_odo_job(
     Odo dispatch (OLCF open enclave): IRI compute + Globus file ops, the same
     architecture as Frontier (`_submit_frontier_job`). Differences:
 
-    - open-enclave IRI endpoint (`settings.odo_iri_url`) with a pinned compute
-      resource id (`settings.odo_compute_resource_id`)
+    - open-enclave IRI endpoint (`settings.odo_iri_url`) and its own compute
+      resource (`settings.odo_iri_resource_id`)
     - the Slurm account is the S3M token's own project (see `_olcf_project`)
     - the setup snippet `cd`s into RUN_DIR_Odo so job.odo.slurm scripts that
       reference sources relative to the working dir keep working
@@ -877,7 +877,7 @@ async def _submit_perlmutter_job(
         },
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
-    logging.info(f"Submitted job {job_id} via IRI to {settings.nersc_machine}")
+    logging.info(f"Submitted job {job_id} via IRI to perlmutter")
     return (
         job_id,
         layout.log_path(job_id),
@@ -1061,7 +1061,7 @@ async def _submit_frontier_job(
         },
     }
     job_id = await iri_client.submit_job(spec, name=f"vista-{job}")
-    logging.info(f"Submitted job {job_id} via IRI to {settings.frontier_machine}")
+    logging.info(f"Submitted job {job_id} via IRI to frontier")
     return (
         job_id,
         layout.log_path(job_id),
@@ -1556,7 +1556,7 @@ async def _get_perlmutter_job_status(cfg: UserConfig, job_id: str) -> str:
 
     metadata = {
         "JOB_ID": job_id,
-        "CLUSTER": settings.nersc_machine,
+        "CLUSTER": "perlmutter",
         "STATE": state,
     }
     if status.get("exit_code") is not None:
@@ -1850,12 +1850,12 @@ async def _get_lux_job_status(
     ])
 
 
-def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
+def _flatten_ls_paths(ls_result: list | dict, *, root: str) -> list[str]:
     """
-    Walk an amscrot ls() result and return file paths relative to *root*.
+    The files in an `IriClient.ls()` listing, as paths relative to *root*.
+    Folders are left out: a listing of outputs names what can be downloaded.
 
-    The IRI ls response shape isn't strictly typed; this is forgiving — it accepts
-    either a list of entries or a dict with a "files"/"entries"/"results" key.
+    Also accepts a dict with a "files"/"entries"/"results"/"items" list.
     """
     entries: list[dict] = []
     if isinstance(ls_result, list):
@@ -1869,7 +1869,7 @@ def _flatten_ls_paths(ls_result: dict, *, root: str) -> list[str]:
     out: list[str] = []
     root_norm = root.rstrip("/")
     for e in entries:
-        if not isinstance(e, dict):
+        if not isinstance(e, dict) or e.get("type") == "d":
             continue
         path = e.get("path") or e.get("name") or ""
         if not path:
@@ -1971,7 +1971,7 @@ async def _fetch_once(
 
 
 async def _get_perlmutter_job_outputs(cfg: UserConfig, host_output_dir: Path, job_id: str, files: list[str]) -> str:
-    # IRI filesystem download is currently text-only; binary checkpoints are not supported here.
+    # Text and binary alike: `IriClient.download` checks what arrives against the file's size.
     remote_out_dir = _layout(cfg, "perlmutter").output_dir(job_id)
 
     iri_client = await create_iri_client(iri_token=cfg.require_nersc_iri_token())

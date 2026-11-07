@@ -647,7 +647,7 @@ class HpcStatusService:
         return {
             "odo": self._settings.odo_iri_url,
             "frontier": self._settings.frontier_iri_url,
-            "perlmutter": self._settings.nersc_iri_url,
+            "perlmutter": self._settings.perlmutter_iri_url,
         }[cluster].rstrip("/")
 
     async def _facility_feed(
