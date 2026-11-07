@@ -313,7 +313,7 @@ test.describe("HPC availability cards", () => {
     await expect(lux.getByLabel("Lux S3M token")).toBeVisible();
     await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
     await expect(lux.getByLabel("Lux account")).toHaveCount(0);
-    await expect(lux).toContainText("Frontier (shared with Lux)");
+    await expect(lux).toContainText("Lux mounts Frontier's filesystem");
     expect(await stub.unstubbed()).toEqual([]);
   });
 

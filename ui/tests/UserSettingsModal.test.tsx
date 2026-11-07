@@ -10,16 +10,18 @@ import type { LocalSettings } from "@/lib/settings";
 import { DEBOUNCE_MS } from "@/lib/settings-autosave";
 import type { VersionInfo } from "@/lib/version";
 
-const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock } = vi.hoisted(() => ({
-  fetchSettingsMock: vi.fn(),
-  updateSettingsMock: vi.fn(),
-  startGlobusLoginMock: vi.fn(),
-}));
+const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock, completeGlobusLoginMock } =
+  vi.hoisted(() => ({
+    fetchSettingsMock: vi.fn(),
+    updateSettingsMock: vi.fn(),
+    startGlobusLoginMock: vi.fn(),
+    completeGlobusLoginMock: vi.fn(),
+  }));
 vi.mock("@/lib/settings", () => ({
   fetchSettings: fetchSettingsMock,
   updateSettings: updateSettingsMock,
   startGlobusLogin: startGlobusLoginMock,
-  completeGlobusLogin: vi.fn(),
+  completeGlobusLogin: completeGlobusLoginMock,
 }));
 
 const { recheckMock, refreshMock, useHpcStatusMock } = vi.hoisted(() => ({
@@ -1217,7 +1219,6 @@ describe("UserSettingsModal: Lux", () => {
     expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     // No account any more: Lux jobs are charged to the token's project.
     expect(within(lux).queryByLabelText(/Lux account/)).toBeNull();
-    expect(lux).toHaveTextContent("Frontier (shared with Lux)");
     expect(lux).toHaveTextContent(/Lux mounts Frontier.s filesystem/);
     expect(lux).not.toHaveTextContent(/PIN|passcode|SSH/);
   });
@@ -1230,6 +1231,73 @@ describe("UserSettingsModal: Lux", () => {
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_s3m_token: "lux-tok" }));
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).toHaveBeenCalledWith("lux");
+  });
+
+  describe("one Globus connection for Frontier and Lux", () => {
+    beforeEach(() => {
+      window.sessionStorage.clear();
+      startGlobusLoginMock.mockReset();
+      startGlobusLoginMock.mockResolvedValue({ authorize_url: "https://auth.globus.org/x" });
+      completeGlobusLoginMock.mockReset();
+      completeGlobusLoginMock.mockResolvedValue({
+        cluster: "frontier",
+        connected: "frontier",
+        identity: "ada@ornl.gov",
+      });
+    });
+
+    async function connectIn(name: "Frontier" | "Lux") {
+      const section = await region(name);
+      await userEvent.click(within(section).getByRole("button", { name: "Connect" }));
+      await userEvent.type(
+        await within(section).findByPlaceholderText("Paste the code from Globus"),
+        "a-code",
+      );
+      await userEvent.click(within(section).getByRole("button", { name: "Finish" }));
+      await within(section).findByText("Connected as ada@ornl.gov");
+    }
+
+    it("connected from Lux, Frontier shows connected with nothing to set up", async () => {
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      await connectIn("Lux");
+      expect(completeGlobusLoginMock).toHaveBeenCalledWith("frontier", "a-code");
+      expect(recheckMock).toHaveBeenCalledWith("frontier");
+      expect(recheckMock).toHaveBeenCalledWith("lux");
+
+      const frontier = await openOn("Frontier");
+      expect(within(frontier).getByText("Connected as ada@ornl.gov")).toBeInTheDocument();
+      expect(within(frontier).getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+    });
+
+    it("connected from Frontier, Lux shows connected with nothing to set up", async () => {
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
+      await connectIn("Frontier");
+
+      const lux = await openOn("Lux");
+      expect(within(lux).getByText("Connected as ada@ornl.gov")).toBeInTheDocument();
+      expect(within(lux).queryByRole("button", { name: "Connect" })).toBeNull();
+    });
+
+    it("a Frontier connection saved earlier shows as connected in Lux", async () => {
+      fetchSettingsMock.mockResolvedValue(
+        settingsRow({ frontier_globus_token: "t", frontier_globus_https_token: "h" }),
+      );
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      const lux = await region("Lux");
+      expect(within(lux).getByText("Connected")).toBeInTheDocument();
+      expect(within(lux).getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+    });
+
+    it("Odo's connection is not Lux's", async () => {
+      fetchSettingsMock.mockResolvedValue(
+        settingsRow({ odo_globus_token: "t", odo_globus_https_token: "h" }),
+      );
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      const lux = await region("Lux");
+      expect(within(lux).getByText("Not connected")).toBeInTheDocument();
+    });
   });
 
   it("connecting Globus from Lux connects Frontier's", async () => {
