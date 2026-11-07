@@ -504,8 +504,16 @@ def _serve(monkeypatch, facility: Facility) -> None:
         return _create
 
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", make("perlmutter"))
-    monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", make("frontier"))
-    monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", make("odo"))
+    monkeypatch.setattr(
+        submit_job_mcp,
+        "client_for",
+        lambda cluster, token: IriClient(
+            iri_target(cluster),
+            token,
+            transport=httpx.MockTransport(facility),
+            sleep=Clock(),
+        ),
+    )
 
 
 async def test_perlmutter_failed_exit_7_reads_failed_with_its_exit_code(

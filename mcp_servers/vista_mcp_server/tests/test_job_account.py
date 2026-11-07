@@ -67,11 +67,7 @@ def submit_env(monkeypatch):
     globus.seed_remote_dir("/fake/odo/vista")
     globus.seed_remote_dir("/fake/frontier/vista")
 
-    async def _iri(*, iri_token: str):
-        return iri
-
-    monkeypatch.setattr(m, "create_odo_iri_client", _iri)
-    monkeypatch.setattr(m, "create_olcf_iri_client", _iri)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     return iri, globus
 
@@ -86,26 +82,20 @@ CFG = UserConfig(
 )
 
 
-@pytest.mark.parametrize(
-    ("cluster", "submit"),
-    [("odo", m._submit_odo_job), ("frontier", m._submit_frontier_job)],
-)
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
 async def test_a_job_is_charged_to_any_tokens_project(
-    introspected, submit_env, cluster, submit
+    introspected, submit_env, cluster
 ):
     iri, _ = submit_env
-    await submit(CFG, "example", node_count=None, duration_int=None, script_args=None)
+    await m._submit_job(
+        cluster, CFG, "example", node_count=None, duration_int=None, script_args=None
+    )
     spec, _ = iri.submitted[0]
     assert spec["attributes"]["account"] == PROJECT
 
 
-@pytest.mark.parametrize(
-    ("cluster", "submit"),
-    [("odo", m._submit_odo_job), ("frontier", m._submit_frontier_job)],
-)
-async def test_an_unreadable_token_moves_no_files(
-    monkeypatch, submit_env, cluster, submit
-):
+@pytest.mark.parametrize("cluster", ["odo", "frontier"])
+async def test_an_unreadable_token_moves_no_files(monkeypatch, submit_env, cluster):
     """Introspection comes first: a token S3M refuses, or one with no project,
     stops the submission before any source is uploaded."""
     _, globus = submit_env
@@ -115,8 +105,13 @@ async def test_an_unreadable_token_moves_no_files(
 
     monkeypatch.setattr(m, "get_s3m_token_project", refuse)
     with pytest.raises(ToolError, match="introspection failed"):
-        await submit(
-            CFG, "example", node_count=None, duration_int=None, script_args=None
+        await m._submit_job(
+            cluster,
+            CFG,
+            "example",
+            node_count=None,
+            duration_int=None,
+            script_args=None,
         )
     assert globus.uploads == []
 
@@ -130,10 +125,11 @@ def no_introspection(monkeypatch):
 
 
 async def test_status_does_not_introspect(no_introspection, monkeypatch, tmp_path):
-    async def iri_for(cluster, cfg):
-        return FakeIriClient(status={"state": "QUEUED"})
-
-    monkeypatch.setattr(m, "_create_olcf_iri_for", iri_for)
+    monkeypatch.setattr(
+        m,
+        "client_for",
+        lambda cluster, token: FakeIriClient(status={"state": "QUEUED"}),
+    )
     text = await m._get_olcf_job_status(
         UserConfig(frontier_s3m_token="tok", frontier_remote_dir="/o"),
         tmp_path,

@@ -577,12 +577,12 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         seen["introspected"] = token
         return "chm243"
 
-    async def olcf(*, iri_token):
-        seen["iri_token"] = iri_token
+    def olcf(cluster, token):
+        seen["iri"] = (cluster, token)
         return iri
 
     monkeypatch.setattr(m, "get_s3m_token_project", introspect)
-    monkeypatch.setattr(m, "create_olcf_iri_client", olcf)
+    monkeypatch.setattr(m, "client_for", olcf)
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
 
     cfg = UserConfig(
@@ -591,20 +591,23 @@ async def test_real_job_dir_submits_on_frontier_under_the_tokens_project(monkeyp
         frontier_globus_https_token="g-https",
         frontier_remote_dir=base,
     )
-    job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_frontier_job(
-        cfg, "forge-pretrain", None, None, "MODEL=forge-s"
+    job_id, log_path, err_path, out_dir, nodes, duration = await m._submit_job(
+        "frontier", cfg, "forge-pretrain", None, None, "MODEL=forge-s"
     )
     assert (job_id, nodes, duration) == ("777", 16, 1800)
     assert out_dir == f"{base}.out/777"
     # The account is whatever project the token belongs to.
-    assert seen == {"introspected": "chm243-token", "iri_token": "chm243-token"}
+    assert seen == {
+        "introspected": "chm243-token",
+        "iri": ("frontier", "chm243-token"),
+    }
 
     [(spec, _)] = iri.submitted
     attrs = spec["attributes"]
     assert attrs["account"] == "chm243"
     assert attrs["queue_name"] == "batch"
-    assert attrs["directory"] == f"{base}.researcher.jobs"
-    env = attrs["environment"]
+    assert spec["directory"] == f"{base}.researcher.jobs"
+    env = spec["environment"]
     # The checkout is written by the job, as the project's automation user, so
     # it goes in `.out`, which that user created; the sources it only reads.
     assert env["VISTA_JOB_DIR"] == f"{base}.out/forge-pretrain"

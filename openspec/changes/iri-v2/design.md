@@ -123,8 +123,11 @@ Perlmutter keeps its `constraint` custom attribute, shifter image and
 transport rather than the cluster name.
 
 The setup script is inlined into the job body after the shared prefix (for OLCF: umask,
-`VISTA_OUT`, `HOME` fallback, proxy, `module purge`), run with `bash -le` so that its
-failure exits the job with its output in the job's logs. Today it is IRI `pre_launch`,
+`VISTA_OUT`, `HOME` fallback, proxy, `module purge`), run in a login bash of its own
+(`bash -lc`) whose non-zero exit ends the job with the reason in its stderr. It does not
+add `-e`: every bundled setup script sets `set -euo pipefail` itself, and `-e` from the
+command line would also apply to the login profile (Lux's automation user's profile has a
+failing line). Its own shell keeps its exports out of the job script, as `pre_launch` did. Today it is IRI `pre_launch`,
 which runs before the prefix and so sees neither `VISTA_OUT` nor the proxy. Perlmutter's
 prefix is unchanged apart from this ordering.
 

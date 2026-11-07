@@ -466,20 +466,11 @@ class IriClient:
 
 # ---------------------------------------------------------------------------- factories
 
-def iri_client(cluster: IriCluster, token: str) -> IriClient:
+def client_for(cluster: IriCluster, token: str) -> IriClient:
+    """ The IRI client for `cluster`, as the researcher whose token this is. """
     return IriClient(iri_target(cluster), token)
 
 
 async def create_iri_client(*, iri_token: str) -> IriClient:
     """ NERSC IRI client (Perlmutter). """
-    return iri_client("perlmutter", iri_token)
-
-
-async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
-    """ S3M IRI client for Frontier (moderate enclave); its files go through Globus. """
-    return iri_client("frontier", iri_token)
-
-
-async def create_odo_iri_client(*, iri_token: str) -> IriClient:
-    """ S3M IRI client for Odo (open enclave); its files go through Globus. """
-    return iri_client("odo", iri_token)
+    return client_for("perlmutter", iri_token)

@@ -8,6 +8,10 @@ setup/pre_launch, source sync, and the one folder layout every cluster shares
 
 from __future__ import annotations
 
+import os
+import shlex
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -19,8 +23,8 @@ from vista_mcp_server.submit_job_mcp import (
     AVAILABLE_JOBS,
     _get_olcf_job_status,
     _get_perlmutter_job_status,
-    _submit_frontier_job,
-    _submit_odo_job,
+    _job_body,
+    _submit_job,
     _submit_perlmutter_job,
 )
 from fakes import FakeGlobusClient, FakeIriClient
@@ -59,12 +63,6 @@ def user_cfg() -> UserConfig:
 
 
 def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient):
-    async def _odo(*, iri_token: str):
-        return iri
-
-    async def _olcf(*, iri_token: str):
-        return iri
-
     async def _nersc(*, iri_token: str):
         return iri
 
@@ -72,8 +70,7 @@ def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient)
         # Every token belongs to a project no deployment is configured for.
         return "abc123"
 
-    monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo)
-    monkeypatch.setattr(submit_job_mcp, "create_olcf_iri_client", _olcf)
+    monkeypatch.setattr(submit_job_mcp, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
@@ -86,7 +83,8 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     globus.seed_remote_dir(ODO)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_odo_job(
+    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_job(
+        "odo",
         user_cfg,
         "example",
         node_count=None,
@@ -115,8 +113,8 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     assert job_cmd.startswith("umask 002\n")
     assert f"chgrp abc123 {ODO}.out 2>/dev/null || true" in job_cmd
     assert f"chmod 2775 {ODO}.out 2>/dev/null || true" in job_cmd
-    assert spec["attributes"]["directory"] == f"{ODO}.researcher.jobs"
-    assert spec["attributes"]["stdout_path"] == f"{ODO}.out/log-%j.out"
+    assert spec["directory"] == f"{ODO}.researcher.jobs"
+    assert spec["stdout_path"] == f"{ODO}.out/log-%j.out"
     # Nothing the job writes is made through Globus: only the source tree.
     assert globus.mkdir_p_calls == [
         ("odo-collection", f"{ODO}.researcher.jobs/example/src", "/fake/odo")
@@ -125,7 +123,7 @@ async def test_submit_odo_job_inlines_slurm_and_vista_out(monkeypatch, user_cfg)
     slurm = (HPC_JOBS_DIR / "example" / "job.odo.slurm").read_text(encoding="utf-8")
     assert slurm in job_cmd
     assert "set -- a b" in job_cmd
-    env = spec["attributes"]["environment"]
+    env = spec["environment"]
     assert env["RUN_DIR_Odo"] == f"{ODO}.researcher.jobs/example/src"
     assert env["FORGE_MODEL_Odo"] == f"{ODO}.out/example/model"
     assert spec["attributes"]["account"] == "abc123"
@@ -187,7 +185,8 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     globus.seed_remote_dir(FRONTIER)
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_frontier_job(
+    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_job(
+        "frontier",
         user_cfg,
         "example",
         node_count=None,
@@ -207,12 +206,12 @@ async def test_submit_frontier_job_syncs_and_inlines(monkeypatch, user_cfg):
     job_cmd = spec["arguments"][2]
     assert f'export VISTA_OUT={FRONTIER}.out/"$SLURM_JOB_ID"' in job_cmd
     assert 'mkdir -p -m 2775 "$VISTA_OUT"' in job_cmd
-    assert spec["attributes"]["directory"] == f"{FRONTIER}.researcher.jobs"
+    assert spec["directory"] == f"{FRONTIER}.researcher.jobs"
     assert (HPC_JOBS_DIR / "example" / "job.frontier.slurm").read_text(
         encoding="utf-8"
     ) in job_cmd
-    assert "VISTA_REMOTE_BASE" not in spec["attributes"]["environment"]  # never created
-    run_dir = spec["attributes"]["environment"].get("RUN_DIR_Frontier")
+    assert "VISTA_REMOTE_BASE" not in spec["environment"]  # never created
+    run_dir = spec["environment"].get("RUN_DIR_Frontier")
     assert run_dir is not None and run_dir.endswith("/example/src")
     # Only the source tree: out/ was once made through Globus here, as the
     # researcher, where the project's automation user could not write to it.
@@ -368,3 +367,109 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
     text = await _get_perlmutter_job_status(user_cfg, "pm-2")
     assert "--- STDERR ---" in text
     assert "unrecognized arguments: --salt flibe_90Li6" in text
+
+
+# ---------------------------------------------------------------- one OLCF submit path
+
+
+@pytest.mark.parametrize(
+    ("cluster", "job", "base"),
+    [("odo", "salt-neutronics-tbr", ODO), ("frontier", "forge-tune", FRONTIER)],
+)
+async def test_olcf_spec_is_the_iri_jobspec_with_setup_in_the_body(
+    monkeypatch, user_cfg, cluster, job, base
+):
+    """
+    The resource is the IRI path's, never an attribute, and the setup script
+    runs inside the job after the shared prefix rather than as `pre_launch`.
+    """
+    iri = FakeIriClient(job_id="9")
+    globus = FakeGlobusClient()
+    globus.seed_remote_dir(base)
+    _patch_clients(monkeypatch, iri=iri, globus=globus)
+
+    await _submit_job(cluster, user_cfg, job, None, None, "--flag x")
+
+    [(spec, name)] = iri.submitted
+    assert name == f"vista-{job}"
+    assert "resource_id" not in spec["attributes"]
+    assert "pre_launch" not in spec and "pre_launch" not in spec["attributes"]
+    assert set(spec["attributes"]) <= {
+        "queue_name",
+        "account",
+        "duration",
+        "custom_attributes",
+    }
+    # What the client sends is what was built: nothing is left to lift out.
+    from vista_mcp_server.lib.iri import wire_job_spec
+
+    wire = wire_job_spec(spec, name=name)
+    for key in ("directory", "stdout_path", "stderr_path", "environment", "attributes"):
+        assert wire[key] == spec[key]
+
+    body = spec["arguments"][2]
+    setup = (HPC_JOBS_DIR / job / f"setup_{cluster}.sh").read_text(encoding="utf-8")
+    script = (HPC_JOBS_DIR / job / f"job.{cluster}.slurm").read_text(encoding="utf-8")
+    order = [
+        body.index("export VISTA_OUT="),
+        body.index("module purge"),
+        body.index(f"bash -lc {shlex.quote(setup)}"),
+        body.index("set -- --flag x"),
+        body.index(script),
+    ]
+    assert order == sorted(order)
+    assert f"VISTA: setup_{cluster}.sh failed with exit code" in body
+    if cluster == "odo":  # Odo's job scripts run from their sources
+        assert body.index("cd ") < body.index("bash -lc")
+
+
+def _run(body: str, home: Path) -> subprocess.CompletedProcess:
+    """`body` under bash, with a HOME that has no login profile to read."""
+    return subprocess.run(
+        ["bash", "-c", body],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={"PATH": os.environ["PATH"], "HOME": str(home)},
+    )
+
+
+needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+
+
+@needs_bash
+def test_setup_sees_the_prefix_and_the_job_gets_its_arguments(tmp_path):
+    body = _job_body(
+        'export VISTA_OUT=/scratch/out/7\nexport https_proxy="http://proxy:3128"',
+        'echo "job $1|$2|$VISTA_OUT"',
+        setup=("setup_odo.sh", 'echo "setup $VISTA_OUT $https_proxy"; export LEAK=1'),
+        script_args="a 'b c'",
+    )
+    ran = _run(body, tmp_path)
+    assert ran.returncode == 0, ran.stderr
+    assert ran.stdout.splitlines() == [
+        "setup /scratch/out/7 http://proxy:3128",
+        "job a|b c|/scratch/out/7",
+    ]
+
+
+@needs_bash
+def test_a_failing_setup_ends_the_job_with_its_exit_code(tmp_path):
+    body = _job_body(
+        "export VISTA_OUT=/scratch/out/7",
+        "echo job-ran",
+        setup=("setup_frontier.sh", "echo 'missing input' >&2; exit 3"),
+    )
+    ran = _run(body, tmp_path)
+    assert ran.returncode == 3
+    assert "job-ran" not in ran.stdout
+    assert "missing input" in ran.stderr
+    assert "VISTA: setup_frontier.sh failed with exit code 3" in ran.stderr
+
+
+@needs_bash
+def test_setup_exports_stay_out_of_the_job_as_before(tmp_path):
+    body = _job_body(
+        ":", 'echo "leak=${LEAK:-none}"', setup=("setup_odo.sh", "export LEAK=1")
+    )
+    assert _run(body, tmp_path).stdout.strip() == "leak=none"

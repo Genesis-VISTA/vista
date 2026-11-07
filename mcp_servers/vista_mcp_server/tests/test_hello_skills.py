@@ -46,13 +46,10 @@ def _clean_dry_registry():
 
 
 def _patch_frontier(monkeypatch, *, iri, globus):
-    async def _client(*, iri_token: str):
-        return iri
-
     async def _introspect(token, *, introspect_url):
         return "abc123"
 
-    monkeypatch.setattr(m, "create_olcf_iri_client", _client)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(m, "get_s3m_token_project", _introspect)
     monkeypatch.setattr(
@@ -104,7 +101,7 @@ async def test_hello_frontier_uploads_its_input_and_sees_run_dir(monkeypatch):
 
     [(spec, name)] = iri.submitted
     assert name == "vista-hello-frontier/hello"
-    env = spec["attributes"]["environment"]
+    env = spec["environment"]
     assert env["RUN_DIR_Frontier"] == remote.removesuffix("/input.txt")
     job_cmd = spec["arguments"][2]
     script = SKILLS / "hello-frontier" / "hpc_jobs" / "hello" / "job.frontier.slurm"
@@ -120,13 +117,10 @@ async def test_hello_odo_sees_run_dir(monkeypatch):
     globus = FakeGlobusClient()
     globus.seed_remote_dir(odo)
 
-    async def _client(*, iri_token: str):
-        return iri
-
     async def _introspect(token, *, introspect_url):
         return "abc123"
 
-    monkeypatch.setattr(m, "create_odo_iri_client", _client)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(m, "get_s3m_token_project", _introspect)
     cfg = UserConfig(
@@ -141,9 +135,7 @@ async def test_hello_odo_sees_run_dir(monkeypatch):
     [(_, remote)] = globus.uploads
     assert remote.endswith("/input.txt")
     [(spec, _)] = iri.submitted
-    assert spec["attributes"]["environment"]["RUN_DIR_Odo"] == remote.removesuffix(
-        "/input.txt"
-    )
+    assert spec["environment"]["RUN_DIR_Odo"] == remote.removesuffix("/input.txt")
 
 
 async def test_frontier_without_globus_is_refused_and_nothing_is_submitted(

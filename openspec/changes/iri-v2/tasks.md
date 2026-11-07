@@ -25,9 +25,9 @@ credentials and stay out of PR CI.
 
 ## 4. Odo and Frontier on v2 through one submit path
 
-- [ ] 4.1 Introduce `ClusterProfile` and `_submit_job(cluster)` for Odo and Frontier (design §3) on the new client; verify `tests/test_submit_job_spec.py` Odo/Frontier JobSpec assertions (resource in path, no `resource_id` attribute)
-- [ ] 4.2 Inline `setup_<cluster>.sh` into the job body after the shared prefix instead of `pre_launch`; verify a spec test of the body order (prefix → setup → `set --` args → job script) and that a failing setup exits the job
-- [ ] 4.3 OLCF status and cancel on the new client; verify `tests/test_log_tail.py`, `tests/test_job_account.py`, `tests/test_dry_run.py`; `./scripts/ci-local.sh mcp` passes
+- [x] 4.1 Introduce `ClusterProfile` and `_submit_job(cluster)` for Odo and Frontier (design §3) on the new client (`client_for(cluster, token)`; `_submit_odo_job`, `_submit_frontier_job`, `_create_olcf_iri_for` and the `create_odo/olcf_iri_client` factories are gone), building the IRI wire shape directly; verify `tests/test_submit_job_spec.py` Odo/Frontier JobSpec assertions (resource in path, no `resource_id` attribute)
+- [x] 4.2 Inline `setup_<cluster>.sh` into the job body after the shared prefix instead of `pre_launch` (`_job_body`: `bash -lc <setup> || exit`, see design §3); verify a spec test of the body order (prefix → setup → `set --` args → job script) and, under real bash, that a failing setup exits the job with its code
+- [x] 4.3 OLCF status and cancel on the new client; verify `tests/test_log_tail.py`, `tests/test_job_account.py`, `tests/test_dry_run.py`; `./scripts/ci-local.sh mcp` passes
 
 ## 5. Perlmutter on the new client (IRI v1)
 

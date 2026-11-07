@@ -154,10 +154,11 @@ class TestWhatAStatusQuerySays:
     def _olcf(self, monkeypatch, globus):
         monkeypatch.setattr(settings, "frontier_globus_collection_id", COLLECTION)
 
-        async def _iri(cluster, cfg):
-            return FakeIriClient(status={"state": "RUNNING"})
-
-        monkeypatch.setattr(submit_job_mcp, "_create_olcf_iri_for", _iri)
+        monkeypatch.setattr(
+            submit_job_mcp,
+            "client_for",
+            lambda cluster, token: FakeIriClient(status={"state": "RUNNING"}),
+        )
         monkeypatch.setattr(
             submit_job_mcp, "create_globus_client", lambda **kwargs: globus
         )

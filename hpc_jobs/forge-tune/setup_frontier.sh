@@ -1,7 +1,8 @@
 #!/bin/bash -l
-# Frontier pre_launch setup for forge-tune. Runs ONCE per submission on the head
-# compute node, before the per-rank job.frontier.slurm body starts. Injected into
-# the IRI JobSpec by vista's submit_job_mcp dispatcher.
+# Frontier setup for forge-tune. Runs ONCE per submission on the head compute
+# node, before the per-rank job.frontier.slurm body starts: vista's dispatcher
+# (submit_job_mcp.py) runs it inside the job, after its own prefix (VISTA_OUT,
+# HOME, proxy), and a non-zero exit ends the job.
 #
 # Responsibilities:
 #   1. Validate the forge-tune source files vista uploaded via SCP.

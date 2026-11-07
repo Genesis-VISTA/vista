@@ -7,6 +7,7 @@ a submission before anything is introspected, uploaded or submitted.
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import pytest
@@ -107,9 +108,12 @@ def clients(monkeypatch):
         reached.append("iri")
         return iri
 
+    def iri_for(cluster, token):
+        reached.append("iri")
+        return iri
+
     monkeypatch.setattr(m, "get_s3m_token_project", introspect)
-    monkeypatch.setattr(m, "create_odo_iri_client", make_iri)
-    monkeypatch.setattr(m, "create_olcf_iri_client", make_iri)
+    monkeypatch.setattr(m, "client_for", iri_for)
     monkeypatch.setattr(m, "create_iri_client", make_iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
     return reached, iri, globus
@@ -129,8 +133,8 @@ CREDENTIALS = UserConfig(
 @pytest.mark.parametrize(
     ("cluster", "submit", "job"),
     [
-        ("odo", m._submit_odo_job, "example"),
-        ("frontier", m._submit_frontier_job, "example"),
+        ("odo", functools.partial(m._submit_job, "odo"), "example"),
+        ("frontier", functools.partial(m._submit_job, "frontier"), "example"),
         ("perlmutter", m._submit_perlmutter_job, "forge-tune"),
     ],
 )
