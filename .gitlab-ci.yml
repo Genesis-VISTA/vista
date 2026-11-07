@@ -263,8 +263,6 @@ vista-mcp:test:
   # Required job — must NOT set allow_failure.
   script:
     - cd mcp_servers/vista_mcp_server
-    # Install without the private `hpc` extra (amscrot-py). CI job tokens cannot
-    # access amsc-isro-toolkit; hermetic tests use FakeIriClient / dry-run.
     - uv sync --frozen --extra dev
     - uv run pytest tests/ -v --tb=short -m "not live and not hpc and not sandbox"
       --junitxml=junit.xml

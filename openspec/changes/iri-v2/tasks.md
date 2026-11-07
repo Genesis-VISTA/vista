@@ -51,9 +51,9 @@ credentials and stay out of PR CI.
 
 ## 8. Drop amscrot
 
-- [ ] 8.1 Remove `amscrot-py`, the `hpc` extra and `override-dependencies` from `mcp_servers/vista_mcp_server/pyproject.toml`; `uv lock`; delete the remaining amscrot comments; verify `uv sync --extra dev` needs no gitlab.com credential and `./scripts/ci-local.sh mcp` passes
-- [ ] 8.2 Remove the private-dependency handling from `.gitlab-ci.yml`, `.github/scripts/package.sh` (and the release workflow's `AMSC_GIT_TOKEN`), `aws/Dockerfile.server`, `aws/build-image.sh`; verify `scripts/build_local_package.sh` builds with no `AMSC_GIT_TOKEN` set
-- [ ] 8.3 Update README, `docs/development.md`, `docs/building-packages.md`, `docs/releasing.md`; `./scripts/ci-local.sh docs` passes
+- [x] 8.1 Remove `amscrot-py`, the `hpc` extra, `override-dependencies` and `allow-direct-references` from `mcp_servers/vista_mcp_server/pyproject.toml`; `uv lock` (no git sources left; `test_no_private_dependency` keeps it so); delete the remaining amscrot comments; verify `uv sync --frozen --extra dev` resolves with no git configuration or gitlab.com credential and `./scripts/ci-local.sh mcp` passes
+- [x] 8.2 Remove the private-dependency handling from `.gitlab-ci.yml`, `.github/scripts/package.sh` (and the release workflow's `AMSC_GIT_TOKEN`), `aws/Dockerfile.server`, `aws/build-image.sh`, `scripts/build.sh` and `scripts/build_local_package.sh` (the amsc2 preflight and the `--extra hpc` sync); verified by shell syntax checks and the credential-free frozen sync of 8.1 (a full package build needs the inputs and a sandbox image; it runs in the release workflow)
+- [x] 8.3 Update README, `docs/development.md` ("HPC job submission" replaces "HPC dependencies"), `docs/building-packages.md`, `docs/releasing.md` (the `AMSC_GIT_TOKEN` setup becomes how to retire it), and `docs/hpc.md`'s Perlmutter row; `./scripts/ci-local.sh docs` passes
 
 ## 9. Skills and docs
 

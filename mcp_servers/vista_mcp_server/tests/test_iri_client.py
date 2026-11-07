@@ -551,15 +551,12 @@ async def test_a_queued_olcf_job_reads_queued_with_no_exit_code_or_message(
     assert "has not started yet" in text
 
 
-def test_nothing_imports_amscrot():
-    """Task 3.5: the private SDK stays installed until it is dropped, but nothing uses it."""
-    src = Path(iri.__file__).parents[1]
-    importers = [
-        p.relative_to(src).as_posix()
-        for p in src.rglob("*.py")
-        if any(
-            m in p.read_text(encoding="utf-8")
-            for m in ("import amscrot", "from amscrot", "amsc_iri")
-        )
-    ]
-    assert importers == []
+def test_no_private_dependency():
+    """
+    Job submission needs no private repository: VISTA's IRI client replaced
+    amscrot-py, the one dependency that took a gitlab.com credential to install.
+    """
+    root = Path(iri.__file__).parents[3]
+    for name in ("pyproject.toml", "uv.lock"):
+        text = (root / name).read_text(encoding="utf-8")
+        assert "git+" not in text and "amscrot" not in text, name

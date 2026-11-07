@@ -105,8 +105,8 @@ verification" in the draft. That section is collapsed, so open it to see the box
    gh release edit v0.2.0 -R Genesis-VISTA/vista --draft=false
    ```
 
-Redistribution of the OLCF documentation, the embedding weights and `amscrot-py` must be cleared
-before the first release is published.
+Redistribution of the OLCF documentation and the embedding weights must be cleared before the
+first release is published.
 
 **Rollback.** Delete the release and its tag. The workflow can be disabled in the repository's
 Actions settings without a commit.
@@ -258,7 +258,6 @@ revoked without touching the others.
 |---|---|---|
 | `BUILD_INPUTS_DEPLOY_KEY` | secret | The private half of a read-only deploy key on `vista-build-inputs`. Preferred, but needs deploy keys enabled for the organisation |
 | `BUILD_INPUTS_TOKEN` | secret | Used only when there is no deploy key: a fine-grained token that can read `vista-build-inputs`' contents and nothing else |
-| `AMSC_GIT_TOKEN` | secret | A maintainer's gitlab.com fine-grained token that can only download the private `amscrot-py` repository's code (below) |
 | `RELEASE_PLATFORMS` | variable | **Leave unset on the public repository.** Only a private rehearsal sets it (below) |
 
 One of the two inputs credentials must be set, and the package jobs stop early, naming both,
@@ -292,31 +291,10 @@ leaks, it opens only that one repository, whose contents ship inside every publi
 Rotate it by repeating the steps and deleting the old key, which
 `gh repo deploy-key list -R Genesis-VISTA/vista-build-inputs` names by its title.
 
-**Creating the GitLab token.** It is a fine-grained personal access token belonging to a
-maintainer with at least Reporter access to `amsc2/…/amsc-isro-toolkit`, the repository that
-provides `amscrot-py`. A project deploy token would not depend on a person, but needs a
-Maintainer of that project to create it, and the fine-grained token is already confined to one
-project's code. At gitlab.com → Edit profile → Access → Personal access tokens → Generate token →
-**Fine-grained token**:
-
-- **Group and project access:** only the selected project
-  `amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit`;
-- **Resource permissions:** on the Group and project tab, **Code → Download**, and nothing else;
-- **Expiration date:** GitLab allows at most 365 days.
-
-Check it in a terminal before storing it. `read -s` keeps it off the screen:
-
-```bash
-read -rs T && git ls-remote "https://oauth2:$T@gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git" HEAD && echo TOKEN-OK; unset T
-```
-
-Then store it with `gh secret set AMSC_GIT_TOKEN -R Genesis-VISTA/vista`, which prompts for the
-value rather than taking it on the command line. Run both in an interactive terminal: without one,
-`gh secret set` reads standard input and can store an empty secret.
-
-**Before the token expires**, or if its owner leaves the project, create a new one and set the
-secret again. Otherwise every package job fails its preflight with "no access to the amsc2
-repository that provides amscrot-py".
+**The retired `AMSC_GIT_TOKEN` secret.** Builds once needed a gitlab.com token to fetch the
+private `amscrot-py`; VISTA's own IRI client replaced it, and no build reads the secret. Once a
+release built without it is out, delete the secret
+(`gh secret delete AMSC_GIT_TOKEN -R Genesis-VISTA/vista`) and revoke the token on gitlab.com.
 
 ## Running a package job's steps locally
 
@@ -334,8 +312,7 @@ BUILD_INPUTS_DIR=<inputs checkout> SANDBOX_IMAGE=/tmp/sandbox-image.tar \
   .github/scripts/package.sh
 ```
 
-Add `VERIFY_WITHOUT_SANDBOX=1` to run it the way the macOS job does. Without `AMSC_GIT_TOKEN`,
-it uses your own git credentials for `amscrot-py`.
+Add `VERIFY_WITHOUT_SANDBOX=1` to run it the way the macOS job does.
 
 ## Rehearsing a workflow change
 
@@ -344,8 +321,7 @@ your own account (design D12):
 
 1. Create a private repository, such as `<you>/vista-release-rehearsal`, and push the branch to
    it as `main`, so `workflow_dispatch` sees the workflow.
-2. Add the `AMSC_GIT_TOKEN` secret and one inputs credential (`BUILD_INPUTS_DEPLOY_KEY` or
-   `BUILD_INPUTS_TOKEN`), and set the variable `RELEASE_PLATFORMS` to
+2. Add one inputs credential (`BUILD_INPUTS_DEPLOY_KEY` or `BUILD_INPUTS_TOKEN`), and set the variable `RELEASE_PLATFORMS` to
    `["linux-x86","win-x86"]`.
 3. Run the workflow by hand. To test the release job, push a tag such as `v0.2.0-rc0` to the
    rehearsal repository. It needs only one platform, so narrow `RELEASE_PLATFORMS` to

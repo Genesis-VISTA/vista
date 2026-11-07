@@ -10,7 +10,7 @@ it can also move files outside a job (see [Moving files outside a job](#moving-f
 |---|---|---|---|
 | Odo (OLCF, open enclave) | AmSC IRI API, authorized by an S3M token | Globus | the project's IRI automation user |
 | Frontier (OLCF, moderate enclave) | AmSC IRI API, authorized by an S3M token | Globus | the project's IRI automation user |
-| Perlmutter (NERSC) | NERSC IRI API (`amscrot-py`) | NERSC IRI filesystem API | the researcher |
+| Perlmutter (NERSC) | NERSC IRI API (v1), authorized by a NERSC IRI token | NERSC IRI filesystem API | the researcher |
 | Lux (OLCF) | `sbatch` over SSH, since Lux has no IRI service | SFTP on the same connection | the researcher |
 
 ## Credentials
