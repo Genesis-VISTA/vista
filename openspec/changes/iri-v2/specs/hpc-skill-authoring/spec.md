@@ -23,3 +23,17 @@ IRI as the queue and GPUs per process.
 #### Scenario: The guidance names no login node
 - **WHEN** the `hpc-skill-author` SKILL.md and its Lux templates are read
 - **THEN** none of them says a setup script runs on a login node or before `sbatch`
+
+### Requirement: The validator refuses what submit refuses
+The `hpc-skill-author` validator SHALL report as errors the `cluster_defaults.json` that
+submission refuses: `iri.pre_launch`, and a `gpus_per_node` that is not a multiple of
+`processes_per_node`. The skill SHALL say that on Lux each task of a step sees only its
+own GPUs, and how a job that picks its GPU by local rank sees all of them.
+
+#### Scenario: pre_launch in a job
+- **WHEN** the validator checks a job whose `cluster_defaults.json` sets `iri.pre_launch`
+- **THEN** it reports an error naming `setup_<cluster>.sh` as the replacement
+
+#### Scenario: GPUs that do not divide among processes
+- **WHEN** a job asks for 8 GPUs and 3 processes per node
+- **THEN** the validator reports an error before any submission

@@ -1,5 +1,6 @@
 #!/bin/bash -l
-# hello-lux/hello on Lux. VISTA writes the #SBATCH header (your Lux account, one node and GPU, walltime) and exports:
+# hello-lux/hello on Lux. VISTA submits it through IRI with cluster_defaults.json's resources (one node and GPU,
+# the batch partition, the walltime; the account comes from the S3M token) and exports:
 #   VISTA_OUT      this run's output folder (already created); write outputs here
 #   RUN_DIR_Lux  this job folder's uploaded files (input.txt); read only
 #   VISTA_JOB_DIR  shared state of every run of this job; this job needs none

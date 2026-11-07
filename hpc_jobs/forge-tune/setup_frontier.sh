@@ -10,7 +10,7 @@
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py), derived from
 # the user's frontier_remote_dir + cluster_defaults.json:
-#   RUN_DIR_Frontier      <remote_dir>.<user>.jobs/<job>/src    (vista uploads here via scp)
+#   RUN_DIR_Frontier      <remote_dir>.<user>.jobs/<job>/src    (vista uploads here through Globus)
 #   FORGE_MODEL_Frontier  path to pre-downloaded FORGE weights (from cluster_defaults.json
 #                         iri.environment; world-shared, no per-submission download needed).
 
@@ -22,12 +22,12 @@ set -euo pipefail
 echo "[setup_frontier] RUN_DIR_Frontier=${RUN_DIR_Frontier}"
 echo "[setup_frontier] FORGE_MODEL_Frontier=${FORGE_MODEL_Frontier}"
 
-# 1. Validate source files vista scp'd to RUN_DIR_Frontier.
+# 1. Validate source files vista uploaded (Globus) to RUN_DIR_Frontier.
 required=(forge-tune.py hybrid_split.py setup_dist_vars.sh Molten_Salt_Thermophysical_Properties.csv)
 for f in "${required[@]}"; do
     if [ ! -f "${RUN_DIR_Frontier}/${f}" ]; then
         echo "[setup_frontier] ERROR: missing ${RUN_DIR_Frontier}/${f}" >&2
-        echo "[setup_frontier] vista should have uploaded these via scp; verify VISTA_MCP_FRONTIER_SSH_* settings, the user's frontier_remote_dir, and dir permissions (the IRI service runs as <project>_auser and needs group-readable sources)" >&2
+        echo "[setup_frontier] vista should have uploaded these through Globus; verify the user's frontier_remote_dir and dir permissions (the IRI service runs as <project>_auser and needs group-readable sources)" >&2
         exit 1
     fi
 done

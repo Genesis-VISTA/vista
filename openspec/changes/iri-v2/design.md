@@ -186,6 +186,15 @@ resource id. Lux joins the OLCF branch with its token and Frontier's Globus pair
 - [Release secrets removed while an older branch still needs them] → `AMSC_GIT_TOKEN` is
   removed from workflow use, not revoked; revoking is a manual step after the release.
 
+- **Lux binds each task to its own GPUs.** Because IRI asks for GPUs per process, a Lux
+  job with 8 processes per node gets `SLURM_TRES_PER_TASK=gres/gpu:1`, and a plain
+  `srun -n 8` gives every rank one distinct GPU, seen as device 0 (probed live, job 398650).
+  Under `sbatch --gpus-per-node=8` every rank saw all eight. Code that picks its device by
+  local rank (NeoX in `forge-pretrain`) therefore sets `SLURM_GPU_BIND=none`, which srun
+  reads as `--gpu-bind=none` and restores the old visibility (same probe). Steps also get
+  one CPU per task: S3M does not pass `cpu_cores_per_process` through to Slurm on Lux.
+  The authoring guidance and `docs/hpc-jobs.md` say both.
+
 ## Migration Plan
 
 1. Ship group 1 (v1 Frontier pin) immediately; it is independent.

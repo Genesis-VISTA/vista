@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Literal
 
 import httpx
 from fastmcp.exceptions import ToolError
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from ..config import settings
 
@@ -39,7 +39,10 @@ class IriResourceSpec(BaseModel):
     cpu_cores_per_process: int | None = None
     exclusive_node_use: bool = True
     gpus_per_node: int | None = None
-    """ Lux only: rendered as `#SBATCH --gpus-per-node`. The IRI clusters bind GPUs themselves. """
+    """
+    Sent to IRI as `gpu_cores_per_process`, this divided by processes per node
+    (`_iri_resources`). Lux needs it to hand out any GPU at all.
+    """
 
 
 class IriAttributes(BaseModel):
@@ -49,15 +52,25 @@ class IriAttributes(BaseModel):
     """ Slurm constraint, e.g. "gpu" on Perlmutter. Omitted on Frontier. """
     partition: str | None = None
     """
-    Lux only: rendered as `#SBATCH -p`. Lux refuses a job that names no
-    partition. `queue_name` there is the QOS (`-q`); the IRI clusters choose
-    the partition themselves.
+    Lux only: sent as IRI's `queue_name`, which Lux's IRI service takes as the
+    Slurm partition; Lux refuses a job that names none. The other clusters
+    choose the partition themselves.
     """
     image: str | None = None
     module: str | None = None
     pre_launch: str | None = None
-    """ Inline shell text run on the compute node before the main executable. """
+    """ No longer used; refused, so a job that still sets it fails loudly. """
     environment: dict[str, str] = {}
+
+    @field_validator("pre_launch")
+    @classmethod
+    def _no_pre_launch(cls, value: str | None) -> None:
+        if value is not None:
+            raise ValueError(
+                "iri.pre_launch is no longer used: put those commands in the job's "
+                "setup_<cluster>.sh, which VISTA runs inside the job before the job script"
+            )
+        return None
 
 
 class IriDefaults(BaseModel):

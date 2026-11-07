@@ -268,10 +268,12 @@ case "$*" in *"log -1"*) echo "abc1234 2026-09-14 add lux config";; esac""",
         )
         _stub(bin_dir, "scontrol", 'printf "node001\\nnode002\\n"')
         self.ntasks = tmp_path / "ntasks.log"
+        self.gpu_bind = tmp_path / "gpu_bind.log"
         _stub(
             bin_dir,
             "python",
-            f'echo "python $*" >> {self.calls}; echo "${{SLURM_NTASKS:-unset}}" >> {self.ntasks}',
+            f'echo "python $*" >> {self.calls}; echo "${{SLURM_NTASKS:-unset}}" >> {self.ntasks}; '
+            f'echo "${{SLURM_GPU_BIND:-unset}}" >> {self.gpu_bind}',
         )
         _stub(bin_dir, "module", f'echo "module $*" >> {self.calls}')
         _stub(rocm / "bin", "rocm-smi", "true")
@@ -351,7 +353,10 @@ def test_lux_job_defaults(cluster):
     )
     assert (out / ".deepspeed_env").read_text(encoding="utf-8").startswith("PATH=")
     assert (cluster.job_dir / "torch_extensions" / "lux").is_dir()
-    # The checkout was updated on the login node already, not here.
+    # IRI gives each of Lux's 8 tasks per node one GPU, which srun would bind it
+    # to as device 0; NeoX picks cuda:<local rank>, so every rank must see all 8.
+    assert cluster.gpu_bind.read_text(encoding="utf-8").splitlines()[-1] == "none"
+    # setup_lux.sh updated the checkout before this script, in the same job.
     assert cluster.recorded("git clone") == []
 
 

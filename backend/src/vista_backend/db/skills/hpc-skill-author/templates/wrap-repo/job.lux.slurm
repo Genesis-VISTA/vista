@@ -1,7 +1,8 @@
 #!/bin/bash -l
 # __SKILL__/__JOB__ on Lux: runs __REPO_URL__ at __REPO_COMMIT__, which
 # setup_lux.sh checked out into $VISTA_JOB_DIR/src/$REPO_COMMIT.
-# VISTA writes the #SBATCH header from cluster_defaults.json and exports
+# VISTA submits it through IRI with cluster_defaults.json's resources, after
+# setup_lux.sh in the same job, and exports
 # VISTA_OUT (write outputs here), RUN_DIR_Lux (this folder's files, read only),
 # VISTA_JOB_DIR, and REPO_URL / REPO_COMMIT from iri.environment.
 # Args ("$@", VISTA's script_args): KEY=VALUE pairs, see README.md.

@@ -79,7 +79,6 @@ class ClusterDefaults(BaseModel):
     perlmutter: IriDefaults | None = None
     frontier: IriDefaults | None = None
     lux: IriDefaults | None = None
-    """ Same shape as the IRI sections; rendered into `#SBATCH` directives instead of a JobSpec. """
 
 
 @dataclasses.dataclass

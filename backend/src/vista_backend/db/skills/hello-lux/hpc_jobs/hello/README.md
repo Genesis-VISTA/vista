@@ -8,7 +8,8 @@ Supported clusters: Lux only.
 Default nodes: 1
 Default time: 0:05:00 (it finishes in seconds)
 
-Needs the Lux account in Settings, and your RSA passcode when Lux asks for it (and the Lux remote directory), nothing else.
+Needs a Lux S3M token, Globus connected for Frontier or Lux (one connection serves both), and the
+Lux remote directory, all in Settings; nothing else.
 
 ## Script args
 

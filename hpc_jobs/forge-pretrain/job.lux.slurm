@@ -1,10 +1,10 @@
 #!/bin/bash -l
 # Lux Slurm body for forge-pretrain, adapted from forge@lux train/job.sb.
-# Vista's Lux dispatcher prepends the #SBATCH header (account, nodes, walltime,
-# --exclusive, log paths) and the env below, then submits over SSH. The checkout
-# was updated on the login node by setup_lux.sh just before submission.
+# VISTA submits it through Lux's IRI service (cluster_defaults.json: 8 tasks and
+# 8 GPUs per node, exclusive) and runs setup_lux.sh in the same job first, which
+# updated the checkout.
 #
-# Env vars provided by vista (submit_job_mcp._submit_lux_job):
+# Env vars provided by vista (submit_job_mcp._submit_job):
 #   VISTA_OUT        per-job output dir, already created
 #   VISTA_JOB_DIR    <remote_dir>.out/forge-pretrain; holds the forge checkout
 #   RUN_DIR_Lux      <remote_dir>.<user>.jobs/forge-pretrain/src (make_config.py, forge_common.sh)
@@ -53,5 +53,11 @@ export LD_PRELOAD=/usr/lib64/libionic.so.1
 export TORCH_EXTENSIONS_DIR="${VISTA_JOB_DIR}/torch_extensions/lux"
 mkdir -p "${TORCH_EXTENSIONS_DIR}"
 export CUDAPATH="${ROCM_PATH}"
+
+# IRI asks Lux for GPUs per task, so srun binds each rank to its own GPU, seen as
+# device 0 (ROCR_VISIBLE_DEVICES=0 in every rank). NeoX picks its device by local
+# rank, which needs all eight visible, as they were under sbatch --gpus-per-node=8.
+# DeepSpeed's launcher sruns with --export=ALL, so srun reads this as --gpu-bind=none.
+export SLURM_GPU_BIND=none
 
 forge_launch lux.yml "${RUN_DIR_Lux}"

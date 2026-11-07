@@ -1,12 +1,12 @@
 #!/bin/bash
 # Bring the shared forge checkout and data links up to date. Shared by both clusters:
-#   Lux:      run by setup_lux.sh on the login node, before sbatch.
-#   Frontier: run by job.frontier.slurm at job start (the IRI path has no
-#             login-node step; the head compute node reaches GitHub via the proxy).
-# The checkout under a remote_dir is shared by every job submitted there, and is
-# written by different users (researchers over SSH on Lux; the project's IRI
-# automation user on Frontier), hence group permissions, safe.directory, and the
-# lock.
+#   Lux:      run by setup_lux.sh, which VISTA runs at job start.
+#   Frontier: run by job.frontier.slurm at job start.
+# Either way on the first compute node, which reaches GitHub through the proxy.
+# The checkout under a remote_dir is shared by every job submitted there, and may
+# have been written by different users (the project's IRI automation user now;
+# researchers themselves, when Lux jobs were submitted over SSH), hence group
+# permissions, safe.directory, and the lock.
 #
 #   1. Clone or update $VISTA_JOB_DIR/forge to the latest $FORGE_BRANCH.
 #   2. Check the tokenized corpus is readable, and link it into $VISTA_JOB_DIR/data.

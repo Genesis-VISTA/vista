@@ -60,7 +60,10 @@ see the job's environment: `VISTA_OUT`, `VISTA_JOB_DIR`, `RUN_DIR_<Cluster>`, th
 `VISTA_OUT` when the scheduler leaves it unset. A setup script that fails SHALL fail the
 job, with its output in the job's logs. On Lux, the job's `cluster_defaults.json`
 `partition` SHALL be passed as the IRI queue, and `gpus_per_node` as GPUs per process
-with one process per node unless the job sets processes per node.
+with one process per node unless the job sets processes per node. A job whose
+`cluster_defaults.json` sets `iri.pre_launch` SHALL be refused, since the setup script
+replaces it, and a `gpus_per_node` that is not a multiple of the processes per node SHALL
+be refused, since IRI asks for GPUs per process.
 
 #### Scenario: Lux setup runs in the allocation
 - **WHEN** a Lux job with a `setup_lux.sh` is submitted
@@ -69,6 +72,10 @@ with one process per node unless the job sets processes per node.
 #### Scenario: Lux partition and GPUs
 - **WHEN** a Lux job's `cluster_defaults.json` has `"partition": "batch"` and `"gpus_per_node": 1`
 - **THEN** the IRI job is submitted with queue `batch` and one GPU per process
+
+#### Scenario: A stale pre_launch
+- **WHEN** a job's `cluster_defaults.json` sets `iri.pre_launch`
+- **THEN** the submission is refused with a message saying to move it into `setup_<cluster>.sh`, and no job is submitted
 
 #### Scenario: HOME is set
 - **WHEN** a Lux job starts with no `HOME` from the scheduler
