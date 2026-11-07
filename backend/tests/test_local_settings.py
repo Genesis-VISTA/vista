@@ -201,6 +201,7 @@ def test_existing_settings_table_gains_new_columns(tmp_path):
     assert {
         "odo_s3m_token",
         "frontier_s3m_token",
+        "lux_s3m_token",
         "research_role",
         "personalize_responses",
         "hpc_hidden_clusters",
@@ -210,6 +211,34 @@ def test_existing_settings_table_gains_new_columns(tmp_path):
         "inference_olcf_api_key",
     } <= columns
     assert personalized == 1
+
+
+def test_a_settings_table_that_already_has_the_lux_token_column_starts(tmp_path):
+    """
+    Installs that ran the unmerged lux-iri-support branch already have
+    `lux_s3m_token`: startup neither adds it twice nor reports a schema problem.
+    """
+    import sqlite3
+
+    from vista_backend.db.schema_check import schema_problems
+
+    path = tmp_path / "branch.db"
+    engine = create_engine(f"sqlite:///{path}")
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        _add_missing_columns(conn)  # nothing to add, and no error
+        conn.execute(
+            text(
+                "INSERT INTO local_settings (id, install_id, lux_s3m_token) VALUES (1, :i, 'x')"
+            ),
+            {"i": uuid.uuid4().hex},
+        )
+        columns = [c["name"] for c in inspect(conn).get_columns("local_settings")]
+    engine.dispose()
+    assert columns.count("lux_s3m_token") == 1
+    assert "lux_account" in columns  # kept, unread, so older databases still match
+    with sqlite3.connect(path) as raw:
+        assert schema_problems(raw) == []
 
 
 @pytest.mark.anyio
@@ -462,13 +491,13 @@ async def test_remote_dirs_round_trip_and_reach_the_mcp_server(session):
             odo_remote_dir="/odo/proj/vista",
             frontier_remote_dir="/frontier/proj/vista",
             lux_remote_dir="/lux/me/vista",
-            lux_account="abc123",
+            lux_s3m_token="lux-tok",
         ),
     )
     assert saved.odo_remote_dir == "/odo/proj/vista"
     assert saved.frontier_remote_dir == "/frontier/proj/vista"
     assert saved.lux_remote_dir == "/lux/me/vista"
-    assert saved.lux_account == "abc123"
+    assert saved.lux_s3m_token == "lux-tok"
 
     meta = build_metadata(await _local(session), {})
     # Still `user` on the wire: the MCP server reads it under that name.
@@ -476,7 +505,9 @@ async def test_remote_dirs_round_trip_and_reach_the_mcp_server(session):
     assert creds["odo_remote_dir"] == "/odo/proj/vista"
     assert creds["frontier_remote_dir"] == "/frontier/proj/vista"
     assert creds["lux_remote_dir"] == "/lux/me/vista"
-    assert creds["lux_account"] == "abc123"
+    assert creds["lux_s3m_token"] == "lux-tok"
+    # The account Lux needed over SSH is no longer sent: the token's project is.
+    assert "lux_account" not in creds
 
 
 @pytest.mark.anyio

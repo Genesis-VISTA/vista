@@ -383,3 +383,37 @@ class TestGlobusRefusals:
         )
         assert globus_auth.complete_login("odo", "half-a-code").refresh_token
         assert "odo" not in globus_auth._pending
+
+
+class TestLuxSharesFrontiersConnection:
+    """Lux mounts Frontier's filesystem and is reached through its collection."""
+
+    @pytest.mark.anyio
+    async def test_connecting_from_lux_stores_frontiers_pair(
+        self, session, monkeypatch
+    ):
+        from vista_backend.api import settings as settings_api
+        from vista_backend.services import local_settings
+
+        started = await settings_api.start_globus_login("lux")
+        assert query(started.authorize_url, "session_required_single_domain") == (
+            "sso.ccs.ornl.gov"
+        )
+        assert "frontier" in globus_auth._pending and "lux" not in globus_auth._pending
+
+        monkeypatch.setattr(
+            globus_auth.globus_sdk.NativeAppAuthClient,
+            "oauth2_exchange_code_for_tokens",
+            lambda self, code: FakeResponse(
+                transfer_tokens(https_refresh="fr-https", cluster="frontier")
+            ),
+        )
+        connected = await settings_api.complete_globus_login(
+            "lux", settings_api.GlobusLoginCode(code="a-code"), session
+        )
+        assert (connected.cluster, connected.connected) == ("lux", "frontier")
+
+        saved = await local_settings.get_public(session)
+        assert saved.frontier_globus_token == "the-refresh-token"
+        assert saved.frontier_globus_https_token == "fr-https"
+        assert saved.odo_globus_token is None

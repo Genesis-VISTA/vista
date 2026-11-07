@@ -142,8 +142,13 @@ Frontier collection. `lux_account` stays in the database, unread. Perlmutter kee
 
 Backend: `local_settings.lux_s3m_token` as `EncryptedStr`, nullable (additive; the column
 adder skips a column that already exists, as on installs that ran the unmerged
-`lux-iri-support` branch). Added to the settings update/public models (write-only) and
-the MCP metadata; `HPC_TOOLS` needs no change.
+`lux-iri-support` branch). Added to the settings update/public models and the MCP
+metadata as the other S3M tokens are (`GET /settings` returns them decrypted for the
+settings form, which shows them masked); `HPC_TOOLS` needs no change. `lux_account` leaves
+both models and the MCP metadata, and keeps its column so older databases still match.
+Connecting Globus from Lux goes through `/settings/globus/{cluster}` with `lux`, which
+stores Frontier's pair; the Lux settings section connects Frontier's directly and rechecks
+both cards.
 
 ### 5. Readiness at each cluster's version
 

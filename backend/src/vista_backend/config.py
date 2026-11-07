@@ -14,7 +14,7 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
-from .utils.types import CommaSeparatedList, OptionalHttpUrl, ResolvedPath, LogLevel
+from .utils.types import OptionalHttpUrl, ResolvedPath, LogLevel
 from palisade.config import PalisadeSettings
 from .metrics import MetricsSettings
 
@@ -577,11 +577,6 @@ class HpcClusterSettings(BaseSettings):
     """ OLCF AmSC IRI API, open enclave. """
     odo_iri_api_version: Literal["v1", "v2"] = "v2"
     odo_iri_resource_id: str = "odo"
-    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
-    """
-    Odo's IRI compute resource. Matched by id, not name: the open enclave lists
-    Odo beside Defiant, Wombat, and Quokka with no stable naming to match on.
-    """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
 
@@ -589,8 +584,6 @@ class HpcClusterSettings(BaseSettings):
     """ OLCF AmSC IRI API, moderate enclave. """
     frontier_iri_api_version: Literal["v1", "v2"] = "v2"
     frontier_iri_resource_id: str = "frontier"
-    frontier_machine: str = "frontier"
-    """ Frontier's resource name in the IRI status list, compared case-insensitively. """
     frontier_introspect_url: str = (
         "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     )
@@ -608,19 +601,11 @@ class HpcClusterSettings(BaseSettings):
     perlmutter_iri_api_version: Literal["v1", "v2"] = "v1"
     perlmutter_iri_resource_id: str = "94351904-6dba-4c16-b5cd-fbd280d8615b"
     perlmutter_iri_storage_id: str = "65b28619-c3b6-4942-8da1-044a3b3a2a9e"
-    nersc_machine: str = "perlmutter"
-    """ The IRI status group Perlmutter's `compute` resource sits in. """
 
     lux_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     lux_iri_api_version: Literal["v1", "v2"] = "v2"
     lux_iri_resource_id: str = "lux"
-
-    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
-    """
-    The SSH hops to Lux, ending at its login node. Only the first is probed:
-    Lux has no IRI service. Lux is now reached directly, so the default is one
-    hop; a jump host can still be listed first.
-    """
+    """ Lux's files go through Frontier's Globus collection, which it mounts. """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """ The public client the users' Globus refresh tokens were minted for. """

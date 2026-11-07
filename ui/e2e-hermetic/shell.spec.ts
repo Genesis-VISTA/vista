@@ -289,16 +289,17 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
   });
 
-  test("Lux is Ready from its SSH probe, and its settings are the sidebar switch and its folder", async ({ page }) => {
+  test("Lux is Ready like Frontier, and its settings are its token, folder and Frontier's Globus", async ({ page }) => {
     const stub = await installStub(page);
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: "Lux: Ready" }).click();
 
     const details = page.getByRole("dialog", { name: "Lux connection details" });
-    await expect(details).toContainText("Lux is reachable");
-    await expect(details).not.toContainText("Project");
-    await expect(details).not.toContainText("Globus");
+    await expect(details).toContainText("Facility is up");
+    await expect(details).toContainText("Project lmn456");
+    await expect(details).toContainText("Frontier's connection");
+    await expect(details).not.toContainText("passcode");
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
       .poll(() => stub.requests())
@@ -309,9 +310,10 @@ test.describe("HPC availability cards", () => {
     await expect(settings.getByRole("button", { name: /^Compute,/ })).toHaveAttribute("aria-current", "page");
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    await expect(lux.getByRole("textbox")).toHaveCount(2);
-    await expect(lux.getByLabel("Lux account")).toBeVisible();
+    await expect(lux.getByLabel("Lux S3M token")).toBeVisible();
     await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
+    await expect(lux.getByLabel("Lux account")).toHaveCount(0);
+    await expect(lux).toContainText("Frontier (shared with Lux)");
     expect(await stub.unstubbed()).toEqual([]);
   });
 

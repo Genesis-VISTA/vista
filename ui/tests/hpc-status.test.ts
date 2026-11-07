@@ -22,7 +22,7 @@ function cluster(name: HpcClusterStatus["cluster"], state: HpcState): HpcCluster
     checks: {
       facility: ok,
       credential: ok,
-      globus: name === "perlmutter" || name === "lux" ? null : ok,
+      globus: name === "perlmutter" ? null : ok,
       settings: ok,
     },
   };
@@ -137,7 +137,7 @@ describe("useHpcStatus", () => {
     await flush();
     const entry = result.current.clusters?.find((c) => c.cluster === "lux");
     expect(entry?.state).toBe("ready");
-    expect(entry?.status.checks.globus).toBeNull();
+    expect(entry?.status.checks.globus?.ok).toBe(true); // Frontier's connection
     await act(async () => {
       await result.current.recheck("lux");
     });

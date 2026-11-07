@@ -284,18 +284,18 @@ from vista_backend.config import hpc_settings as h
 print(json.dumps({
     "odo": h.odo_iri_url,
     "frontier": h.frontier_iri_url,
-    "machine": h.frontier_machine,
+    "lux": h.lux_iri_resource_id,
 }))
 """,
         extra={
             **_clean_env(),
             "VISTA_MCP_ODO_IRI_URL": "https://odo.example",
-            "VISTA_MCP_FRONTIER_MACHINE": "frontier-test",
+            "VISTA_MCP_LUX_IRI_RESOURCE_ID": "lux-test",
             "VISTA_BACKEND_FRONTIER_IRI_URL": "https://must-not-be-used.example",
         },
     )
     assert result["odo"] == "https://odo.example"
-    assert result["machine"] == "frontier-test"
+    assert result["lux"] == "lux-test"
     assert result["frontier"] == "https://amsc-moderate.s3m.olcf.ornl.gov"
 
 

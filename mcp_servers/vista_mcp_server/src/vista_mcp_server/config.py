@@ -91,12 +91,6 @@ class AppSettings(BaseSettings):
     odo_iri_api_version: Literal["v1", "v2"] = "v2"
     odo_iri_resource_id: str = "odo"
     """ Odo's compute resource in S3M's IRI v2 (a UUID on v1). """
-    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
-    """
-    Odo's IRI v1 compute resource UUID. Read only by the backend's facility
-    check (`HpcClusterSettings`, kept in step by its parity test) until that
-    check moves to v2; job submission uses `odo_iri_resource_id`.
-    """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """
     S3M token introspection endpoint. Tells VISTA which OLCF project an Odo
@@ -114,11 +108,6 @@ class AppSettings(BaseSettings):
     frontier_iri_api_version: Literal["v1", "v2"] = "v2"
     frontier_iri_resource_id: str = "frontier"
     """ Frontier's compute resource in S3M's IRI v2 (a UUID on v1). """
-    frontier_machine: str = "frontier"
-    """
-    Frontier's name in the IRI v1 status list. Read only by the backend's facility
-    check (`HpcClusterSettings`) until that check moves to v2.
-    """
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
     """
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
@@ -129,13 +118,7 @@ class AppSettings(BaseSettings):
     lux_iri_api_version: Literal["v1", "v2"] = "v2"
     """ v2 only: S3M's v1 lists Lux but answers 404 to a submission. """
     lux_iri_resource_id: str = "lux"
-
-    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
-    """
-    Lux's login node. Read only by the backend's SSH greeting probe
-    (`HpcClusterSettings`, kept in step by its parity test) until that probe is
-    replaced by an IRI check; jobs no longer reach Lux over SSH.
-    """
+    """ Lux's files go through Frontier's Globus collection, which it mounts. """
 
     perlmutter_iri_url: A[
         str, Field(validation_alias=AliasChoices("VISTA_MCP_PERLMUTTER_IRI_URL", "VISTA_MCP_NERSC_IRI_URL"))
@@ -153,11 +136,6 @@ class AppSettings(BaseSettings):
     """ Perlmutter's `compute` resource (NERSC also lists `login` and `jobs`). """
     perlmutter_iri_storage_id: str = "65b28619-c3b6-4942-8da1-044a3b3a2a9e"
     """ NERSC's `homes` storage resource, where Perlmutter's job folders are. """
-    nersc_machine: str = "perlmutter"
-    """
-    The IRI v1 status group Perlmutter's `compute` resource sits in, for the
-    backend's facility check (`HpcClusterSettings`). Not used to find resources.
-    """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """

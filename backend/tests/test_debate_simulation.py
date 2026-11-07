@@ -658,6 +658,7 @@ class _Settings:
     def __init__(self, **kw):
         self.odo_s3m_token = kw.get("odo_s3m_token")
         self.frontier_s3m_token = kw.get("frontier_s3m_token")
+        self.lux_s3m_token = kw.get("lux_s3m_token")
         self.nersc_iri_token = kw.get("nersc_iri_token")
 
 
@@ -667,6 +668,8 @@ def test_each_olcf_token_unlocks_only_its_own_machine():
     assert simulation.clusters_for(_Settings(frontier_s3m_token="t")) == ["frontier"]
     both = _Settings(odo_s3m_token="t", frontier_s3m_token="t")
     assert simulation.clusters_for(both) == ["frontier", "odo"]
+    # Lux has its own token: Frontier's does not reach it, nor its Frontier's.
+    assert simulation.clusters_for(_Settings(lux_s3m_token="t")) == ["lux"]
 
 
 def test_the_nersc_token_unlocks_perlmutter():

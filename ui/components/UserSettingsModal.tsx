@@ -79,9 +79,9 @@ const TEXT_FIELDS = [
   "odo_remote_dir",
   "frontier_remote_dir",
   "lux_remote_dir",
-  "lux_account",
   "odo_s3m_token",
   "frontier_s3m_token",
+  "lux_s3m_token",
   "nersc_iri_token",
 ] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
@@ -139,8 +139,8 @@ const AGENT_FIELDS: Array<keyof LocalSettingsUpdate> = [
 const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
   odo_s3m_token: "odo",
   frontier_s3m_token: "frontier",
+  lux_s3m_token: "lux",
   nersc_iri_token: "perlmutter",
-  // Lux has none: a researcher signs in from a chat.
 };
 
 /**
@@ -154,7 +154,6 @@ const SETTING_FIELDS = new Set([
   "frontier_remote_dir",
   "nersc_account",
   "nersc_remote_dir",
-  "lux_account",
   "lux_remote_dir",
 ]);
 
@@ -221,7 +220,7 @@ const FIELD_LABELS: Record<string, string> = {
   odo_s3m_token: "Odo S3M token",
   frontier_remote_dir: "Frontier remote directory",
   frontier_s3m_token: "Frontier S3M token",
-  lux_account: "Lux account",
+  lux_s3m_token: "Lux S3M token",
   lux_remote_dir: "Lux remote directory",
   github_token: "GitHub token",
   gitlab_token: "gitlab.com token",
@@ -1848,7 +1847,7 @@ function ClusterFields({
             cluster="frontier"
             label="Frontier"
             initiallyConnected={globusConnected(user, "frontier")}
-            onConnected={() => void recheckHpcStatus("frontier")}
+            onConnected={recheckFrontierAndLux}
           />
         </>
       );
@@ -1887,19 +1886,28 @@ function ClusterFields({
     case "lux":
       return (
         <>
-          <SavedField
-            label="Lux account"
-            field="lux_account"
-            binding={bind("lux_account", "debounce")}
-            placeholder="e.g. abc123"
-            hint="Required for Lux. The OLCF project Lux jobs are charged to."
+          <S3mTokenField
+            label="Lux S3M token"
+            field="lux_s3m_token"
+            binding={bind("lux_s3m_token", "on-blur")}
+            hint="From any OLCF project with S3M access to Lux, and separate from Frontier's token. Lux jobs are charged to that project."
           />
           <SavedField
             label="Lux remote directory"
             field="lux_remote_dir"
             binding={bind("lux_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
+            hint={<GroupWritableHint cluster="Lux" />}
+          />
+          <p className="user-settings-hint">
+            Lux mounts Frontier&apos;s filesystem, so its files go through Frontier&apos;s Globus
+            connection. Connecting here connects Frontier too.
+          </p>
+          <GlobusConnect
+            cluster="frontier"
+            label="Frontier (shared with Lux)"
+            initiallyConnected={globusConnected(user, "frontier")}
+            onConnected={recheckFrontierAndLux}
           />
         </>
       );
@@ -1958,6 +1966,12 @@ function SavedField({
  * which creates `<dir>.out`, so the folder holding them must be writable by the
  * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
  */
+/** Frontier's Globus connection is Lux's too, so connecting it rechecks both cards. */
+function recheckFrontierAndLux() {
+  void recheckHpcStatus("frontier");
+  void recheckHpcStatus("lux");
+}
+
 function GroupWritableHint({
   cluster,
   runsAs = "your project's IRI automation user",

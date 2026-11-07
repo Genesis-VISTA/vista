@@ -3,26 +3,26 @@
 Behind the NavRail's HPC cards. Every card is a live answer, not an inference
 from which credentials happen to be saved: the facility is asked whether the
 cluster is up, the facility is asked whether it accepts the researcher's
-token, and for Odo and Frontier the cluster's Globus collection is asked
-whether the researcher's session still reaches it.
+token, and for the OLCF clusters (Odo, Frontier, Lux) the cluster's Globus
+collection is asked whether the researcher's session still reaches it.
 
 The calls are the ones a 2026-09-25 spike found could tell a good credential
 from a bad one (see the hpc-cards change's design.md):
 
-- facility: the public IRI `status/resources` list plus `status/incidents`.
-  The per-resource endpoint is not used -- OLCF's reports `unknown` while the
-  list says `up`.
-- credential: `GET compute/resources` with the token, which answers 200 for a
-  valid token and 401 otherwise. The `account/*` endpoints refuse valid S3M
+- facility: the public IRI `status/resources` list plus `status/incidents`, at
+  each cluster's configured API version (S3M's v2 for OLCF, NERSC's v1 for
+  Perlmutter), the cluster's row matched by its configured resource id -- the
+  one jobs are submitted to. The per-resource endpoint is not used -- OLCF's
+  v1 reported `unknown` while the list said `up`.
+- credential: `GET compute/resources` with the token, at the same version,
+  which answers 200 for a valid token and 401 otherwise. The `account/*` endpoints refuse valid S3M
   tokens too, so they cannot tell the two apart. OLCF tokens are also
   introspected, for their project and expiry.
 - Globus: exchange both refresh tokens, then list the collection home. A lapsed
   High Assurance session survives the exchange and fails only the listing.
 
-Lux is the exception (see the lux-hpc-card change): it has no IRI service and
-no stored credential -- a researcher signs in with a PIN and RSA passcode when
-a chat first uses it. Its facility check is whether its login node's SSH
-server answers, and its credential check always passes, saying how sign-in works.
+Lux is checked like Frontier, with its own S3M token and Frontier's Globus
+connection and collection: Lux mounts Frontier's filesystem.
 
 The checks run here rather than as an MCP tool because the rail is global --
 it shows with no project open, and MCP tools are reachable only through a
@@ -32,11 +32,9 @@ project's agent -- and because the agent has no reason to see a UI check.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import hashlib
 import logging
 import re
-import socket
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -68,14 +66,6 @@ RESULT_TTL = 60.0
 """ How long one researcher's result for one cluster is reused. """
 FACILITY_TTL = 60.0
 """ How long a facility's public status feed is reused, across researchers. """
-LUX_PROBE_MIN_INTERVAL = 10.0
-"""
-Lux's login node is probed at most this often, even for a fresh check: every probe
-is a pre-login SSH connection from the VISTA host, the same address the MCP
-server submits Lux jobs from, and sshd penalises bursts of those.
-"""
-LUX_PROBE_FAILURE_TTL = 10.0
-""" How long a failed Lux probe is reused. Shorter than a success, so one dropped connection doesn't keep Lux grey for a minute. """
 INTROSPECT_TTL = 600.0
 """ A token's project does not change; matches the MCP server's introspection cache. """
 
@@ -85,15 +75,6 @@ _TITLES: dict[HpcCluster, str] = {
     "perlmutter": "Perlmutter",
     "lux": "Lux",
 }
-
-SSH_PORT = 22
-PROBE_IDENTIFICATION = b"SSH-2.0-VISTA_status_probe\r\n"
-"""
-Sent back after the server's greeting, so the server logs a named client that hung
-up before key exchange rather than a silent connection -- the pattern scanners
-leave and fail2ban-style filters match.
-"""
-LUX_SIGN_IN = "Sign in with PIN + RSA passcode when a chat first uses Lux."
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +122,7 @@ class Check(BaseModel):
     project: str | None = None
     """
     The project the cluster's jobs run under: the S3M token's, once learned, or
-    the researcher's Lux account setting. A project name, not a secret.
+    the researcher's NERSC account setting. A project name, not a secret.
     """
     expires_at: datetime | None = None
     """ S3M `plannedExpiration`. No other credential's expiry is knowable. """
@@ -152,11 +133,11 @@ class ClusterChecks(BaseModel):
     facility: Check
     credential: Check
     globus: Check | None = None
-    """ Odo and Frontier only; Perlmutter and Lux move no files through Globus. """
+    """ The OLCF clusters only (Lux through Frontier's connection); Perlmutter moves files through IRI. """
     settings: Check
     """
     The researcher's own settings a submission needs: the remote directory,
-    and the account on Perlmutter and Lux. Read from the settings row, so it is
+    and the NERSC account on Perlmutter. Read from the settings row, so it is
     never cached.
     """
 
@@ -228,15 +209,13 @@ def resolve_state(checks: ClusterChecks) -> State:
 
 _SAFE_REMOTE_DIR = re.compile(r"/[A-Za-z0-9._+,:=@/-]*")
 """ The MCP server's rule (`UserConfig.require_remote_dir`): the card refuses what submission would. """
-_PLAIN_ACCOUNT = re.compile(r"[A-Za-z0-9_-]+")
-""" The MCP server's rule for the Lux account (`UserConfig.require_lux_account`). """
 
 
 def settings_check(cluster: HpcCluster, local: Any) -> Check:
     """Whether the researcher has set what a submission to `cluster` needs.
 
-    Every cluster needs a remote directory, and Perlmutter and Lux an account
-    too. A value submission would refuse -- a relative path, `/`, shell
+    Every cluster needs a remote directory, and Perlmutter a NERSC account
+    too (the OLCF clusters charge their S3M token's project). A value submission would refuse -- a relative path, `/`, shell
     characters, or a `<project>` placeholder left in -- fails the check as
     well, so the card never shows Ready for a cluster every job would fail on.
     """
@@ -247,12 +226,9 @@ def settings_check(cluster: HpcCluster, local: Any) -> Check:
         "perlmutter": local.nersc_remote_dir,
         "lux": local.lux_remote_dir,
     }[cluster]
-    account: str | None = {
-        "perlmutter": local.nersc_account,
-        "lux": local.lux_account,
-    }.get(cluster)
-    needs_account = cluster in ("perlmutter", "lux")
-    account_label = "NERSC account" if cluster == "perlmutter" else "Lux account"
+    needs_account = cluster == "perlmutter"
+    account: str | None = local.nersc_account if needs_account else None
+    account_label = "NERSC account"
 
     missing = [
         label
@@ -277,12 +253,6 @@ def settings_check(cluster: HpcCluster, local: Any) -> Check:
                 "absolute path other than /, using only letters, digits and "
                 ". _ + , : = @ - /. Replace any <project> with the project's name."
             ),
-        )
-    if cluster == "lux" and not _PLAIN_ACCOUNT.fullmatch(account or ""):
-        return Check(
-            ok=False,
-            reason="invalid",
-            message=f"The Lux account {account} isn't a project name.",
         )
     return Check(
         ok=True,
@@ -428,16 +398,23 @@ class _GlobusSource:
     https: str
 
 
-def globus_source(
-    cluster: Literal["odo", "frontier"], local: Any
-) -> _GlobusSource | None:
+OlcfCluster = Literal["odo", "frontier", "lux"]
+
+
+def globus_owner(cluster: OlcfCluster) -> Literal["odo", "frontier"]:
+    """Whose Globus connection and collection `cluster` uses: Frontier's for Lux, which mounts it."""
+    return "frontier" if cluster == "lux" else cluster
+
+
+def globus_source(cluster: OlcfCluster, local: Any) -> _GlobusSource | None:
     """The Globus pair this cluster's file operations would use, or None.
 
     The same order as the MCP server's `UserConfig.require_globus_token`: the
-    researcher's pair for this cluster, then their shared pair. There is no
-    deployment-wide pair. A source counts only with both halves -- half a pair
-    lists a directory it cannot read.
+    researcher's pair for this cluster (Frontier's, for Lux), then their shared
+    pair. There is no deployment-wide pair. A source counts only with both
+    halves -- half a pair lists a directory it cannot read.
     """
+    cluster = globus_owner(cluster)
     own = (
         (local.odo_globus_token, local.odo_globus_https_token)
         if cluster == "odo"
@@ -447,67 +424,6 @@ def globus_source(
         if transfer and https:
             return _GlobusSource(transfer, https)
     return None
-
-
-# ---------------------------------------------------------------------------
-# Lux
-# ---------------------------------------------------------------------------
-
-
-class SshProbeError(Exception):
-    """The host answered, but not as an SSH server."""
-
-
-class LuxProbe(Protocol):
-    async def __call__(self, host: str, *, timeout: float) -> str: ...
-
-
-async def probe_ssh_greeting(host: str, *, timeout: float, port: int = SSH_PORT) -> str:
-    """The SSH greeting `host` sends, e.g. `SSH-2.0-OpenSSH_8.7`.
-
-    Reads the server's first line, answers with `PROBE_IDENTIFICATION`, and
-    hangs up: no key exchange, no authentication. Raises `TimeoutError`,
-    `OSError` (DNS, refused, unreachable), or `SshProbeError`.
-    """
-
-    async def talk() -> str:
-        # RFC 4253 caps the identification line at 255 bytes; a longer first
-        # line overruns the reader's limit and is not an SSH server.
-        reader, writer = await asyncio.open_connection(host, port, limit=256)
-        try:
-            try:
-                line = await reader.readline()
-            except ValueError as error:
-                raise SshProbeError(
-                    "sent a first line too long for an SSH greeting"
-                ) from error
-            if not line:
-                raise SshProbeError("closed the connection without a greeting")
-            if not line.startswith(b"SSH-"):
-                raise SshProbeError("answered, but not with an SSH greeting")
-            writer.write(PROBE_IDENTIFICATION)
-            await writer.drain()
-            return line.decode("ascii", "replace").strip()
-        finally:
-            writer.close()
-            with contextlib.suppress(OSError):
-                await writer.wait_closed()
-
-    return await asyncio.wait_for(talk(), timeout)
-
-
-def _probe_failure(error: BaseException, timeout: float) -> str:
-    if isinstance(error, TimeoutError):
-        return f"did not answer within {timeout:g} s"
-    if isinstance(error, socket.gaierror):
-        return "could not be resolved"
-    if isinstance(error, ConnectionRefusedError):
-        return "refused the connection"
-    if isinstance(error, SshProbeError):
-        return str(error)
-    if isinstance(error, OSError):
-        return f"could not be reached ({error.strerror or type(error).__name__})"
-    return f"could not be checked ({type(error).__name__})"
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +449,7 @@ class HpcStatusService:
     """Runs the checks, with the caches that keep them cheap.
 
     Everything that reaches the network is injectable -- the HTTP transport,
-    the Globus and Lux probes, and the clock -- so the tests run with none.
+    the Globus probe, and the clock -- so the tests run with none.
     """
 
     def __init__(
@@ -542,21 +458,17 @@ class HpcStatusService:
         settings: HpcClusterSettings = hpc_settings,
         transport: httpx.AsyncBaseTransport | None = None,
         globus_probe: GlobusProbe = probe_globus,
-        lux_probe: LuxProbe = probe_ssh_greeting,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._settings = settings
         self._transport = transport
         self._globus_probe = globus_probe
-        self._lux_probe = lux_probe
         self._now = now
         self._monotonic = monotonic
         self._results: dict[HpcCluster, tuple[float, str, ClusterStatus]] = {}
         self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
         self._introspections: dict[str, tuple[float, dict]] = {}
-        self._ssh_probes: dict[str, tuple[float, Check]] = {}
-        self._ssh_inflight: dict[str, asyncio.Future[Check]] = {}
 
     async def status(
         self, local: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
@@ -593,7 +505,7 @@ class HpcStatusService:
             not fresh
             and cached is not None
             and cached[1] == fingerprint
-            and self._monotonic() - cached[0] < self._result_ttl(cached[2])
+            and self._monotonic() - cached[0] < RESULT_TTL
         ):
             # The settings come from the settings row, not a facility, so a cached
             # result always carries the current ones.
@@ -602,7 +514,7 @@ class HpcStatusService:
                 update={"checks": checks, "state": resolve_state(checks)}
             )
 
-        olcf = cluster in ("odo", "frontier")
+        olcf = cluster != "perlmutter"
         facility, credential, globus = await asyncio.gather(
             self._facility(client, cluster, fresh=fresh),
             self._credential(client, cluster, local),
@@ -620,49 +532,42 @@ class HpcStatusService:
         self._results[key] = (self._monotonic(), fingerprint, result)
         return result
 
-    @staticmethod
-    def _result_ttl(result: ClusterStatus) -> float:
-        """A failed Lux probe is kept no longer per researcher than it is shared."""
-        if result.cluster == "lux" and not result.checks.facility.ok:
-            return LUX_PROBE_FAILURE_TTL
-        return RESULT_TTL
-
     def _credential_fingerprint(self, local: Any, cluster: HpcCluster) -> str:
         """Changes whenever a credential this cluster's checks use changes."""
-        if cluster == "lux":
-            return _digest()  # no credential feeds Lux's checks
         if cluster == "perlmutter":
             return _digest(local.nersc_iri_token)
-        s3m = local.odo_s3m_token if cluster == "odo" else local.frontier_s3m_token
-        own = (
-            (local.odo_globus_token, local.odo_globus_https_token)
-            if cluster == "odo"
-            else (local.frontier_globus_token, local.frontier_globus_https_token)
+        owner = globus_owner(cluster)
+        return _digest(
+            _s3m_token(local, cluster),
+            getattr(local, f"{owner}_globus_token"),
+            getattr(local, f"{owner}_globus_https_token"),
+            local.globus_token,
+            local.globus_https_token,
         )
-        return _digest(s3m, *own, local.globus_token, local.globus_https_token)
 
     # --- facility ----------------------------------------------------------
 
-    def _iri_url(self, cluster: HpcCluster) -> str:
-        return {
-            "odo": self._settings.odo_iri_url,
-            "frontier": self._settings.frontier_iri_url,
-            "perlmutter": self._settings.perlmutter_iri_url,
-        }[cluster].rstrip("/")
+    def _iri_api(self, cluster: HpcCluster) -> str:
+        """The cluster's IRI API root at its configured version, e.g. `.../api/v2`."""
+        base = getattr(self._settings, f"{cluster}_iri_url").rstrip("/")
+        return f"{base}/api/{getattr(self._settings, f'{cluster}_iri_api_version')}"
+
+    def _resource_id(self, cluster: HpcCluster) -> str:
+        return getattr(self._settings, f"{cluster}_iri_resource_id")
 
     async def _facility_feed(
-        self, client: httpx.AsyncClient, base: str, *, fresh: bool
+        self, client: httpx.AsyncClient, api: str, *, fresh: bool
     ) -> tuple[list[dict], list[dict]]:
-        cached = self._facility_feeds.get(base)
+        cached = self._facility_feeds.get(api)
         if not fresh and cached and self._monotonic() - cached[0] < FACILITY_TTL:
             return cached[1], cached[2]
         # Only incidents active now. Unfiltered, NERSC returns its *oldest*
         # hundred, which never include a current one; OLCF answers "none
         # active" with a 404 rather than an empty list.
         resources, incidents = await asyncio.gather(
-            client.get(f"{base}/api/v1/status/resources", timeout=FACILITY_TIMEOUT),
+            client.get(f"{api}/status/resources", timeout=FACILITY_TIMEOUT),
             client.get(
-                f"{base}/api/v1/status/incidents",
+                f"{api}/status/incidents",
                 params={"time": self._now().strftime("%Y-%m-%dT%H:%M:%SZ")},
                 timeout=FACILITY_TIMEOUT,
             ),
@@ -675,28 +580,17 @@ class HpcStatusService:
             active = incidents.json()
         if not (isinstance(rows, list) and isinstance(active, list)):
             raise ValueError("status feed is not a list")
-        self._facility_feeds[base] = (self._monotonic(), rows, active)
+        self._facility_feeds[api] = (self._monotonic(), rows, active)
         return rows, active
 
     def _match_resource(self, cluster: HpcCluster, rows: list[dict]) -> dict | None:
+        """
+        The cluster's row, by the resource id jobs are submitted to -- never by
+        name or position: the moderate enclave lists Lux beside Frontier.
+        """
+        want = self._resource_id(cluster)
         for row in rows:
-            if not isinstance(row, dict):
-                continue
-            if (
-                cluster == "odo"
-                and row.get("id") == self._settings.odo_compute_resource_id
-            ):
-                return row
-            if (
-                cluster == "frontier"
-                and str(row.get("name", "")).lower() == self._settings.frontier_machine
-            ):
-                return row
-            if (
-                cluster == "perlmutter"
-                and row.get("group") == self._settings.nersc_machine
-                and row.get("name") == "compute"
-            ):
+            if isinstance(row, dict) and row.get("id") == want:
                 return row
         return None
 
@@ -720,12 +614,10 @@ class HpcStatusService:
     async def _facility(
         self, client: httpx.AsyncClient, cluster: HpcCluster, *, fresh: bool
     ) -> Check:
-        if cluster == "lux":
-            return await self._lux_facility(fresh=fresh)
         title = _TITLES[cluster]
         try:
             resources, incidents = await self._facility_feed(
-                client, self._iri_url(cluster), fresh=fresh
+                client, self._iri_api(cluster), fresh=fresh
             )
         except (httpx.HTTPError, ValueError) as error:
             log.info("%s status feed unavailable: %s", title, type(error).__name__)
@@ -758,54 +650,6 @@ class HpcStatusService:
                 incident=incident,
             )
         return Check(ok=True, message=f"The facility reports {title} up.")
-
-    async def _lux_facility(self, *, fresh: bool) -> Check:
-        """Whether Lux's login node (the first SSH hop) answers. Shared across researchers.
-
-        Every failure is `unreachable` (Couldn't verify), never `degraded`: a
-        probe that fails cannot tell Lux being down from a network that does
-        not reach ORNL. Concurrent callers share one probe, and even a fresh
-        check reuses a probe younger than `LUX_PROBE_MIN_INTERVAL`.
-        """
-        hosts = self._settings.lux_ssh_hosts
-        if not hosts:
-            return Check(
-                ok=False,
-                reason="unverifiable",
-                message="No Lux host is configured (VISTA_MCP_LUX_SSH_HOSTS is empty).",
-            )
-        host = hosts[0]
-        cached = self._ssh_probes.get(host)
-        if cached:
-            age = self._monotonic() - cached[0]
-            ttl = FACILITY_TTL if cached[1].ok else LUX_PROBE_FAILURE_TTL
-            if age < LUX_PROBE_MIN_INTERVAL or (not fresh and age < ttl):
-                return cached[1]
-        inflight = self._ssh_inflight.get(host)
-        if inflight is None:
-            inflight = asyncio.ensure_future(self._probe_lux_hub(host))
-            self._ssh_inflight[host] = inflight
-            inflight.add_done_callback(lambda _: self._ssh_inflight.pop(host, None))
-        # Shielded: one caller giving up must not cancel the others' probe.
-        return await asyncio.shield(inflight)
-
-    async def _probe_lux_hub(self, host: str) -> Check:
-        try:
-            greeting = await self._lux_probe(host, timeout=HTTP_TIMEOUT)
-        except Exception as error:  # noqa: BLE001 -- any failure is "couldn't tell", never a 500
-            log.info("Lux %s probe failed: %s", host, type(error).__name__)
-            check = Check(
-                ok=False,
-                reason="unreachable",
-                message=f"Lux {host} {_probe_failure(error, HTTP_TIMEOUT)}.",
-            )
-        else:
-            check = Check(
-                ok=True,
-                message=f"Lux {host} answered ({greeting}).",
-            )
-        self._ssh_probes[host] = (self._monotonic(), check)
-        return check
 
     # --- credential --------------------------------------------------------
 
@@ -846,29 +690,27 @@ class HpcStatusService:
     async def _credential(
         self, client: httpx.AsyncClient, cluster: HpcCluster, local: Any
     ) -> Check:
-        if cluster == "lux":
-            # Nothing is stored to check; see LUX_SIGN_IN.
-            return Check(ok=True, message=LUX_SIGN_IN, project=local.lux_account)
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
-        token = {
-            "odo": local.odo_s3m_token,
-            "frontier": local.frontier_s3m_token,
-            "perlmutter": local.nersc_iri_token,
-        }[cluster]
+        token = (
+            local.nersc_iri_token
+            if cluster == "perlmutter"
+            else _s3m_token(local, cluster)
+        )
         if not token:
             return Check(
                 ok=False,
                 reason="not_connected",
                 message=f"No {kind} token is saved for {title}.",
             )
-        compute_url = f"{self._iri_url(cluster)}/api/v1/compute/resources"
+        compute_url = f"{self._iri_api(cluster)}/compute/resources"
 
         if cluster == "perlmutter":
             return self._from_iri(
                 title, kind, await self._get_status(client, compute_url, token)
             )
 
+        # Lux's tokens are S3M's like Frontier's, and introspected at the same place.
         introspect_url = (
             self._settings.odo_introspect_url
             if cluster == "odo"
@@ -936,19 +778,18 @@ class HpcStatusService:
 
     # --- Globus ------------------------------------------------------------
 
-    async def _globus(self, cluster: Literal["odo", "frontier"], local: Any) -> Check:
+    async def _globus(self, cluster: OlcfCluster, local: Any) -> Check:
         title = _TITLES[cluster]
+        shared = " (Lux uses Frontier's connection)" if cluster == "lux" else ""
         source = globus_source(cluster, local)
         if source is None:
             return Check(
                 ok=False,
                 reason="not_connected",
-                message=f"Globus file transfer is not connected for {title}.",
+                message=f"Globus file transfer is not connected for {title}{shared}.",
             )
-        collection = (
-            self._settings.odo_globus_collection_id
-            if cluster == "odo"
-            else self._settings.frontier_globus_collection_id
+        collection = getattr(
+            self._settings, f"{globus_owner(cluster)}_globus_collection_id"
         )
         try:
             await asyncio.wait_for(
@@ -1006,6 +847,10 @@ class HpcStatusService:
 
 async def _none() -> None:
     return None
+
+
+def _s3m_token(local: Any, cluster: HpcCluster) -> str | None:
+    return getattr(local, f"{cluster}_s3m_token")
 
 
 hpc_status_service = HpcStatusService()
