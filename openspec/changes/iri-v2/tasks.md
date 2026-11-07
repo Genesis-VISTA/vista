@@ -13,7 +13,7 @@ credentials and stay out of PR CI.
 ## 2. Recorded facility responses
 
 - [x] 2.1 **[live]** Probe S3M v2 on Lux and NERSC v1/v2 on Perlmutter (done 2026-11-06; findings in design.md Context: NERSC v2 refuses NERSC IRI tokens, v1 works end to end)
-- [ ] 2.2 Commit sanitized fixtures from those probes: `mcp_servers/vista_mcp_server/tests/fixtures/iri/olcf_v2/{submit,queued,failed_exit7,canceled}.json` and `tests/fixtures/iri/nersc_v1/{submit,queued,failed_exit7,task_pending,mkdir,upload,ls,ls_recursive,head,stat,download_text,download_binary,head_missing,ls_missing}.json` (usernames, paths and ids replaced); verify a fixture-loading test parses each
+- [x] 2.2 Commit sanitized fixtures from those probes: `mcp_servers/vista_mcp_server/tests/fixtures/iri/olcf_v2/{submit,queued,failed_exit7,canceled}.json` and `tests/fixtures/iri/nersc_v1/{submit,queued,failed_exit7,task_submitted,task_pending,mkdir,upload,ls,ls_recursive,head,stat,download_text,download_binary,head_missing,ls_missing}.json` (usernames, project, paths, hosts and ids replaced; provenance in the folder's README); verify `tests/test_iri_fixtures.py` parses each and checks its shape
 
 ## 3. The IRI client
 

@@ -1,0 +1,50 @@
+{
+  "id": "2001",
+  "status": {
+    "state": "queued",
+    "time": 1794022057.007141,
+    "message": "None",
+    "exit_code": 0,
+    "meta_data": {
+      "scheduler": "slurm",
+      "s3m": {
+        "account": "abc123",
+        "job_id": 2001,
+        "name": "vista-probe",
+        "partition": "batch",
+        "user": "abc123_auser",
+        "group": "abc123",
+        "state": {
+          "current": [
+            "PENDING"
+          ],
+          "reason": "None"
+        },
+        "exit_code": {
+          "status": [
+            "SUCCESS"
+          ],
+          "return_code": {
+            "set": true,
+            "infinite": false,
+            "number": 0
+          },
+          "signal": {
+            "id": {
+              "set": false,
+              "infinite": false,
+              "number": 0
+            },
+            "name": ""
+          }
+        },
+        "nodes": "None assigned",
+        "cluster": "lux",
+        "qos": "normal",
+        "working_directory": "/lustre/orion/abc123/proj-shared",
+        "stdout_expanded": "/lustre/orion/abc123/proj-shared/vista-probe-2001.out",
+        "stderr_expanded": "/lustre/orion/abc123/proj-shared/vista-probe-2001.err"
+      }
+    }
+  }
+}

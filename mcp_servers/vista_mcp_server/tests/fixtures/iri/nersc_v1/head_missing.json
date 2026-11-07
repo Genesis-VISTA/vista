@@ -1,0 +1,17 @@
+{
+  "id": "00000000-0000-4000-8000-000000000009",
+  "status": "failed",
+  "result": {
+    "error": "Exception: Error: 404: head: cannot open '/global/u1/r/researcher/vista-probe/no-such.log' for reading: No such file or directory"
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "head",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/no-such.log",
+      "file_bytes": null,
+      "lines": 5,
+      "skip_trailing": false
+    }
+  }
+}

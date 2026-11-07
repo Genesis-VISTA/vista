@@ -1,0 +1,15 @@
+{
+  "id": "00000000-0000-4000-8000-000000000002",
+  "status": "completed",
+  "result": {
+    "output": "Uploaded /global/homes/r/researcher/vista-probe/hello.txt"
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "upload",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/hello.txt",
+      "content": "aGVsbG8gZnJvbSBWSVNUQQpsaW5lIDIKbGluZSAzCg=="
+    }
+  }
+}

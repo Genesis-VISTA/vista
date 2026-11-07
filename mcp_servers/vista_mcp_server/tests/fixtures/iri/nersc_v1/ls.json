@@ -1,0 +1,49 @@
+{
+  "id": "00000000-0000-4000-8000-000000000003",
+  "status": "completed",
+  "result": {
+    "output": [
+      {
+        "name": "/global/u1/r/researcher/vista-probe",
+        "type": "d",
+        "link_target": "",
+        "user": "researcher",
+        "group": "researcher",
+        "permissions": "770",
+        "last_modified": "2026-11-06 19:59:14.6174960000",
+        "size": "512"
+      },
+      {
+        "name": "/global/u1/r/researcher/vista-probe/sub",
+        "type": "d",
+        "link_target": "",
+        "user": "researcher",
+        "group": "researcher",
+        "permissions": "770",
+        "last_modified": "2026-11-06 19:59:16.7549000000",
+        "size": "512"
+      },
+      {
+        "name": "/global/u1/r/researcher/vista-probe/hello.txt",
+        "type": "f",
+        "link_target": "",
+        "user": "researcher",
+        "group": "researcher",
+        "permissions": "644",
+        "last_modified": "2026-11-06 19:59:14.6181007890",
+        "size": "31"
+      }
+    ]
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "ls",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe",
+      "show_hidden": false,
+      "numeric_uid": false,
+      "recursive": false,
+      "dereference": false
+    }
+  }
+}
