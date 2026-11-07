@@ -21,11 +21,9 @@ from vista_mcp_server.config import settings
 from vista_mcp_server.lib.user_config import UserConfig
 from vista_mcp_server.submit_job_mcp import (
     AVAILABLE_JOBS,
-    _get_olcf_job_status,
-    _get_perlmutter_job_status,
+    _get_job_status,
     _job_body,
     _submit_job,
-    _submit_perlmutter_job,
 )
 from fakes import FakeGlobusClient, FakeIriClient
 
@@ -63,15 +61,11 @@ def user_cfg() -> UserConfig:
 
 
 def _patch_clients(monkeypatch, *, iri: FakeIriClient, globus: FakeGlobusClient):
-    async def _nersc(*, iri_token: str):
-        return iri
-
     async def _introspect(token, *, introspect_url):
         # Every token belongs to a project no deployment is configured for.
         return "abc123"
 
     monkeypatch.setattr(submit_job_mcp, "client_for", lambda cluster, token: iri)
-    monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
     monkeypatch.setattr(submit_job_mcp, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
 
@@ -136,7 +130,8 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     globus = FakeGlobusClient()
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_perlmutter_job(
+    job_id, log_path, err_path, out_dir, nodes, duration = await _submit_job(
+        "perlmutter",
         user_cfg,
         "forge-tune",
         node_count=2,
@@ -162,15 +157,23 @@ async def test_submit_perlmutter_job_inlines_slurm_and_uploads(monkeypatch, user
     assert "umask 002" not in job_cmd
     assert "chmod 2775" not in job_cmd
     assert "chgrp" not in job_cmd
-    assert spec["attributes"]["directory"] == f"{NERSC}/jobs"
+    assert spec["directory"] == f"{NERSC}/jobs"
     slurm = (HPC_JOBS_DIR / "forge-tune" / "job.perlmutter.slurm").read_text(
         encoding="utf-8"
     )
     assert slurm in job_cmd
-    # setup_perlmutter.sh exists → pre_launch set
-    assert "pre_launch" in spec["attributes"]
-    assert "bash -lc" in spec["attributes"]["pre_launch"]
-    env = spec["attributes"]["environment"]
+    # setup_perlmutter.sh runs inside the job, after VISTA_OUT, as on OLCF.
+    setup = (HPC_JOBS_DIR / "forge-tune" / "setup_perlmutter.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "pre_launch" not in spec and "resource_id" not in spec["attributes"]
+    assert (
+        job_cmd.index("export VISTA_OUT=")
+        < job_cmd.index(f"bash -lc {shlex.quote(setup)}")
+        < job_cmd.index(slurm)
+    )
+    assert spec["attributes"]["account"] == "m1234"
+    env = spec["environment"]
     assert env["RUN_DIR_Perlmutter"].endswith("/forge-tune/src")
     assert "VISTA_PM_IMAGE" in env
     # The source tree, and the log folder: Perlmutter runs as the researcher,
@@ -250,7 +253,7 @@ async def test_odo_status_fetches_both_streams_and_shows_stderr(
     )
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    text = await _get_olcf_job_status(user_cfg, tmp_path, "44039", cluster="odo")
+    text = await _get_job_status(user_cfg, tmp_path, "44039", cluster="odo")
 
     assert "--- LOGS ---" in text
     assert "run_state_point.py present" in text
@@ -280,7 +283,7 @@ async def test_odo_status_reports_a_missing_stderr_as_nothing_on_stderr(
     globus.files[f"{ODO}.out/log-1.out"] = b"TBR = 1.14\n"
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    ran = await _get_olcf_job_status(user_cfg, tmp_path, "1", cluster="odo")
+    ran = await _get_job_status(user_cfg, tmp_path, "1", cluster="odo")
     assert "TBR = 1.14" in ran
     assert "(nothing on stderr)" in ran
 
@@ -313,7 +316,7 @@ async def test_odo_status_says_when_stderr_could_not_be_fetched(
     globus.stat = _refuse  # type: ignore[method-assign]
     _patch_clients(monkeypatch, iri=iri, globus=globus)
 
-    text = await _get_olcf_job_status(user_cfg, tmp_path, "3", cluster="odo")
+    text = await _get_job_status(user_cfg, tmp_path, "3", cluster="odo")
     assert "endpoint activation expired" in text
     assert "(nothing on stderr)" not in text, "silence we did not verify is not silence"
 
@@ -329,12 +332,9 @@ async def test_perlmutter_status_formats_golden_fixture(
     iri = FakeIriClient(status=status)
     iri.head_content[f"{NERSC}/out/log-pm-1.out"] = "line1\nline2\n"
 
-    async def _nersc(*, iri_token: str):
-        return iri
+    monkeypatch.setattr(submit_job_mcp, "client_for", lambda cluster, token: iri)
 
-    monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
-
-    text = await _get_perlmutter_job_status(user_cfg, "pm-1")
+    text = await _get_job_status(user_cfg, tmp_path, "pm-1", cluster="perlmutter")
     assert "JOB_ID=pm-1" in text
     assert "STATE=COMPLETED" in text
     assert "EXIT_CODE=0" in text
@@ -342,7 +342,7 @@ async def test_perlmutter_status_formats_golden_fixture(
     assert "line1" in text
 
 
-async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
+async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg, tmp_path):
     """
     Where a failed job explains itself.
 
@@ -359,12 +359,9 @@ async def test_perlmutter_status_shows_stderr(monkeypatch, user_cfg):
         "run_state_point.py: error: unrecognized arguments: --salt flibe_90Li6\n"
     )
 
-    async def _nersc(*, iri_token: str):
-        return iri
+    monkeypatch.setattr(submit_job_mcp, "client_for", lambda cluster, token: iri)
 
-    monkeypatch.setattr(submit_job_mcp, "create_iri_client", _nersc)
-
-    text = await _get_perlmutter_job_status(user_cfg, "pm-2")
+    text = await _get_job_status(user_cfg, tmp_path, "pm-2", cluster="perlmutter")
     assert "--- STDERR ---" in text
     assert "unrecognized arguments: --salt flibe_90Li6" in text
 

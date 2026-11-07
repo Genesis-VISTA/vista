@@ -104,17 +104,12 @@ def clients(monkeypatch):
         reached.append("introspect")
         return "abc123"
 
-    async def make_iri(*, iri_token):
-        reached.append("iri")
-        return iri
-
     def iri_for(cluster, token):
         reached.append("iri")
         return iri
 
     monkeypatch.setattr(m, "get_s3m_token_project", introspect)
     monkeypatch.setattr(m, "client_for", iri_for)
-    monkeypatch.setattr(m, "create_iri_client", make_iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
     return reached, iri, globus
 
@@ -135,7 +130,7 @@ CREDENTIALS = UserConfig(
     [
         ("odo", functools.partial(m._submit_job, "odo"), "example"),
         ("frontier", functools.partial(m._submit_job, "frontier"), "example"),
-        ("perlmutter", m._submit_perlmutter_job, "forge-tune"),
+        ("perlmutter", functools.partial(m._submit_job, "perlmutter"), "forge-tune"),
     ],
 )
 async def test_submission_stops_at_an_unset_folder(clients, cluster, submit, job):

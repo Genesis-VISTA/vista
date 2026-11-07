@@ -31,8 +31,8 @@ credentials and stay out of PR CI.
 
 ## 5. Perlmutter on the new client (IRI v1)
 
-- [ ] 5.1 Add Perlmutter's `ClusterProfile` (IRI file transport, nested layout, NERSC account, constraint/shifter/GPU env as today); move source sync, `mkdir`, status log tails and output listing/download to the v2 filesystem calls; verify `tests/test_submit_job_spec.py` Perlmutter assertions and a new `tests/test_perlmutter_files.py` per the "Perlmutter files through IRI filesystem tasks" scenarios
-- [ ] 5.2 Remove `_submit_perlmutter_job`, `_get_perlmutter_job_*` and `nersc_machine` discovery; `./scripts/ci-local.sh mcp` passes
+- [x] 5.1 Add Perlmutter's `ClusterProfile` (`facility="nersc"`: IRI file transport, nested layout, NERSC account; constraint/shifter/GPU env as today; setup inlined as on OLCF); move source sync (`_sync_job_sources_iri`), `mkdir`, status log heads and output listing/download to the new client's filesystem calls; status is one `_get_job_status` for every IRI cluster (state, then `_globus_job_files` or `_iri_job_files`), outputs `_get_iri_job_outputs` (names checked first, local copies kept); verify `tests/test_submit_job_spec.py` Perlmutter assertions and a new `tests/test_perlmutter_files.py` per the "Perlmutter files through IRI filesystem tasks" scenarios, against `tests/fakes/nersc.py` (`FakeNersc`, the recorded shapes over an in-memory filesystem)
+- [x] 5.2 Remove `_submit_perlmutter_job`, `_get_perlmutter_job_*`, `create_iri_client` and `wire_job_spec`'s lifting of fields out of `attributes` (every caller now builds the wire shape; a stray one is refused); `nersc_machine` is no longer read by the MCP server and goes with the backend's check in 7.3; `./scripts/ci-local.sh mcp` passes
 
 ## 6. Lux on IRI; SSH path removed (MCP)
 

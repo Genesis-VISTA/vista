@@ -95,8 +95,12 @@ SHALL be saved exactly as the facility returned it; a file the API cannot return
 SHALL fail naming the file, and SHALL NOT be saved altered.
 
 #### Scenario: Log not written yet
-- **WHEN** status is requested for a queued Perlmutter job whose log file does not exist
+- **WHEN** status is requested for a running Perlmutter job whose log file does not exist yet
 - **THEN** the state is reported with "(no logs yet)", and the call does not fail
+
+#### Scenario: Queued job
+- **WHEN** status is requested for a queued Perlmutter job
+- **THEN** the state is reported from IRI alone, and no filesystem task is started
 
 #### Scenario: Task fails
 - **WHEN** the upload task for a source file finishes as `failed` with a permission error

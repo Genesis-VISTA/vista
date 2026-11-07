@@ -130,7 +130,7 @@ async def test_status_does_not_introspect(no_introspection, monkeypatch, tmp_pat
         "client_for",
         lambda cluster, token: FakeIriClient(status={"state": "QUEUED"}),
     )
-    text = await m._get_olcf_job_status(
+    text = await m._get_job_status(
         UserConfig(frontier_s3m_token="tok", frontier_remote_dir="/o"),
         tmp_path,
         "10",

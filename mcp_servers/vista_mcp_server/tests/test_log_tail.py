@@ -27,7 +27,7 @@ from vista_mcp_server.config import settings
 from vista_mcp_server.lib.globus import GlobusSessionExpired
 from vista_mcp_server.lib.user_config import UserConfig
 from vista_mcp_server.submit_job_mcp import (
-    _get_olcf_job_status,
+    _get_job_status,
     _read_log_tail,
     _tail_remote_log,
 )
@@ -164,7 +164,7 @@ class TestWhatAStatusQuerySays:
         )
 
     async def status(self, tmp_path: Path) -> str:
-        return await _get_olcf_job_status(
+        return await _get_job_status(
             UserConfig(
                 frontier_s3m_token="s3m",
                 frontier_globus_token="t",
@@ -228,7 +228,7 @@ class TestWhatAStatusQuerySays:
         The case that makes it real: a researcher who connected Globus before
         VISTA moved to the HTTPS interface has half a credential, which is not
         one. They should still be able to see that their job finished."""
-        text = await _get_olcf_job_status(
+        text = await _get_job_status(
             UserConfig(
                 frontier_s3m_token="s3m",
                 frontier_globus_token="stale",

@@ -297,7 +297,7 @@ async def test_globus_skips_a_complete_nested_tree(skills):
 async def test_perlmutter_uploads_nested_files(skills):
     d = skills / "primus-on-lux" / "hpc_jobs" / "primus-smoke"
     iri = FakeIriClient(job_id="1")
-    await m._sync_perlmutter_sources(iri, d, "/r/jobs/x/src")
+    await m._sync_job_sources_iri(iri, d, "/r/jobs/x/src")
     assert iri.mkdirs == ["/r/jobs/x/src", "/r/jobs/x/src/configs"]
     assert {remote for _, remote in iri.uploads} == {
         "/r/jobs/x/src/summarize.sh",

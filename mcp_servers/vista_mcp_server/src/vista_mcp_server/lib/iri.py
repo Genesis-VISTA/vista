@@ -127,8 +127,7 @@ class IriTaskTimeout(IriError):
 
 # ---------------------------------------------------------------------------- job specs
 
-# JobSpec fields that sit beside `attributes` on the wire. Callers may still pass
-# them inside `attributes`, the shape amscrot took; they are lifted out here.
+# JobSpec fields that sit beside `attributes` on the wire.
 _JOBSPEC_TOP_LEVEL = (
     "name", "directory", "stdout_path", "stderr_path", "stdin_path",
     "inherit_environment", "environment", "pre_launch", "post_launch", "launcher",
@@ -142,19 +141,16 @@ def wire_job_spec(spec: dict[str, Any], *, name: str) -> dict[str, Any]:
     The IRI `JobSpec` body for `spec`.
 
     Fields given as None are left out, since both facilities reject a null for a
-    field with a minimum length, and `resource_id` is dropped: the resource is
-    the target's, named in the path. NERSC refuses unknown top-level fields, so
-    only `JobSpec`'s own reach the top level, and an unknown attribute is an error
-    here rather than a silently ignored one there.
+    field with a minimum length. NERSC refuses unknown top-level fields, so only
+    `JobSpec`'s own are sent, and an unknown attribute (`resource_id`, a field
+    that belongs at the top level) is an error here rather than a silently
+    ignored one there: the resource is the target's, named in the path.
     """
     attrs = {k: v for k, v in (spec.get("attributes") or {}).items() if v is not None}
-    attrs.pop("resource_id", None)
     body: dict[str, Any] = {"name": name}
     for key in _JOBSPEC_TOP_LEVEL:
-        lifted = attrs.pop(key, None)
-        value = spec.get(key, lifted)
-        if value is not None:
-            body[key] = value
+        if spec.get(key) is not None:
+            body[key] = spec[key]
     body["executable"] = spec.get("executable") or "bash"
     if spec.get("arguments"):
         body["arguments"] = list(spec["arguments"])
@@ -470,7 +466,3 @@ def client_for(cluster: IriCluster, token: str) -> IriClient:
     """ The IRI client for `cluster`, as the researcher whose token this is. """
     return IriClient(iri_target(cluster), token)
 
-
-async def create_iri_client(*, iri_token: str) -> IriClient:
-    """ NERSC IRI client (Perlmutter). """
-    return client_for("perlmutter", iri_token)

@@ -87,16 +87,16 @@ def client(
 SPEC = {
     "executable": "bash",
     "arguments": ["-l", "-c", "echo hi"],
+    "directory": "/lustre/orion/abc123/proj-shared",
+    "stdout_path": "/lustre/orion/abc123/proj-shared/log-%j.out",
+    "environment": {"RUN_DIR": "/x"},
+    "pre_launch": None,
     "resources": {"node_count": 1, "process_count": 1, "cpu_cores_per_process": None},
     "attributes": {
-        "resource_id": "ignored",
         "queue_name": "batch",
         "account": "abc123",
         "duration": 300,
-        "directory": "/lustre/orion/abc123/proj-shared",
-        "stdout_path": "/lustre/orion/abc123/proj-shared/log-%j.out",
-        "environment": {"RUN_DIR": "/x"},
-        "pre_launch": None,
+        "custom_attributes": None,
     },
 }
 
@@ -206,9 +206,11 @@ async def test_submitted_body_is_the_iri_jobspec():
     }
 
 
-def test_an_unknown_job_attribute_is_refused_here_not_dropped_there():
-    with pytest.raises(ValueError, match="partition"):
-        wire_job_spec({"attributes": {"partition": "batch"}}, name="x")
+@pytest.mark.parametrize("attribute", ["partition", "resource_id", "directory"])
+def test_an_unknown_job_attribute_is_refused_here_not_dropped_there(attribute):
+    """The resource is named in the path, and JobSpec fields sit beside `attributes`."""
+    with pytest.raises(ValueError, match=attribute):
+        wire_job_spec({"attributes": {attribute: "x"}}, name="x")
 
 
 async def test_a_rejected_token_names_the_setting_to_renew():
@@ -492,18 +494,6 @@ def user_cfg() -> UserConfig:
 
 
 def _serve(monkeypatch, facility: Facility) -> None:
-    def make(cluster):
-        async def _create(*, iri_token: str):
-            return IriClient(
-                iri_target(cluster),
-                iri_token,
-                transport=httpx.MockTransport(facility),
-                sleep=Clock(),
-            )
-
-        return _create
-
-    monkeypatch.setattr(submit_job_mcp, "create_iri_client", make("perlmutter"))
     monkeypatch.setattr(
         submit_job_mcp,
         "client_for",
@@ -517,7 +507,7 @@ def _serve(monkeypatch, facility: Facility) -> None:
 
 
 async def test_perlmutter_failed_exit_7_reads_failed_with_its_exit_code(
-    monkeypatch, user_cfg
+    monkeypatch, user_cfg, tmp_path
 ):
     resource = settings.perlmutter_iri_resource_id
     routes = {
@@ -535,7 +525,9 @@ async def test_perlmutter_failed_exit_7_reads_failed_with_its_exit_code(
     routes[("GET", "/api/v1/task/m")] = missing
     _serve(monkeypatch, Facility(routes))
 
-    text = await submit_job_mcp._get_perlmutter_job_status(user_cfg, "1001")
+    text = await submit_job_mcp._get_job_status(
+        user_cfg, tmp_path, "1001", cluster="perlmutter"
+    )
     head = text.split("\n\n")[0].splitlines()
     assert head == ["JOB_ID=1001", "CLUSTER=perlmutter", "STATE=FAILED", "EXIT_CODE=7"]
 
@@ -551,7 +543,7 @@ async def test_a_queued_olcf_job_reads_queued_with_no_exit_code_or_message(
         submit_job_mcp, "create_globus_client", lambda **_: FakeGlobusClient()
     )
 
-    text = await submit_job_mcp._get_olcf_job_status(
+    text = await submit_job_mcp._get_job_status(
         user_cfg, tmp_path, "2001", cluster="frontier"
     )
     head = text.split("\n\n")[0].splitlines()
