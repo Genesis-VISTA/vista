@@ -581,6 +581,13 @@ class ClusterProfile:
     `cpu`: Perlmutter's shifter reads it to bind GPUs per task. Not on OLCF, where
     `--exclusive` has the prolog bind every GPU and export SLURM_GPUS_ON_NODE.
     """
+    purge_modules: bool = True
+    """
+    Start the job from `module purge` (`_olcf_prefix`). Not on Lux, whose jobs
+    start with Lux's own default modules, as a login shell does; purging them
+    drops the Spack module paths (`MODULEPATH=/sw/lux/modules` alone), and a
+    job's `module load mpich/5.0.1` then fails (job 398819).
+    """
 
 
 PROFILES: dict[Cluster, ClusterProfile] = {
@@ -595,7 +602,7 @@ PROFILES: dict[Cluster, ClusterProfile] = {
     "lux": ClusterProfile(
         cluster="lux", facility="olcf", job_script=LUX_JOB_SCRIPT,
         setup_script=LUX_SETUP_SCRIPT, env_suffix="Lux", image_env="VISTA_LUX",
-        queue_is_partition=True,
+        queue_is_partition=True, purge_modules=False,
     ),
     "perlmutter": ClusterProfile(
         cluster="perlmutter", facility="nersc", job_script=PERLMUTTER_JOB_SCRIPT,
@@ -635,7 +642,9 @@ OLCF_PROXY = "http://proxy.ccs.ornl.gov:3128"
 """ OLCF compute nodes have no direct outbound network; pip, curl and git go through this. """
 
 
-def _olcf_prefix(layout: RemoteLayout, project: str, *, cd: str | None) -> str:
+def _olcf_prefix(
+    layout: RemoteLayout, project: str, *, cd: str | None, purge_modules: bool = True,
+) -> str:
     """
     The first lines of an OLCF job, before its setup and job scripts.
 
@@ -645,9 +654,10 @@ def _olcf_prefix(layout: RemoteLayout, project: str, *, cd: str | None) -> str:
       and conda activation hooks (run by `module load`) break silently without it,
       after which Python segfaults at import.
     - The OLCF proxy, since compute nodes have no direct outbound network.
-    - `module purge`: Lmod state from the IRI service host arrives through
-      `--export=ALL`, and Cray PE modules stacked under the job's own
-      `module load` put conflicting libraries first (PyTorch then segfaults).
+    - `module purge` (unless `purge_modules` is off, as on Lux): Lmod state from
+      the IRI service host arrives through `--export=ALL`, and Cray PE modules
+      stacked under the job's own `module load` put conflicting libraries first
+      (PyTorch then segfaults).
     """
     lines = [_shared_out_prefix(layout.out, project), textwrap.dedent(f"""
         export VISTA_OUT={shlex.quote(layout.out)}/"$SLURM_JOB_ID"
@@ -658,9 +668,9 @@ def _olcf_prefix(layout: RemoteLayout, project: str, *, cd: str | None) -> str:
         export https_proxy="{OLCF_PROXY}"
         export http_proxy="{OLCF_PROXY}"
         export no_proxy="localhost,127.0.0.1,0.0.0.0"
-
-        module purge 2>/dev/null || true
     """).strip()]
+    if purge_modules:
+        lines.append("module purge 2>/dev/null || true")
     if cd:
         lines.append(f"cd {shlex.quote(cd)}")
     return "\n".join(lines)
@@ -795,7 +805,10 @@ async def _submit_job(
         await _sync_job_sources(
             globus, local_job_dir, src_dir, parents_below=layout.parent, remote_endpoint=collection_id,
         )
-        prefix = _olcf_prefix(layout, project, cd=src_dir if profile.cd_into_sources else None)
+        prefix = _olcf_prefix(
+            layout, project, cd=src_dir if profile.cd_into_sources else None,
+            purge_modules=profile.purge_modules,
+        )
 
     setup_path = local_job_dir / profile.setup_script
     job_cmd = _job_body(

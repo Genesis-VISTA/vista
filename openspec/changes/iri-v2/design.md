@@ -123,7 +123,7 @@ Perlmutter keeps its `constraint` custom attribute, shifter image and
 transport rather than the cluster name.
 
 The setup script is inlined into the job body after the shared prefix (for OLCF: umask,
-`VISTA_OUT`, `HOME` fallback, proxy, `module purge`), run in a login bash of its own
+`VISTA_OUT`, `HOME` fallback, proxy, and `module purge` except on Lux), run in a login bash of its own
 (`bash -lc`) whose non-zero exit ends the job with the reason in its stderr. It does not
 add `-e`: every bundled setup script sets `set -euo pipefail` itself, and `-e` from the
 command line would also apply to the login profile (Lux's automation user's profile has a
@@ -194,6 +194,11 @@ resource id. Lux joins the OLCF branch with its token and Frontier's Globus pair
   reads as `--gpu-bind=none` and restores the old visibility (same probe). Steps also get
   one CPU per task: S3M does not pass `cpu_cores_per_process` through to Slurm on Lux.
   The authoring guidance and `docs/hpc-jobs.md` say both.
+- **Lux jobs start with Lux's default modules.** Under IRI a Lux job begins with the same
+  modules a login gets (`DefApps`, `rocm`, `openmpi` and the Spack module paths), not
+  modules leaked from the IRI service host as on Frontier. `module purge` would leave
+  `MODULEPATH=/sw/lux/modules` alone, and forge's `module load mpich/5.0.1` then fails
+  (job 398819; probe job 398823). So the Lux profile does not purge (`purge_modules`).
 
 ## Migration Plan
 

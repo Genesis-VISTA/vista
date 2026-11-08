@@ -63,7 +63,8 @@ job, with its output in the job's logs. On Lux, the job's `cluster_defaults.json
 with one process per node unless the job sets processes per node. A job whose
 `cluster_defaults.json` sets `iri.pre_launch` SHALL be refused, since the setup script
 replaces it, and a `gpus_per_node` that is not a multiple of the processes per node SHALL
-be refused, since IRI asks for GPUs per process.
+be refused, since IRI asks for GPUs per process. A Lux job SHALL keep the modules Lux
+starts it with, which its job scripts load from, rather than starting from `module purge`.
 
 #### Scenario: Lux setup runs in the allocation
 - **WHEN** a Lux job with a `setup_lux.sh` is submitted
@@ -76,6 +77,10 @@ be refused, since IRI asks for GPUs per process.
 #### Scenario: A stale pre_launch
 - **WHEN** a job's `cluster_defaults.json` sets `iri.pre_launch`
 - **THEN** the submission is refused with a message saying to move it into `setup_<cluster>.sh`, and no job is submitted
+
+#### Scenario: Lux keeps its default modules
+- **WHEN** a Lux job's environment script runs `module load mpich/5.0.1`
+- **THEN** the module is found, because the job was not started from `module purge`
 
 #### Scenario: HOME is set
 - **WHEN** a Lux job starts with no `HOME` from the scheduler

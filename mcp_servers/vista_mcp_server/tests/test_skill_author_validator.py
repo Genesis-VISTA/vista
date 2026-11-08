@@ -151,7 +151,9 @@ BROKEN = {
     "pre-launch": {
         "README.md": "# pre-launch\n",
         "job.odo.slurm": SCRIPT,
-        "cluster_defaults.json": json.dumps({"odo": {"iri": {"pre_launch": "module load x"}}}),
+        "cluster_defaults.json": json.dumps(
+            {"odo": {"iri": {"pre_launch": "module load x"}}}
+        ),
     },
 }
 

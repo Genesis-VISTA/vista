@@ -62,13 +62,14 @@ credentials and stay out of PR CI.
 - [x] 9.3 Lux notes in bundled skills (`llm-pretraining`, `salt-neutronics-tbr`), the `hello-olcf` system prompt, `docs/hpc.md` (transport table: IRI v2 everywhere), `docs/hpc-jobs.md`, `docs/skill-onboarding.md`, AGENTS.md; `./scripts/ci-local.sh docs` passes
 - [x] 9.3a `iri.pre_launch` refused at submit (`IriAttributes`) and by the validator; validator also refuses `gpus_per_node` not divisible by `processes_per_node`
 - [x] 9.3b `forge-pretrain` on Lux: `SLURM_GPU_BIND=none` (IRI binds each of 8 tasks/node to one GPU seen as device 0; probed live, job 398650); stale `pre_launch`/scp/SSH comments in `forge-tune`, `salt-neutronics-tbr`, `forge-pretrain`
+- [x] 9.3c No `module purge` on Lux (`ClusterProfile.purge_modules`): its jobs start with Lux's default modules, which `lux_env.sh` needs (forge-pretrain job 398819 failed on `mpich/5.0.1`)
 - [ ] 9.4 `openspec validate iri-v2 --strict` and the full `./scripts/ci-local.sh` pass
 
 ## 10. Live validation (manual; excluded from PR CI)
 
-- [ ] 10.1 **[live]** Add `mcp_servers/vista_mcp_server/tests/live/test_iri_live.py` (`@pytest.mark.live`, `@pytest.mark.hpc`): v2 submit/status/cancel per cluster from tokens in the environment, and Perlmutter filesystem round trip
+- [x] 10.1 **[live]** Add `mcp_servers/vista_mcp_server/tests/live/test_iri_live.py` (`@pytest.mark.live`, `@pytest.mark.hpc`): v2 submit/status/cancel per cluster from tokens in the environment, and Perlmutter filesystem round trip
 - [ ] 10.2 **[live]** `hello-lux` end to end in the VISTA window: report fetched, GPU named, no login prompt
 - [ ] 10.3 **[live]** `hello-frontier` and `hello-odo` end to end (needs an Odo S3M token; none is saved today)
 - [ ] 10.4 **[live]** One Perlmutter job end to end on the new client (sources up, log tail, a binary output down)
-- [ ] 10.5 **[live]** One existing Lux skill job with a `setup_lux.sh` (e.g. `llm-pretraining`): setup works in the allocation through the proxy, and NeoX's ranks each find their GPU with `SLURM_GPU_BIND=none`
+- [x] 10.5 **[live]** One existing Lux skill job with a `setup_lux.sh` (e.g. `llm-pretraining`): setup works in the allocation through the proxy, and NeoX's ranks each find their GPU with `SLURM_GPU_BIND=none`
 - [ ] 10.6 After release: revoke `AMSC_GIT_TOKEN` (manual, maintainer)

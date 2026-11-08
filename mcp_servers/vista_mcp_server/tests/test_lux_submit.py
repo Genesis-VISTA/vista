@@ -193,6 +193,16 @@ async def test_setup_runs_in_the_allocation_after_the_prefix(env):
     assert "VISTA: setup_lux.sh failed with exit code" in body
 
 
+async def test_lux_keeps_its_default_modules(env):
+    """
+    A Lux job starts with Lux's default modules, which put the Spack module paths
+    on MODULEPATH; a purge leaves `module load mpich/5.0.1` with nothing to find.
+    """
+    await env.submit()
+    [(spec, _)] = env.iri.submitted
+    assert "module purge" not in spec["arguments"][2]
+
+
 async def test_without_a_partition_nothing_is_contacted(env, tmp_path, monkeypatch):
     lux = {**LUX_DEFAULTS, "iri": {"environment": {}}}
     other = Env(tmp_path / "other", monkeypatch)
