@@ -190,7 +190,7 @@ describe("HpcStatusSection", () => {
     expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
     expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
     expect(within(dialog).getByText("Project abc123 · expires in 22 h")).toBeInTheDocument();
-    expect(within(dialog).getByText("Your own identity")).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Orion connection, shared by Frontier and Lux/)).toBeInTheDocument();
     expect(within(dialog).getByText("Checked 2 min ago")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Recheck" }));
@@ -401,7 +401,7 @@ describe("HpcStatusSection: Lux", () => {
     expect(screen.getByRole("button", { name: "Lux: Ready" })).toHaveTextContent("Lx");
   });
 
-  it("details read like Frontier's: IRI facility, its own S3M token, Frontier's Globus", async () => {
+  it("details read like Frontier's: IRI facility, its own S3M token, the Orion Globus connection", async () => {
     useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: "Lux: Ready" }));
@@ -412,11 +412,11 @@ describe("HpcStatusSection: Lux", () => {
     expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
     expect(within(dialog).getByText(/Project lmn456/)).toBeInTheDocument();
     expect(within(dialog).getByText("Globus file transfer connected")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Frontier's connection/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Orion connection, shared by Frontier and Lux/)).toBeInTheDocument();
     expect(dialog).not.toHaveTextContent(/SSH|passcode|Sign in/);
   });
 
-  it("without Frontier's Globus, the card says whose connection Lux needs", async () => {
+  it("without the Orion Globus connection, the card says which one Lux needs", async () => {
     useHpcStatusMock.mockReturnValue(
       view([
         {
@@ -434,6 +434,6 @@ describe("HpcStatusSection: Lux", () => {
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: /^Lux: / }));
     const dialog = screen.getByRole("dialog", { name: "Lux connection details" });
-    expect(within(dialog).getByText(/Lux uses Frontier's Globus connection/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/share the Orion Globus connection/)).toBeInTheDocument();
   });
 });

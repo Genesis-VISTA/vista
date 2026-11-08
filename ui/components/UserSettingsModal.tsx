@@ -1866,9 +1866,10 @@ function ClusterFields({
             hint={<GroupWritableHint cluster="Frontier" />}
           />
           <p className="user-settings-hint">
-            Lux uses this connection too: connecting here connects Lux.
+            Frontier and Lux share the Orion filesystem, so one Globus connection serves
+            both: connecting here connects Lux too.
           </p>
-          <GlobusConnect cluster="frontier" label="Frontier" {...globus("frontier")} />
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
     case "perlmutter":
@@ -1920,11 +1921,11 @@ function ClusterFields({
             hint={<GroupWritableHint cluster="Lux" />}
           />
           <p className="user-settings-hint">
-            Lux mounts Frontier&apos;s filesystem, so its files go through Frontier&apos;s Globus
-            connection. Connecting here connects Frontier too, and if Frontier is already
+            Lux and Frontier share the Orion filesystem, so one Globus connection serves
+            both. Connecting here connects Frontier too, and if Frontier is already
             connected there is nothing to do.
           </p>
-          <GlobusConnect cluster="frontier" label="Frontier" {...globus("frontier")} />
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
   }

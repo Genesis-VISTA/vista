@@ -68,8 +68,8 @@ credentials and stay out of PR CI.
 ## 10. Live validation (manual; excluded from PR CI)
 
 - [x] 10.1 **[live]** Add `mcp_servers/vista_mcp_server/tests/live/test_iri_live.py` (`@pytest.mark.live`, `@pytest.mark.hpc`): v2 submit/status/cancel per cluster from tokens in the environment, and Perlmutter filesystem round trip
-- [ ] 10.2 **[live]** `hello-lux` end to end in the VISTA window: report fetched, GPU named, no login prompt
-- [ ] 10.3 **[live]** `hello-frontier` and `hello-odo` end to end (needs an Odo S3M token; none is saved today)
-- [ ] 10.4 **[live]** One Perlmutter job end to end on the new client (sources up, log tail, a binary output down)
+- [x] 10.2 **[live]** `hello-lux` end to end in the VISTA window: report fetched, GPU named, no login prompt
+- [x] 10.3 **[live]** `hello-frontier` and `hello-odo` end to end (needs an Odo S3M token; none is saved today)
+- [x] 10.4 **[live]** One Perlmutter job end to end on the new client (sources up, log tail, a binary output down)
 - [x] 10.5 **[live]** One existing Lux skill job with a `setup_lux.sh` (e.g. `llm-pretraining`): setup works in the allocation through the proxy, and NeoX's ranks each find their GPU with `SLURM_GPU_BIND=none`
 - [ ] 10.6 After release: revoke `AMSC_GIT_TOKEN` (manual, maintainer)

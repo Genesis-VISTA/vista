@@ -634,7 +634,7 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
     expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue("/frontier/proj/vista");
     expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
-    expect(within(frontier).getByText("Frontier", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
+    expect(within(frontier).getByText("Orion", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(frontier).toHaveTextContent("Ready");
 
     const perlmutter = await openOn("Perlmutter");
@@ -1206,7 +1206,7 @@ describe("UserSettingsModal: Globus address", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows its S3M token, remote directory and Frontier's Globus", async () => {
+  it("opened from the Lux card, shows its S3M token, remote directory and the Orion Globus connection", async () => {
     fetchSettingsMock.mockResolvedValue(
       settingsRow({ lux_remote_dir: "/lux/vista", lux_s3m_token: "lux-tok" }),
     );
@@ -1219,7 +1219,8 @@ describe("UserSettingsModal: Lux", () => {
     expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     // No account any more: Lux jobs are charged to the token's project.
     expect(within(lux).queryByLabelText(/Lux account/)).toBeNull();
-    expect(lux).toHaveTextContent(/Lux mounts Frontier.s filesystem/);
+    expect(lux).toHaveTextContent(/share the Orion filesystem/);
+    expect(within(lux).getByText("Orion", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(lux).not.toHaveTextContent(/PIN|passcode|SSH/);
   });
 

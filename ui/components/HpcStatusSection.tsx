@@ -156,13 +156,13 @@ export function failureSummary(status: HpcClusterStatus | null): string | null {
 }
 
 function globusRow(cluster: HpcCluster, check: HpcCheck): Row {
-  // Lux mounts Frontier's filesystem and has no Globus connection of its own.
-  const shared = cluster === "lux";
+  // Frontier and Lux share the Orion filesystem, and one Globus connection to it.
+  const shared = cluster === "frontier" || cluster === "lux";
   if (check.ok) {
     return {
       ok: true,
       title: "Globus file transfer connected",
-      detail: shared ? "Frontier's connection · your own identity" : "Your own identity",
+      detail: shared ? "Orion connection, shared by Frontier and Lux · your own identity" : "Your own identity",
     };
   }
   switch (check.reason) {
@@ -171,7 +171,7 @@ function globusRow(cluster: HpcCluster, check: HpcCheck): Row {
         ok: false,
         title: "Globus not connected",
         detail: shared
-          ? "Lux uses Frontier's Globus connection. Outputs can't be fetched until you connect it."
+          ? "Frontier and Lux share the Orion Globus connection. Outputs can't be fetched until you connect it."
           : "Outputs can't be fetched until you connect it.",
       };
     case "session_expired":

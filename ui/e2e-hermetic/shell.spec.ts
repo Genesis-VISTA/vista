@@ -289,7 +289,7 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
   });
 
-  test("Lux is Ready like Frontier, and its settings are its token, folder and Frontier's Globus", async ({ page }) => {
+  test("Lux is Ready like Frontier, and its settings are its token, folder and the Orion Globus connection", async ({ page }) => {
     const stub = await installStub(page);
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
@@ -298,7 +298,7 @@ test.describe("HPC availability cards", () => {
     const details = page.getByRole("dialog", { name: "Lux connection details" });
     await expect(details).toContainText("Facility is up");
     await expect(details).toContainText("Project lmn456");
-    await expect(details).toContainText("Frontier's connection");
+    await expect(details).toContainText("Orion connection, shared by Frontier and Lux");
     await expect(details).not.toContainText("passcode");
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
@@ -313,7 +313,7 @@ test.describe("HPC availability cards", () => {
     await expect(lux.getByLabel("Lux S3M token")).toBeVisible();
     await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
     await expect(lux.getByLabel("Lux account")).toHaveCount(0);
-    await expect(lux).toContainText("Lux mounts Frontier's filesystem");
+    await expect(lux).toContainText("share the Orion filesystem");
     expect(await stub.unstubbed()).toEqual([]);
   });
 

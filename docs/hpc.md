@@ -11,7 +11,7 @@ Perlmutter. On Odo, Frontier and Lux it can also move files outside a job (see [
 |---|---|---|---|
 | Odo (OLCF, open enclave) | S3M IRI API (v2), authorized by an S3M token | Globus | the project's IRI automation user |
 | Frontier (OLCF, moderate enclave) | S3M IRI API (v2), authorized by an S3M token | Globus | the project's IRI automation user |
-| Lux (OLCF, moderate enclave) | S3M IRI API (v2), authorized by a Lux S3M token | Globus, through Frontier's collection | the project's IRI automation user |
+| Lux (OLCF, moderate enclave) | S3M IRI API (v2), authorized by a Lux S3M token | Globus, through Frontier's collection (both mount Orion) | the project's IRI automation user |
 | Perlmutter (NERSC) | NERSC IRI API (v1), authorized by a NERSC IRI token | NERSC IRI filesystem API | the researcher |
 
 Each cluster is named by a configured IRI URL, API version and resource id
@@ -55,8 +55,9 @@ directory. The implementation notes are in
 
 #### When the Globus card isn't Ready
 
-The Odo, Frontier and Lux cards list Globus as a row in each cluster's details (Lux's is
-Frontier's connection). When the S3M token is
+The Odo, Frontier and Lux cards list Globus as a row in each cluster's details. Frontier and
+Lux share the Orion filesystem, so Settings shows one Globus connection, labelled Orion, in both
+sections, and connecting it in either connects both. When the S3M token is
 also rejected, the card's own word reads "Token rejected", which outranks the Globus states; the
 Globus row still shows in the details. Three states mean Globus needs attention:
 
