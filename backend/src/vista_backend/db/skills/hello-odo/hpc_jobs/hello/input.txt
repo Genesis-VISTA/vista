@@ -1,0 +1,2 @@
+Hello from VISTA.
+If you can read this line in hello.txt, the job's input was uploaded to the cluster intact.

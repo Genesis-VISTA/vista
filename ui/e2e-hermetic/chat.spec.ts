@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { CHAT_SESSION, SESSION_ID } from "./fixtures";
 import { ANSWER_CHUNKS, installStub, streamOneTurn, type Stub } from "./stub";
 
 /**
@@ -150,5 +151,126 @@ test.describe("chat flow", () => {
     for (const request of requests) {
       expect(request, "a request left the /api namespace").toMatch(/^[A-Z]+ \/api\//);
     }
+  });
+});
+
+/**
+ * A link that opens a conversation at a turn, as the Files page's "shown in" and the
+ * artifacts feed make them: `/?chat=<id>&run=<run>&step=<tool call>`.
+ */
+test.describe("opening a conversation at a turn", () => {
+  let stub: Stub | null = null;
+
+  const filler = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of a long answer.`).join("\n\n");
+  const turn = (run: string, answer: string, stepId: string | null) => [
+    { id: `u-${run}`, role: "user", content: `Question for ${run}`, run_id: run },
+    {
+      id: `s-${run}`,
+      role: "assistant",
+      content: "Calling `display_file`…",
+      intermediate: true,
+      run_id: run,
+      ...(stepId ? { tool_call_id: stepId } : {}),
+    },
+    { id: `a-${run}`, role: "assistant", content: answer, run_id: run },
+  ];
+  // The first turn is far above the last, so reaching it takes a scroll.
+  const MESSAGES = [
+    ...turn("run-1", `First answer\n\n${filler}`, "call-1"),
+    ...turn("run-2", `Second answer\n\n${filler}`, "call-2"),
+    ...turn("run-3", `Third answer\n\n${filler}`, "call-3"),
+    // A step saved before steps carried their call's id.
+    ...turn("run-4", "Last answer", null),
+  ];
+
+  test.beforeEach(async ({ page }) => {
+    stub = await installStub(page, {
+      "GET /api/chat/session": { ...CHAT_SESSION, messages: MESSAGES },
+      // What run-1 displayed: a CSV, so the card needs no image fetch.
+      "GET /api/chat/displayed-files": [
+        {
+          kind: "outputs",
+          path: "run1/density.csv",
+          name: "density.csv",
+          mime_type: "text/csv",
+          run_id: "run-1",
+          tool_call_id: "call-1",
+          shown_at: "2026-01-01T00:00:00+00:00",
+          status: "current",
+        },
+      ],
+    });
+    // The project is active once it has been opened; the link then names a conversation.
+    await page.goto("/projects");
+    await page
+      .locator(".project-card")
+      .filter({ hasText: "molten-salt" })
+      .getByRole("button", { name: "Open" })
+      .click();
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeVisible();
+  });
+
+  test.afterEach(async () => {
+    if (stub) {
+      expect(await stub.unstubbed(), "page asked for a route with no fixture").toEqual([]);
+    }
+    stub = null;
+  });
+
+  test("selects the chat, highlights the turn's answer and the file's card, and clears the URL", async ({ page }) => {
+    // Leave Artifacts first, so the jump has to bring it back.
+    await page.getByRole("tab", { name: /Activity/ }).click();
+    await page.goto(`/?chat=${SESSION_ID}&run=run-1&step=call-1`);
+
+    await expect(page.locator(".chat-session-banner")).toBeVisible();
+    const answer = page.locator("#msg-a-run-1");
+    await expect(answer).toHaveClass(/turn-highlight/);
+    await expect(answer).toBeInViewport();
+    // The file the link came from is in Artifacts, which is now the tab on show.
+    await expect(page.getByRole("tab", { name: "Artifacts" })).toHaveAttribute("aria-selected", "true");
+    const card = page.locator("#artifact-run-1-call-1");
+    await expect(card).toHaveClass(/turn-highlight/);
+    await expect(card).toBeInViewport();
+    // Only the named run's bubbles.
+    await expect(page.locator("#msg-a-run-2")).not.toHaveClass(/turn-highlight/);
+
+    // Selecting it was the same as choosing it from the list.
+    const stored = await page.evaluate(() =>
+      window.localStorage.getItem("vista.activeChatSession.molten-salt.v1"),
+    );
+    expect(stored).toBe(SESSION_ID);
+    // The params are gone, so a reload does not jump again.
+    await expect.poll(() => new URL(page.url()).search).toBe("");
+    await page.reload();
+    await expect(page.locator(".chat-session-banner")).toBeVisible();
+    await expect(page.locator(".turn-highlight")).toHaveCount(0);
+  });
+
+  test("an unknown run opens the conversation at its end, with no highlight", async ({ page }) => {
+    await page.goto(`/?chat=${SESSION_ID}&run=run-nope&step=call-1`);
+
+    await expect(page.locator(".chat-session-banner")).toBeVisible();
+    await expect(page.locator("#msg-a-run-4")).toBeInViewport();
+    await expect(page.locator(".turn-highlight")).toHaveCount(0);
+    await expect(page.getByText("Conversation not found")).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).search).toBe("");
+  });
+
+  test("an unknown conversation says so and otherwise opens as plain /", async ({ page }) => {
+    await page.goto("/?chat=00000000-0000-4000-8000-0000000000ff&run=run-1&step=call-1");
+
+    await expect(page.getByText("Conversation not found")).toBeVisible();
+    // The conversation list, as `/` shows with none open.
+    await expect(page.getByRole("button", { name: /Density of FLiBe/ })).toBeVisible();
+    await expect(page.locator(".chat-session-banner")).toHaveCount(0);
+    await expect.poll(() => new URL(page.url()).search).toBe("");
+  });
+
+  test("a display with no card in the feed falls back to the turn", async ({ page }) => {
+    await page.goto(`/?chat=${SESSION_ID}&run=run-4&step=call-4`);
+
+    await expect(page.locator("#msg-a-run-4")).toHaveClass(/turn-highlight/);
+    // run-4 recorded nothing, so no card is pointed at.
+    await expect(page.locator(".artifact-item.turn-highlight")).toHaveCount(0);
   });
 });

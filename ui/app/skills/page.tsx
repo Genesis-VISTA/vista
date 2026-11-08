@@ -1,81 +1,155 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { refreshProjects, useActiveProject } from "@/lib/projects";
 import { setSkillLoaded } from "@/lib/loaded-skills";
+import { publishAudience, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
+import {
+  importRemoteSkill,
+  isOnServer,
+  listRemoteSkills,
+  publishSkill,
+  sharingLabel,
+} from "@/lib/skill-sharing";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
+import { HpcJobsBadge } from "@/components/HpcJobsBadge";
+import { TeamBadge } from "@/components/TeamSwitcher";
+import { useTour } from "@/components/TourProvider";
+import { TOUR_SKILL } from "@/lib/default-project";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
 
 export default function SkillsPage() {
   const activeProject = useActiveProject();
   const projectName = activeProject?.name ?? null;
+  const collab = useCollaboration();
+  const teams = useTeams();
+  const serverUrl = collab.status?.reachable ? collab.status.url : null;
   const [skills, setSkills] = useState<SkillSummary[]>([]);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
+  const tour = useTour();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
-  const [pendingPublishSlug, setPendingPublishSlug] = useState<string | null>(null);
-  const [pendingUnloadSkill, setPendingUnloadSkill] = useState<SkillSummary | null>(null);
+  const [pendingPublish, setPendingPublish] = useState<SkillSummary | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SkillSummary | null>(null);
+  const [pendingUpdate, setPendingUpdate] = useState<SkillSummary | null>(null);
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  /** The server's newest version of each item, by id, for "version N available". */
+  const [heads, setHeads] = useState<Record<string, number>>({});
 
-  useEffect(() => {
+  const [copying, setCopying] = useState<SkillSummary | null>(null);
+
+  const loadSkills = useCallback(() => {
     fetch("/api/skills")
       .then((res) => res.json())
       .then((data) => setSkills(Array.isArray(data) ? data : []))
       .catch(() => setSkills([]));
   }, []);
 
+  useEffect(() => {
+    loadSkills();
+  }, [loadSkills]);
+
+  const refreshHeads = useCallback(() => {
+    listRemoteSkills({ manifests: false })
+      .then((remote) => setHeads(Object.fromEntries(remote.map((r) => [r.id, r.head_version]))))
+      .catch(() => setHeads({}));
+  }, []);
+
+  useEffect(() => {
+    if (collab.available) refreshHeads();
+  }, [collab.available, refreshHeads]);
+
   const loadedSlugs = useMemo(
     () => new Set(activeProject?.skills ?? []),
     [activeProject]
   );
 
-  async function unload(slug: string) {
+  function replaceSkill(updated: SkillSummary) {
+    setSkills((prev) => {
+      const rest = prev.filter((s) => s.slug !== updated.slug);
+      return [...rest, updated].sort((a, b) => a.slug.localeCompare(b.slug));
+    });
+  }
+
+  async function setLoaded(slug: string, loaded: boolean) {
     if (!activeProject) return;
     try {
-      await setSkillLoaded(activeProject, slug, false);
+      await setSkillLoaded(activeProject, slug, loaded);
     } catch (err) {
-      window.alert(`Failed to unload: ${err instanceof Error ? err.message : err}`);
+      window.alert(`Failed to update the project: ${err instanceof Error ? err.message : err}`);
     }
   }
 
-  async function publish(slug: string) {
-    setBusySlug(slug);
+  async function publish(skill: SkillSummary, opts: { onTopOf?: number; asNew?: boolean } = {}) {
+    setBusySlug(skill.slug);
+    setNotice(null);
     try {
-      const resp = await fetch(`/api/skills/${slug}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ is_public: true }),
-      });
-      if (!resp.ok) {
-        window.alert("Failed to publish. See server logs for details.");
+      const result = await publishSkill(skill.slug, opts);
+      if (result.ok) {
+        replaceSkill(result.skill);
+        setNotice(`Published ${skill.slug} as version ${result.skill.remoteVersion}.`);
+        refreshHeads();
         return;
       }
-      setSkills((prev) =>
-        prev.map((s) => (s.slug === slug ? { ...s, isPublic: true } : s))
-      );
+      if (result.code === "version_conflict" || result.code === "remote_missing") {
+        setConflict({ skill, refusal: result });
+        return;
+      }
+      setNotice(result.detail);
     } finally {
       setBusySlug(null);
     }
   }
 
-  async function deleteUnpublishedSkill(slug: string) {
-    setBusySlug(slug);
+  /**
+   * Replace the files here with the server's version `version` (the one the
+   * researcher was shown), or its newest.
+   */
+  async function takeServers(skill: SkillSummary, version?: number) {
+    if (!skill.remoteId) return;
+    setBusySlug(skill.slug);
+    setNotice(null);
     try {
-      const resp = await fetch(`/api/skills/${slug}`, {
-        method: "DELETE",
-      });
+      const result = await importRemoteSkill(skill.remoteId, { version, replaceModified: true });
+      if (result.ok) {
+        replaceSkill(result.skill);
+        setNotice(`${skill.slug} is now the server's version ${result.skill.remoteVersion}.`);
+        refreshHeads();
+      } else {
+        setNotice(result.detail);
+      }
+    } finally {
+      setBusySlug(null);
+    }
+  }
+
+  async function deleteSkill(skill: SkillSummary) {
+    setBusySlug(skill.slug);
+    try {
+      const resp = await fetch(`/api/skills/${skill.slug}`, { method: "DELETE" });
       if (!resp.ok) {
-        window.alert("Failed to delete unpublished skill. See server logs for details.");
+        // The proxy wraps the backend's answer, `{"detail": …}`, as its `error`.
+        const body = (await resp.json().catch(() => ({}))) as { error?: string };
+        let message = body.error ?? "";
+        try {
+          message = String((JSON.parse(message) as { detail?: unknown }).detail ?? message);
+        } catch {
+          // not JSON: shown as it is
+        }
+        setNotice(message || `Failed to delete ${skill.slug}.`);
         return;
       }
-      await unload(slug);
-      setSkills((prev) => prev.filter((s) => s.slug !== slug));
+      setSkills((prev) => prev.filter((s) => s.slug !== skill.slug));
     } finally {
       setBusySlug(null);
     }
@@ -87,22 +161,199 @@ export default function SkillsPage() {
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
+      tour.report("skill-opened");
     } catch {
       // ignore
     }
   }
 
-  const loadedSkills = useMemo(() => {
-    const term = filter.trim().toLowerCase();
-    const list = skills.filter((s) => loadedSlugs.has(s.slug));
-    if (!term) return list;
-    return list.filter(
-      (s) =>
-        s.slug.toLowerCase().includes(term) ||
-        s.name.toLowerCase().includes(term) ||
-        s.description.toLowerCase().includes(term)
+  // The tour explains the open skill, then waits for it to be closed, so it
+  // moves on to Load only once the researcher is done reading.
+  function closeDetail() {
+    setSelected(null);
+    tour.report("skill-closed");
+  }
+
+  const term = filter.trim().toLowerCase();
+  const matches = useCallback(
+    (s: SkillSummary) =>
+      !term ||
+      s.slug.toLowerCase().includes(term) ||
+      s.name.toLowerCase().includes(term) ||
+      s.description.toLowerCase().includes(term),
+    [term]
+  );
+  const loadedSkills = useMemo(
+    () => skills.filter((s) => loadedSlugs.has(s.slug) && matches(s)),
+    [skills, loadedSlugs, matches]
+  );
+  // The loaded ones are the project's, whatever team is selected; the others
+  // are the selected team's alone (Private's: those on this computer only).
+  const otherSkills = useMemo(
+    () => skills.filter((s) => !loadedSlugs.has(s.slug) && teams.show(s.teamId) && matches(s)),
+    [skills, loadedSlugs, matches, teams]
+  );
+
+  // The cards the tour points at: the tour's skill (loaded first, else among the
+  // others), else the first skill; and the first Load button.
+  const tourSkill =
+    loadedSkills.find((s) => s.slug === TOUR_SKILL) ??
+    otherSkills.find((s) => s.slug === TOUR_SKILL) ??
+    loadedSkills[0] ??
+    otherSkills[0];
+  const tourOpenSlug = tourSkill?.slug;
+  const tourLoadSlug = otherSkills[0]?.slug;
+
+  function card(skill: SkillSummary, loaded: boolean) {
+    const busy = busySlug === skill.slug;
+    const onServer = isOnServer(skill, serverUrl);
+    const head = skill.remoteId ? heads[skill.remoteId] : undefined;
+    const behind = onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
+    // A private skill is shared by copying it to a team; one in a team
+    // publishes new versions to it.
+    // A bundled one too, once copied: it is then its team's copy of it.
+    const canPublish = Boolean(skill.teamId) && (!onServer || skill.modified);
+    const canCopy = teams.shown && copyTargets(teams.teams, skill.teamId).length > 0;
+    // A project loads only skills of exactly its own team.
+    const usable = usableInProject(skill.teamId, activeProject?.teamId);
+    return (
+      <div
+        key={skill.slug}
+        className="skill-item"
+        data-tour={skill.slug === tourOpenSlug ? "skills:open-skill" : undefined}
+        data-tour-name={skill.slug === tourOpenSlug ? skill.name : undefined}
+        onClick={() => openDetail(skill.slug)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            openDetail(skill.slug);
+          }
+        }}
+      >
+        <div className="skill-name">
+          {skill.name}
+          <HpcJobsBadge jobs={skill.hpcJobs} />
+          <TeamBadge teamId={skill.teamId} />
+        </div>
+        <div className="skill-desc">{skill.description || "No description"}</div>
+        <div className="skill-meta">
+          <span className="skill-sharing">{sharingLabel(skill, serverUrl, head)}</span>
+          {skill.repoUrl && (
+            <>
+              <span className="skill-meta-sep">·</span>
+              <a
+                href={skill.repoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="skill-repo"
+                onClick={(e) => e.stopPropagation()}
+              >
+                repo ↗
+              </a>
+            </>
+          )}
+        </div>
+        <div className="skill-actions">
+          {canPublish && (
+            <button
+              type="button"
+              className="button button-sm"
+              disabled={busy || !collab.available}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onServer) void publish(skill);
+                else setPendingPublish(skill);
+              }}
+              title={
+                collab.available
+                  ? "Publish this skill to its team"
+                  : (collab.reason ?? undefined)
+              }
+            >
+              {onServer ? "Publish changes" : "Publish"}
+            </button>
+          )}
+          {canCopy && (
+            <button
+              type="button"
+              className="button ghost button-sm"
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                setCopying(skill);
+              }}
+              title="Copy this skill to a team"
+            >
+              Copy to team…
+            </button>
+          )}
+          {behind && (
+            <button
+              type="button"
+              className="button secondary button-sm"
+              disabled={busy || !collab.available}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (skill.modified) setPendingUpdate(skill);
+                else void takeServers(skill);
+              }}
+              title={collab.available ? `Import version ${head}` : (collab.reason ?? undefined)}
+            >
+              Update to version {head}
+            </button>
+          )}
+          {loaded ? (
+            <button
+              type="button"
+              className="button ghost button-sm"
+              disabled={busy}
+              onClick={(e) => {
+                e.stopPropagation();
+                void setLoaded(skill.slug, false);
+              }}
+            >
+              Unload
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="button secondary button-sm"
+                disabled={busy || !usable}
+                title={
+                  usable
+                    ? undefined
+                    : "This skill is in another team: a project uses only its own team's skills."
+                }
+                data-tour={skill.slug === tourLoadSlug ? "skills:load" : undefined}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void setLoaded(skill.slug, true);
+                }}
+              >
+                Load
+              </button>
+              {!skill.bundled && (
+                <button
+                  type="button"
+                  className="button ghost button-sm"
+                  disabled={busy}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setPendingDelete(skill);
+                  }}
+                >
+                  Delete
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      </div>
     );
-  }, [skills, loadedSlugs, filter]);
+  }
 
   return (
     <div className="app-page">
@@ -116,7 +367,8 @@ export default function SkillsPage() {
               type="button"
               className="button button-sm"
               onClick={() => setShowImport(true)}
-              title="Import a skill from a GitHub repository or a local folder into this project"
+              data-tour="skills:import"
+              title="Import skills from a GitHub or GitLab repository, or a local folder, into this project"
               disabled={!projectName}
             >
               Import…
@@ -133,23 +385,21 @@ export default function SkillsPage() {
         <div className="panel-body">
           <input
             className="input"
-            placeholder="Search loaded skills"
+            placeholder="Search skills"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+          {notice && (
+            <div className="skill-notice" role="status">
+              {notice}
+            </div>
+          )}
+          <h3 className="skill-section-title">Loaded in this project</h3>
+          <div className="skill-section" data-tour="skills:loaded">
             {loadedSlugs.size === 0 ? (
-              <div
-                style={{
-                  fontSize: 13,
-                  color: "var(--muted)",
-                  padding: "20px 16px",
-                  border: "1px dashed var(--line)",
-                  borderRadius: 8,
-                  textAlign: "center",
-                }}
-              >
-                No skills loaded for this session.
+              <div className="skill-empty">
+                No skills loaded for this project. Load one from the skills on
+                this computer below, or import one.
                 <div style={{ marginTop: 10 }}>
                   <Link
                     href="/skill-hub"
@@ -161,83 +411,15 @@ export default function SkillsPage() {
                 </div>
               </div>
             ) : (
-              loadedSkills.map((skill) => (
-                <div
-                  key={skill.slug}
-                  className="skill-item"
-                  onClick={() => openDetail(skill.slug)}
-                  role="button"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      openDetail(skill.slug);
-                    }
-                  }}
-                >
-                  <div className="skill-name">
-                    {skill.name}
-                    <HpcJobsBadge jobs={skill.hpcJobs} />
-                  </div>
-                  <div className="skill-desc">{skill.description || "No description"}</div>
-                  {(skill.author || skill.repoUrl) && (
-                    <div className="skill-meta">
-                      {skill.author && (
-                        <span className="skill-author">by {skill.author}</span>
-                      )}
-                      {skill.author && skill.repoUrl && (
-                        <span className="skill-meta-sep">·</span>
-                      )}
-                      {skill.repoUrl && (
-                        <a
-                          href={skill.repoUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="skill-repo"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          repo ↗
-                        </a>
-                      )}
-                    </div>
-                  )}
-                  <div className="skill-actions">
-                    {skill.isPublic ? (
-                      <span className="skill-published" title="Listed on the Skill Hub">
-                        Published ✓
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        className="button button-sm"
-                        disabled={busySlug === skill.slug}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPendingPublishSlug(skill.slug);
-                        }}
-                        title="Publish this skill to the Skill Hub (permanent)"
-                      >
-                        Publish
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="button ghost button-sm"
-                      disabled={busySlug === skill.slug}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (skill.isPublic) {
-                          void unload(skill.slug);
-                          return;
-                        }
-                        setPendingUnloadSkill(skill);
-                      }}
-                    >
-                      Unload
-                    </button>
-                  </div>
-                </div>
-              ))
+              loadedSkills.map((skill) => card(skill, true))
+            )}
+          </div>
+          <h3 className="skill-section-title">Other skills on this computer</h3>
+          <div className="skill-section" data-tour="skills:available">
+            {otherSkills.length === 0 ? (
+              <div className="skill-empty">No other skills.</div>
+            ) : (
+              otherSkills.map((skill) => card(skill, false))
             )}
           </div>
         </div>
@@ -246,8 +428,8 @@ export default function SkillsPage() {
       </div>
 
       {selected && (
-        <div className="modal-backdrop" onClick={() => setSelected(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-backdrop" onClick={closeDetail}>
+          <div className="modal" data-tour="skills:detail" onClick={(e) => e.stopPropagation()}>
             <div className="panel-header">
               <div className="panel-title">
                 {typeof selected.frontmatter?.name === "string"
@@ -258,7 +440,7 @@ export default function SkillsPage() {
               <button
                 type="button"
                 className="button ghost"
-                onClick={() => setSelected(null)}
+                onClick={closeDetail}
               >
                 Close
               </button>
@@ -273,72 +455,105 @@ export default function SkillsPage() {
       )}
 
       <PublishConfirmModal
-        open={pendingPublishSlug !== null}
-        title="Publish skill to Skill Hub"
-        message={pendingPublishSlug
-          ? `Publish "${pendingPublishSlug}" to the Skill Hub?\n\nThis action is permanent - once published, a skill cannot be made private again.`
+        open={pendingPublish !== null}
+        title="Publish skill"
+        message={pendingPublish
+          ? `Publish "${pendingPublish.slug}" to the collaboration server at ${serverUrl ?? "?"}?\n\n${publishAudience(pendingPublish.teamId, teams)} A published version stays there; you can publish newer ones.`
           : ""}
         confirmLabel="Publish"
-        cancelActionLabel="Keep private"
-        busy={pendingPublishSlug !== null && busySlug === pendingPublishSlug}
-        onCancel={() => setPendingPublishSlug(null)}
+        onCancel={() => setPendingPublish(null)}
         onConfirm={() => {
-          if (!pendingPublishSlug) return;
-          const slug = pendingPublishSlug;
-          setPendingPublishSlug(null);
-          void publish(slug);
+          if (!pendingPublish) return;
+          const skill = pendingPublish;
+          setPendingPublish(null);
+          void publish(skill);
         }}
       />
       <PublishConfirmModal
-        open={pendingUnloadSkill !== null}
-        title="Unload unpublished skill?"
-        message={pendingUnloadSkill
-          ? `Unload "${pendingUnloadSkill.slug}" without publishing?\n\nThis skill is not published to the Skill Hub. If you unload it now, it will disappear completely and you may not be able to recover it.`
+        open={pendingDelete !== null}
+        title="Delete skill?"
+        message={pendingDelete
+          ? `Delete "${pendingDelete.slug}" from this computer?${
+              isOnServer(pendingDelete, serverUrl) && !pendingDelete.modified
+                  ? "\n\nIts published versions stay on the collaboration server, where you can import it again."
+                  : "\n\nIts changes here are not published anywhere, so they cannot be recovered."
+            }`
           : ""}
-        confirmLabel="Unload permanently"
-        cancelActionLabel="Go back"
-        onCancel={() => setPendingUnloadSkill(null)}
+        confirmLabel="Delete"
+        cancelActionLabel="Keep it"
+        onCancel={() => setPendingDelete(null)}
         onConfirm={() => {
-          if (!pendingUnloadSkill) return;
-          const slug = pendingUnloadSkill.slug;
-          setPendingUnloadSkill(null);
-          void deleteUnpublishedSkill(slug);
+          if (!pendingDelete) return;
+          const skill = pendingDelete;
+          setPendingDelete(null);
+          void deleteSkill(skill);
         }}
       />
+      <PublishConfirmModal
+        open={pendingUpdate !== null}
+        title="Replace your changes?"
+        message={pendingUpdate
+          ? `"${pendingUpdate.slug}" has changes made here since version ${pendingUpdate.remoteVersion}. Importing the server's newest version replaces them.`
+          : ""}
+        confirmLabel="Replace my changes"
+        cancelActionLabel="Keep my changes"
+        onCancel={() => setPendingUpdate(null)}
+        onConfirm={() => {
+          if (!pendingUpdate) return;
+          const skill = pendingUpdate;
+          setPendingUpdate(null);
+          void takeServers(skill);
+        }}
+      />
+      {conflict && (
+        <PublishConflictModal
+          name={conflict.skill.slug}
+          noun="skill"
+          refusal={conflict.refusal}
+          onCancel={() => setConflict(null)}
+          onTakeServers={() => {
+            setConflict(null);
+            void takeServers(conflict.skill, conflict.refusal.headVersion ?? undefined);
+          }}
+          onPublishOnTop={(head) => {
+            setConflict(null);
+            void publish(conflict.skill, { onTopOf: head });
+          }}
+          onPublishAsNew={() => {
+            setConflict(null);
+            void publish(conflict.skill, { asNew: true });
+          }}
+        />
+      )}
+
+      {copying && (
+        <CopyToTeamModal
+          kind="skill"
+          name={copying.slug}
+          teamId={copying.teamId}
+          onClose={() => setCopying(null)}
+          onCopied={() => {
+            loadSkills();
+            refreshHeads();
+            void refreshProjects();
+          }}
+        />
+      )}
 
       <SkillImportModal
         open={showImport}
         project={projectName}
         onCancel={() => setShowImport(false)}
-        onImported={(skill) => {
-          // The backend loaded the new private skill into the active project;
-          // append it to the local catalog (de-dupe in case a refetch crossed
-          // paths with the import) and refetch the project to show it loaded.
-          setSkills((prev) => {
-            const without = prev.filter((s) => s.slug !== skill.slug);
-            return [skill, ...without];
-          });
+        onImported={(imported, done) => {
+          // The backend loaded the new skills into the active project;
+          // append them to the local catalog (de-dupe in case a refetch crossed
+          // paths with the import) and refetch the project to show them loaded.
+          const slugs = new Set(imported.map((s) => s.slug));
+          setSkills((prev) => [...imported, ...prev.filter((s) => !slugs.has(s.slug))]);
           void refreshProjects();
-          setShowImport(false);
+          if (done) setShowImport(false);
         }}
       />
     </div>
-  );
-}
-
-/**
- * Marks a skill that ships HPC jobs. Loading it lets the agent run the skill's
- * own scripts on a cluster as the researcher, which an imported skill could
- * otherwise do without anyone noticing.
- */
-function HpcJobsBadge({ jobs }: { jobs?: string[] }) {
-  if (!jobs?.length) return null;
-  return (
-    <span
-      className="skill-hpc"
-      title={`Loading this skill lets the agent submit its HPC jobs (${jobs.join(", ")}) under your cluster credentials. Review its hpc_jobs/ folder before loading a skill you did not write.`}
-    >
-      Runs HPC jobs: {jobs.join(", ")}
-    </span>
   );
 }

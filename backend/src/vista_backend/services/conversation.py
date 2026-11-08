@@ -14,16 +14,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import Channel
 from ..agents.inference import require_inference_credential
-from ..db.schemas import ProjectPublic, UserPublicWithConfig
+from ..db.schemas import LocalSettingsPublic, ProjectPublic
 from . import chat_session as chat_session_service
 from .chat_run import ChatRun, ChatRunRegistry, chat_run_registry
-from .project_agent import get_project_agent_key
+from .project_agent import ProjectAgentKey
 
 
 async def start_turn(
     session: AsyncSession,
     *,
-    user: UserPublicWithConfig,
+    local: LocalSettingsPublic,
     project: ProjectPublic,
     chat_session_id: uuid.UUID,
     user_prompt: str,
@@ -38,20 +38,19 @@ async def start_turn(
     session and must not wait on a lock this one holds.
 
     Raises:
+        HTTPException(404): the conversation is not in `project`.
         MissingInferenceCredential: before anything is written.
         RunBusy: the conversation already has a turn running.
     """
-    require_inference_credential(user)
-    agent_key = await get_project_agent_key(
-        session,
-        project_id=project.id,
-        user_id=user.id,
-        chat_session_id=chat_session_id,
+    chat_row = await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
     )
+    # The chat's own model counts, so it can send on a provider with no default.
+    require_inference_credential(local, chat_row.inference_model)
+    agent_key: ProjectAgentKey = (chat_row.id, project.id)
     history = await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
-        user_id=user.id,
         fallback_history=fallback_history or [],
         chat_session_id=chat_session_id,
     )
@@ -59,7 +58,6 @@ async def start_turn(
     return await (registry or chat_run_registry).start(
         chat_session_id=chat_session_id,
         project_id=project.id,
-        user_id=user.id,
         agent_key=agent_key,
         user_prompt=user_prompt,
         prior_history=history,

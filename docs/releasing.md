@@ -37,7 +37,7 @@ maintainer does it by hand.
 
    The version comes from the tag, without the `v`. No file needs editing.
 
-3. If a platform fails, no draft is created. Fix the cause on GitLab, then delete the tag on
+3. If a platform or the `data-compat` job fails, no draft is created. Fix the cause on GitLab, then delete the tag on
    both GitLab and GitHub and push it again, or push a new tag. A re-run for a tag whose draft
    already exists replaces its assets and its generated notes, and keeps what you wrote under
    "What's changed".
@@ -50,9 +50,28 @@ Drafts are visible only to people with write access to the repository.
 gh release view v0.2.0 -R Genesis-VISTA/vista
 ```
 
-Check that it has three archives, each with its `.sha256` file, plus `install.sh` and
-`install.ps1`, and that the notes name the right build-inputs commit under "Build and
-verification".
+Check that it has three archives, each with its `.sha256` file, plus `install.sh`,
+`install.ps1`, `update.json` and `vista-schema.sqlite`, and that the notes name the right
+build-inputs commit under "Build and verification".
+
+`update.json` is what VISTA's update check reads to warn that an update resets local data:
+its `data_compatible_from` is the oldest earlier release whose database this one opens, and
+an install older than that is told its data will be reset. The workflow's `data-compat` job
+writes it with [`.github/scripts/data-compat.sh`](../.github/scripts/data-compat.sh), which
+runs this release's startup check against each earlier release's empty database, newest
+first, and stops at the first refusal. Its log names the tag and the columns. If it
+refuses the newest earlier release (`data_compatible_from` is this version), this release
+resets every researcher's data: a `db/schemas.py` change since then was not additive. Make
+sure that is intended before publishing.
+`vista-schema.sqlite` is this release's own empty database, for the next release's check.
+
+To run the check yourself before tagging (it builds each earlier release from its tag, so
+it needs the tags fetched):
+
+```bash
+VERSION=0.2.5 REPO=Genesis-VISTA/vista .github/scripts/data-compat.sh /tmp/data-compat
+VERSION=0.2.5 RELEASE_TAGS="v0.2.4 v0.2.3" .github/scripts/data-compat.sh /tmp/data-compat  # without GitHub
+```
 
 While the repository is private, its release assets need a signed-in download: plain `curl`
 gets a 404, so the release notes' own commands work only once it is public. Use
@@ -86,7 +105,7 @@ verification" in the draft. That section is collapsed, so open it to see the box
    gh release edit v0.2.0 -R Genesis-VISTA/vista --draft=false
    ```
 
-Redistribution of the AI-safety PDFs, the embedding weights and `amscrot-py` must be cleared
+Redistribution of the OLCF documentation, the embedding weights and `amscrot-py` must be cleared
 before the first release is published.
 
 **Rollback.** Delete the release and its tag. The workflow can be disabled in the repository's
@@ -136,12 +155,12 @@ build's version is the last release tag plus the commits since it, such as `0.2.
 
 ## The build inputs
 
-The AI-safety corpus and its prebuilt Chroma store come from the private
+The OLCF docs corpus and its prebuilt Chroma store come from the private
 `Genesis-VISTA/vista-build-inputs`, laid out as the build's flags expect:
 
 ```
-vista-data/ai-safety/   # the PDFs, for --payload
-rag_db/                 # the Chroma store with its citation metadata, for --vector-store
+vista-data/olcf-docs/   # the Markdown sections and SOURCE, for --payload (no store)
+rag_db/                 # the Chroma store with its descriptions, for --vector-store
 ```
 
 It has no releases and is never offered as a download of its own. Its contents ship only inside
@@ -152,43 +171,74 @@ workflow stops with "no build inputs pinned".
 
 ### Updating them
 
-Do this when the corpus changes. It needs ORNL access to the corpus (`VISTA_DATA_TOKEN`, or a
-local copy for `--payload`) and an LLM key for citation extraction, both through the repo-root
-`.env` as for any build.
+Do this when the OLCF documentation changes. The corpus is `olcf/olcf-user-docs` converted to
+Markdown, one file per section, and `SOURCE` records the docs commit it came from. It needs an LLM
+key for the descriptions (one model call per file, through the repo-root `.env` as for any build)
+and, to push, access to the private repositories. The first refresh, of 144 pages, made 790 files,
+1,152 chunks and a 33 MB store, and indexing took about 17 minutes with OLCF Inference's
+`gpt-oss-120b`.
 
-1. Build a package that indexes the corpus itself. Leave out `--vector-store`:
+1. Clone the docs at the commit you chose, and convert them. The converter builds the checkout
+   with Sphinx, using the pins from its `contributing/index.rst` in a throwaway `uv` environment,
+   and needs the network:
 
    ```bash
-   ./scripts/build_local_package.sh            # or: --payload <a vista-data tree>
+   git clone https://github.com/olcf/olcf-user-docs && git -C olcf-user-docs checkout <commit>
+   uv run scripts/olcf_docs/convert.py olcf-user-docs olcf-docs
    ```
 
-2. Take the corpus and the new store out of the package's payload:
+   `olcf-docs/` now holds the section files and `SOURCE`. Sphinx warnings are reported, not
+   fatal; read them.
+
+2. Index it. Build a package from the converted folder, leaving out `--vector-store`, so the
+   build's own indexer writes a description for each file:
 
    ```bash
+   mkdir -p /tmp/vista-data && rm -rf /tmp/vista-data/olcf-docs && cp -R olcf-docs /tmp/vista-data/
+   ./scripts/build_local_package.sh --payload /tmp/vista-data
    out=$(mktemp -d)
    tar -xf dist/vista-<version>-<platform>.tar.gz -C "$out" --strip-components 2 \
      vista-<version>-<platform>/payload/payload.tar
-   tar -xf "$out/payload.tar" -C "$out" vista-data/ai-safety knowledge-bases/ai-safety/rag_db
+   tar -xf "$out/payload.tar" -C "$out" vista-data/olcf-docs knowledge-bases/olcf-docs/rag_db
    ```
 
-3. Replace both directories in a checkout of the inputs repo, commit, and push. **Never
-   force-push or rewrite its history.** Every past release's pin must stay resolvable. Nothing
-   enforces this: the organisation's free plan allows no branch protection on a private repo,
-   so it rests on this rule alone.
+   The store is in the payload at `knowledge-bases/olcf-docs/rag_db`. (Calling
+   `vista_backend.utils.indexer.index_publications` directly gives the same store.)
+
+3. Run the retrieval gate on that store. It asks the questions in
+   `scripts/olcf_docs/questions.toml` the way an agent does and checks that the expected file is
+   among the top 5 hits. It exits 0 when all pass, 1 when any fails, 2 on bad input. **It must
+   pass before anything is committed.** Add a question when the refresh brings a topic worth
+   guarding.
+
+   ```bash
+   uv run --project mcp_servers/vista_mcp_server scripts/olcf_docs/check_retrieval.py \
+     "$out/knowledge-bases/olcf-docs/rag_db"
+   ```
+
+4. Commit the corpus to the two private repositories. **Never force-push or rewrite either's
+   history.** Every past release's pin must stay resolvable. Nothing enforces this: the
+   organisation's free plan allows no branch protection on a private repo, so it rests on this
+   rule alone.
+
+   - `v28/vista-data` (code.ornl.gov), for dev seeding: replace `olcf-docs/` with the Markdown,
+     `SOURCE` and the new `rag_db/`.
+   - `Genesis-VISTA/vista-build-inputs`: replace `vista-data/olcf-docs/` (Markdown and `SOURCE`,
+     no store) and the top-level `rag_db/`.
 
    ```bash
    git clone git@github.com:Genesis-VISTA/vista-build-inputs.git && cd vista-build-inputs
-   rm -rf vista-data/ai-safety rag_db
-   mkdir -p vista-data && cp -R "$out/vista-data/ai-safety" vista-data/
-   cp -R "$out/knowledge-bases/ai-safety/rag_db" rag_db
-   git add -A && git commit -m "Update the AI-safety corpus and store" && git push
+   rm -rf vista-data/olcf-docs rag_db
+   mkdir -p vista-data && cp -R "$out/vista-data/olcf-docs" vista-data/
+   cp -R "$out/knowledge-bases/olcf-docs/rag_db" rag_db
+   git add -A && git commit -m "Update the OLCF docs corpus and store" && git push
    git rev-parse HEAD
    ```
 
-4. Set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env` to that full hash, and commit it on
+5. Set `BUILD_INPUTS_COMMIT` in `.github/build-inputs.env` to that full hash, and commit it on
    GitLab.
 
-5. Check the pin before relying on it. A clone at that commit must pass the build's preflight:
+6. Check the pin before relying on it. A clone at that commit must pass the build's preflight:
 
    ```bash
    ./scripts/build_local_package.sh --check \

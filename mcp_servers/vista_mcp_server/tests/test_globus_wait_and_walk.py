@@ -85,6 +85,31 @@ def test_walk_without_excludes_still_descends():
     assert "/out/.venv" in tc.ls_calls
 
 
+def test_hidden_dirs_are_listed_but_not_descended_into():
+    tree = {
+        "/out": [_f("chart.png"), _d(".cache"), _d(".local"), _d("data")],
+        "/out/.cache": [_d("pip")],
+        "/out/data": [_d(".hidden-inside"), _f("a.csv")],
+    }
+    tc = _FakeTransferClient(tree=tree)
+    entries = _client(tc)._operation_ls("ep", "/out", True, (), 200, skip_hidden=True)
+    assert tc.ls_calls == ["/out", "/out/data"]
+    walked = {e["path"]: e.get("walked", True) for e in entries if e["type"] == "dir"}
+    assert walked == {
+        "/out/.cache": False,
+        "/out/.local": False,
+        "/out/data": True,
+        "/out/data/.hidden-inside": False,
+    }
+
+
+def test_a_hidden_folder_asked_for_is_still_listed():
+    tree = {"/out/.cache": [_d("pip")], "/out/.cache/pip": [_f("x")]}
+    tc = _FakeTransferClient(tree=tree)
+    _client(tc)._operation_ls("ep", "/out/.cache", True, (), 200, skip_hidden=True)
+    assert tc.ls_calls == ["/out/.cache", "/out/.cache/pip"]
+
+
 def test_max_dirs_bounds_a_runaway_tree():
     """A deep tree must yield a partial listing, never an unbounded sequential walk."""
     tree = {f"/out{'/d' * i}": [_d("d")] for i in range(50)}

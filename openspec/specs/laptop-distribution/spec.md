@@ -65,9 +65,18 @@ artifact. The artifact's own contents SHALL be treated as read-only at run time.
 
 #### Scenario: Replacing the artifact preserves state
 
-- **WHEN** the unpacked artifact is replaced with a newer version and started
+- **WHEN** the unpacked artifact is replaced with a newer version whose database is compatible
+  with the existing one, and started
 - **THEN** existing conversations, uploaded files, and configured credentials remain
   available
+
+#### Scenario: Replacing the artifact with an incompatible version
+
+- **WHEN** the unpacked artifact is replaced with a newer version that cannot use the existing
+  database, and started
+- **THEN** startup stops before changing the database, and the startup window offers to move
+  the local data into a backup folder and start fresh, without the researcher moving or
+  deleting files by hand
 
 ### Requirement: Single command to install and run
 
@@ -142,7 +151,7 @@ capability, not as a reason to refuse to start.
 
 ### Requirement: Bundled corpus is searchable at first run
 
-The artifact SHALL include the AI-safety corpus already indexed, so retrieval works on
+The artifact SHALL include the OLCF docs corpus already indexed, so retrieval works on
 first run without an indexing step. A knowledge base SHALL NOT be presented as ready
 unless its index actually contains content. The molten-salt corpus, its index and MSTDB
 data SHALL be included only in an artifact built with the science projects enabled; an
@@ -151,7 +160,7 @@ artifact built without them SHALL contain none of that data.
 #### Scenario: Retrieval works immediately
 
 - **WHEN** a researcher asks a question on their first session after installation
-- **THEN** retrieval returns passages from the bundled AI-safety corpus with no indexing
+- **THEN** retrieval returns passages from the bundled OLCF docs corpus with no indexing
   having run
 
 #### Scenario: Cited sources are readable
@@ -242,7 +251,7 @@ startup protocol the application depends on. Verification SHALL NOT require code
 #### Scenario: A build prerequisite is missing
 
 - **WHEN** a build is started without one of its required credentials or tools, or without the
-  AI-safety corpus in its source data
+  OLCF docs corpus in its source data
 - **THEN** it fails immediately, naming what is missing, rather than producing an incomplete
   artifact
 
@@ -252,13 +261,20 @@ startup protocol the application depends on. Verification SHALL NOT require code
   molten-salt corpus or MSTDB
 - **THEN** the build proceeds
 
+#### Scenario: A reused index that does not match its corpus
+
+- **WHEN** a build reuses a prebuilt index that cites a document, Markdown or PDF, missing from
+  the corpus in its source data
+- **THEN** it fails, naming the first missing documents, rather than shipping citations that
+  cannot be opened
+
 #### Scenario: The finished artifact is exercised
 
 - **WHEN** a build completes
 - **THEN** the artifact is unpacked to a different location, started, checked for service health,
-  checked with one retrieval query against the AI-safety corpus, checked to contain no science data
-  unless it was built with the science projects enabled, and shut down before the build reports
-  success
+  checked with one retrieval query against the OLCF docs corpus, checked to contain no science
+  data unless it was built with the science projects enabled, and shut down before the build
+  reports success
 
 #### Scenario: The supervised protocol is exercised
 
@@ -284,10 +300,17 @@ installed.
 
 #### Scenario: Upgrading from a molten-salt package
 
-- **WHEN** a package containing the AI-safety corpus is run against a state directory
+- **WHEN** a package containing the OLCF docs corpus is run against a state directory
   created by an earlier package that installed only the molten-salt corpus
-- **THEN** the AI-safety corpus and its index are installed, the molten-salt corpus is left
-  in place, and the AI-safety project's literature search works in that session
+- **THEN** the OLCF docs corpus and its index are installed, the molten-salt corpus is left
+  in place, and `hello-olcf`'s literature search works in that session
+
+#### Scenario: Upgrading from an AI-safety package
+
+- **WHEN** a package containing the OLCF docs corpus is run against a state directory
+  created by an earlier package that installed only the AI-safety corpus
+- **THEN** the OLCF docs corpus and its index are installed, the AI-safety corpus is left
+  in place, and `hello-olcf`'s literature search works in that session
 
 #### Scenario: Nothing new to install
 

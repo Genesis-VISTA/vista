@@ -141,7 +141,7 @@ describe("useHpcStatus", () => {
     await act(async () => {
       await result.current.recheck("lux");
     });
-    expect(urls()).toContain("/api/users/me/hpc-status?fresh=true&cluster=lux");
+    expect(urls()).toContain("/api/settings/hpc-status?fresh=true&cluster=lux");
   });
 
   it("recheck asks for fresh results, for one cluster or all", async () => {
@@ -154,9 +154,9 @@ describe("useHpcStatus", () => {
       await recheckHpcStatus();
     });
     expect(urls()).toEqual([
-      "/api/users/me/hpc-status",
-      "/api/users/me/hpc-status?fresh=true&cluster=odo",
-      "/api/users/me/hpc-status?fresh=true",
+      "/api/settings/hpc-status",
+      "/api/settings/hpc-status?fresh=true&cluster=odo",
+      "/api/settings/hpc-status?fresh=true",
     ]);
   });
 

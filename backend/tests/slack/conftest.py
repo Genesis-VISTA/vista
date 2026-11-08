@@ -1,4 +1,4 @@
-"""Fixtures for Slack tests: an enabled config and linked users, no real Slack."""
+"""Fixtures for Slack tests: an enabled config and linked Slack accounts, no real Slack."""
 
 import inspect
 
@@ -59,12 +59,12 @@ async def slack_config(session) -> SlackConfigTable:
 
 
 async def link(
-    session, user, slack_user_id: str, *, team_id: str = TEAM
+    session, slack_user_id: str, *, team_id: str = TEAM, collab_sub: str | None = None
 ) -> SlackLinkTable:
     row = SlackLinkTable(
         team_id=team_id,
         slack_user_id=slack_user_id,
-        user_id=user.id,
+        collab_sub=collab_sub,
         dm_channel_id=f"D{slack_user_id}",
         created_at=store.now_iso(),
     )
@@ -73,13 +73,11 @@ async def link(
     return row
 
 
-async def project(session, user, name: str = "molten-salts"):
-    from vista_backend.db.schemas import ProjectMemberTable, ProjectTable
+async def project(session, name: str = "molten-salts"):
+    from vista_backend.db.schemas import ProjectTable
 
     row = ProjectTable(name=name, skills=[], knowledge_bases=[])
     session.add(row)
-    await session.flush()
-    session.add(ProjectMemberTable(project_id=row.id, user_id=user.id))
     await session.commit()
     await session.refresh(row)
     return row

@@ -19,7 +19,8 @@ ENV_PREFIX="$ENV_PARENT/$ENV_NAME"
 export https_proxy="${https_proxy:-http://proxy.ccs.ornl.gov:3128}"
 export http_proxy="${http_proxy:-http://proxy.ccs.ornl.gov:3128}"
 
-# 2. TODO: load what the cluster's docs say to build with (https://docs.olcf.ornl.gov/),
+# 2. TODO: load what the cluster's docs say to build with (the olcf-docs knowledge base,
+#    or https://docs.olcf.ornl.gov/),
 #    e.g. on Frontier:  module load miniforge3 PrgEnv-gnu cray-mpich
 command -v conda >/dev/null || { echo "ERROR: conda not found; load the cluster's conda module first" >&2; exit 3; }
 

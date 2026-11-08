@@ -3643,6 +3643,7 @@ dependencies = [
     { name = "keyring" },
     { name = "numpy" },
     { name = "openai" },
+    { name = "packaging" },
     { name = "palisade" },
     { name = "pydantic-ai" },
     { name = "pydantic-ai-shields" },
@@ -3664,6 +3665,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "vista-collaboration-server" },
 ]
 
 [package.dev-dependencies]
@@ -3681,12 +3683,13 @@ requires-dist = [
     { name = "cryptography", specifier = ">=48.0.0" },
     { name = "fastapi", specifier = ">=0.136.3" },
     { name = "flowcept", specifier = ">=0.10.6" },
-    { name = "globus-sdk", specifier = ">=3.40" },
+    { name = "globus-sdk", specifier = ">=4.7" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jsonschema", specifier = ">=4.21,<5" },
     { name = "keyring", specifier = ">=25" },
     { name = "numpy", specifier = ">=1.26,<3" },
     { name = "openai", specifier = ">=1.69" },
+    { name = "packaging", specifier = ">=24" },
     { name = "palisade", git = "https://github.com/herronej/palisade_siege_agentic_security.git?tag=v1.0.0" },
     { name = "pydantic-ai", specifier = ">=1.105.0" },
     { name = "pydantic-ai-shields", specifier = ">=0.3.2,<0.4" },
@@ -3704,11 +3707,43 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "sqlmodel", specifier = ">=0.0.38" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.48.0" },
+    { name = "vista-collaboration-server", marker = "extra == 'dev'", editable = "../collaboration_server" },
 ]
 provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=9.0.3" }]
+
+[[package]]
+name = "vista-collaboration-server"
+version = "0.1.0"
+source = { editable = "../collaboration_server" }
+dependencies = [
+    { name = "aiosqlite" },
+    { name = "fastapi" },
+    { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
+    { name = "python-multipart" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "sqlmodel" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "anyio", marker = "extra == 'dev'", specifier = ">=4.13.0" },
+    { name = "fastapi", specifier = ">=0.136.3" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "pydantic-settings", specifier = ">=2.14.0" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
+    { name = "python-multipart", specifier = ">=0.0.27" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
+    { name = "sqlmodel", specifier = ">=0.0.38" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.48.0" },
+]
+provides-extras = ["dev"]
 
 [[package]]
 name = "watchfiles"

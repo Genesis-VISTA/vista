@@ -31,14 +31,16 @@ from pydantic_ai.exceptions import (
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ...config import settings
-from ...db.schemas import DebateRunTable
+from ...db.schemas import DebateRunTable, ForumThreadTable
 from ...services import debate as debate_service
+from ...services import threads as thread_service
 from ...services.forum_git import (
     ForumClient,
     Participant,
     Post,
     PostKind,
     Thread,
+    RunRefused,
     ThreadClosed,
     ThreadMissing,
 )
@@ -52,6 +54,14 @@ ROSTER: tuple[DebateRole, ...] = ("proposer", "reviewer", "referee")
 """ The debate's roles, in speaking order. """
 
 
+class RunSuperseded(Exception):
+    """
+    The thread's latest RUN is not this run's: another install's run has taken
+    over (this one went quiet past the run expiry, and a Continue followed).
+    Control flow, caught in `DebateOrchestrator.run`.
+    """
+
+
 def identity_for(role: DebateRole, run_id: uuid.UUID) -> str:
     """
     The forum identity a role posts under, e.g. `vista-proposer-1a2b3c4d`.
@@ -61,6 +71,33 @@ def identity_for(role: DebateRole, run_id: uuid.UUID) -> str:
     names, so one role's posts read as one voice.
     """
     return f"vista-{role}-{str(run_id)[:8]}"
+
+
+ANNOUNCED_RUN_ENDED = "This run could not start on this install; it has ended."
+""" The Referee's BLOCKED for a run announced and then abandoned. No cause: it is shared. """
+
+
+async def end_run_on_forum(
+    client: ForumClient,
+    thread_id: str,
+    referee_identity: str,
+    exc: BaseException,
+) -> None:
+    """
+    Post the Referee's BLOCKED straight through the forum client, with no
+    database session: for a failure that may have broken the session, or that
+    is a cancellation. Best effort — it logs its own failure and never raises.
+    """
+    logger.warning("thread %s: ending its announced run: %r", thread_id, exc)
+    try:
+        await client.post_as(
+            Participant(identity=referee_identity, role="referee"),
+            thread_id,
+            ANNOUNCED_RUN_ENDED,
+            kind=PostKind.BLOCKED,
+        )
+    except BaseException:  # noqa: BLE001
+        logger.warning("thread %s: could not end its announced run", thread_id)
 
 
 def _participant_of(row) -> Participant:
@@ -128,14 +165,23 @@ class DebateOrchestrator:
         runnable: dict[str, list[str]] | None = None,
         job_usage: dict[str, str] | None = None,
         knowledge_bases: list[str] | None = None,
+        models: dict[DebateRole, str | None] | None = None,
+        model_names: dict[str, str] | None = None,
     ) -> None:
         self.client = client
+        # Set by `run` when its own crash handler is in force: from then on a
+        # failure ends the run's RUN itself, and a caller must not.
+        self.run_in_charge = False
         self.roles = roles or RoleAgents()
         self.on_post = on_post
         self.checkpoint = checkpoint
         self.runnable = runnable or {}
         self.job_usage = job_usage or {}
         self.knowledge_bases = knowledge_bases or []
+        # Each role's own model where it has one: what `_add_roster` records.
+        self.models = models or {}
+        # The model each role resolves to, written on its posts.
+        self.model_names = model_names or {}
 
     # -- setup ------------------------------------------------------------- #
 
@@ -144,7 +190,6 @@ class DebateOrchestrator:
         session: AsyncSession,
         *,
         project_id: uuid.UUID,
-        user_id: uuid.UUID,
         topic: str,
         framing: str | None = None,
         rounds: int | None = None,
@@ -156,19 +201,52 @@ class DebateOrchestrator:
         have distinguishable voices.
         """
         thread_id = await self.client.create_thread(topic, body=framing)
+        thread = await thread_service.ensure_thread(
+            session,
+            project_id=project_id,
+            thread_id=thread_id,
+            title=topic,
+            framing=framing,
+            created_by=self.client.host_id,
+        )
         run = await debate_service.create_debate(
             session,
             project_id=project_id,
-            user_id=user_id,
             topic=topic,
             thread_id=thread_id,
             framing=framing,
             rounds=rounds or settings.forum.default_rounds,
         )
+        await thread_service.link_run(session, run=run, thread=thread)
 
         await self._add_roster(session, run.id)
         return await debate_service.set_status(
             session, run_id=run.id, status="debating"
+        )
+
+    async def adopt(
+        self, session: AsyncSession, *, thread: ForumThreadTable
+    ) -> DebateRunTable:
+        """
+        Give this install a run in a thread it has not argued in yet, so that
+        `resume` can continue it.
+
+        The run starts with no rounds and a roster of this install's own, named
+        after the new run, so its voices are told apart from the opener's. It is
+        left concluded; `resume` raises the budget and argues.
+        """
+        run = await debate_service.create_debate(
+            session,
+            project_id=thread.project_id,
+            topic=thread.title,
+            thread_id=thread.thread_id,
+            framing=thread.framing,
+            rounds=0,
+        )
+        await thread_service.link_run(session, run=run, thread=thread)
+        await self._add_roster(session, run.id)
+        return await debate_service.set_status(
+            session, run_id=run.id, status="converged"
         )
 
     async def resume(
@@ -177,8 +255,13 @@ class DebateOrchestrator:
         *,
         run: DebateRunTable,
         extra_rounds: int,
+        announced: bool = False,
     ) -> DebateRunTable:
         """
+        `announced`: this run's RUN post is already on the thread (a hosted
+        forum's Continue posts it before answering, so the server's refusal can
+        be answered with a 409), so `run` does not post another.
+
         Argue a finished debate for another few rounds, with the same roster.
 
         `rounds_done` is left alone and the budget is raised instead, so the loop
@@ -186,6 +269,7 @@ class DebateOrchestrator:
         much arguing this debate has had in total.
         """
         run_id = run.id
+        before = (run.status, run.rounds)
         if not await debate_service.list_active_participants(session, run_id=run_id):
             await self._add_roster(session, run_id)
 
@@ -200,9 +284,22 @@ class DebateOrchestrator:
         # expired the row above. Handing the expired object to `run` makes its
         # first line async IO in a context that cannot await.
         await self._checkpoint(session)
-        return await self.run(
-            session, await debate_service.require_debate(session, run_id)
-        )
+        try:
+            return await self.run(
+                session,
+                await debate_service.require_debate(session, run_id),
+                announced=announced,
+            )
+        except RunRefused as refused:
+            # A hosted forum's server found a run live there: another install
+            # is continuing this debate. This install does not argue, and the
+            # run is as it was before it was asked to.
+            logger.info("debate %s: not continued: %s", run_id, refused)
+            await debate_service.update_debate(
+                session, run_id=run_id, status=before[0], rounds=before[1]
+            )
+            await self._checkpoint(session)
+            return await debate_service.require_debate(session, run_id)
 
     async def _add_roster(self, session: AsyncSession, run_id: uuid.UUID) -> None:
         for role in ROSTER:
@@ -212,6 +309,7 @@ class DebateOrchestrator:
                 participant=Participant(identity=identity_for(role, run_id), role=role),
                 debate_role=role,
                 granted_tools=self.roles.granted.get(role, []),
+                model=self.models.get(role),
             )
 
     async def _participants(
@@ -226,7 +324,9 @@ class DebateOrchestrator:
 
     # -- the loop ---------------------------------------------------------- #
 
-    async def run(self, session: AsyncSession, run: DebateRunTable) -> DebateRunTable:
+    async def run(
+        self, session: AsyncSession, run: DebateRunTable, *, announced: bool = False
+    ) -> DebateRunTable:
         """
         Argue to a verdict, or until someone closes the thread.
 
@@ -255,22 +355,40 @@ class DebateOrchestrator:
         await debate_service.record_granted_tools(
             session, run_id=run_id, granted=granted
         )
+        self.run_in_charge = True
         try:
+            if not announced:
+                await self._announce_run(session, run_id, roster)
             while True:
                 run = await debate_service.require_debate(session, run_id)
                 if run.rounds_done >= run.rounds:
                     break
                 await self.run_round(session, run, roster)
             await self.conclude(session, run, roster)
+        except RunRefused:
+            # The server will not have two runs at once. Nothing was said on the
+            # thread, so there is nothing to end with a BLOCKED either.
+            raise
         except ThreadClosed:
             logger.info("debate %s: the thread was closed", run_id)
             await self._sync(session, run_id)
             await debate_service.set_status(session, run_id=run_id, status="closed")
             await self._checkpoint(session)
+        except RunSuperseded:
+            logger.info("debate %s: another run has taken over the thread", run_id)
+            await self._stand_down(session, run_id, roster)
         except ThreadMissing:
             logger.info("debate %s: the thread is no longer on the forum", run_id)
             await debate_service.mark_thread_missing(session, run_id=run_id)
             await self._checkpoint(session)
+        except Exception as exc:
+            # A crash must still end the run on the forum, or every other
+            # install would see it as live until it expired. The Referee's
+            # BLOCKED is what ends a run (forum_git.live_run).
+            if "referee" in roster:
+                run = await debate_service.require_debate(session, run_id)
+                await self._blocked(session, run, roster["referee"], None, exc)
+            raise
         finally:
             # Whatever ended the debate — verdict, closure, a raised error — the
             # interface must stop saying someone is thinking. A stale activity is
@@ -298,6 +416,7 @@ class DebateOrchestrator:
 
         propose_deps = self._turn_deps(run, index, roster["proposer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        self._ensure_not_superseded(thread, roster)
         # Commit the projection before handing off to the role.
         #
         # `_sync_thread` writes, so without this the session holds a write
@@ -337,6 +456,7 @@ class DebateOrchestrator:
 
         review_deps = self._turn_deps(run, index, roster["reviewer"])
         thread = await self._sync_thread(session, run, round_index=index)
+        self._ensure_not_superseded(thread, roster)
         run = await self._announce(
             session, run_id, f"Reviewer is looking for holes · round {index + 1}"
         )
@@ -385,6 +505,7 @@ class DebateOrchestrator:
         """The Referee rules on what the thread produced."""
         run_id = run.id
         thread = await self._sync_thread(session, run, round_index=None)
+        self._ensure_not_superseded(thread, roster)
         deps = self._turn_deps(run, run.rounds_done, roster["referee"])
         run = await self._announce(session, run_id, "Referee is ruling on the thread")
         try:
@@ -403,6 +524,7 @@ class DebateOrchestrator:
             kind=PostKind.DONE,
             round_index=None,
             deps=deps,
+            verdict=verdict.model_dump(),
         )
         await debate_service.record_verdict(
             session, run_id=run_id, verdict=verdict.model_dump()
@@ -423,6 +545,7 @@ class DebateOrchestrator:
         reply_to: str | None = None,
         round_index: int | None = None,
         deps: DebateDeps | None = None,
+        verdict: dict | None = None,
     ) -> Post:
         attachment = await self._stage_receipts(participant, deps)
         post = await self.client.post_as(
@@ -432,6 +555,7 @@ class DebateOrchestrator:
             kind=kind,
             reply_to=reply_to,
             attachment=attachment,
+            verdict=verdict,
         )
         await self._sync_thread(session, run, round_index=round_index)
         if deps is not None:
@@ -444,6 +568,11 @@ class DebateOrchestrator:
                 post_id=post.id,
                 tools=[call.stored() for call in deps.tool_calls],
             )
+            model_name = self.model_names.get(participant.role)
+            if model_name:
+                await debate_service.record_post_model(
+                    session, run_id=run.id, post_id=post.id, model=model_name
+                )
         if self.on_post is not None:
             await self.on_post(post)
         return post
@@ -524,6 +653,32 @@ class DebateOrchestrator:
                 "debate %s: could not post a BLOCKED note", run.id, exc_info=True
             )
 
+    async def end_announced_run(
+        self, session: AsyncSession, run_id: uuid.UUID, exc: BaseException
+    ) -> None:
+        """
+        End a run whose RUN is on the forum but which will never reach `run`'s
+        loop (a hosted Continue that failed in its setup): the Referee's BLOCKED,
+        so no install sees a live run with nothing behind it. Best effort — it
+        never raises. The cause stays in the local log, not on the shared thread.
+        """
+        logger.warning("debate %s: ending its announced run: %r", run_id, exc)
+        try:
+            run = await debate_service.require_debate(session, run_id)
+            roster = await self._participants(session, run_id)
+            if "referee" in roster:
+                await self._post(
+                    session,
+                    run,
+                    roster["referee"],
+                    ANNOUNCED_RUN_ENDED,
+                    kind=PostKind.BLOCKED,
+                )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "debate %s: could not end its announced run", run_id, exc_info=True
+            )
+
     def _turn_deps(
         self, run: DebateRunTable, round_index: int, participant: Participant
     ) -> DebateDeps:
@@ -602,12 +757,91 @@ class DebateOrchestrator:
     async def _sync_thread(
         self, session: AsyncSession, run: DebateRunTable, *, round_index: int | None
     ) -> Thread:
-        """Read the forum and project it. The read is what makes the DB catch up."""
+        """
+        Read the forum and project it, into this run's rows and into the
+        thread's shared copy that the lab shows. The read is what makes the DB
+        catch up.
+        """
         thread = await self.client.read_thread(run.thread_id)
         await debate_service.project_thread(
             session, run_id=run.id, thread=thread, round_index=round_index
         )
+        shared = await thread_service.project_forum_thread(
+            session, project_id=run.project_id, thread=thread
+        )
+        await thread_service.link_run(session, run=run, thread=shared)
         return thread
+
+    async def _announce_run(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        roster: dict[DebateRole, Participant],
+    ) -> None:
+        """
+        Post this run's RUN marker, so every install sees whose agents are
+        arguing and for how long (forum_git.live_run).
+        """
+        run = await debate_service.require_debate(session, run_id)
+        await self.client.start_run(
+            run.thread_id,
+            rounds=max(1, run.rounds - run.rounds_done),
+            roster={str(role): p.identity for role, p in roster.items()},
+            expiry_seconds=settings.forum.run_expiry_seconds,
+        )
+        await self._sync_thread(session, run, round_index=None)
+        await self._checkpoint(session)
+
+    @staticmethod
+    def _ensure_not_superseded(
+        thread: Thread, roster: dict[DebateRole, Participant]
+    ) -> None:
+        """
+        Raise `RunSuperseded` if the thread's latest RUN is not ours.
+
+        Ours is the latest RUN whose roster is this run's identities. They are
+        named after the run's id (`identity_for`), so no other run's RUN can
+        carry them, and a Continue of this same run reuses them. The origin is
+        not consulted: it is a peer's claim, and the roster says it better.
+        """
+        latest = next(
+            (p for p in reversed(thread.posts) if p.kind == PostKind.RUN), None
+        )
+        if latest is None or latest.run is None:
+            return
+        if set(latest.run.roster.values()) != {p.identity for p in roster.values()}:
+            raise RunSuperseded()
+
+    async def _stand_down(
+        self,
+        session: AsyncSession,
+        run_id: uuid.UUID,
+        roster: dict[DebateRole, Participant],
+    ) -> None:
+        """
+        Say on the thread that this run has stopped, and leave it not active.
+
+        The Referee's BLOCKED ends only the run whose roster it is on
+        (`live_run`), so the other run carries on. "converged" is the status
+        for a run that is finished without error; the UI has none for this.
+        """
+        run = await debate_service.require_debate(session, run_id)
+        try:
+            await self._post(
+                session,
+                run,
+                roster["referee"],
+                "This run went quiet past the run expiry and another run has "
+                "taken over the thread; stopping here.",
+                kind=PostKind.BLOCKED,
+                round_index=None,
+            )
+        except Exception:  # noqa: BLE001 — best effort, like every BLOCKED
+            logger.warning(
+                "debate %s: could not post a BLOCKED note", run_id, exc_info=True
+            )
+        await debate_service.set_status(session, run_id=run_id, status="converged")
+        await self._checkpoint(session)
 
     async def _sync(self, session: AsyncSession, run_id: uuid.UUID) -> None:
         """

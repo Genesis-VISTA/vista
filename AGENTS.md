@@ -132,6 +132,65 @@ cd backend
 uv run vista-backend
 ```
 
+Keep `db/schemas.py` changes additive: a nullable column, or a NOT NULL one with a server default. A dropped, renamed or retyped column, or a NOT NULL column without a default, fails `db/schema_check.py` (run from `init_db`) on every existing install, and each researcher is prompted to back up and reset their data.
+
+### Collaboration server
+Where researchers explicitly publish and import projects, skills and knowledge bases.
+A generic item/version API, deployed on the Holly testbed behind Obsidian's gateway at
+`https://obsidian.ccs.ornl.gov/vista/api` (`collaboration_server/deploy/holly/`, whose README
+is the runbook; how the server works is `docs/collaboration-server.md`). Authentication is
+`services/identity.py`, the one place it lives: `auth_mode=oidc` (the default) verifies a Keycloak token itself, as well as the gateway;
+`dev-headers` trusts `X-Vista-Install-Id` / `X-Vista-Display-Name` and only listens on loopback.
+Access is by team (`services/teams.py`): every item is in one team, and a team's items are
+`404` to anyone not in it. Everyone is in the public team, which has no member rows and starts
+empty; the server holds no seeds. The server chooses every item's id, and copies an item into
+another team as a new one sharing its blob (`POST /items/{id}/copy`). Every item query filters
+through `teams.visible_teams`, as a condition rather than a set read first, so a publish
+checks it in its compare-and-set. On the backend every project, skill and knowledge base has a
+`team_id`, None being private (this computer only: everything made with Private selected, and
+everything VISTA seeds or bundles; `services/teams.py` there). A new one joins the selected
+team (`collaboration_team_id`), or its project's when made for one; an import joins its item's;
+a project uses only its own team's; a private one is not published but copied to a team
+(`services/team_copy.py`, recursively for a project). A row records its team's server too
+(`team_server`): on another server it is private, until that one is in effect again.
+```bash
+./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
+cd collaboration_server && uv run vista-collaboration-server
+```
+No package, package launcher or Electron startup starts one. The backend reads its address
+from Settings, falling back to `VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets);
+with neither, publishing and importing are off and `GET /collaboration/status` says why. An
+unreachable server is never fatal. To sign in, the researcher opens the server's `/sign-in`
+page (a login gateway in front of the server logs them in; Obsidian's APISIX on the deployment)
+and pastes the token it shows into Settings: `collaboration_token`, write-only like
+`github_token`. The backend sends it only over https (or loopback), forgets it when the server
+address changes, and keeps it out of every settings dump. Nothing in VISTA knows which login is
+behind the gateway, so a self-hosted server can use any. The UI's Publish and Import controls read `useCollaboration()`
+(`ui/lib/collaboration.ts`), which needs `reachable` and `signed_in`.
+Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
+a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
+The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local
+library. A local skill records `origin_server`, `remote_id`, `remote_version` and `modified`;
+every write to its files must set `modified`. Projects are items of kind `project`
+(`services/project_collaboration.py`): a manifest built field by field from `ProjectPublic`
+(never the row) that references skill versions, published after the skills it loads and
+imported with them; `/projects` publishes and imports. A project records the same four fields,
+and every write that changes its `ProjectCreate` fields must set `modified`. Knowledge bases
+are items of kind `knowledge-base` (`services/knowledge_base_collaboration.py`): a tar of the
+PDFs and a snapshot of the index (SQLite backup API, under the indexer's lock), sent through
+the server's streamed upload (`POST /blobs/stream`); a project references them and recurses
+into them.
+An import never writes over a store: it unpacks into `<slug>/store-<id>/` and points
+`<slug>/CURRENT` at it. The MCP server, which has no database, finds stores on disk
+(`rag_mcp._store_path`) and checks each one's folder before every search (`_refresh_kb`), so
+nothing has to tell it about a replaced, reindexed or deleted store. Its signal is the BM25
+corpus, so any code that writes a store must rewrite the corpus afterwards
+(`build_rag.write_bm25_corpus`); `chroma.sqlite3` is no signal, as merely opening a store
+writes it. Close ChromaDB clients
+(`client.close()` or `with`) rather than dropping them: one left open serves a store rebuilt
+at its path from the old one. Backend tests mount the server in-process (the `collab_server`
+fixture) through the backend's dev extra, so run them with `--extra dev`.
+
 ### Frontend (UI)
 Launches Next.js dev server on :3000
 ```bash
@@ -150,13 +209,15 @@ Playwright validation is schedule-or-manual only — see
 [`docs/validation-lane.md`](docs/validation-lane.md) and
 `./scripts/nightly-validation.sh`.
 
-Mirror GitLab CI locally (targets: `backend`, `ui`, `mcp`, `electron`, `install`, `launcher`; actions: `lint`, `test`):
+Mirror GitLab CI locally (targets: `backend`, `collab`, `ui`, `mcp`, `electron`, `install`, `launcher`, `docs`; actions: `lint`, `test`):
 ```bash
 ./scripts/ci-local.sh                  # all lint + test
 ./scripts/ci-local.sh lint             # lint only
 ./scripts/ci-local.sh backend test     # backend pytest only
 ./scripts/ci-local.sh ui mcp lint      # UI + MCP lint
+./scripts/ci-local.sh collab           # collaboration server lint, typecheck, tests
 ./scripts/ci-local.sh electron         # window typecheck + routing tests
+./scripts/ci-local.sh docs             # Markdown links, the site manifest, strict build of the published pages
 ./scripts/ci-local.sh install-hooks    # git pre-commit runs lint --fast
 ```
 
@@ -167,6 +228,7 @@ Or run pieces directly:
 ```bash
 cd mcp_servers/vista_mcp_server && uv run --extra dev pytest  # HPC/RAG MCP tests
 cd mcp_servers/dev_mcp_server && uv run pytest  # Sandbox/view tests
+cd collaboration_server && uv run --extra dev pytest  # Collaboration server tests
 cd ui && npm run lint                           # Frontend ESLint
 cd backend && uv run --extra dev pytest -vv     # Backend tests
 curl http://localhost:3000/api/projects         # Smoke test: UI and backend up
@@ -178,9 +240,18 @@ Use Playwright (install globally if not present) to interact with the browser, t
 The vista MCP server boots without any interactive login — HPC job submission authenticates
 with per-user tokens (S3M / NERSC IRI for compute, Globus for file ops) supplied via the UI, each
 connected once per cluster in the settings modal rather than exported anywhere. Set
-`VISTA_MCP_DISABLE_SERVERS=submit_job` if you want to skip mounting the job tools entirely.
+`VISTA_MCP_DISABLE_SERVERS=submit_job` (or `transfer`) if you want to skip mounting the job tools
+(or the file transfer tools) entirely.
 
-Odo and Frontier file operations go through Globus, split across two of its surfaces
+Those credentials reach an MCP tool only if its name is in `HPC_TOOLS`, in `_build_vista_metadata`
+([`backend/src/vista_backend/agents/agents.py`](backend/src/vista_backend/agents/agents.py)). A new
+tool that reads `get_vista_meta(ctx).user` must be added there too: otherwise every call reads
+as "not connected", and no test catches it, because the MCP tests hand tools their config
+directly.
+
+Odo and Frontier file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
+the transfer tools (`transfer_mcp.py`, which list, download and upload outside a job), split across
+two of its surfaces
 ([`lib/globus.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/globus.py)). **File
 contents** move over the **HTTPS interface** — ordinary `GET`/`PUT` against the cluster's own
 collection, authorized by a bearer token. **Directory listings and `mkdir`** stay on the
@@ -199,8 +270,9 @@ Both OLCF collections are High Assurance with a 3-day authentication timeout tha
 token does **not** reset, and a Frontier queue wait routinely exceeds it. So an expired session
 is an expected outcome, not an exceptional one, and it must never be reported as an empty output
 directory — that confusion is the bug this transport exists to remove. `GlobusSessionExpired`
-(401, from either surface) and `GlobusFileNotFound` (404) are separate types for exactly that
-reason; branch on them rather than on a message.
+(Globus asking for a new session, a GARE, under whatever status: `502` from Transfer,
+`403 InsufficientSession` over HTTPS) and `GlobusFileNotFound` (404) are separate types for
+exactly that reason; branch on them rather than on a message.
 
 The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
@@ -230,6 +302,16 @@ is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
 - **Tests.** `test_forum_git.py` runs the real client against temporary bare
   repositories as two installs; orchestrator/API/simulation tests use
   `tests/harness/fake_forum.py` (the `fake_forum` / `client` fixtures).
+
+## Docs and the public site
+
+`docs/site.toml` decides which `docs/*.md` pages genesis-vista.github.io publishes: every
+page is either listed (with its section, nav order and title) or in `exclude`. Adding,
+renaming or deleting a doc means listing or excluding it there in the same MR, or
+`docs:manifest` fails. `docs:site` builds the listed pages strictly with MkDocs, so a link
+or anchor into a published page must resolve. The site shows the latest release, never main:
+a docs change reaches it with the next release. `scripts/docs_site/sync_docs.py` copies the
+pages into the site repo, and its command line is a contract with that repo.
 
 ## Text encoding
 

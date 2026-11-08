@@ -41,9 +41,9 @@ def test_existing_conversations_read_as_from_the_app(tmp_path):
         conn.execute(text('ALTER TABLE chat_session DROP COLUMN "origin"'))
         conn.execute(
             text(
-                "INSERT INTO chat_session (id, user_id, project_id, title, message_history,"
+                "INSERT INTO chat_session (id, project_id, title, message_history,"
                 " messages, run_state, run_unseen, created_at, updated_at)"
-                " VALUES ('a', 'u', 'p', 't', '[]', '[]', 'idle', 0, '', '')"
+                " VALUES ('a', 'p', 't', '[]', '[]', 'idle', 0, '', '')"
             )
         )
 
@@ -51,3 +51,23 @@ def test_existing_conversations_read_as_from_the_app(tmp_path):
 
     with engine.connect() as conn:
         assert conn.execute(text("SELECT origin FROM chat_session")).scalar() == "app"
+
+
+def test_an_existing_link_gains_the_collaboration_identity_columns(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    _build(engine)
+    with engine.begin() as conn:
+        for column in ("collab_sub", "collab_name"):
+            conn.execute(text(f'ALTER TABLE slack_link DROP COLUMN "{column}"'))
+        conn.execute(
+            text(
+                "INSERT INTO slack_link (id, team_id, slack_user_id,"
+                " notify_in_thread, created_at) VALUES ('l', 'T1', 'U1', 0, '')"
+            )
+        )
+
+    _build(engine)
+
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT collab_sub, collab_name FROM slack_link")).one()
+    assert tuple(row) == (None, None), "a link made before is simply unattributed"

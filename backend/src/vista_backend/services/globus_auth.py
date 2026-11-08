@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Literal
 
@@ -155,8 +154,8 @@ class _Pending:
     started_at: float
 
 
-_pending: dict[tuple[uuid.UUID, Cluster], _Pending] = {}
-"""Flows waiting for a code, keyed by whose they are.
+_pending: dict[Cluster, _Pending] = {}
+"""Flows waiting for a code, keyed by cluster.
 
 In memory, which ties a pending flow to one backend process: a second worker
 would not find it and the researcher would be told to start again. The desktop
@@ -175,11 +174,10 @@ def _prune(now: float) -> None:
             del _pending[key]
 
 
-def start_login(user_id: uuid.UUID, cluster: Cluster) -> str:
+def start_login(cluster: Cluster) -> str:
     """Begin a flow and return the address the researcher authorizes at.
 
-    Starting again replaces any flow already pending for this researcher and
-    cluster. Two live addresses for one connection would differ only in their
+    Starting again replaces any flow already pending for this cluster. Two live addresses for one connection would differ only in their
     verifier, and a code from the older one would then fail with a PKCE error
     that describes nothing the researcher did wrong.
     """
@@ -192,22 +190,22 @@ def start_login(user_id: uuid.UUID, cluster: Cluster) -> str:
         refresh_tokens=True,
         prefill_named_grant=f"VISTA ({cluster})",
     )
-    _pending[(user_id, cluster)] = _Pending(verifier=flow.verifier, started_at=now)
+    _pending[cluster] = _Pending(verifier=flow.verifier, started_at=now)
 
     return client.oauth2_get_authorize_url(
         session_required_single_domain=CLUSTER_SESSION_DOMAINS[cluster],
     )
 
 
-def complete_login(user_id: uuid.UUID, cluster: Cluster, code: str) -> Connection:
+def complete_login(cluster: Cluster, code: str) -> Connection:
     """Exchange the code the researcher pasted for a long-lived credential."""
     code = code.strip()
     if not code:
         raise HTTPException(400, "Paste the code Globus showed you after logging in.")
 
-    pending = _pending.get((user_id, cluster))
+    pending = _pending.get(cluster)
     if pending is None or time.time() - pending.started_at > PENDING_TTL_SECONDS:
-        _pending.pop((user_id, cluster), None)
+        _pending.pop(cluster, None)
         raise HTTPException(
             400,
             "This connection attempt has expired. Start it again to get a fresh "
@@ -237,7 +235,7 @@ def complete_login(user_id: uuid.UUID, cluster: Cluster, code: str) -> Connectio
     # Accepted, so the code is spent and the flow it belonged to is finished
     # with -- including on the failures below, which are about what came back
     # rather than about the exchange.
-    _pending.pop((user_id, cluster), None)
+    _pending.pop(cluster, None)
 
     transfer = _refresh_token(
         response.data,

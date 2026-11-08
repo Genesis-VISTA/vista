@@ -105,7 +105,6 @@ async def _committing(session: AsyncSession) -> None:
 async def _start(
     client,
     session,
-    alice,
     *,
     roles: RoleAgents,
     rounds=2,
@@ -127,7 +126,6 @@ async def _start(
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="why does the knee move?",
         framing="1 bar only.",
         rounds=rounds,
@@ -151,21 +149,21 @@ def _roles(
 
 @pytest.mark.anyio
 async def test_the_roster_records_the_tools_the_debate_actually_ran_with(
-    client, session, alice
+    client, session
 ):
     """
     Whoever runs the debate writes the grants, because only they know them.
 
     The roster is attached by `open_debate`, and at that moment the run does not
     exist — so `build_run_grounding`, which needs it to find the project's
-    knowledge bases and the opener's credentials, cannot have been called. The
+    knowledge bases and the credentials in Settings, cannot have been called. The
     grants recorded there are a bare orchestrator's. Left alone, they made the
     roster panel report two tools for a debate whose posts cite a literature
     search, an attached paper and a commissioned job.
     """
     from vista_backend.agents.forum.grounding import Grounding, build_toolsets
 
-    _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    _, run = await _start(client, session, roles=_roles(), rounds=1)
     run_id = run.id
 
     before = await debate_service.list_participants(session, run_id=run_id)
@@ -204,8 +202,8 @@ async def _run_to_verdict(client, session, run_id):
 
 
 @pytest.mark.anyio
-async def test_a_debate_runs_its_rounds_and_ends_with_a_verdict(client, session, alice):
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=2)
+async def test_a_debate_runs_its_rounds_and_ends_with_a_verdict(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
     run = await orch.run(session, run)
 
     assert run.status == "converged"
@@ -222,9 +220,9 @@ async def test_a_debate_runs_its_rounds_and_ends_with_a_verdict(client, session,
 
 
 @pytest.mark.anyio
-async def test_each_role_posts_under_its_own_identity(client, session, alice):
+async def test_each_role_posts_under_its_own_identity(client, session):
     """Three roles, three voices on the thread."""
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
     posts = await debate_service.list_posts(session, run_id=run.id)
@@ -238,8 +236,8 @@ async def test_each_role_posts_under_its_own_identity(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_rebuttal_replies_to_the_proposal_it_attacks(client, session, alice):
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+async def test_the_rebuttal_replies_to_the_proposal_it_attacks(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
     posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
@@ -252,14 +250,14 @@ async def test_the_rebuttal_replies_to_the_proposal_it_attacks(client, session, 
 
 
 @pytest.mark.anyio
-async def test_conceding_votes_instead_of_posting(client, session, alice):
+async def test_conceding_votes_instead_of_posting(client, session):
     """
     A concession must not become a post. "I agree" as a post costs every later
     reader a turn, and it is the shape a reviewer falls into when it cannot
     concede cheaply.
     """
     roles = _roles(reviewer=scripted(CONCEDE))
-    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    orch, run = await _start(client, session, roles=roles, rounds=1)
     run = await orch.run(session, run)
 
     posts = await debate_service.list_posts(session, run_id=run.id)
@@ -276,14 +274,14 @@ async def test_conceding_votes_instead_of_posting(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_human_post_reaches_the_next_round(client, session, alice):
+async def test_a_human_post_reaches_the_next_round(client, session):
     """
     There is no separate inbox: the thread is re-read before every turn, so an
     interjection is simply in front of the role when it next speaks.
     """
     prompts: list[str] = []
     roles = _roles(capture=prompts)
-    orch, run = await _start(client, session, alice, roles=roles, rounds=2)
+    orch, run = await _start(client, session, roles=roles, rounds=2)
 
     # Round one, then the human interrupts, then round two.
     roster = await orch._participants(session, run.id)  # noqa: SLF001
@@ -298,7 +296,7 @@ async def test_a_human_post_reaches_the_next_round(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_human_can_end_a_debate_early(client, session, alice):
+async def test_the_human_can_end_a_debate_early(client, session):
     """
     Closing is enforced by the forum, not by the loop: the next post is simply
     refused.
@@ -313,7 +311,7 @@ async def test_the_human_can_end_a_debate_early(client, session, alice):
             await client.close_thread(post.thread)
 
     orch, run = await _start(
-        client, session, alice, roles=_roles(), rounds=5, on_post=close_after_first_post
+        client, session, roles=_roles(), rounds=5, on_post=close_after_first_post
     )
     run = await orch.run(session, run)
 
@@ -323,7 +321,7 @@ async def test_the_human_can_end_a_debate_early(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_closing_still_records_what_was_said(client, session, alice):
+async def test_closing_still_records_what_was_said(client, session):
     """The record should hold the debate up to the stop, plus the CLOSED marker."""
     closed = {"done": False}
 
@@ -333,7 +331,7 @@ async def test_closing_still_records_what_was_said(client, session, alice):
             await client.close_thread(post.thread)
 
     orch, run = await _start(
-        client, session, alice, roles=_roles(), rounds=5, on_post=close_after_first_post
+        client, session, roles=_roles(), rounds=5, on_post=close_after_first_post
     )
     run = await orch.run(session, run)
 
@@ -349,8 +347,8 @@ async def test_closing_still_records_what_was_said(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_roster_is_attached_and_recorded(client, session, alice):
-    _, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+async def test_the_roster_is_attached_and_recorded(client, session):
+    _, run = await _start(client, session, roles=_roles(), rounds=1)
 
     rows = await debate_service.list_participants(session, run_id=run.id)
     assert {r.debate_role: r.identity for r in rows} == {
@@ -361,12 +359,12 @@ async def test_the_roster_is_attached_and_recorded(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_roster_outlives_the_debate(client, session, alice):
+async def test_the_roster_outlives_the_debate(client, session):
     """
     Nothing is revoked at the end: a late simulation result still posts under
     the identity that asked for it, and a continued debate speaks as before.
     """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
     rows = await debate_service.list_participants(session, run_id=run.id)
@@ -374,10 +372,10 @@ async def test_the_roster_outlives_the_debate(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_participants_are_named_after_their_run(client, session, alice):
+async def test_participants_are_named_after_their_run(client, session):
     """Several debates share one forum, so identities cannot be bare role names."""
-    _, first = await _start(client, session, alice, roles=_roles(), rounds=1)
-    _, second = await _start(client, session, alice, roles=_roles(), rounds=1)
+    _, first = await _start(client, session, roles=_roles(), rounds=1)
+    _, second = await _start(client, session, roles=_roles(), rounds=1)
 
     a = {
         r.identity
@@ -391,9 +389,9 @@ async def test_participants_are_named_after_their_run(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_projection_matches_the_forum(client, session, alice):
+async def test_the_projection_matches_the_forum(client, session):
     """The tables are a mirror; a divergence means the mirror is lying."""
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=2)
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
     run = await orch.run(session, run)
 
     thread = await client.read_thread(run.thread_id)
@@ -409,7 +407,7 @@ async def test_the_projection_matches_the_forum(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_progress_is_checkpointed_every_round(client, session, alice):
+async def test_progress_is_checkpointed_every_round(client, session):
     """
     A debate runs for minutes in one background session. Everything that reads it
     meanwhile — the event stream, a GET, another worker — reads through a
@@ -432,7 +430,6 @@ async def test_progress_is_checkpointed_every_round(client, session, alice):
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="why does the knee move?",
         rounds=3,
     )
@@ -447,7 +444,7 @@ async def test_progress_is_checkpointed_every_round(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failing_checkpoint_does_not_end_the_debate(client, session, alice):
+async def test_a_failing_checkpoint_does_not_end_the_debate(client, session):
     """Losing durability is bad; losing the argument as well would be worse."""
     calls = {"n": 0}
 
@@ -460,7 +457,6 @@ async def test_a_failing_checkpoint_does_not_end_the_debate(client, session, ali
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="t",
         rounds=2,
     )
@@ -471,7 +467,7 @@ async def test_a_failing_checkpoint_does_not_end_the_debate(client, session, ali
 
 
 @pytest.mark.anyio
-async def test_the_orchestrator_survives_its_own_checkpoints(client, session, alice):
+async def test_the_orchestrator_survives_its_own_checkpoints(client, session):
     """
     A commit expires every ORM object the session holds, so a loop that carried
     the run row across one would read `rounds_done` off an expired object — sync
@@ -487,7 +483,6 @@ async def test_the_orchestrator_survives_its_own_checkpoints(client, session, al
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="t",
         rounds=2,
     )
@@ -498,7 +493,7 @@ async def test_the_orchestrator_survives_its_own_checkpoints(client, session, al
 
 
 @pytest.mark.anyio
-async def test_run_round_returns_a_run_the_caller_can_still_use(client, session, alice):
+async def test_run_round_returns_a_run_the_caller_can_still_use(client, session):
     """
     A round ends by checkpointing, and a checkpoint commits — which expires every
     object the session holds, including the row the round was about. So the round
@@ -517,7 +512,6 @@ async def test_run_round_returns_a_run_the_caller_can_still_use(client, session,
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="t",
         rounds=2,
     )
@@ -575,15 +569,13 @@ def test_a_role_turn_carries_an_explicit_request_ceiling():
 
 
 @pytest.mark.anyio
-async def test_a_role_that_burns_its_budget_does_not_kill_the_debate(
-    client, session, alice
-):
+async def test_a_role_that_burns_its_budget_does_not_kill_the_debate(client, session):
     """
     A role stuck in a tool loop used to take the whole debate down with an
     unhandled UsageLimitExceeded. The round is lost; the debate is not.
     """
     roles = _looping_roles(proposer=_exhausted())
-    orch, run = await _start(client, session, alice, roles=roles, rounds=2)
+    orch, run = await _start(client, session, roles=roles, rounds=2)
     run = await orch.run(session, run)
 
     assert run.status == "converged", "the referee still ruled"
@@ -593,13 +585,13 @@ async def test_a_role_that_burns_its_budget_does_not_kill_the_debate(
 
 
 @pytest.mark.anyio
-async def test_the_blocked_note_says_it_is_not_a_conclusion(client, session, alice):
+async def test_the_blocked_note_says_it_is_not_a_conclusion(client, session):
     """
     Silence from a role reads as agreement. It has to be labelled as a budget
     limit, or the Referee weighs an absence as if it were a concession.
     """
     roles = _looping_roles(reviewer=_exhausted())
-    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    orch, run = await _start(client, session, roles=roles, rounds=1)
     run = await orch.run(session, run)
 
     posts = await debate_service.list_posts(session, run_id=run.id)
@@ -609,10 +601,10 @@ async def test_the_blocked_note_says_it_is_not_a_conclusion(client, session, ali
 
 
 @pytest.mark.anyio
-async def test_a_referee_that_runs_out_leaves_no_verdict(client, session, alice):
+async def test_a_referee_that_runs_out_leaves_no_verdict(client, session):
     """A fabricated verdict would be worse than none; the run is marked failed."""
     roles = _looping_roles(referee=_exhausted())
-    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    orch, run = await _start(client, session, roles=roles, rounds=1)
     run = await orch.run(session, run)
 
     assert run.status == "failed"
@@ -642,7 +634,7 @@ def _tool_using_proposer() -> FunctionModel:
 
 
 @pytest.mark.anyio
-async def test_a_posts_provenance_reaches_the_record(client, session, alice):
+async def test_a_posts_provenance_reaches_the_record(client, session):
     """
     The whole point: a reader can tell which claims were grounded. The forum
     carries what was said; how the agent got there is recorded on our side.
@@ -660,7 +652,7 @@ async def test_a_posts_provenance_reaches_the_record(client, session, alice):
         },
         toolsets=build_toolsets(Grounding(skills=skill)),
     )
-    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    orch, run = await _start(client, session, roles=roles, rounds=1)
     run = await orch.run(session, run)
 
     posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
@@ -684,7 +676,7 @@ async def test_a_posts_provenance_reaches_the_record(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_each_role_records_what_it_was_allowed_to_use(client, session, alice):
+async def test_each_role_records_what_it_was_allowed_to_use(client, session):
     from vista_backend.agents.forum.grounding import Grounding, build_toolsets
 
     async def skill(name):
@@ -698,7 +690,7 @@ async def test_each_role_records_what_it_was_allowed_to_use(client, session, ali
         },
         toolsets=build_toolsets(Grounding(skills=skill)),
     )
-    _, run = await _start(client, session, alice, roles=roles, rounds=1)
+    _, run = await _start(client, session, roles=roles, rounds=1)
 
     by_role = {
         r.debate_role: r.granted_tools
@@ -715,14 +707,14 @@ async def test_each_role_records_what_it_was_allowed_to_use(client, session, ali
 
 
 @pytest.mark.anyio
-async def test_a_continued_debate_reuses_its_identities(client, session, alice):
+async def test_a_continued_debate_reuses_its_identities(client, session):
     """
     One roster for the debate's whole life.
 
     Continuing is the same debate, so the same three voices: the extra rounds
     post under the identities the earlier rounds used, and no new rows appear.
     """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run_id = run.id
     await orch.run(session, run)
 
@@ -757,7 +749,7 @@ async def test_a_continued_debate_reuses_its_identities(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_roster_excludes_retired_identities(client, session, alice):
+async def test_the_roster_excludes_retired_identities(client, session):
     """
     Rows written before the git forum can be inactive (retired h5i stints).
 
@@ -765,7 +757,7 @@ async def test_the_roster_excludes_retired_identities(client, session, alice):
     last row visited would win. Here the inactive identity sorts *after* the
     live one, so an unfiltered roster would pick it.
     """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run_id = run.id
     live = Participant(identity=identity_for("proposer", run_id), role="proposer")
 
@@ -784,7 +776,7 @@ async def test_the_roster_excludes_retired_identities(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_resume_survives_a_committing_checkpoint(client, session, alice):
+async def test_resume_survives_a_committing_checkpoint(client, session):
     """
     The same expiry trap `run` documents, one frame further up.
 
@@ -807,7 +799,6 @@ async def test_resume_survives_a_committing_checkpoint(client, session, alice):
     run = await orch.start(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="why does the knee move?",
         rounds=1,
     )
@@ -823,7 +814,7 @@ async def test_resume_survives_a_committing_checkpoint(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_forum_carries_the_proposers_own_words(client, session, alice):
+async def test_the_forum_carries_the_proposers_own_words(client, session):
     """
     End to end: what lands on the thread is the text the role wrote.
 
@@ -832,7 +823,7 @@ async def test_the_forum_carries_the_proposers_own_words(client, session, alice)
     scaffold added anywhere on this path would be what they see — and would be
     what the next round is written against.
     """
-    orch, run = await _start(client, session, alice, roles=_roles(), rounds=1)
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
     run = await orch.run(session, run)
 
     posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
@@ -840,9 +831,7 @@ async def test_the_forum_carries_the_proposers_own_words(client, session, alice)
 
 
 @pytest.mark.anyio
-async def test_nothing_is_held_uncommitted_while_a_role_speaks(
-    engine, client, session, alice
-):
+async def test_nothing_is_held_uncommitted_while_a_role_speaks(engine, client, session):
     """
     The property the round-boundary checkpoint exists for.
 
@@ -867,7 +856,6 @@ async def test_nothing_is_held_uncommitted_while_a_role_speaks(
     orch, run = await _start(
         client,
         session,
-        alice,
         roles=_roles(proposer=FunctionModel(nosy_proposer)),
         rounds=1,
     )
@@ -883,7 +871,7 @@ async def test_nothing_is_held_uncommitted_while_a_role_speaks(
 
 @pytest.mark.anyio
 async def test_a_role_announces_itself_before_it_starts_thinking(
-    engine, client, session, alice
+    engine, client, session
 ):
     """
     Announced before the turn, not after, and committed — the reader is on
@@ -903,7 +891,6 @@ async def test_a_role_announces_itself_before_it_starts_thinking(
     orch, run = await _start(
         client,
         session,
-        alice,
         roles=_roles(proposer=FunctionModel(nosy_proposer)),
         rounds=1,
     )
@@ -926,9 +913,7 @@ async def test_a_role_announces_itself_before_it_starts_thinking(
 
 
 @pytest.mark.anyio
-async def test_a_role_out_of_budget_argues_again_without_its_tools(
-    client, session, alice
-):
+async def test_a_role_out_of_budget_argues_again_without_its_tools(client, session):
     """
     What four BLOCKED reviewer turns should have been.
 
@@ -948,7 +933,6 @@ async def test_a_role_out_of_budget_argues_again_without_its_tools(
     orch, run = await _start(
         client,
         session,
-        alice,
         roles=_roles(reviewer=FunctionModel(flaky_reviewer)),
         rounds=1,
     )
@@ -960,9 +944,7 @@ async def test_a_role_out_of_budget_argues_again_without_its_tools(
 
 
 @pytest.mark.anyio
-async def test_a_blocked_note_records_what_the_turn_actually_called(
-    client, session, alice
-):
+async def test_a_blocked_note_records_what_the_turn_actually_called(client, session):
     """
     The one post in the record where provenance was empty, and the one where a
     reader most needs it: "it spent its whole budget" and "we will not say on
@@ -993,7 +975,7 @@ async def test_a_blocked_note_records_what_the_turn_actually_called(
         },
         toolsets=build_toolsets(Grounding(rag=rag)),
     )
-    orch, run = await _start(client, session, alice, roles=roles, rounds=1)
+    orch, run = await _start(client, session, roles=roles, rounds=1)
     run = await orch.run(session, run)
 
     posts = {p.kind: p for p in await debate_service.list_posts(session, run_id=run.id)}
@@ -1006,7 +988,7 @@ async def test_a_blocked_note_records_what_the_turn_actually_called(
 
 @pytest.mark.anyio
 async def test_prose_where_structured_output_was_expected_costs_one_round(
-    client, session, alice
+    client, session
 ):
     """
     The failure that killed a whole debate: a model answered in prose, pydantic-ai
@@ -1033,7 +1015,6 @@ async def test_prose_where_structured_output_was_expected_costs_one_round(
     orch, run = await _start(
         client,
         session,
-        alice,
         roles=_roles(reviewer=FunctionModel(answers_in_prose)),
         rounds=2,
     )
@@ -1054,9 +1035,7 @@ async def test_prose_where_structured_output_was_expected_costs_one_round(
 
 
 @pytest.mark.anyio
-async def test_a_thread_deleted_mid_debate_ends_it_without_an_error(
-    client, session, alice
-):
+async def test_a_thread_deleted_mid_debate_ends_it_without_an_error(client, session):
     """Someone deletes the branch on the forge while the debate is arguing."""
     deleted = {"done": False}
 
@@ -1068,7 +1047,6 @@ async def test_a_thread_deleted_mid_debate_ends_it_without_an_error(
     orch, run = await _start(
         client,
         session,
-        alice,
         roles=_roles(),
         rounds=3,
         on_post=delete_after_first_post,
@@ -1082,7 +1060,7 @@ async def test_a_thread_deleted_mid_debate_ends_it_without_an_error(
 
 
 @pytest.mark.anyio
-async def test_a_peers_close_ends_the_debate(client, session, alice):
+async def test_a_peers_close_ends_the_debate(client, session):
     closed = {"done": False}
 
     async def peer_closes(post):
@@ -1091,9 +1069,442 @@ async def test_a_peers_close_ends_the_debate(client, session, alice):
             client.peer_close(post.thread)
 
     orch, run = await _start(
-        client, session, alice, roles=_roles(), rounds=3, on_post=peer_closes
+        client, session, roles=_roles(), rounds=3, on_post=peer_closes
     )
     run = await orch.run(session, run)
     posts = await debate_service.list_posts(session, run_id=run.id)
     assert run.status == "closed"
     assert debate_service.closed_by(posts) == "peer"
+
+
+@pytest.mark.anyio
+async def test_each_post_records_the_model_that_wrote_it(client, session):
+    """
+    A debate continued with its Reviewer moved from A to C: the earlier rounds
+    say A, the new ones say C, and the roles that did not move say A throughout.
+    """
+    on_a = {role: "openai:a" for role in ROSTER}
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    orch.model_names = on_a
+    run_id = run.id
+    await orch.run(session, run)
+    earlier = {
+        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
+    }
+
+    orch.model_names = {**on_a, "reviewer": "openai:c"}
+    run = await debate_service.require_debate(session, run_id)
+    await orch.resume(session, run=run, extra_rounds=1)
+
+    models: dict[tuple[bool, str], set] = {}
+    for post in await debate_service.list_posts(session, run_id=run_id):
+        if post.sender == "human":
+            assert post.model is None
+            continue
+        key = (post.post_id in earlier, post.forum_role)
+        models.setdefault(key, set()).add(post.model)
+
+    assert models[(True, "reviewer")] == {"openai:a"}
+    assert models[(False, "reviewer")] == {"openai:c"}
+    assert models[(False, "proposer")] == {"openai:a"}
+
+
+# --------------------------------------------------------------------------- #
+# Shared threads (forum-shared-threads group 3)
+# --------------------------------------------------------------------------- #
+
+
+def _live(posts):
+    from datetime import UTC, datetime
+
+    from vista_backend.services.forum_git import live_run
+
+    return live_run(posts, now=datetime.now(UTC), expiry=2700.0)
+
+
+@pytest.mark.anyio
+async def test_a_run_announces_itself_and_its_verdict_ends_it(client, session):
+    from vista_backend.services import threads as thread_service
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
+    run_id, thread_id = run.id, run.thread_id
+    await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    marker = next(p for p in thread.posts if p.kind == PostKind.RUN)
+    assert marker.run is not None and marker.run.rounds == 2
+    assert marker.run.roster == {role: identity_for(role, run_id) for role in ROSTER}
+    done = next(p for p in thread.posts if p.kind == PostKind.DONE)
+    assert done.verdict is not None
+    assert done.verdict["unresolved"] == ["measure at 650K"]
+    assert _live(thread.posts) is None, "the Referee's verdict ends the run"
+
+    shared = await thread_service.require_thread(
+        session, project_id=run.project_id, thread_id=thread_id
+    )
+    assert shared.verdict == done.verdict
+    linked = await debate_service.require_debate(session, run_id)
+    assert linked.forum_thread_id == shared.id
+
+
+@pytest.mark.anyio
+async def test_a_continue_announces_only_its_extra_rounds(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run_id, thread_id = run.id, run.thread_id
+    await orch.run(session, run)
+    await orch.resume(
+        session,
+        run=await debate_service.require_debate(session, run_id),
+        extra_rounds=2,
+    )
+
+    markers = [
+        p for p in (await client.read_thread(thread_id)).posts if p.kind == PostKind.RUN
+    ]
+    assert [m.run.rounds for m in markers] == [1, 2]
+    assert markers[0].run.roster == markers[1].run.roster, "same roster on continue"
+
+
+@pytest.mark.anyio
+async def test_another_installs_thread_is_adopted_with_a_roster_of_our_own(
+    client, session
+):
+    from vista_backend.services import threads as thread_service
+
+    project_id = (await _project(session)).id
+    thread_id = client.peer_thread("Alice's question", body="Frame it.")
+    peer_roster = client.peer_run(thread_id, rounds=1)
+    client.peer_post(
+        thread_id,
+        "verdict",
+        kind="DONE",
+        identity=peer_roster["referee"],
+        role="referee",
+    )
+    shared = await thread_service.project_forum_thread(
+        session, project_id=project_id, thread=await client.read_thread(thread_id)
+    )
+
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
+    run = await orch.adopt(session, thread=shared)
+    run_id = run.id
+    assert run.topic == "Alice's question" and run.framing == "Frame it."
+    await orch.resume(session, run=run, extra_rounds=1)
+
+    thread = await client.read_thread(thread_id)
+    mine = {identity_for(role, run_id) for role in ROSTER}
+    assert not mine & set(peer_roster.values()), "our voices are our own"
+    markers = [p for p in thread.posts if p.kind == PostKind.RUN]
+    assert len(markers) == 2 and set(markers[1].run.roster.values()) == mine
+    dones = [p for p in thread.posts if p.kind == PostKind.DONE]
+    assert dones[-1].sender == identity_for("referee", run_id)
+
+    shared = await thread_service.require_thread(
+        session, project_id=project_id, thread_id=thread_id
+    )
+    assert shared.verdict == dones[-1].verdict, "the newest verdict is current"
+
+
+@pytest.mark.anyio
+async def test_a_crashed_run_ends_with_the_referees_blocked(client, session):
+    def explode(messages, info):
+        raise RuntimeError("the database went away")
+
+    orch, run = await _start(
+        client,
+        session,
+        roles=_roles(proposer=FunctionModel(explode)),
+        rounds=1,
+    )
+    thread_id = run.thread_id
+    with pytest.raises(RuntimeError):
+        await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    assert thread.posts[-1].kind == PostKind.BLOCKED
+    assert thread.posts[-1].role == "referee"
+    assert _live(thread.posts) is None, "nobody else waits on a dead run"
+
+
+@pytest.mark.anyio
+async def test_agents_do_not_read_run_markers(client, session):
+    capture: list[str] = []
+    orch, run = await _start(client, session, roles=_roles(capture=capture), rounds=1)
+    await orch.run(session, run)
+    assert capture and all("RUN —" not in prompt for prompt in capture)
+
+
+@pytest.mark.anyio
+async def test_a_continue_the_server_refuses_starts_no_run(
+    client, session, monkeypatch
+):
+    """
+    A hosted forum refuses a RUN while another install's is live. This install
+    must then not argue, and must not post a BLOCKED either: nothing was said on
+    the thread, so there is nothing to end. The run is as it was before.
+    """
+    from vista_backend.services.forum_git import RunRefused
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id = run.id
+    posts_before = [
+        p.post_id for p in await debate_service.list_posts(session, run_id=run_id)
+    ]
+
+    async def refuse(thread, *, rounds, roster, expiry_seconds=None):
+        raise RunRefused("Refused: a run is already live on this thread.")
+
+    monkeypatch.setattr(client, "start_run", refuse)
+    run = await debate_service.require_debate(session, run_id)
+    status, rounds = run.status, run.rounds
+    after = await orch.resume(session, run=run, extra_rounds=3)
+
+    assert (after.status, after.rounds) == (status, rounds)
+    assert after.activity is None
+    posts_after = await debate_service.list_posts(session, run_id=run_id)
+    assert [p.post_id for p in posts_after] == posts_before
+    assert PostKind.BLOCKED not in {p.kind for p in posts_after}
+
+
+@pytest.mark.anyio
+async def test_a_run_announces_itself_unless_its_continue_already_did(client, session):
+    """
+    A forge forum keeps its order: `run` posts the RUN itself, local-first. Only
+    a hosted forum's Continue posts it earlier and says so (`announced`).
+    """
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 1
+
+    run = await debate_service.require_debate(session, run.id)
+    await orch.resume(session, run=run, extra_rounds=1)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 2
+
+    run = await debate_service.require_debate(session, run.id)
+    await orch.resume(session, run=run, extra_rounds=1, announced=True)
+    kinds = [p.kind for p in await debate_service.list_posts(session, run_id=run.id)]
+    assert kinds.count(PostKind.RUN) == 2, "its Continue had posted it"
+
+
+async def _announced_continue_that_fails_in_setup(
+    client, session, engine, monkeypatch, *, announced
+):
+    """A debate that has finished, a Continue whose setup then raises."""
+    from vista_backend.agents.forum import wiring
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id, thread_id = run.id, run.thread_id
+    members = await debate_service.list_active_participants(session, run_id=run_id)
+    if announced:
+        await client.start_run(
+            thread_id,
+            rounds=1,
+            roster={m.debate_role: m.identity for m in members},
+        )
+    posts_before = len((await client.read_thread(thread_id)).posts)
+
+    async def forum(_session, _run):
+        return client
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("no grounding today")
+
+    monkeypatch.setattr(wiring, "get_engine", lambda: engine)
+    monkeypatch.setattr(wiring, "client_for_run", forum)
+    monkeypatch.setattr(wiring, "build_run_grounding", broken)
+    await wiring.continue_debate_task(run_id, 1, announced=announced)
+    return run_id, thread_id, posts_before
+
+
+@pytest.mark.anyio
+async def test_an_announced_continue_that_fails_in_setup_ends_its_run(
+    client, session, engine, monkeypatch
+):
+    run_id, thread_id, _ = await _announced_continue_that_fails_in_setup(
+        client, session, engine, monkeypatch, announced=True
+    )
+    thread = await client.read_thread(thread_id)
+    last = thread.posts[-1]
+    assert last.kind == PostKind.BLOCKED
+    assert "no grounding today" not in last.body, "the cause stays in the log"
+    assert "could not start on this install" in last.body
+    assert _live(thread.posts) is None
+    session.expire_all()
+    run = await debate_service.require_debate(session, run_id)
+    assert run.status == "failed"
+
+
+@pytest.mark.anyio
+async def test_a_forge_continue_that_fails_in_setup_posts_nothing(
+    client, session, engine, monkeypatch
+):
+    _, thread_id, before = await _announced_continue_that_fails_in_setup(
+        client, session, engine, monkeypatch, announced=False
+    )
+    assert len((await client.read_thread(thread_id)).posts) == before
+
+
+def _take_over_after_first_round(client, thread_id, roster_out):
+    """An `on_post` hook: install B's RUN lands once A's first round is done."""
+
+    async def hook(post):
+        if post.kind == PostKind.PROPOSAL and not roster_out:
+            roster_out.update(client.peer_run(thread_id, rounds=2))
+
+    return hook
+
+
+@pytest.mark.anyio
+async def test_a_run_another_run_superseded_stops_at_its_next_turn(client, session):
+    from vista_backend.services.debate import ACTIVE_STATUSES
+
+    project = await _project(session)
+    peer: dict[str, str] = {}
+    orch = DebateOrchestrator(client=client, roles=_roles(), checkpoint=_committing)
+    run = await orch.start(
+        session, project_id=project.id, topic="t", framing="f", rounds=3
+    )
+    run_id, thread_id = run.id, run.thread_id
+    orch.on_post = _take_over_after_first_round(client, thread_id, peer)
+    await orch.run(session, run)
+
+    thread = await client.read_thread(thread_id)
+    kinds = [p.kind for p in thread.posts]
+    b_run = max(i for i, k in enumerate(kinds) if k == PostKind.RUN)
+    after = thread.posts[b_run + 1 :]
+    ours = {identity_for(r, run_id) for r in ROSTER}
+    assert [p.kind for p in after if p.sender in ours] == [PostKind.BLOCKED]
+    assert after[-1].sender == identity_for("referee", run_id)
+    assert PostKind.DONE not in kinds
+    live = _live(thread.posts)
+    assert live is not None and live.roster == peer, "the other run carries on"
+    final = await debate_service.require_debate(session, run_id)
+    assert final.status not in ACTIVE_STATUSES and final.status != "failed"
+
+
+@pytest.mark.anyio
+async def test_our_own_run_being_latest_is_not_superseded(client, session):
+    orch, run = await _start(client, session, roles=_roles(), rounds=2)
+    thread_id = run.thread_id
+    await orch.run(session, run)
+    kinds = [p.kind for p in (await client.read_thread(thread_id)).posts]
+    assert PostKind.BLOCKED not in kinds and PostKind.DONE in kinds
+
+
+async def _announced_continue_with_a_working_setup(
+    client, session, engine, monkeypatch, *, break_it
+):
+    """
+    An announced Continue whose setup succeeds, so that `resume` and `run` are
+    what fail. `break_it` patches the failure in once the run has finished.
+    """
+    from types import SimpleNamespace
+
+    from vista_backend.agents.forum import wiring
+
+    orch, run = await _start(client, session, roles=_roles(), rounds=1)
+    run = await orch.run(session, run)
+    run_id, thread_id = run.id, run.thread_id
+    members = await debate_service.list_active_participants(session, run_id=run_id)
+    await client.start_run(
+        thread_id, rounds=1, roster={m.debate_role: m.identity for m in members}
+    )
+    before = len((await client.read_thread(thread_id)).posts)
+
+    async def forum(*_a, **_k):
+        return client
+
+    async def grounding(*_a, **_k):
+        return SimpleNamespace(simulation=None)
+
+    async def simulation(*_a, **_k):
+        return None, {}
+
+    async def nothing(*_a, **_k):
+        return []
+
+    async def no_models(*_a, **_k):
+        return {}
+
+    async def settings_(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(wiring, "get_engine", lambda: engine)
+    monkeypatch.setattr(wiring, "client_for_run", forum)
+    monkeypatch.setattr(wiring, "build_run_grounding", grounding)
+    monkeypatch.setattr(wiring, "build_simulation", simulation)
+    monkeypatch.setattr(wiring, "knowledge_bases_for", nothing)
+    monkeypatch.setattr(wiring, "models_for", no_models)
+    monkeypatch.setattr(wiring.local_settings, "get_public", settings_)
+    monkeypatch.setattr(
+        wiring,
+        "build_orchestrator",
+        lambda c, **_k: DebateOrchestrator(
+            client=c, roles=_roles(), checkpoint=_committing
+        ),
+    )
+    break_it(monkeypatch)
+    await wiring.continue_debate_task(run_id, 1, announced=True)
+    thread = await client.read_thread(thread_id)
+    return thread, thread.posts[before:]
+
+
+def _fail_once(monkeypatch, owner, name):
+    real = getattr(owner, name)
+    calls = []
+
+    async def failing(*a, **k):
+        if not calls:
+            calls.append(1)
+            raise RuntimeError("secret internal detail")
+        return await real(*a, **k)
+
+    monkeypatch.setattr(owner, name, failing)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "owner, name",
+    [
+        (debate_service, "update_debate"),  # in resume, before run
+        (debate_service, "record_granted_tools"),  # in run, before its try
+    ],
+)
+async def test_an_announced_continue_ends_its_run_whatever_fails_before_the_loop(
+    client, session, engine, monkeypatch, owner, name
+):
+    thread, new = await _announced_continue_with_a_working_setup(
+        client,
+        session,
+        engine,
+        monkeypatch,
+        break_it=lambda mp: _fail_once(mp, owner, name),
+    )
+    blocked = [p for p in new if p.kind == PostKind.BLOCKED]
+    assert len(blocked) == 1, "exactly one Referee BLOCKED"
+    assert blocked[0].role == "referee"
+    assert "secret internal detail" not in blocked[0].body
+    assert _live(thread.posts) is None
+
+
+@pytest.mark.anyio
+async def test_a_crash_inside_the_loop_is_ended_once_by_run_alone(
+    client, session, engine, monkeypatch
+):
+    from vista_backend.agents.forum import debate as debate_mod
+
+    def break_round(mp):
+        async def boom(*_a, **_k):
+            raise RuntimeError("round exploded")
+
+        mp.setattr(debate_mod.DebateOrchestrator, "run_round", boom)
+
+    thread, new = await _announced_continue_with_a_working_setup(
+        client, session, engine, monkeypatch, break_it=break_round
+    )
+    assert [p.kind for p in new].count(PostKind.BLOCKED) == 1, "no double BLOCKED"
+    assert _live(thread.posts) is None

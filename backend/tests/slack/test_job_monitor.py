@@ -28,9 +28,8 @@ class Poll:
         return state
 
 
-async def _record(session, user, job_id="4471", *, origin="slack", **kw):
+async def _record(session, job_id="4471", *, origin="slack", **kw):
     row = HpcJobRecordTable(
-        user_id=user.id,
         origin=origin,
         cluster="frontier",
         job_id=job_id,
@@ -65,9 +64,9 @@ async def _get(engine, record_id) -> HpcJobRecordTable:
         return row
 
 
-async def test_a_finished_slack_job_is_sent_by_dm_once(engine, session, alice):
-    await link(session, alice, "U1")
-    rid = await _record(session, alice)
+async def test_a_finished_slack_job_is_sent_by_dm_once(engine, session):
+    await link(session, "U1")
+    rid = await _record(session)
     slack = FakeTransport()
     poll = Poll({"4471": "COMPLETED"})
     monitor = _monitor(engine, slack, poll)
@@ -84,9 +83,9 @@ async def test_a_finished_slack_job_is_sent_by_dm_once(engine, session, alice):
     assert poll.calls == ["4471"], "a notified job is not polled again"
 
 
-async def test_a_running_job_waits(engine, session, alice):
-    await link(session, alice, "U1")
-    rid = await _record(session, alice)
+async def test_a_running_job_waits(engine, session):
+    await link(session, "U1")
+    rid = await _record(session)
     slack = FakeTransport()
 
     assert (
@@ -98,12 +97,12 @@ async def test_a_running_job_waits(engine, session, alice):
     assert row.state == "RUNNING" and row.notified_at is None
 
 
-async def test_in_thread_when_the_researcher_chose_it(engine, session, alice):
-    row = await link(session, alice, "U1")
+async def test_in_thread_when_the_researcher_chose_it(engine, session):
+    row = await link(session, "U1")
     row.notify_in_thread = True
     session.add(row)
     await session.commit()
-    await _record(session, alice)
+    await _record(session)
     slack = FakeTransport()
 
     await _monitor(engine, slack, Poll({"4471": "FAILED"})).reconcile_once()
@@ -113,9 +112,9 @@ async def test_in_thread_when_the_researcher_chose_it(engine, session, alice):
     assert "<@U1>" in msg.text and "FAILED" in msg.text
 
 
-async def test_desktop_jobs_only_with_the_setting(engine, session, alice):
-    await link(session, alice, "U1")
-    await _record(session, alice, origin="app")
+async def test_desktop_jobs_only_with_the_setting(engine, session):
+    await link(session, "U1")
+    await _record(session, origin="app")
     slack = FakeTransport()
     poll = Poll({"4471": "COMPLETED"})
 
@@ -132,14 +131,10 @@ async def test_desktop_jobs_only_with_the_setting(engine, session, alice):
     assert msg.channel == "DU1", "desktop jobs always go by DM"
 
 
-async def test_a_job_that_ended_while_vista_was_off_is_told_on_start(
-    engine, session, alice
-):
+async def test_a_job_that_ended_while_vista_was_off_is_told_on_start(engine, session):
     """The state was recorded before shutdown, but the notice never went out."""
-    await link(session, alice, "U1")
-    await _record(
-        session, alice, state="COMPLETED", finished_at="2026-10-16T11:00:00+00:00"
-    )
+    await link(session, "U1")
+    await _record(session, state="COMPLETED", finished_at="2026-10-16T11:00:00+00:00")
     slack = FakeTransport()
     poll = Poll({})
 
@@ -149,10 +144,10 @@ async def test_a_job_that_ended_while_vista_was_off_is_told_on_start(
     assert "1h 0m" in slack.messages[0].text
 
 
-async def test_a_poll_failure_skips_the_job_until_next_time(engine, session, alice):
-    await link(session, alice, "U1")
-    rid = await _record(session, alice, "1")
-    await _record(session, alice, "2")
+async def test_a_poll_failure_skips_the_job_until_next_time(engine, session):
+    await link(session, "U1")
+    rid = await _record(session, "1")
+    await _record(session, "2")
     slack = FakeTransport()
     poll = Poll({"1": RuntimeError("no Lux login"), "2": "COMPLETED"})
 
@@ -162,8 +157,8 @@ async def test_a_poll_failure_skips_the_job_until_next_time(engine, session, ali
     assert (await _get(engine, rid)).notified_at is None
 
 
-async def test_a_job_with_no_slack_link_is_closed_quietly(engine, session, alice):
-    rid = await _record(session, alice)
+async def test_a_job_with_no_slack_link_is_closed_quietly(engine, session):
+    rid = await _record(session)
     slack = FakeTransport()
 
     assert (
@@ -174,9 +169,9 @@ async def test_a_job_with_no_slack_link_is_closed_quietly(engine, session, alice
     assert (await _get(engine, rid)).notified_at is not None
 
 
-async def test_a_failed_post_is_retried_next_pass(engine, session, alice):
-    await link(session, alice, "U1")
-    rid = await _record(session, alice)
+async def test_a_failed_post_is_retried_next_pass(engine, session):
+    await link(session, "U1")
+    rid = await _record(session)
     slack = FakeTransport()
     slack.fail_next["post"] = "ratelimited"
     monitor = _monitor(engine, slack, Poll({"4471": "COMPLETED"}))
@@ -192,25 +187,25 @@ def test_elapsed():
     assert elapsed("x", "y") == ""
 
 
-async def test_the_live_poll_asks_as_the_requester(engine, session, alice, monkeypatch):
+async def test_the_live_poll_asks_with_the_installs_settings(
+    engine, session, local, monkeypatch
+):
     from vista_backend.db.schemas import ChatSessionTable
     from vista_backend.slack import jobs
 
     from .conftest import project
 
-    project_id = (await project(session, alice)).id
-    chat = ChatSessionTable(
-        project_id=project_id, user_id=alice.id, message_history=[], messages=[]
-    )
+    project_id = (await project(session)).id
+    chat = ChatSessionTable(project_id=project_id, message_history=[], messages=[])
     chat_id = chat.id
     session.add(chat)
     await session.commit()
-    rid = await _record(session, alice, chat_session_id=chat_id)
+    rid = await _record(session, chat_session_id=chat_id)
     asked = []
 
-    def builder(user, paths):
+    def builder(local, paths):
         async def invoke(name, args):
-            asked.append((user.id, paths["output_dir"], name, args))
+            asked.append((local.install_id, paths["output_dir"], name, args))
             return "JOBID=4471 STATE=COMPLETED"
 
         return invoke
@@ -219,8 +214,9 @@ async def test_the_live_poll_asks_as_the_requester(engine, session, alice, monke
 
     record = await session.get(HpcJobRecordTable, rid)
     assert await jobs.poll_status(session, record) == "COMPLETED"
-    ((user_id, out, name, args),) = asked
-    assert user_id == alice.id and f"{project_id}-{alice.id}" in out
+    ((install_id, out, name, args),) = asked
+    assert install_id == local.install_id
+    assert out.endswith(f"volumes/{project_id}/data/output")
     assert (name, args) == (
         "get_hpc_job_status",
         {"job_id": "4471", "cluster": "frontier"},

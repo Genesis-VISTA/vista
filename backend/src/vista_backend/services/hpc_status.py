@@ -44,6 +44,7 @@ from typing import Any, Callable, Literal, Protocol
 
 import globus_sdk
 import httpx
+from globus_sdk import gare
 from pydantic import BaseModel
 
 from ..config import HpcClusterSettings, hpc_settings
@@ -155,7 +156,7 @@ class ClusterChecks(BaseModel):
     settings: Check
     """
     The researcher's own settings a submission needs: the remote directory,
-    and the account on Perlmutter and Lux. Read from the user row, so it is
+    and the account on Perlmutter and Lux. Read from the settings row, so it is
     never cached.
     """
 
@@ -231,7 +232,7 @@ _PLAIN_ACCOUNT = re.compile(r"[A-Za-z0-9_-]+")
 """ The MCP server's rule for the Lux account (`UserConfig.require_lux_account`). """
 
 
-def settings_check(cluster: HpcCluster, user: Any) -> Check:
+def settings_check(cluster: HpcCluster, local: Any) -> Check:
     """Whether the researcher has set what a submission to `cluster` needs.
 
     Every cluster needs a remote directory, and Perlmutter and Lux an account
@@ -241,14 +242,14 @@ def settings_check(cluster: HpcCluster, user: Any) -> Check:
     """
     title = _TITLES[cluster]
     remote_dir: str | None = {
-        "odo": user.odo_remote_dir,
-        "frontier": user.frontier_remote_dir,
-        "perlmutter": user.nersc_remote_dir,
-        "lux": user.lux_remote_dir,
+        "odo": local.odo_remote_dir,
+        "frontier": local.frontier_remote_dir,
+        "perlmutter": local.nersc_remote_dir,
+        "lux": local.lux_remote_dir,
     }[cluster]
     account: str | None = {
-        "perlmutter": user.nersc_account,
-        "lux": user.lux_account,
+        "perlmutter": local.nersc_account,
+        "lux": local.lux_account,
     }.get(cluster)
     needs_account = cluster in ("perlmutter", "lux")
     account_label = "NERSC account" if cluster == "perlmutter" else "Lux account"
@@ -298,22 +299,65 @@ def settings_check(cluster: HpcCluster, user: Any) -> Check:
 class GlobusSessionExpired(Exception):
     """The researcher has to connect Globus again for this cluster."""
 
+    def __init__(
+        self, detail: str, log: str = "", http_status: int | None = None
+    ) -> None:
+        super().__init__(detail)
+        self.detail, self.log, self.http_status = detail, log, http_status
+
+
+class GlobusCheckFailed(Exception):
+    """Globus answered, but not in a way that says whether the session works;
+    the card reads Couldn't verify."""
+
+    def __init__(
+        self, detail: str, log: str = "", http_status: int | None = None
+    ) -> None:
+        super().__init__(detail)
+        self.detail, self.log, self.http_status = detail, log, http_status
+
+
+def _describe(error: globus_sdk.GlobusAPIError) -> tuple[str, str]:
+    """(detail, log) for a Globus answer: status, code and message, no headers."""
+    code, message = error.code, error.message
+    detail = f"Globus answered HTTP {error.http_status}"
+    if code:
+        detail += f" ({code})"
+    if message:
+        detail += f": {message}"
+    log = f"HTTP {error.http_status} code={code} body={(error.text or '')[:500]}"
+    return detail + ".", log
+
 
 class GlobusProbe(Protocol):
     def __call__(
-        self, *, transfer: str, https: str, collection_id: str, client_id: str
+        self,
+        *,
+        transfer: str,
+        https: str,
+        collection_id: str,
+        client_id: str,
+        title: str,
     ) -> None: ...
 
 
 def probe_globus(
-    *, transfer: str, https: str, collection_id: str, client_id: str
+    *,
+    transfer: str,
+    https: str,
+    collection_id: str,
+    client_id: str,
+    title: str = "this cluster",
 ) -> None:
     """Prove a Globus pair still reaches the collection. Blocking.
 
     Classifies failures the way the MCP server's `lib/globus.py` does, so the
-    card and the file operations agree on what an expired session is: a
-    refresh token Globus will not exchange, a Transfer 401, or a
-    `ConsentRequired` / `AuthenticationFailed` refusal.
+    card and the file operations agree on what an expired session is. A GARE
+    (Globus's re-authentication answer) is checked first, whatever its status,
+    because an expired High Assurance login answers 502. Then: a refresh token
+    Globus will not exchange, a Transfer 401, or a `ConsentRequired` /
+    `AuthenticationFailed` refusal. Raises GlobusSessionExpired or
+    GlobusCheckFailed, and lets network errors through.
     """
     auth_client = globus_sdk.NativeAppAuthClient(client_id)
     try:
@@ -322,23 +366,60 @@ def probe_globus(
         transfer_auth = globus_sdk.RefreshTokenAuthorizer(transfer, auth_client)
         globus_sdk.RefreshTokenAuthorizer(https, auth_client)
     except globus_sdk.GlobusAPIError as error:
-        raise GlobusSessionExpired(error.message) from error
+        detail, log = _describe(error)
+        raw = error.raw_json
+        if (
+            error.http_status == 400
+            and isinstance(raw, dict)
+            and raw.get("error") == "invalid_grant"
+        ):
+            raise GlobusSessionExpired(
+                f"Globus no longer accepts the saved {title} connection. "
+                "Connect Globus again.",
+                log=log,
+                http_status=400,
+            ) from error
+        raise GlobusCheckFailed(
+            f"Globus token exchange: {detail}", log, error.http_status
+        ) from error
 
     client = globus_sdk.TransferClient(authorizer=transfer_auth)
     try:
         client.operation_ls(collection_id, path="/~/", limit=1)
     except globus_sdk.TransferAPIError as error:
+        detail, log = _describe(error)
+        reauth = gare.to_gare(error)
+        if reauth is not None:
+            params = reauth.authorization_parameters
+            required = params.session_required_single_domain or []
+            domains = [d for d in required if d != "clients.auth.globus.org"]
+            if domains:
+                detail = (
+                    f"The Globus session for {title} has expired: Globus needs a "
+                    f"fresh login with {', '.join(domains)}. Connect Globus again."
+                )
+            else:
+                detail = (
+                    f"The Globus session for {title} has expired. Connect Globus again."
+                )
+            raise GlobusSessionExpired(
+                detail, log=log, http_status=error.http_status
+            ) from error
         code = error.code or ""
         if error.http_status == 401 or code in (
             "ConsentRequired",
             "AuthenticationFailed",
         ):
-            raise GlobusSessionExpired(error.message) from error
+            raise GlobusSessionExpired(
+                f"The Globus session for {title} has expired. Connect Globus again.",
+                log=log,
+                http_status=error.http_status,
+            ) from error
         if error.http_status in (403, 404):
             # Authenticated, and the collection answered; the home directory
             # just is not listable. The session is what this check is about.
             return
-        raise
+        raise GlobusCheckFailed(detail, log, error.http_status) from error
 
 
 @dataclass(frozen=True)
@@ -348,7 +429,7 @@ class _GlobusSource:
 
 
 def globus_source(
-    cluster: Literal["odo", "frontier"], user: Any
+    cluster: Literal["odo", "frontier"], local: Any
 ) -> _GlobusSource | None:
     """The Globus pair this cluster's file operations would use, or None.
 
@@ -358,11 +439,11 @@ def globus_source(
     lists a directory it cannot read.
     """
     own = (
-        (user.odo_globus_token, user.odo_globus_https_token)
+        (local.odo_globus_token, local.odo_globus_https_token)
         if cluster == "odo"
-        else (user.frontier_globus_token, user.frontier_globus_https_token)
+        else (local.frontier_globus_token, local.frontier_globus_https_token)
     )
-    for transfer, https in (own, (user.globus_token, user.globus_https_token)):
+    for transfer, https in (own, (local.globus_token, local.globus_https_token)):
         if transfer and https:
             return _GlobusSource(transfer, https)
     return None
@@ -471,42 +552,42 @@ class HpcStatusService:
         self._lux_probe = lux_probe
         self._now = now
         self._monotonic = monotonic
-        self._results: dict[
-            tuple[str, HpcCluster], tuple[float, str, ClusterStatus]
-        ] = {}
+        self._results: dict[HpcCluster, tuple[float, str, ClusterStatus]] = {}
         self._facility_feeds: dict[str, tuple[float, list[dict], list[dict]]] = {}
         self._introspections: dict[str, tuple[float, dict]] = {}
         self._ssh_probes: dict[str, tuple[float, Check]] = {}
         self._ssh_inflight: dict[str, asyncio.Future[Check]] = {}
 
     async def status(
-        self, user: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
+        self, local: Any, *, fresh: bool = False, cluster: HpcCluster | None = None
     ) -> HpcStatus:
-        """Every visible cluster's status for `user`.
+        """Every visible cluster's status for these settings.
 
         `fresh` reruns the checks instead of reusing a recent result: for every
         cluster, or with `cluster` for that one only. A hidden cluster is not
         checked at all.
         """
-        hidden: set[str] = set(user.hpc_hidden_clusters or [])
+        hidden: set[str] = set(local.hpc_hidden_clusters or [])
         visible: list[HpcCluster] = [c for c in CLUSTERS if c not in hidden]
         async with httpx.AsyncClient(
             timeout=HTTP_TIMEOUT, transport=self._transport
         ) as client:
             results = await asyncio.gather(
                 *(
-                    self._cluster(client, user, c, fresh=fresh and cluster in (None, c))
+                    self._cluster(
+                        client, local, c, fresh=fresh and cluster in (None, c)
+                    )
                     for c in visible
                 )
             )
         return HpcStatus(clusters=list(results))
 
     async def _cluster(
-        self, client: httpx.AsyncClient, user: Any, cluster: HpcCluster, *, fresh: bool
+        self, client: httpx.AsyncClient, local: Any, cluster: HpcCluster, *, fresh: bool
     ) -> ClusterStatus:
-        key = (str(user.id), cluster)
-        fingerprint = self._credential_fingerprint(user, cluster)
-        settings = settings_check(cluster, user)
+        key = cluster
+        fingerprint = self._credential_fingerprint(local, cluster)
+        settings = settings_check(cluster, local)
         cached = self._results.get(key)
         if (
             not fresh
@@ -514,7 +595,7 @@ class HpcStatusService:
             and cached[1] == fingerprint
             and self._monotonic() - cached[0] < self._result_ttl(cached[2])
         ):
-            # The settings come from the user row, not a facility, so a cached
+            # The settings come from the settings row, not a facility, so a cached
             # result always carries the current ones.
             checks = cached[2].checks.model_copy(update={"settings": settings})
             return cached[2].model_copy(
@@ -524,8 +605,8 @@ class HpcStatusService:
         olcf = cluster in ("odo", "frontier")
         facility, credential, globus = await asyncio.gather(
             self._facility(client, cluster, fresh=fresh),
-            self._credential(client, cluster, user),
-            self._globus(cluster, user) if olcf else _none(),
+            self._credential(client, cluster, local),
+            self._globus(cluster, local) if olcf else _none(),
         )
         checks = ClusterChecks(
             facility=facility, credential=credential, globus=globus, settings=settings
@@ -546,19 +627,19 @@ class HpcStatusService:
             return LUX_PROBE_FAILURE_TTL
         return RESULT_TTL
 
-    def _credential_fingerprint(self, user: Any, cluster: HpcCluster) -> str:
+    def _credential_fingerprint(self, local: Any, cluster: HpcCluster) -> str:
         """Changes whenever a credential this cluster's checks use changes."""
         if cluster == "lux":
             return _digest()  # no credential feeds Lux's checks
         if cluster == "perlmutter":
-            return _digest(user.nersc_iri_token)
-        s3m = user.odo_s3m_token if cluster == "odo" else user.frontier_s3m_token
+            return _digest(local.nersc_iri_token)
+        s3m = local.odo_s3m_token if cluster == "odo" else local.frontier_s3m_token
         own = (
-            (user.odo_globus_token, user.odo_globus_https_token)
+            (local.odo_globus_token, local.odo_globus_https_token)
             if cluster == "odo"
-            else (user.frontier_globus_token, user.frontier_globus_https_token)
+            else (local.frontier_globus_token, local.frontier_globus_https_token)
         )
-        return _digest(s3m, *own, user.globus_token, user.globus_https_token)
+        return _digest(s3m, *own, local.globus_token, local.globus_https_token)
 
     # --- facility ----------------------------------------------------------
 
@@ -763,17 +844,17 @@ class HpcStatusService:
         return 200, info
 
     async def _credential(
-        self, client: httpx.AsyncClient, cluster: HpcCluster, user: Any
+        self, client: httpx.AsyncClient, cluster: HpcCluster, local: Any
     ) -> Check:
         if cluster == "lux":
             # Nothing is stored to check; see LUX_SIGN_IN.
-            return Check(ok=True, message=LUX_SIGN_IN, project=user.lux_account)
+            return Check(ok=True, message=LUX_SIGN_IN, project=local.lux_account)
         title = _TITLES[cluster]
         kind = "NERSC IRI" if cluster == "perlmutter" else "S3M"
         token = {
-            "odo": user.odo_s3m_token,
-            "frontier": user.frontier_s3m_token,
-            "perlmutter": user.nersc_iri_token,
+            "odo": local.odo_s3m_token,
+            "frontier": local.frontier_s3m_token,
+            "perlmutter": local.nersc_iri_token,
         }[cluster]
         if not token:
             return Check(
@@ -855,9 +936,9 @@ class HpcStatusService:
 
     # --- Globus ------------------------------------------------------------
 
-    async def _globus(self, cluster: Literal["odo", "frontier"], user: Any) -> Check:
+    async def _globus(self, cluster: Literal["odo", "frontier"], local: Any) -> Check:
         title = _TITLES[cluster]
-        source = globus_source(cluster, user)
+        source = globus_source(cluster, local)
         if source is None:
             return Check(
                 ok=False,
@@ -877,14 +958,41 @@ class HpcStatusService:
                     https=source.https,
                     collection_id=collection,
                     client_id=self._settings.globus_native_app_client_id,
+                    title=title,
                 ),
                 GLOBUS_TIMEOUT,
             )
-        except GlobusSessionExpired:
+        except GlobusSessionExpired as error:
+            log.info("%s Globus check failed: %s", title, error.log or error.detail)
             return Check(
                 ok=False,
                 reason="session_expired",
-                message=f"The Globus session for {title} has expired; connect Globus again.",
+                message=error.detail,
+                http_status=error.http_status,
+            )
+        except GlobusCheckFailed as error:
+            log.info("%s Globus check failed: %s", title, error.log or error.detail)
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=error.detail,
+                http_status=error.http_status,
+            )
+        except TimeoutError:
+            log.info(
+                "%s Globus check failed: no answer within %g s", title, GLOBUS_TIMEOUT
+            )
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message=f"Globus did not answer within {GLOBUS_TIMEOUT:g} s",
+            )
+        except globus_sdk.NetworkError as error:
+            log.info("%s Globus check failed: %s", title, type(error).__name__)
+            return Check(
+                ok=False,
+                reason="unverifiable",
+                message="Globus could not be reached",
             )
         except Exception as error:  # noqa: BLE001 -- any other failure is "couldn't tell"
             log.info("%s Globus check failed: %s", title, type(error).__name__)

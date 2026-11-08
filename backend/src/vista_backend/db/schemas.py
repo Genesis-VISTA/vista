@@ -4,12 +4,20 @@ Data models / schemas
 
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Boolean, Column, String, false, true
+from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
 from pydantic_ai import UsageLimits
-from pydantic import BaseModel, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    TypeAdapter,
+    field_serializer,
+    field_validator,
+)
 from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
+from ..utils.types import OptionalHttpUrl
 
 # TODO: Remove SQLModel and simplify the duplicate models
 
@@ -91,60 +99,80 @@ class ProjectBase(SQLModel):
 class ProjectCreate(ProjectBase):
     """Project fields the user can set"""
 
-    forum_repo_token: str | None = None
+
+_UNSET: Any = object()
+
+server_in_effect: ContextVar[Any] = ContextVar("server_in_effect", default=_UNSET)
+"""
+The collaboration server in effect for the request being answered, set by the
+API (`api.api`) so that `TeamSharing.team_id` is sent as the team there.
+"""
+
+
+class TeamSharing(SQLModel):
+    """Which collaboration team a project, skill or knowledge base is in."""
+
+    team_id: uuid.UUID | None = None
     """
-    Access token git sends to an `https://` forum repository, or what to do with it.
+    The collaboration team it is in, on the server in effect, and publishes
+    to: the team selected when it was made (`collaboration_team_id`), its
+    project's when made for one, its item's when imported, or the one it was
+    copied to (`team_copy`). None is private: on this computer only, as
+    everything made with Private selected, or seeded or bundled by VISTA, is.
+    Only resources of the same team are used together (`services/teams.py`).
+    """
+    team_server: str | None = None
+    """
+    The collaboration server `team_id` is a team on. On another server the
+    row is private, and it is in its team again on this one (`teams.team_of`).
+    """
 
-    Write-only, because a save replaces the whole project and the token is never
-    read back: None keeps whatever is stored, "" removes it, anything else
-    replaces it.
+    @field_serializer("team_id")
+    def _team_in_effect(self, team_id: uuid.UUID | None) -> uuid.UUID | None:
+        """
+        Sent as its team on the server in effect (`teams.team_of`): a team on
+        another server is None, private, so a client shows what the backend
+        enforces. Unchanged outside a request that set `server_in_effect`.
+        """
+        url = server_in_effect.get()
+        if url is _UNSET or team_id is None:
+            return team_id
+        return team_id if self.team_server == url else None
+
+
+class ProjectSharing(TeamSharing):
+    """
+    Where a project stands with the collaboration server. Never set through
+    `ProjectCreate`: publishing and importing set it, and every write to the
+    project's own fields sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this project was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version this project was published as or imported from. """
+    modified: bool = True
+    """
+    Its own fields (`ProjectCreate`'s) changed here since `remote_version`:
+    set by every write to them, cleared by a publish or an import. A change to
+    a skill it loads is the skill's own `modified`, not this. True for a
+    project never published, seeded ones included: all of it is local.
     """
 
 
-class ProjectPublic(ProjectBase):
+class ProjectPublic(ProjectBase, ProjectSharing):
     """Project fields the user can read"""
 
     id: uuid.UUID
-    has_forum_token: bool = False
-    """Whether the project stores a forum access token. The token is never read back."""
 
 
-class ProjectTable(ProjectBase, table=True):
+class ProjectTable(ProjectBase, ProjectSharing, table=True):
     """Project SQL model"""
 
     __tablename__: str = "project"
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    forum_repo_token: str | None = Field(
-        default=None, sa_column=Column(EncryptedStr, nullable=True)
-    )
-    """
-    Access token for the forum repository over HTTPS. Encrypted at rest.
-
-    Here and not on `ProjectBase`, so no read model carries it: `ProjectPublic` is
-    what an agent is built from, and a credential has no business near a prompt.
-    Without one, git uses whatever credentials the system git has, as before.
-    """
-
-    @property
-    def has_forum_token(self) -> bool:
-        """Read by `ProjectPublic.model_validate`, which validates from attributes."""
-        return bool(self.forum_repo_token)
-
-
-class ProjectMemberTable(SQLModel, table=True):
-    """
-    Membership join table. A row grants `user_id` read+write access to
-    `project_id`. The composite primary key makes a (project, user) pair
-    unique, so a duplicate add raises IntegrityError.
-    """
-
-    __tablename__: str = "project_member"
-    project_id: uuid.UUID = Field(
-        foreign_key="project.id", primary_key=True, ondelete="CASCADE"
-    )
-    user_id: uuid.UUID = Field(
-        foreign_key="app_user.id", primary_key=True, ondelete="CASCADE"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +195,8 @@ class ProjectMemberTable(SQLModel, table=True):
 # Lowercase letters, digits, and dashes only. 1–80 chars. Must start and
 # end with an alphanumeric character. Matches the URL-safe slug convention
 # used by Projects and Skills elsewhere in the codebase.
-_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+SLUG_PATTERN = r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$"
+_SLUG_RE = re.compile(SLUG_PATTERN)
 
 
 def is_valid_slug(slug: str) -> bool:
@@ -190,6 +219,9 @@ PublicationCitationStatus = Literal[
     "failed",  # LLM call ran but produced an error or unparseable output
     "disabled",  # no LLM credentials configured, citation extraction is off
 ]
+
+
+PublicationKind = Literal["pdf", "csv", "tsv", "text", "markdown"]
 
 
 class Publication(BaseModel):
@@ -238,6 +270,10 @@ class Publication(BaseModel):
     """
     citation_error: Optional[str] = None
     """Last error from the citation LLM call, if citation_status='failed'."""
+    kind: PublicationKind = "pdf"
+    """File format, from the suffix; rows without one read as a PDF."""
+    row_count: Optional[int] = None
+    """Data rows in a CSV/TSV file; None for other formats or when unknown."""
 
 
 KnowledgeBaseBuildStatus = Literal[
@@ -292,6 +328,27 @@ class KnowledgeBaseBase(SQLModel):
     """ ISO timestamp of the most recent successful indexer run. """
 
 
+class KnowledgeBaseSharing(TeamSharing):
+    """
+    Where a knowledge base stands with the collaboration server. Never set
+    through `KnowledgeBaseCreate` or `KnowledgeBaseUpdate`: publishing and
+    importing set it, and every write to the knowledge base sets `modified`.
+    """
+
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this knowledge base was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version its PDFs and index were published as or imported from. """
+    modified: bool = True
+    """
+    Changed here since `remote_version`: set by a change of name or
+    description and by adding or deleting a PDF, cleared by a publish or an
+    import. True for one never published, seeded ones included.
+    """
+
+
 class KnowledgeBaseCreate(SQLModel):
     """
     Fields the user can set when creating a Knowledge Base via the API.
@@ -303,6 +360,11 @@ class KnowledgeBaseCreate(SQLModel):
     slug: str
     name: str
     description: str | None = None
+    project: str | None = None
+    """
+    The project it is made for, whose team it joins (so the project can use
+    it); without one, it joins the team selected here.
+    """
 
 
 class KnowledgeBaseUpdate(SQLModel):
@@ -312,13 +374,13 @@ class KnowledgeBaseUpdate(SQLModel):
     description: str | None = None
 
 
-class KnowledgeBasePublic(KnowledgeBaseBase):
+class KnowledgeBasePublic(KnowledgeBaseBase, KnowledgeBaseSharing):
     id: uuid.UUID
     created_at: str
     updated_at: str
 
 
-class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
+class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """Knowledge Base SQL model."""
 
     __tablename__: str = "knowledge_base"
@@ -329,6 +391,11 @@ class KnowledgeBaseTable(KnowledgeBaseBase, table=True):
     """ ISO timestamp set at row insert time. """
     updated_at: str = Field(default="")
     """ ISO timestamp updated on every write. """
+    seed_item: uuid.UUID | None = None
+    """
+    No longer used: seeds are private, like anything else never published.
+    Kept so an older database still opens.
+    """
 
 
 class IndexProgress(BaseModel):
@@ -351,13 +418,14 @@ class IndexProgress(BaseModel):
 # Skills
 # Note, this is different than the models in agents/skills.py. agents/skills.py only handles the
 # skills spec directly (https://agentskills.io/specification). This database model handles storing
-# to location on disk, and some ownership metadata, in addition to mirroring the Skill spec metadata
+# to location on disk, provenance and collaboration state, in addition to mirroring the Skill spec
+# metadata
 #
 # TODO: Currently skills are still globably editable, and project just select a subset of skills.
 # We need to make skills scoped to a project, only editable by their creator, etc.
 
 
-class SkillBase(SQLModel):
+class SkillBase(TeamSharing):
     name: str
     """
     SKILL.md name. Must be kebab case. Unique
@@ -380,10 +448,26 @@ class SkillBase(SQLModel):
     models, but the API exposes it as `metadata` (matching create/patch input).
     """
 
-    # DB-only hub metadata (never written to SKILL.md).
-    author: str | None = None
+    # Provenance and collaboration state (never written to SKILL.md).
     repo_url: str | None = None
-    is_public: bool = False
+    """ The repository folder a GitHub or GitLab import came from. """
+    bundled: bool = False
+    """
+    Ships with VISTA (`db/skills/`), so every installation already has it: it
+    is never published or deleted, and an import never replaces it.
+    """
+    origin_server: str | None = None
+    """ The collaboration server `remote_id` lives on; None until published or imported. """
+    remote_id: uuid.UUID | None = None
+    """ The item on `origin_server` this skill was published as or imported from. """
+    remote_version: int | None = None
+    """ The item's version these files were published as or imported from. """
+    modified: bool = False
+    """
+    Changed here since `remote_version`: set by every write to the skill's
+    files, cleared by a publish or an import. A skill never published is
+    modified from its creation, as everything in it is local.
+    """
 
 
 class SkillPublic(SkillBase):
@@ -417,15 +501,12 @@ class SkillUpdate(BaseModel):
     compatibility: str | None = None
     allowed_tools: str | None = None
     metadata: dict[str, str | list[str]] | None = None
-    author: str | None = None
-    repo_url: str | None = None
-    is_public: bool | None = None
 
 
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
-InferenceProvider = Literal["i2", "mag", "olcf", "custom"]
+InferenceProvider = Literal["mag", "olcf", "custom"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
 PreferredUnits = Literal["si", "source"]
@@ -448,13 +529,11 @@ def _normalize_research_interests(v: list[str] | None) -> list[str] | None:
     return cleaned
 
 
-class UserBase(SQLModel):
-    pass
-
-
 # Treat "" the same as None for the optional config fields so a cleared frontend
 # input doesn't end up as a non-null-but-empty token/account in the DB
-_USER_CONFIG_NULLABLE_FIELDS = (
+_SETTINGS_NULLABLE_FIELDS = (
+    "display_name",
+    "email",
     "inference_model",
     "inference_base_url",
     "inference_api_key",
@@ -489,101 +568,36 @@ def _empty_str_to_none(v):
     return None if v == "" else v
 
 
-class UserCreate(UserBase):
-    email: str
-    is_admin: bool = False
-    inference_model: str | None = None
-    inference_base_url: str | None = None
-    inference_api_key: str | None = None
-    inference_provider: InferenceProvider | None = None
-    inference_mag_api_key: str | None = None
-    inference_olcf_api_key: str | None = None
-    inference_custom_api_key: str | None = None
-    research_role: str | None = None
-    research_institution: str | None = None
-    research_interests: list[str] | None = None
-    preferred_units: PreferredUnits | None = None
-    technical_depth: TechnicalDepth | None = None
-    evidence_preference: EvidencePreference | None = None
-    personalize_responses: bool = True
-    nersc_account: str | None = None
-    nersc_remote_dir: str | None = None
-    odo_remote_dir: str | None = None
-    frontier_remote_dir: str | None = None
-    lux_remote_dir: str | None = None
-    lux_account: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
-    nersc_iri_token: str | None = None
-    globus_token: str | None = None
-    odo_globus_token: str | None = None
-    frontier_globus_token: str | None = None
-    globus_https_token: str | None = None
-    odo_globus_https_token: str | None = None
-    frontier_globus_https_token: str | None = None
-
-    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
-    @classmethod
-    def _empty_to_none(cls, v):
-        return _empty_str_to_none(v)
-
-    @field_validator("research_interests")
-    @classmethod
-    def _normalize_interests(cls, v):
-        return _normalize_research_interests(v)
+_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+""" One `@`, no spaces, and a dot in the domain: a shape check, not a delivery check. """
 
 
-class UserUpdate(UserBase):
-    is_admin: bool | None = None
-    inference_model: str | None = None
-    inference_base_url: str | None = None
-    inference_api_key: str | None = None
-    inference_provider: InferenceProvider | None = None
-    inference_mag_api_key: str | None = None
-    inference_olcf_api_key: str | None = None
-    inference_custom_api_key: str | None = None
-    research_role: str | None = None
-    research_institution: str | None = None
-    research_interests: list[str] | None = None
-    preferred_units: PreferredUnits | None = None
-    technical_depth: TechnicalDepth | None = None
-    evidence_preference: EvidencePreference | None = None
-    personalize_responses: bool = True
-    nersc_account: str | None = None
-    nersc_remote_dir: str | None = None
-    odo_remote_dir: str | None = None
-    frontier_remote_dir: str | None = None
-    lux_remote_dir: str | None = None
-    lux_account: str | None = None
-    odo_s3m_token: str | None = None
-    frontier_s3m_token: str | None = None
-    nersc_iri_token: str | None = None
-    globus_token: str | None = None
-    odo_globus_token: str | None = None
-    frontier_globus_token: str | None = None
-    globus_https_token: str | None = None
-    odo_globus_https_token: str | None = None
-    frontier_globus_https_token: str | None = None
-    hpc_hidden_clusters: list[HpcCluster] | None = None
-    """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
+class OnboardingTourState(BaseModel):
+    """
+    Where the researcher is in the first-boot tour. Checked on writes only, like
+    `HpcCluster`: the stored JSON is read back as it is, so a step id that a
+    later version drops cannot make reading the settings fail.
+    """
 
-    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
-    @classmethod
-    def _empty_to_none(cls, v):
-        return _empty_str_to_none(v)
-
-    @field_validator("hpc_hidden_clusters")
-    @classmethod
-    def _dedupe_hidden(cls, v):
-        return _dedupe_clusters(v)
-
-    @field_validator("research_interests")
-    @classmethod
-    def _normalize_interests(cls, v):
-        return _normalize_research_interests(v)
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["in_progress", "finished", "exited"]
+    step: str
 
 
-class UserSelfUpdate(UserBase):
+class LocalSettingsUpdate(SQLModel):
+    """
+    The settings a researcher can change. `install_id` is not among them: it is
+    made once, with the row, and never changes.
+    """
+
+    display_name: str | None = None
+    """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: OptionalHttpUrl = None
+    """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
+    collaboration_team_id: uuid.UUID | None = None
+    """ The collaboration team selected here; None for Private. """
+    email: str | None = None
+    """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
@@ -615,17 +629,37 @@ class UserSelfUpdate(UserBase):
     frontier_globus_https_token: str | None = None
     hpc_hidden_clusters: list[HpcCluster] | None = None
     """ Clusters left out of the NavRail. `null` or `[]` shows them all. """
+    onboarding_tour: OnboardingTourState | None = None
+    """ The tour's progress; `null` forgets it, so the tour starts again. """
+    update_checks: bool = True
+    """ Whether the backend checks GitHub for a newer release. """
+    update_prereleases: bool = False
+    """ Whether release candidates are offered as updates. """
     github_token: str | None = None
     """
     The researcher's GitHub token, or what to do with it. Write-only: absent or
     null keeps the stored one, "" removes it, anything else replaces it. Kept out
-    of `_USER_CONFIG_NULLABLE_FIELDS` on purpose — that turns "" into null, which
-    here would make "remove" mean "keep". See `services/user.update_user`.
+    of `_SETTINGS_NULLABLE_FIELDS` on purpose — that turns "" into null, which
+    here would make "remove" mean "keep". See `services/local_settings.update`.
     """
     gitlab_token: str | None = None
     """ The researcher's gitlab.com token. Write-only, like `github_token`. """
+    collaboration_token: str | None = None
+    """
+    The token from the collaboration server's sign-in page. Write-only, like
+    `github_token`; a `Bearer ` copied with it is dropped.
+    """
 
-    @field_validator(*_USER_CONFIG_NULLABLE_FIELDS, mode="before")
+    @field_validator("collaboration_token", mode="before")
+    @classmethod
+    def _bare_token(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            if v[:7].lower() == "bearer ":
+                v = v[7:].strip()
+        return v
+
+    @field_validator(*_SETTINGS_NULLABLE_FIELDS, mode="before")
     @classmethod
     def _empty_to_none(cls, v):
         return _empty_str_to_none(v)
@@ -640,31 +674,34 @@ class UserSelfUpdate(UserBase):
     def _normalize_interests(cls, v):
         return _normalize_research_interests(v)
 
-
-class UserPublic(UserBase):
-    id: uuid.UUID
-    email: str
-    is_admin: bool = False
-    hpc_hidden_clusters: list[str] = []
-    """
-    Clusters left out of the NavRail; not a secret, so on the light view too.
-    Plain strings on the way out: only writes are checked against
-    `HpcCluster`, so a stored name that later leaves the list cannot make
-    reading the user fail.
-    """
-
-    @field_validator("hpc_hidden_clusters", mode="before")
+    @field_validator("email")
     @classmethod
-    def _null_is_none_hidden(cls, v):
-        return [] if v is None else v
+    def _check_email(cls, v):
+        """
+        A malformed address would be saved and then fail every send, and the
+        monitor marks a job notified either way, so its notifications would be
+        lost without a word. A rough shape check catches the typos.
+        """
+        if v is None:
+            return v
+        v = v.strip()
+        if not _EMAIL.fullmatch(v):
+            raise ValueError("enter an email address, like you@example.org")
+        return v
 
 
-class UserPublicWithConfig(UserBase):
-    """Full user view for the authenticated user — includes decrypted token fields."""
+class LocalSettingsPublic(SQLModel):
+    """
+    The installation's settings, including decrypted credentials. Never carries
+    the write-only repository tokens, only whether each is saved.
+    """
 
-    id: uuid.UUID
-    email: str
-    is_admin: bool = False
+    install_id: uuid.UUID
+    """ This installation's identity, made once when the settings row is created. """
+    display_name: str | None = None
+    collaboration_server_url: str | None = None
+    collaboration_team_id: uuid.UUID | None = None
+    email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
     inference_api_key: str | None = None
@@ -699,15 +736,36 @@ class UserPublicWithConfig(UserBase):
     has_gitlab_token: bool = False
     """
     Whether each repository token is saved. The tokens themselves are left out:
-    this is the model an agent is built from, and they are read from the user's
+    this is the model an agent is built from, and they are read from the settings
     row when used (`services/repo_tokens`), never from here.
+    """
+    has_collaboration_token: bool = False
+    collaboration_token: str | None = Field(default=None, exclude=True, repr=False)
+    """
+    Read by `services/collaboration` to sign its requests, and nothing else:
+    left out of every dump and repr, so it is neither in `GET /settings` nor in
+    the settings MCP tools are handed (`_build_vista_metadata`).
     """
     hpc_hidden_clusters: list[str] = []
     """
     Clusters left out of the NavRail; not a secret, so on the light view too.
     Plain strings on the way out: only writes are checked against
     `HpcCluster`, so a stored name that later leaves the list cannot make
-    reading the user fail.
+    reading the settings fail.
+    """
+
+    onboarding_tour: dict[str, Any] | None = None
+    """
+    `{"status", "step"}` as last written; `null` means the tour never started,
+    which is what an upgraded installation has. Plain on the way out.
+    """
+    update_checks: bool = True
+    update_prereleases: bool = False
+    onboarding_tour_enabled: bool = True
+    """
+    Whether the installation's configuration allows the tour
+    (`Settings.onboarding_tour`). Read-only: not on `LocalSettingsUpdate`, and
+    not on the row; `services/local_settings.to_public` fills it.
     """
 
     @field_validator("hpc_hidden_clusters", mode="before")
@@ -721,27 +779,49 @@ class UserPublicWithConfig(UserBase):
         return [] if v is None else v
 
 
-class UserTable(SQLModel, table=True):
-    __tablename__: str = "app_user"
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    email: str = Field(unique=True)
-    is_admin: bool = False
-    remote_hpc_jobs_dir: str = "/gpfs/wolf2/olcf/gen150/proj-shared/vista"
+LOCAL_SETTINGS_ID = 1
+""" The settings row's primary key. There is only ever this one row. """
+
+
+class LocalSettingsTable(SQLModel, table=True):
     """
-    Legacy. Nothing reads it, and no API schema exposes it: each cluster's
-    remote folder is its own field (`odo_remote_dir`, ...). Kept only because
-    SQLite column drops are not worth it.
+    The installation's settings and credentials: one row, made at startup by
+    `init_db`. VISTA has one researcher per installation, so this is everything
+    that used to be per user.
     """
+
+    __tablename__: str = "local_settings"
+    id: int = Field(default=LOCAL_SETTINGS_ID, primary_key=True)
+    install_id: uuid.UUID = Field(default_factory=uuid.uuid4)
+    """ This installation's identity for the collaboration server. Never changes. """
+    display_name: str | None = None
+    """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
+    collaboration_server_url: str | None = None
+    """
+    The collaboration server this installation publishes to and imports from.
+    `None` falls back to `Settings.collaboration_server_url`; with neither,
+    publishing and importing are off. Not a secret.
+    """
+    collaboration_team_id: uuid.UUID | None = None
+    """
+    The collaboration team selected here, which every page shows the
+    resources of and every new project, skill and knowledge base joins; None
+    for Private, on this computer only. A team on that server, so cleared
+    when the server's address changes.
+    """
+    email: str | None = None
+    """ Where campaign notifications go; nothing is sent without it. """
     inference_model: str | None = None
     """
-    Chat model for this user, as `provider:name`; `None` uses the provider's
+    Chat model, as `provider:name`; `None` uses the provider's
     default. Cleared when the provider changes. Not a secret -- stored in the
     clear.
     """
     inference_provider: str | None = None
     """
-    `i2`, `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
-    until the researcher chooses: i2, or `Settings` where they differ from it.
+    `mag`, `olcf` or `custom` (see `agents.inference.PROVIDER_PRESETS`). `None`
+    until the researcher chooses: the default provider (`DEFAULT_PROVIDER`), or
+    `Settings` where they differ from it.
     """
     inference_base_url: str | None = None
     """
@@ -752,14 +832,15 @@ class UserTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """
-    The AmSC i2 provider's access key. Encrypted at rest. Saved before
-    providers existed, so every older key reads as i2's.
+    The access key for an endpoint set in the installation's configuration
+    ("Custom, from configuration"). Encrypted at rest. The key saved before
+    providers existed; no provider preset reads it, so it is never sent to one.
 
-    On a single-user install this row *is* the deployment configuration: it is
-    where a researcher's key lands when they paste it into the settings modal,
-    and it takes precedence over `Settings.openai_api_key`. Changing it evicts
-    this user's pooled agents through `update_user`'s `invalidate_agents` call,
-    so the next message picks it up with no restart.
+    This row *is* the installation's configuration: it is where a researcher's
+    key lands when they paste it into the settings modal, and it takes
+    precedence over `Settings.openai_api_key`. Changing it evicts every pooled
+    agent (`services/local_settings.update`), so the next message picks it up
+    with no restart.
     """
     inference_mag_api_key: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
@@ -797,12 +878,6 @@ class UserTable(SQLModel, table=True):
     """ NERSC project account for Slurm submission. """
     nersc_remote_dir: str | None = None
     """ Absolute remote dir on the NERSC machine (e.g. /pscratch/sd/<u>/<user>/.vista). Required for Perlmutter. """
-    frontier_account: str | None = None
-    """
-    Legacy. Nothing reads it, and no API schema exposes it: a Frontier job is
-    charged to its S3M token's own project. Kept only because SQLite column
-    drops are not worth it.
-    """
     odo_remote_dir: str | None = None
     """
     Names where VISTA puts job sources and outputs on Odo: `<dir>.<user>.jobs`
@@ -822,15 +897,6 @@ class UserTable(SQLModel, table=True):
     """
     The OLCF project Lux jobs are charged to (`#SBATCH -A`). Required for Lux,
     which has no token to take a project from. Not a secret.
-    """
-    s3m_token: str | None = Field(
-        default=None, sa_column=Column(EncryptedStr, nullable=True)
-    )
-    """
-    Legacy single S3M token. Nothing reads it: an S3M token is scoped to one
-    OLCF project, so one field could only ever authorize one of Odo and
-    Frontier. Kept only because SQLite column drops are not worth it; see
-    `odo_s3m_token` / `frontier_s3m_token`.
     """
     odo_s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
@@ -920,20 +986,57 @@ class UserTable(SQLModel, table=True):
 
     @property
     def has_github_token(self) -> bool:
-        """Read by `UserPublicWithConfig.model_validate`, which validates from attributes."""
+        """Read by `LocalSettingsPublic.model_validate`, which validates from attributes."""
         return bool(self.github_token)
 
     @property
     def has_gitlab_token(self) -> bool:
         return bool(self.gitlab_token)
 
+    collaboration_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    The researcher's token for the collaboration server, pasted from its
+    sign-in page and sent as `Authorization: Bearer`. Encrypted at rest.
+    Cleared when the server's address changes, so it only ever goes to the
+    server that issued it (`services/local_settings.update`).
+    """
+
+    @property
+    def has_collaboration_token(self) -> bool:
+        return bool(self.collaboration_token)
+
     hpc_hidden_clusters: list[str] | None = Field(
         default=None, sa_column=Column(JSON, nullable=True)
     )
     """
-    Clusters this user has turned off in the NavRail, whose availability is
-    then never checked. Stored as what is *hidden* so that a cluster added
-    later shows for everyone by default, with nothing to migrate.
+    Clusters turned off in the NavRail, whose availability is then never
+    checked. Stored as what is *hidden* so that a cluster added later shows by
+    default, with nothing to migrate.
+    """
+    onboarding_tour: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSON, nullable=True)
+    )
+    """
+    First-boot tour progress, `{"status": "in_progress" | "finished" | "exited",
+    "step": "<id>"}`; `None` means never started. JSON so a new step id never
+    needs a schema change.
+    """
+    update_checks: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=true()),
+    )
+    """Whether the backend checks GitHub for a newer release (`services/update_check`)."""
+    update_prereleases: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+    """Whether prereleases (release candidates) are offered as updates."""
+    update_checked_at: str | None = None
+    """
+    When the last successful update check finished (ISO 8601, UTC), so the 24h
+    schedule survives a restart. Not on the API models: the backend writes it.
     """
 
 
@@ -997,6 +1100,11 @@ class ChatSessionBase(SQLModel):
         list[dict[str, Any]] | None,
         Field(default=None, sa_column=Column(JSON, nullable=True)),
     ]
+    inference_model: A[
+        str | None,
+        Field(default=None, sa_column=Column(String, nullable=True)),
+    ]
+    """ This chat's own `provider:name` model; null follows the researcher's default. """
     origin: A[
         str,
         Field(
@@ -1019,11 +1127,12 @@ class ChatSessionUpdate(BaseModel):
     latest_result: dict[str, Any] | None = None
     ack_run: bool = False
     """ The researcher has seen the last run: clear its unseen flag and its stored events. """
+    inference_model: str | None = None
+    """ This chat's model. An explicit null clears it (follow the default); absent leaves it untouched. """
 
 
 class ChatSessionSummary(BaseModel):
     id: uuid.UUID
-    user_id: uuid.UUID
     project_id: uuid.UUID
     title: str
     origin: str = "app"
@@ -1033,7 +1142,6 @@ class ChatSessionSummary(BaseModel):
 
 class ChatSessionPublic(ChatSessionBase):
     id: uuid.UUID
-    user_id: uuid.UUID
     project_id: uuid.UUID
     created_at: str
     updated_at: str
@@ -1045,10 +1153,39 @@ class ChatSessionTable(ChatSessionBase, table=True):
     __tablename__: str = "chat_session"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+
+
+class DisplayedFileTable(SQLModel, table=True):
+    """
+    One `display_file` call that succeeded in a chat run. Append-only: every display adds a
+    row. The file's size and `mtime_ns` are taken at display time, so a later write to the
+    file reads as "changed".
+    """
+
+    __tablename__: str = "displayed_file"
+    __table_args__ = (
+        Index("ix_displayed_file_project_kind_path", "project_id", "kind", "path"),
+        Index("ix_displayed_file_chat_shown_at", "chat_session_id", "shown_at"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    run_id: str
+    """ `ChatRun.run_id` hex, as on the UI's bubbles. """
+    tool_call_id: str
+    kind: str
+    """ `uploads` or `outputs`. """
+    path: str
+    """ Relative POSIX path, as the files API names it. """
+    shown_at: str
+    size: int
+    mtime_ns: int
 
 
 # ---------------------------------------------------------------------------
@@ -1096,12 +1233,18 @@ class CampaignRunBase(SQLModel):
             sa_column=Column(String, nullable=False, default="gathering"),
         ),
     ]
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """ The `provider:name` model the launching agent resolved, so a rebuild in the background uses it. Null on older runs: the default. """
+    provider: A[
+        InferenceProvider | None,
+        Field(default=None, sa_column=Column(String, nullable=True)),
+    ]
+    """ The provider `model` was resolved on. A model name means nothing on another one, so after a provider switch the run follows the default. """
 
 
 class CampaignRunPublic(CampaignRunBase):
     id: uuid.UUID
     project_id: uuid.UUID
-    user_id: uuid.UUID
     session_id: uuid.UUID | None = None
     created_at: str
     updated_at: str
@@ -1112,7 +1255,6 @@ class CampaignRunTable(CampaignRunBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
     session_id: uuid.UUID | None = Field(
         default=None, foreign_key="chat_session.id", ondelete="SET NULL"
     )
@@ -1193,7 +1335,6 @@ class HpcJobBase(SQLModel):
 class HpcJobPublic(HpcJobBase):
     job_id: str
     step_id: uuid.UUID
-    user_id: uuid.UUID
 
 
 class HpcJobTable(HpcJobBase, table=True):
@@ -1202,7 +1343,6 @@ class HpcJobTable(HpcJobBase, table=True):
     job_id: str = Field(primary_key=True)
     """ The HPC job id returned by submit_hpc_job; unique across clusters (matches the MCP registry key). """
     step_id: uuid.UUID = Field(foreign_key="campaign_step.id", ondelete="CASCADE")
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
 
 
 class CampaignCreate(BaseModel):
@@ -1240,7 +1380,7 @@ class CampaignStatePublic(BaseModel):
 #
 # The forum's git repository is the source of truth for what was said. These
 # tables are a *projection* of it, rebuildable by reading the thread, and exist
-# for the things git cannot cheaply do: list a user's debates, scope them to a
+# for the things git cannot cheaply do: list debates, scope them to a
 # project, and feed a change stream to the UI.
 #
 #   DebateRun         — the thread: topic, round budget, status, verdict.
@@ -1311,11 +1451,18 @@ class DebateRunBase(SQLModel):
     retrying the read.
     """
 
+    forum_thread_id: uuid.UUID | None = None
+    """
+    The `forum_thread` this run argued in. A run is this install's agents
+    arguing in a thread; a thread may have runs from several installs. Null on
+    rows from before shared threads, until their project's first sync links
+    them.
+    """
+
 
 class DebateRunPublic(DebateRunBase):
     id: uuid.UUID
     project_id: uuid.UUID
-    user_id: uuid.UUID
     created_at: str
     updated_at: str
 
@@ -1325,7 +1472,6 @@ class DebateRunTable(DebateRunBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
 
@@ -1347,6 +1493,8 @@ class DebateParticipantBase(SQLModel):
     identical on a thread and mean very different things — the second is a
     configuration problem, and without this there is no way to see it.
     """
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """ This role's own `provider:name` model; null follows the default. """
 
 
 class DebateParticipantPublic(DebateParticipantBase):
@@ -1413,14 +1561,16 @@ class DebatePostBase(SQLModel):
 
     authored_by: str | None = None
     """
-    The VISTA account that wrote this, for posts this deployment made itself.
+    Who wrote this, for posts this installation made itself: the name in its
+    Settings when the post was made. Never the email, which is for
+    notifications only.
 
     Every operator's post is `sender="human"` with no name — the forum format
     has nowhere to put one, and a name arriving over the wire would be a claim
-    rather than a fact. So this is filled in only where we genuinely know: the
-    request that created the post was authenticated. It is stamped at post time
-    rather than joined at read time — the record says who posted it then, not
-    who owns that account now.
+    rather than a fact. So this is filled in only for a post this installation
+    wrote, and only when Settings names its researcher. The name is self-typed,
+    not verified. It is stamped at post time rather than joined at read time —
+    the record says what Settings said then, not what it says now.
 
     Always None on a peer's post. Nothing we could put there would be knowledge.
     """
@@ -1447,6 +1597,14 @@ class DebatePostBase(SQLModel):
     on an agent's post is meaningful — it says the claim rests on the model
     alone.
     """
+    model: A[str | None, Field(default=None, sa_column=Column(String, nullable=True))]
+    """
+    The `provider:name` model that wrote this post, as resolved at the time.
+
+    Null for human and peer posts and for posts from before this was recorded.
+    The resolved model rather than the role's choice, so it stays true after
+    the default moves or the role is changed for a continued debate.
+    """
 
 
 class DebatePostPublic(DebatePostBase):
@@ -1462,12 +1620,129 @@ class DebatePostTable(DebatePostBase, table=True):
     run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
 
 
+# ---------------------------------------------------------------------------
+# Shared threads (openspec/changes/archive/2026-11-05-forum-shared-threads)
+#
+# Every thread on a project's forum, whichever install opened it, copied from
+# git. `debate_run` stays "a run this install executed", and `debate_post` the
+# posts those runs saw, with this install's notes on its own posts. Everything
+# here can be dropped and rebuilt by syncing the forum.
+# ---------------------------------------------------------------------------
+
+
+class ForumThreadBase(SQLModel):
+    thread_id: str
+    """ The thread's uuid7, as in its ref and `thread.json`. """
+    title: str
+    framing: str | None = None
+    """ The body of the thread's TASK post, if it has one. """
+    created_by: str = ""
+    """ The opener's host id, from `thread.json`. A claim, like every host id. """
+    opened_at: str = ""
+    """ `thread.json`'s `created_at`. """
+    status: str = "open"
+    """ open, done, blocked or closed, as `forum_git.thread_status` reads it. """
+    verdict: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ The structured verdict of the thread's latest DONE post, as it was written. """
+    thread_missing: bool = False
+    tip: str | None = None
+    """ The thread ref's commit when this row was last projected. """
+    synced_at: str | None = None
+
+
+class ForumThreadTable(ForumThreadBase, table=True):
+    __tablename__: str = "forum_thread"
+    __table_args__ = (UniqueConstraint("project_id", "thread_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class ForumPostBase(SQLModel):
+    post_id: str
+    kind: str
+    body: str
+    """ The only agent-authored field, as on `debate_post`. """
+    sender: str
+    forum_role: str
+    origin: str | None = None
+    reply_to: str | None = None
+    ts: str
+    vouch_lane: str | None = None
+    published: bool | None = None
+    on_remote: bool | None = None
+    votes: int = 0
+    peer_votes: int = 0
+    run: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ On a RUN post: its rounds and roster. """
+    verdict: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ On a DONE post: the structured verdict, as written. """
+
+
+class ForumPostTable(ForumPostBase, table=True):
+    __tablename__: str = "forum_post"
+    __table_args__ = (UniqueConstraint("forum_thread_id", "post_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    forum_thread_id: uuid.UUID = Field(
+        foreign_key="forum_thread.id", ondelete="CASCADE"
+    )
+    seq: int = 0
+    """
+    Where the post came in the thread when it was first copied: the order the
+    remote accepted it. Posts are read in this order, never by `ts`.
+    """
+    authored_by: str | None = None
+    """
+    For a post this install's researcher wrote by hand: their name from
+    Settings, as on `debate_post`. Here because a researcher can post in a
+    thread their install has never run agents in, so there may be no run row to
+    hold it. The one field here git does not hold: a rebuild loses it.
+    """
+    pusher_name: str | None = None
+    """
+    On a hosted forum: the name of the account the collaboration server recorded
+    as pushing the post, read from its push records when the thread is synced.
+    None on a forge, for a post copied onto the forum when a project moved
+    there, and until the server's record is read. A cache of the server's.
+    """
+
+
+DebateRoleName = Literal["proposer", "reviewer", "referee"]
+""" The debate's roles; the same vocabulary as `agents.forum.roles.DebateRole`. """
+
+
+def clean_role_models(
+    models: dict[DebateRoleName, str | None],
+) -> dict[DebateRoleName, str | None]:
+    """A blank model is no choice: the role follows the default."""
+    return {role: (model or "").strip() or None for role, model in models.items()}
+
+
 class DebateCreate(BaseModel):
     """Fields a user supplies to open a debate (the project comes from the URL)."""
 
     topic: str
     framing: str | None = None
     rounds: int | None = None
+    models: dict[DebateRoleName, str | None] = {}
+    """ A model per role; a missing key or null means the default. """
+
+    @field_validator("models")
+    @classmethod
+    def _clean_models(cls, models):
+        return clean_role_models(models)
 
 
 class DebateStatePublic(BaseModel):
@@ -1501,9 +1776,6 @@ class HpcJobRecordTable(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("cluster", "job_id"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(
-        foreign_key="app_user.id", ondelete="CASCADE", index=True
-    )
     chat_session_id: uuid.UUID | None = Field(
         default=None, foreign_key="chat_session.id", ondelete="SET NULL"
     )
@@ -1566,7 +1838,15 @@ class SlackConfigTable(SQLModel, table=True):
 
 
 class SlackLinkTable(SQLModel, table=True):
-    """A Slack user who may act as a VISTA user."""
+    """
+    A Slack user who may act through this installation, as its researcher.
+
+    VISTA has one researcher per installation, so a link names no VISTA user:
+    it admits a Slack account to this install. `collab_sub` is who the
+    researcher was on the collaboration server when the link was made (the
+    Keycloak `sub`), recorded so a hosted router can later route a Slack user
+    to their own VISTA by it. Nothing here decides access by it.
+    """
 
     __tablename__: str = "slack_link"
     __table_args__ = (UniqueConstraint("team_id", "slack_user_id"),)
@@ -1574,11 +1854,14 @@ class SlackLinkTable(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     team_id: str
     slack_user_id: str
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
+    collab_sub: str | None = None
+    """ The researcher's collaboration-server identity when linked; None if not signed in. """
+    collab_name: str | None = None
+    """ Their name (or email) there, for showing only. """
     project_id: uuid.UUID | None = Field(
         default=None, foreign_key="project.id", ondelete="SET NULL"
     )
-    """ The project Slack conversations run in; None means the user's first. """
+    """ The project Slack conversations run in; None means the first project. """
     dm_channel_id: str | None = None
     notify_in_thread: bool = False
     """ Job notifications @mention in the thread instead of by direct message. """
@@ -1650,10 +1933,9 @@ class SlackReminderTable(SQLModel, table=True):
     """A credential-expiry reminder already sent, so it is sent once."""
 
     __tablename__: str = "slack_reminder"
-    __table_args__ = (UniqueConstraint("user_id", "cluster", "kind", "expires_at"),)
+    __table_args__ = (UniqueConstraint("cluster", "kind", "expires_at"),)
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="app_user.id", ondelete="CASCADE")
     cluster: str
     kind: str
     """ "24h", "2h" or "expired". """
@@ -1670,7 +1952,8 @@ class SlackAuditTable(SQLModel, table=True):
     at: str
     team_id: str | None = None
     slack_user_id: str | None = None
-    user_id: uuid.UUID | None = None
+    collab_sub: str | None = None
+    """ The researcher's collaboration-server identity, from the link; None if unknown. """
     chat_session_id: uuid.UUID | None = None
     event: str
     tool_name: str | None = None

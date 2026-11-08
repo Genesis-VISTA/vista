@@ -3,7 +3,7 @@ Campaign monitor: the background poller that watches in-flight HPC jobs.
 
 Each pass polls every open job (campaign_service.list_open_jobs), records its latest
 state, and on a terminal state: collects the result (success) or marks the step failed
-(failure), then emails the owning user and stops watching the job. Because it polls the
+(failure), then emails the address in Settings and stops watching the job. Because it polls the
 durable job set globally, a backend restart automatically resumes watching jobs that
 outlived the restart — that, plus the persisted message history and job registry, is
 what lets a long-running campaign pick up where it left off.
@@ -20,8 +20,8 @@ from typing import Awaitable, Callable
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.forum.simulation import DEBATE_DOMAIN
-from ..db.schemas import CampaignRunTable, HpcJobTable, UserTable
-from ..services import campaign as campaign_service
+from ..db.schemas import CampaignRunTable, HpcJobTable
+from ..services import campaign as campaign_service, local_settings
 from ..services import email as email_service
 from ..utils.misc import now_iso
 
@@ -206,11 +206,16 @@ class CampaignMonitor:
         run = (
             await campaign_service.get_campaign(session, step.run_id) if step else None
         )
-        user = await session.get(UserTable, job.user_id)
-        if run is None or user is None:
+        if run is None:
             return
-        subject, body = format_job_notification(run=run, job=job, state=state, ok=ok)
-        await self._send_email(to=user.email, subject=subject, body=body)
+        # Settings may name no address; then there is no one to tell, and the
+        # job is marked notified all the same so it is not retried every poll.
+        email = (await local_settings.get(session)).email
+        if email:
+            subject, body = format_job_notification(
+                run=run, job=job, state=state, ok=ok
+            )
+            await self._send_email(to=email, subject=subject, body=body)
         await campaign_service.update_job(session, job_id=job.job_id, notified=True)
 
     async def run_forever(

@@ -59,14 +59,13 @@ class FakeHpcTools:
         return f"downloaded: {files}"
 
 
-async def _make_run_and_step(session, alice, *, kind="neutronics"):
+async def _make_run_and_step(session, *, kind="neutronics"):
     project = ProjectTable(name=f"subagent-{kind}")
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
     )
@@ -77,8 +76,8 @@ async def _make_run_and_step(session, alice, *, kind="neutronics"):
 
 
 @pytest.mark.anyio
-async def test_dispatch_records_job_and_marks_step(session, alice):
-    run, step = await _make_run_and_step(session, alice)
+async def test_dispatch_records_job_and_marks_step(session):
+    run, step = await _make_run_and_step(session)
     hpc = FakeHpcTools()
     parser = CallableResultParser(lambda **_: ParsedResult(ok=True))
     agent = SubAgent(role="neutronics", hpc=hpc, parser=parser)
@@ -86,7 +85,6 @@ async def test_dispatch_records_job_and_marks_step(session, alice):
     result = await agent.dispatch(
         session,
         step=step,
-        user_id=alice.id,
         order=SubAgentOrder(
             job="neutronics", candidate={"li6": 0.7}, cluster="frontier"
         ),
@@ -98,7 +96,6 @@ async def test_dispatch_records_job_and_marks_step(session, alice):
     job = await campaign_service.get_job(session, "job-1")
     assert job is not None
     assert job.step_id == step.id
-    assert job.user_id == alice.id
     assert job.cluster == "frontier"
     assert job.log_path == "/o/log-job-1.out"
 
@@ -107,8 +104,8 @@ async def test_dispatch_records_job_and_marks_step(session, alice):
 
 
 @pytest.mark.anyio
-async def test_collect_parses_completes_step_and_marks_job(session, alice):
-    run, step = await _make_run_and_step(session, alice)
+async def test_collect_parses_completes_step_and_marks_job(session):
+    run, step = await _make_run_and_step(session)
     hpc = FakeHpcTools()
 
     async def parse(*, candidate, raw_status, raw_outputs):
@@ -122,7 +119,6 @@ async def test_collect_parses_completes_step_and_marks_job(session, alice):
     await agent.dispatch(
         session,
         step=step,
-        user_id=alice.id,
         order=SubAgentOrder(
             job="neutronics", candidate={"li6": 0.7}, cluster="frontier"
         ),
@@ -146,8 +142,8 @@ async def test_collect_parses_completes_step_and_marks_job(session, alice):
 
 
 @pytest.mark.anyio
-async def test_collect_marks_step_failed_when_parse_not_ok(session, alice):
-    run, step = await _make_run_and_step(session, alice)
+async def test_collect_marks_step_failed_when_parse_not_ok(session):
+    run, step = await _make_run_and_step(session)
     hpc = FakeHpcTools()
     parser = CallableResultParser(
         lambda **_: ParsedResult(ok=False, summary="no outputs")
@@ -156,7 +152,6 @@ async def test_collect_marks_step_failed_when_parse_not_ok(session, alice):
     await agent.dispatch(
         session,
         step=step,
-        user_id=alice.id,
         order=SubAgentOrder(job="neutronics", cluster="odo"),
     )
     job = await campaign_service.get_job(session, "job-1")

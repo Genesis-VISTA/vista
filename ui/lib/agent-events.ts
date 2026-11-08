@@ -184,17 +184,18 @@ export type ProjectPublic = {
   knowledge_bases: string[];
   /** Git remote the project's Hypothesis Lab publishes to; null means no lab. */
   forum_repo_url: string | null;
-  /** Whether the project stores a forum access token; the token is never read back. */
-  has_forum_token?: boolean;
   tools: string[];
   usage_limits: Record<string, unknown>;
-};
-
-/** Backend `UserPublic` — returned by `GET /projects/{name}/members`. */
-export type UserPublic = {
-  id: string;
-  email: string;
-  is_admin: boolean;
+  /** The collaboration server `remote_id` lives on; null until published or imported. */
+  origin_server?: string | null;
+  /** The item on `origin_server` this project was published as or imported from. */
+  remote_id?: string | null;
+  /** The item's version this project was published as or imported from. */
+  remote_version?: number | null;
+  /** Its own fields changed here since `remote_version`. */
+  modified?: boolean;
+  /** Its collaboration team; null when private (on this computer only). */
+  team_id?: string | null;
 };
 
 /** Backend `ProjectCreate` — body for `POST /projects` and `PUT /projects/{name}`. */
@@ -205,8 +206,6 @@ export type ProjectCreate = {
   skills: string[];
   knowledge_bases: string[];
   forum_repo_url: string | null;
-  /** Write-only: null keeps the stored token, "" removes it, a value replaces it. */
-  forum_repo_token?: string | null;
   tools: string[];
   usage_limits: Record<string, unknown>;
 };

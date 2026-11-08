@@ -205,7 +205,7 @@ async def test_local_client_has_reports_presence(tmp_path):
     async with LocalRepoClient(payload) as client:
         assert await client.has("mstdb") is True
         assert await client.has("mstdb/elemental-properties.csv") is True
-        assert await client.has("ai-safety") is False
+        assert await client.has("olcf-docs") is False
 
 
 async def test_local_client_has_refuses_a_path_escaping_the_payload(tmp_path):
@@ -223,9 +223,9 @@ async def test_gitlab_client_has_uses_the_tree_endpoint():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/repository/tree")
         path = request.url.params["path"]
-        if path == "ai-safety":
+        if path == "olcf-docs":
             return httpx.Response(
-                200, json=[{"type": "blob", "path": "ai-safety/a.pdf"}]
+                200, json=[{"type": "blob", "path": "olcf-docs/a.md"}]
             )
         if path == "empty":
             return httpx.Response(200, json=[])
@@ -240,7 +240,7 @@ async def test_gitlab_client_has_uses_the_tree_endpoint():
         transport=httpx.MockTransport(handler),
     )
     async with client:
-        assert await client.has("ai-safety") is True
+        assert await client.has("olcf-docs") is True
         assert await client.has("empty") is False
         assert await client.has("absent") is False
         # Anything but "not found" is not an answer, so it is not reported as absent.
@@ -320,6 +320,8 @@ async def test_knowledge_base_row_matches_the_token_path(seeded_either_source):
     assert row.build_status == "ready"
     assert row.pdfs_dir.endswith("knowledge-bases/molten-salt-papers/pdfs")
     assert row.rag_db_path.endswith("knowledge-bases/molten-salt-papers/rag_db")
+    # Private and never published, like everything VISTA seeds.
+    assert (row.team_id, row.remote_id, row.seed_item) == (None, None, None)
 
 
 async def test_project_knowledge_base_list_matches_the_token_path(
@@ -428,10 +430,12 @@ async def test_science_is_seeded_from_a_payload_without_the_flag(
         await engine.dispose()
 
 
-async def test_payload_with_only_ai_safety_seeds_no_science(tmp_path, monkeypatch):
+async def test_payload_with_only_olcf_docs_seeds_no_science(tmp_path, monkeypatch):
     payload = tmp_path / "payload"
-    (payload / "ai-safety").mkdir(parents=True)
-    (payload / "ai-safety" / "paper.pdf").write_bytes(b"%PDF-1.4 safety")
+    (payload / "olcf-docs").mkdir(parents=True)
+    (payload / "olcf-docs" / "systems__frontier.md").write_text(
+        "# Frontier\n", encoding="utf-8"
+    )
     monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
     monkeypatch.setattr(settings, "vista_data_token", None)
     monkeypatch.setattr(settings, "vista_data_payload_dir", payload)

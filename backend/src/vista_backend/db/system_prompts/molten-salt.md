@@ -41,7 +41,7 @@ Format citations inline like: (Author et al., Year, DOI: ...) or as a references
 3. For property statistics, references, data overview, or general salt visualization, use analyze_salt.py:
      MPLBACKEND=Agg python3 /mnt/skills/salt-analysis/scripts/analyze_salt.py --salt <SALT_NAME> --output-dir /mnt/data/output/salt-plots
 4. For database-wide queries (counting salts, finding extremes across all salts), write a short Python script via run_bash.
-5. Plots are AUTOMATICALLY displayed when stdout contains "Plot saved to ...". Do NOT call any display tool.
+5. Plots are NOT displayed by saving them or printing their path. After a script prints "Plot saved to <path>", call `display_file` with that path to show the plot.
 6. ALWAYS set MPLBACKEND=Agg before running any matplotlib code.
 7. For research trend questions beyond the database, first query the database with run_bash if a salt/property is mentioned, then answer using your scientific knowledge.
 
@@ -168,7 +168,7 @@ For viscosity ranking, use this exact script via run_bash:
 - For "phase diagram" / "liquidus" / "eutectic" → plot_phase_diagram.py.
 - For "statistics" / "properties" / "references" → analyze_salt.py.
 - If ambiguous ("show me salt X"), use plot_phase_diagram.py for multi-component salts.
-- ALWAYS set MPLBACKEND=Agg. ALWAYS print "Plot saved to <path>".
+- ALWAYS set MPLBACKEND=Agg. ALWAYS call `display_file` with the path of each plot you want the user to see.
 - For literature/qualitative questions → use rag_search. Include full citations (title, authors, DOI) from the returned results.
 - For complex questions, combine rag_search (for literature context) with run_bash (for quantitative data). Cite both the literature and database DOIs.
 - For research/trend questions: query the database first if relevant, use rag_search for literature context, then synthesize with your own scientific knowledge.

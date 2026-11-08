@@ -1,0 +1,88 @@
+/**
+ * The example files the Files page shows while the tour's files step is up:
+ * a markdown report and a chart among the outputs, a CSV among the uploads.
+ * They exist only here. Nothing is written to the project or sent to the
+ * backend, so the agent never sees them, and each carries its content as a
+ * `data:` URL for `FilePreview`'s `src`.
+ */
+
+import type { TourEvent } from "./onboarding";
+import type { FileKind, ListedFile } from "./files-tree";
+
+export type ExampleFile = {
+  kind: FileKind;
+  file: ListedFile;
+  /** The content as a `data:` URL, which the previewer shows in place of a project file. */
+  src: string;
+  /** What opening it tells the tour. */
+  opened?: TourEvent;
+};
+
+const REPORT = `# Sweep report
+
+This is an example. The agent writes reports like it to the project's outputs, here a
+made-up parameter sweep.
+
+## Runs
+
+| Run | Input value | Result | Runtime |
+| --- | --- | --- | --- |
+| 1 | 0.1 | 2.0 | 10 s |
+| 2 | 0.2 | 3.5 | 11 s |
+| 3 | 0.3 | 4.1 | 10 s |
+| 4 | 0.4 | 3.2 | 12 s |
+| 5 | 0.5 | 1.8 | 11 s |
+
+## Next steps
+
+- Ask the agent to rerun the sweep with a finer step.
+- Ask it to explain which input value gave the best result.
+`;
+
+const SWEEP_CSV = `run,input_value
+1,0.1
+2,0.2
+3,0.3
+4,0.4
+5,0.5
+`;
+
+/** A small bar chart. Named colours on a white plate, so it reads in both themes. */
+const CHART_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="360" height="200" viewBox="0 0 360 200" font-family="sans-serif" font-size="12">
+<rect width="360" height="200" fill="white"/>
+<text x="20" y="24" font-size="14" font-weight="bold" fill="black">Example: result per run</text>
+<line x1="40" y1="160" x2="340" y2="160" stroke="dimgray"/>
+<rect x="55" y="96" width="36" height="64" fill="steelblue"/>
+<rect x="115" y="48" width="36" height="112" fill="steelblue"/>
+<rect x="175" y="29" width="36" height="131" fill="steelblue"/>
+<rect x="235" y="58" width="36" height="102" fill="steelblue"/>
+<rect x="295" y="102" width="36" height="58" fill="steelblue"/>
+<g fill="black" text-anchor="middle"><text x="73" y="178">1</text><text x="133" y="178">2</text><text x="193" y="178">3</text><text x="253" y="178">4</text><text x="313" y="178">5</text></g>
+<text x="40" y="194" fill="dimgray">Run</text>
+</svg>`;
+
+function dataUrl(mime: string, text: string): string {
+  return `data:${mime};charset=utf-8,${encodeURIComponent(text)}`;
+}
+
+const MODIFIED = "2026-01-01T00:00:00Z";
+
+function example(kind: FileKind, name: string, mime: string, text: string, opened?: TourEvent): ExampleFile {
+  return {
+    kind,
+    file: { name, size: new TextEncoder().encode(text).length, modifiedAt: MODIFIED },
+    src: dataUrl(mime, text),
+    opened,
+  };
+}
+
+export const EXAMPLE_FILES: readonly ExampleFile[] = [
+  example("outputs", "sweep-report.md", "text/markdown", REPORT, "example-md-opened"),
+  example("outputs", "sweep-results.svg", "image/svg+xml", CHART_SVG, "example-image-opened"),
+  example("uploads", "sweep-inputs.csv", "text/csv", SWEEP_CSV),
+];
+
+/** The example at `kind` and `path`, if there is one. */
+export function exampleAt(kind: FileKind, path: string): ExampleFile | undefined {
+  return EXAMPLE_FILES.find((e) => e.kind === kind && e.file.name === path);
+}

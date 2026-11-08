@@ -9,7 +9,6 @@ check: the gate runs it before a confirmation is offered, and Confirm runs it
 again.
 """
 
-import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -37,14 +36,17 @@ def _tail(tool_name: str) -> str:
     return tool_name.split("__")[-1]
 
 
-async def _jobs_today(user_id: uuid.UUID) -> tuple[int, datetime | None]:
-    """Slack jobs in the last 24 hours, and when the oldest leaves the window."""
+async def _jobs_today() -> tuple[int, datetime | None]:
+    """
+    Slack jobs in the last 24 hours, and when the oldest leaves the window.
+    Every linked Slack account acts as this install's one researcher, so the
+    limit is the install's.
+    """
     since = store.now() - DAY
     async with chat_run_module.session_factory() as db:
         times = (
             await db.exec(
                 select(HpcJobRecordTable.submitted_at).where(
-                    HpcJobRecordTable.user_id == user_id,
                     HpcJobRecordTable.origin == "slack",
                     col(HpcJobRecordTable.submitted_at)
                     >= since.isoformat(timespec="seconds"),
@@ -65,7 +67,6 @@ def _when(moment: datetime) -> str:
 
 async def check(
     config: SlackConfigTable,
-    user_id: uuid.UUID,
     tool_name: str,
     args: dict[str, Any],
 ) -> str | None:
@@ -87,7 +88,7 @@ async def check(
             f"A walltime of {duration} is over the {config.max_walltime_minutes}-minute "
             "limit for jobs from Slack. Ask for less, or submit it from the desktop app."
         )
-    count, resets = await _jobs_today(user_id)
+    count, resets = await _jobs_today()
     if count >= config.max_jobs_per_day:
         return (
             f"You've submitted {count} jobs from Slack in the last 24 hours, the "
@@ -97,9 +98,7 @@ async def check(
     return None
 
 
-async def refusal(
-    user_id: uuid.UUID, tool_name: str, args: dict[str, Any]
-) -> str | None:
+async def refusal(tool_name: str, args: dict[str, Any]) -> str | None:
     """
     The gate's refusal: the lock, then an expired credential for the system,
     then `check` against the saved limits.
@@ -110,8 +109,8 @@ async def refusal(
         await db.commit()
     if snapshot.locked:
         return LOCKED
-    expired = credentials.refusal(user_id, tool_name, args)
-    return expired or await check(snapshot, user_id, tool_name, args)
+    expired = credentials.refusal(tool_name, args)
+    return expired or await check(snapshot, tool_name, args)
 
 
 async def lock(slack_user_id: str) -> None:

@@ -42,14 +42,12 @@ CANCEL = "vista_cancel"
 CHOOSE = "vista_choose_"
 """ Prefix of a choice button's action id; the suffix is the option's index. """
 
-Preview = Callable[
-    [uuid.UUID, uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]
-]
-""" (user id, conversation id, tool name, args) → card fields for what would happen. """
+Preview = Callable[[uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]]
+""" (conversation id, tool name, args) → card fields for what would happen. """
 
 
 async def no_preview(
-    user_id: uuid.UUID, chat_session_id: uuid.UUID, tool: str, args: dict[str, Any]
+    chat_session_id: uuid.UUID, tool: str, args: dict[str, Any]
 ) -> dict[str, str]:
     return {}
 
@@ -188,7 +186,6 @@ class Confirmations:
         place: Place,
         team_id: str,
         chat_session_id: uuid.UUID,
-        user_id: uuid.UUID,
     ) -> None:
         """Post the card for a `mcp_tool_approval` event; anything else is declined."""
         data = json.loads(event.data)
@@ -219,7 +216,7 @@ class Confirmations:
         args = data.get("args") or {}
         fields = fields_for(tool_name, args)
         try:
-            fields.update(await _preview(user_id, chat_session_id, tool_name, args))
+            fields.update(await _preview(chat_session_id, tool_name, args))
         except Exception:
             log.exception("Could not preview %s for Slack", tool_name)
         pending = self._pending(
@@ -302,7 +299,7 @@ class Confirmations:
                 if pending is not None and pending.chat_session_id
                 else None
             )
-            user_id = chat.user_id if chat is not None else None
+            conversation_exists = chat is not None
         if pending is None or pending.team_id != action.team_id:
             await self._tell(action, "That request is no longer open.")
             return
@@ -336,11 +333,11 @@ class Confirmations:
         if action.action_id == CANCEL:
             await self._close(elicitation_id, "cancelled")
             return
-        if user_id is None:  # The conversation was deleted on the desktop.
+        if not conversation_exists:  # It was deleted on the desktop.
             await self._close(elicitation_id, "expired")
             return
         why = await gate.refusal(
-            user_id, pending.tool_name or "", (pending.summary or {}).get("args") or {}
+            pending.tool_name or "", (pending.summary or {}).get("args") or {}
         )
         if why is not None:
             await self._close(elicitation_id, "refused", reason=why)

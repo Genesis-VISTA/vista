@@ -129,28 +129,34 @@ def test_a_development_checkout_has_no_background_mode(tmp_path):
         svc.install()
 
 
+def test_a_hosted_vista_has_no_background_mode(tmp_path, monkeypatch):
+    from vista_backend.config import settings
+
+    svc = _service(tmp_path, "linux")
+    monkeypatch.setattr(settings, "deployment", "hosted")
+
+    assert "hosted" in (svc.why_unavailable() or "")
+
+    monkeypatch.setattr(settings, "deployment", "desktop")
+    assert svc.why_unavailable() is None or "hosted" not in svc.why_unavailable()
+
+
 def test_an_unknown_platform_is_unavailable(tmp_path):
     assert "isn't available" in (_service(tmp_path, "aix").why_unavailable() or "")
 
 
 @pytest.mark.anyio
-async def test_the_settings_switch_registers_and_removes(
-    session, alice, no_real_login_item
-):
-    view = await update_slack_config(
-        SlackConfigUpdate(background_mode=True), session, alice
-    )
+async def test_the_settings_switch_registers_and_removes(session, no_real_login_item):
+    view = await update_slack_config(SlackConfigUpdate(background_mode=True), session)
     assert view.background_mode is True and view.background_problem is None
 
-    view = await update_slack_config(
-        SlackConfigUpdate(background_mode=False), session, alice
-    )
+    view = await update_slack_config(SlackConfigUpdate(background_mode=False), session)
     assert view.background_mode is False
     assert no_real_login_item.ran == [["launchctl", "bootout", f"gui/501/{LABEL}"]]
 
 
 @pytest.mark.anyio
-async def test_the_switch_says_why_it_cannot(session, alice, tmp_path, monkeypatch):
+async def test_the_switch_says_why_it_cannot(session, tmp_path, monkeypatch):
     from fastapi import HTTPException
 
     from vista_backend.services import background_service
@@ -159,8 +165,6 @@ async def test_the_switch_says_why_it_cannot(session, alice, tmp_path, monkeypat
     monkeypatch.setattr(background_service, "current", lambda: dev)
 
     with pytest.raises(HTTPException) as refused:
-        await update_slack_config(
-            SlackConfigUpdate(background_mode=True), session, alice
-        )
+        await update_slack_config(SlackConfigUpdate(background_mode=True), session)
     assert refused.value.status_code == 400
     assert "installed VISTA package" in refused.value.detail

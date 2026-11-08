@@ -16,10 +16,10 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-async def slack(engine, session, alice, monkeypatch):
+async def slack(engine, session, monkeypatch):
     """One Slack workspace both machines see, with a linked researcher."""
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
-    await link(session, alice, "U1")
+    await link(session, "U1")
     return FakeTransport()
 
 

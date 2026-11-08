@@ -4,7 +4,7 @@
 # The output is an archive a researcher unpacks and runs with `./vista`: no
 # Docker, no HuggingFace token, no GitLab access, no `.env`. Everything the
 # running system needs -- interpreters, virtual environments, the standalone
-# UI, the sandbox image, the AI-safety corpus and its vector store,
+# UI, the sandbox image, the OLCF documentation corpus and its vector store,
 # the embedding weights -- is inside it. The molten-salt corpus and MSTDB are
 # packed only with --science-projects.
 #
@@ -28,7 +28,7 @@
 #                         default), or none to leave the tree unpacked
 #   --without-citations  Build the vector store without citation metadata
 #                         (titles, authors, DOIs), and record that
-#   --vector-store DIR   Optional. Reuse an already-built AI-safety vector
+#   --vector-store DIR   Optional. Reuse an already-built OLCF documentation vector
 #                         store instead of indexing the corpus again. Only for
 #                         skipping re-embedding; omitting it is always correct
 #   --science-projects   Also require and pack the molten-salt corpus, its
@@ -413,9 +413,9 @@ exported elsewhere.")
   if [[ -n "$PAYLOAD_DIR" ]]; then
     [[ -d "$PAYLOAD_DIR" ]] \
       || failures+=("--payload directory does not exist: $PAYLOAD_DIR")
-    [[ -d "$PAYLOAD_DIR/ai-safety" ]] \
+    [[ -d "$PAYLOAD_DIR/olcf-docs" ]] \
       || failures+=("--payload does not look like a vista-data tree: \
-$PAYLOAD_DIR (expected ai-safety/ inside it)")
+$PAYLOAD_DIR (expected olcf-docs/ inside it)")
     if [[ "$SCIENCE_PROJECTS" == true ]]; then
       [[ -d "$PAYLOAD_DIR/molten-salt-papers" && -d "$PAYLOAD_DIR/mstdb" ]] \
         || failures+=("--science-projects needs molten-salt-papers/ and mstdb/ \
@@ -579,7 +579,7 @@ package has no launcher without it")
     echo "science projects  : not included"
   fi
   if [[ -n "$REUSE_STORE" ]]; then
-    echo "ai-safety store   : reusing $REUSE_STORE (no indexing, no model calls)"
+    echo "olcf-docs store   : reusing $REUSE_STORE (no indexing, no model calls)"
   fi
   if [[ "$SCIENCE_PROJECTS" == true && -n "$SCIENCE_STORE" ]]; then
     echo "molten-salt store : reusing $SCIENCE_STORE (no indexing, no model calls)"
@@ -1152,6 +1152,25 @@ stage_window_macos() {
 
 # ─── corpus payload ─────────────────────────────────────────────────────────
 
+# How many files under `$1` the indexer accepts: its own suffix list
+# (`vista_backend.utils.indexer.ACCEPTED_SUFFIXES`), not a copy of it here, so a
+# format the indexer learns is counted and packed without touching this script.
+# Runs in the staged backend environment, so it needs create_environments first.
+count_documents() {
+  "$STAGING_APP/backend/.venv/$VENV_PYTHON" - "$1" <<'PYCOUNTDOCS'
+import sys
+from pathlib import Path
+
+from vista_backend.utils.indexer import ACCEPTED_SUFFIXES
+
+root = Path(sys.argv[1])
+print(sum(
+    1 for p in root.rglob("*")
+    if p.is_file() and p.suffix.lower() in ACCEPTED_SUFFIXES
+))
+PYCOUNTDOCS
+}
+
 # The vista-data files, the vector store built from them, and the embedding
 # weights, all inside the package.
 #
@@ -1163,7 +1182,7 @@ stage_window_macos() {
 # mirrors the repository, so `db/seed.LocalRepoClient` resolves the same
 # repo-relative paths the GitLab client would.
 #
-# Only the folders this build needs are copied: `ai-safety/` always, and with
+# Only the folders this build needs are copied: `olcf-docs/` always, and with
 # --science-projects the molten-salt corpus and MSTDB as well. A default package
 # therefore carries no science data at all.
 stage_payload() {
@@ -1172,7 +1191,7 @@ stage_payload() {
   local vista_data="$STAGING_PAYLOAD/vista-data"
   mkdir -p "$vista_data"
 
-  local folders=(ai-safety)
+  local folders=(olcf-docs)
   [[ "$SCIENCE_PROJECTS" == true ]] && folders+=(molten-salt-papers mstdb)
 
   local source_tree="$PAYLOAD_DIR" tmp=''
@@ -1200,10 +1219,10 @@ stage_payload() {
     rm -rf "$tmp"
   fi
 
-  local pdf_count
-  pdf_count="$(find "$vista_data/ai-safety" -name '*.pdf' | wc -l | tr -d ' ')"
-  (( pdf_count > 0 )) || die "payload contains no AI-safety PDFs"
-  echo "corpus      : ai-safety, $pdf_count PDFs, $(du -sh "$vista_data/ai-safety" | cut -f1)"
+  local doc_count
+  doc_count="$(count_documents "$vista_data/olcf-docs")"
+  (( doc_count > 0 )) || die "payload contains no olcf-docs documents"
+  echo "corpus      : olcf-docs, $doc_count documents, $(du -sh "$vista_data/olcf-docs" | cut -f1)"
 
   if [[ "$SCIENCE_PROJECTS" == true ]]; then
     local science_pdfs
@@ -1259,8 +1278,30 @@ snapshot_download(sys.argv[1], revision=sys.argv[2])
 PYHF
   fi
 
-  [[ -d "$hf/hub/$cache_name/snapshots/$revision" ]] \
+  local cache="$hf/hub/$cache_name"
+  [[ -d "$cache/snapshots/$revision" ]] \
     || die "no weights staged for $model at the pinned revision $revision"
+
+  # A Hugging Face snapshot is symlinks into blobs/, and Windows lets only an
+  # administrator (or Developer Mode) create symlinks: tar.exe could unpack none
+  # of the weights for anyone else, and the MCP server, offline, then had no
+  # model. So the pinned snapshot ships as plain files, which Hugging Face loads
+  # offline the same way, and blobs/ and any other snapshot are dropped.
+  "$STAGING_APP/mcp_servers/vista_mcp_server/.venv/$VENV_PYTHON" - "$cache/snapshots/$revision" <<'PYPLAIN' \
+    || die "could not turn the staged snapshot into plain files"
+import shutil
+import sys
+from pathlib import Path
+
+snapshot = Path(sys.argv[1])
+plain = snapshot.with_name(snapshot.name + ".plain")
+shutil.copytree(snapshot, plain, symlinks=False)
+shutil.rmtree(snapshot)
+plain.rename(snapshot)
+PYPLAIN
+  rm -rf "${cache:?}/blobs"
+  find "$cache/snapshots" -mindepth 1 -maxdepth 1 ! -name "$revision" -exec rm -rf {} +
+  [[ -z "$(find "$hf" -type l)" ]] || die "the staged weights still hold symlinks: $(find "$hf" -type l)"
   echo "weights     : $model@${revision:0:12}, $(du -sh "$hf" | cut -f1)"
 }
 
@@ -1280,6 +1321,8 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
+from vista_backend.utils.indexer import ACCEPTED_SUFFIXES
+
 kb = Path(sys.argv[1])
 client = chromadb.PersistentClient(
     path=str(kb / "rag_db"), settings=ChromaSettings(anonymized_telemetry=False)
@@ -1289,7 +1332,14 @@ sources = {
     for m in client.get_collection("text_chunks").get(include=["metadatas"])["metadatas"]
 }
 sources.discard(None)
-present = {p.name for p in (kb / "pdfs").rglob("*.pdf")}
+# Every format the indexer accepts, by basename (what a citation records as its
+# source). A file with no accepted suffix, such as the corpus's `SOURCE` note,
+# is not a document and cannot be cited.
+present = {
+    p.name
+    for p in (kb / "pdfs").rglob("*")
+    if p.is_file() and p.suffix.lower() in ACCEPTED_SUFFIXES
+}
 missing = sorted(s for s in sources if s not in present)
 if missing:
     sys.exit(
@@ -1367,7 +1417,9 @@ from vista_backend.utils import indexer
 async def main() -> int:
     pdfs = kb / "pdfs"
     names = sorted(
-        str(p.relative_to(pdfs)).replace("\\", "/") for p in pdfs.rglob("*.pdf")
+        str(p.relative_to(pdfs)).replace("\\", "/")
+        for p in pdfs.rglob("*")
+        if p.is_file() and p.suffix.lower() in indexer.ACCEPTED_SUFFIXES
     )
     results = await indexer.index_publications(
         rag_db_path=str(kb / "rag_db"),
@@ -1514,7 +1566,7 @@ PAYLOAD_PARTS=(vista-data knowledge-bases huggingface)
 # corpus, so a launcher can install a corpus an upgraded state directory lacks
 # even though its `vista-data/` and `knowledge-bases/` already exist. Listed in
 # `payload/parts.txt`, the contract between this build and its launcher.
-PAYLOAD_MEMBERS=(vista-data/ai-safety knowledge-bases/ai-safety huggingface)
+PAYLOAD_MEMBERS=(vista-data/olcf-docs knowledge-bases/olcf-docs huggingface)
 if [[ "$SCIENCE_PROJECTS" == true ]]; then
   PAYLOAD_MEMBERS+=(vista-data/molten-salt-papers vista-data/mstdb knowledge-bases/molten-salt-papers)
 fi
@@ -1522,6 +1574,12 @@ fi
 pack_payload() {
   log "packing the payload"
   LC_ALL=C.UTF-8 tar --format=posix -cf "$STAGING_PAYLOAD/payload.tar" -C "$STAGING_PAYLOAD" "${PAYLOAD_MEMBERS[@]}"
+  # The launchers unpack this as the researcher, and on Windows that cannot
+  # create a symlink (see stage_embedding_weights), so none may ship.
+  local links
+  links="$(tar -tvf "$STAGING_PAYLOAD/payload.tar" | grep '^l' || true)"
+  [[ -z "$links" ]] || die "the payload holds symlinks, which Windows cannot unpack without admin rights:
+$links"
   local part
   for part in "${PAYLOAD_PARTS[@]}"; do
     rm -rf "${STAGING_PAYLOAD:?}/$part"
@@ -1592,12 +1650,12 @@ PYCOUNT
 write_manifest() {
   log "writing the manifest"
 
-  local kb="$STAGING_PAYLOAD/knowledge-bases/ai-safety"
-  local chunks citations pdf_count counts
+  local kb="$STAGING_PAYLOAD/knowledge-bases/olcf-docs"
+  local chunks citations doc_count counts
   counts="$(count_store "$kb")"
   chunks="$(echo "$counts" | sed -n 1p)"
   citations="$(echo "$counts" | sed -n 2p)"
-  pdf_count="$(find "$STAGING_PAYLOAD/vista-data/ai-safety" -name '*.pdf' | wc -l | tr -d ' ')"
+  doc_count="$(count_documents "$STAGING_PAYLOAD/vista-data/olcf-docs")"
 
   # The molten-salt corpus, present only in a --science-projects build.
   local science_json=null science_citations=1
@@ -1665,7 +1723,7 @@ write_manifest() {
   },
   "payload": {
     "sandbox_image": { "reference": "$SANDBOX_IMAGE", "bytes": $(size_of "$STAGING_PAYLOAD/sandbox-image.tar") },
-    "corpus": { "pdfs": $pdf_count, "bytes": $(size_of "$STAGING_PAYLOAD/vista-data") },
+    "corpus": { "documents": $doc_count, "bytes": $(size_of "$STAGING_PAYLOAD/vista-data") },
     "vector_store": { "text_chunks": $chunks, "citations": $citations, "bytes": $(size_of "$kb/rag_db") },
     "embedding_weights": { "bytes": $(size_of "$STAGING_PAYLOAD/huggingface") },
     "science": $science_json,
@@ -1923,7 +1981,7 @@ stage_window
 create_environments
 stage_payload
 stage_embedding_weights
-build_vector_store ai-safety "$REUSE_STORE"
+build_vector_store olcf-docs "$REUSE_STORE"
 if [[ "$SCIENCE_PROJECTS" == true ]]; then
   build_vector_store molten-salt-papers "$SCIENCE_STORE"
 fi

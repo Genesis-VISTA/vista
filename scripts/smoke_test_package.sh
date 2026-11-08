@@ -178,9 +178,11 @@ SCIENCE_PROJECTS="$(
 # Retrieval, through the backend's MCP client -- the same path the agent uses,
 # so it covers the store, the embedding weights loading offline, and the
 # knowledge base having actually been registered. Arguments: the project the
-# call goes through, the knowledge base, and a query the corpus should answer.
+# call goes through, the knowledge base, a query the corpus should answer, and
+# optionally a word (matched without regard to case) the passages must contain,
+# so passages unrelated to the question do not pass.
 retrieval_returns_passages() {
-  local project="$1" kb_slug="$2" query="$3" body
+  local project="$1" kb_slug="$2" query="$3" expect="${4:-}" body
   body="$(
     curl -s -m 120 -X POST \
       "$BACKEND_URL/projects/$project/mcp/call" \
@@ -188,7 +190,7 @@ retrieval_returns_passages() {
       -d "{\"name\":\"rag_search\",\"arguments\":{\"query\":\"$query\",\"kb_slug\":\"$kb_slug\"}}"
   )"
   echo "$body" > "$LOGS/retrieval-$kb_slug.json"
-  "$PACKAGE_PYTHON" - "$LOGS/retrieval-$kb_slug.json" <<'PYCHECK'
+  "$PACKAGE_PYTHON" - "$LOGS/retrieval-$kb_slug.json" "$expect" <<'PYCHECK'
 import json
 import sys
 
@@ -200,13 +202,16 @@ text = "".join(
 )
 if len(text) < 200:
     sys.exit(f"rag_search returned no usable passages: {text[:300]!r}")
+expect = sys.argv[2]
+if expect and expect.lower() not in text.lower():
+    sys.exit(f"rag_search passages never mention {expect!r}: {text[:300]!r}")
 PYCHECK
 }
 if [[ "$WITHOUT_SANDBOX" == true ]]; then
-  skip "AI-safety retrieval returns passages" "$NO_SANDBOX_REASON"
+  skip "OLCF docs retrieval returns passages" "$NO_SANDBOX_REASON"
 else
-  check "AI-safety retrieval returns passages" retrieval_returns_passages \
-    ai-safety-autonomous-labs ai-safety "memory poisoning in LLM agents"
+  check "OLCF docs retrieval returns passages" retrieval_returns_passages \
+    hello-olcf olcf-docs "How many GPUs does a Frontier node have?" Frontier
 fi
 
 if [[ "$SCIENCE_PROJECTS" == true && "$WITHOUT_SANDBOX" == true ]]; then
@@ -280,6 +285,21 @@ WINDOW_EXE="$(
     'import json,sys; w=json.load(open(sys.argv[1], encoding="utf-8")).get("window"); print(w["exe"] if w else "")' \
     "$PACKAGE/manifest.json"
 )"
+# The in-app update's helpers sit beside the window as plain files, where it
+# copies one from before an update (in-app-updates D5): resources/, or
+# Contents/Resources in VISTA.app. Not in app.asar, where no shell reads them.
+update_helpers_are_shipped() {
+  local resources
+  case "$WINDOW_EXE" in
+    *.app/Contents/MacOS/*) resources="$PACKAGE/${WINDOW_EXE%%/MacOS/*}/Resources" ;;
+    *) resources="$PACKAGE/$(dirname "$WINDOW_EXE")/resources" ;;
+  esac
+  [[ -s "$resources/apply-update.sh" && -s "$resources/apply-update.ps1" ]]
+}
+if [[ -n "$WINDOW_EXE" ]]; then
+  check "the window ships the update helpers" update_helpers_are_shipped
+fi
+
 # On Linux it gets the sandbox arguments the launcher would give it on this
 # host (linux-desktop-window D1), and a virtual display when there is no real
 # one, which is how a build container runs it (D7).

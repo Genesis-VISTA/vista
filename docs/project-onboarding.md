@@ -39,7 +39,10 @@ Markdown file under [system_prompts/](../backend/src/vista_backend/db/system_pro
 
 The schema lives in
 [backend/src/vista_backend/db/schemas.py](../backend/src/vista_backend/db/schemas.py).
-The on-the-wire shape (`ProjectPublic`) adds `id` (a server-assigned UUID);
+The on-the-wire shape (`ProjectPublic`) adds `id` (a server-assigned UUID)
+and the project's collaboration state (`origin_server`, `remote_id`,
+`remote_version`, `modified`; see
+[Publishing and importing](#publishing-and-importing-through-a-collaboration-server));
 the frontend `Project` type in [ui/lib/projects.ts](../ui/lib/projects.ts)
 camel-cases everything (`systemPrompt`, `usageLimits`).
 
@@ -75,7 +78,7 @@ Common fields:
 | `output_tokens_limit`| Max output tokens per turn.                              | unlimited      |
 | `total_tokens_limit` | Combined input+output cap per turn.                      | unlimited      |
 
-The default projects use `{"request_limit": 50}` (ai-safety-autonomous-labs),
+The default projects use `{"request_limit": 50}` (hello-olcf),
 `{"request_limit": 100}` (molten-salt) and `{"request_limit": 600}`
 (alloy-design, long agentic loops on HPC). Empty `{}` falls back to engine
 defaults.
@@ -92,12 +95,22 @@ UUID so they can be recognised across restarts.
 
 **Always seeded**
 
-- **ai-safety-autonomous-labs** — AI Safety in Autonomous Labs. Its system
-  prompt frames a small literature corpus on the safety and security of
-  autonomous labs and LLM agents. It has no mandated skills, allows every tool
-  except `agenthpc_*`, and has `request_limit` 50. It comes with the
-  `ai-safety` knowledge base ("AI Safety Papers"), built from vista-data's
-  `ai-safety/` folder.
+- **hello-olcf** — A first project for OLCF users. Its system prompt has the
+  agent answer from the OLCF documentation, cite each passage with its
+  docs.olcf.ornl.gov URL, and offer a hello run on a connected cluster. It
+  loads the skills `hello-odo`, `hello-frontier`, `hello-lux` and
+  `hpc-skill-author`, allows every tool except `agenthpc_*`, and has
+  `request_limit` 50. It comes with the `olcf-docs` knowledge base ("OLCF User
+  Documentation"): the `olcf/olcf-user-docs` pages converted to Markdown, one
+  file per section, from vista-data's `olcf-docs/` folder.
+
+  The first-boot tour (off with `VISTA_BACKEND_ONBOARDING_TOUR=false`) opens
+  `hello-olcf` and its knowledge base, reads `hello-frontier`, and ends on a
+  starter question. The UI finds them by the names in `ui/lib/default-project.ts`,
+  which a backend test keeps equal to the seed's constants.
+
+  Earlier versions seeded `ai-safety-autonomous-labs` here instead. An install
+  that has it keeps it, unchanged, and it is never restored if deleted.
 
 **Science projects, off by default**
 
@@ -114,25 +127,28 @@ setting). Every other bundled skill is registered either way.
 ### When each default is seeded
 
 - **First run, empty database** (`seed_db`): the science projects if enabled,
-  the bundled skills, and the dev test users.
-- **Every startup** (`sync_default_projects`): the AI-safety project and its
+  and the bundled skills.
+- **Every startup** (`sync_default_projects`): the hello-olcf project and its
   knowledge base. This is what brings the project to a database that already
   exists. It inserts the project and the knowledge base if either is missing,
-  and appends the `ai-safety` slug to the project's knowledge bases when the
+  and appends the `olcf-docs` slug to the project's knowledge bases when the
   knowledge base exists and is not attached. It overwrites nothing else and
   removes nothing.
 
 The science projects are never added to a database that already has projects,
 even with the setting on.
 
-### Where the AI-safety corpus comes from
+### Where the OLCF docs corpus comes from
 
-With `VISTA_DATA_TOKEN` set, the first startup downloads `ai-safety/` from
-vista-data and indexes it (about a minute, with citations when an inference key
-is configured). If vista-data cannot be reached, startup still completes: the
-project is seeded without the knowledge base, a warning names the missing
-corpus, and the next startup tries again. With neither a token nor a bundled
-payload the project exists but has no literature search.
+With `VISTA_DATA_TOKEN` set, the first startup downloads `olcf-docs/` from
+vista-data, Markdown and its prebuilt `rag_db/` together, and installs the
+store; it indexes nothing, since that is one model call per file. A folder
+without `rag_db/` is not seeded, with a warning. If vista-data cannot be
+reached, startup still completes: the project is seeded without the knowledge
+base, a warning names the missing corpus, and the next startup tries again. With
+neither a token nor a bundled payload the project exists but has no
+documentation search. The corpus is refreshed by a maintainer, from
+`docs/releasing.md` ("Updating them").
 
 A prebuilt package ships the corpus already indexed, and its first-run setup
 never indexes; an absent or empty bundled index fails setup naming the corpus.
@@ -141,7 +157,7 @@ never indexes; an absent or empty bundled index fails setup naming the corpus.
 
 Editing a default project from the UI is safe: the next startup leaves your
 changes alone, and a knowledge base you attach stays attached. **Deleting
-`ai-safety-autonomous-labs` brings it back on the next startup**, with its
+`hello-olcf` brings it back on the next startup**, with its
 default settings, because nothing records that it was deleted. The science
 projects are only created on first run, so deleting them is permanent.
 
@@ -189,6 +205,78 @@ doesn't dangle.
 If you delete the active project, the pointer is cleared and you land back at
 "no active project".
 
+## Publishing and importing through a collaboration server
+
+Projects are shared the way skills are (see the
+[skill onboarding doc](skill-onboarding.md#publishing-and-importing-through-a-collaboration-server)):
+explicitly, through the collaboration server set in **Settings → Collaboration**.
+Without one that answers, Publish and Import say why and do nothing.
+
+**Publishing.** Each card on `/projects` says where the project stands (*Not
+published*, *Version 2*, *Differs here from version 2*, *Version 3
+available*), and **Publish** sends it. The skills it loads go first: each one
+that is not on the server, or has changed since its version, is published, and
+the project's version names them by item and version. Skills bundled with
+VISTA are named as bundled and never published. The knowledge bases it
+searches go next, the same way, each with its PDFs and its index (see
+[Knowledge bases](#knowledge-bases-on-the-collaboration-server) below). A
+project that loads a skill or searches a knowledge base not on this computer is
+not published until it is removed from the project, unless the version you
+imported named it: then the new version names it as that one did. A project
+whose knowledge base is indexing waits until it has finished. If a skill or
+knowledge base needs a choice (someone published it since your version), the
+project is not published, and the page points you to `/skills` or
+`/knowledge-bases` to resolve it.
+
+The project's own conflicts work as a skill's do: if someone published the
+project since your version, you choose **Use the server's version**, **Publish
+mine as version N**, or **Publish as a new project**, and nothing has been
+published yet. A save that changes the project, or loading a skill into it,
+marks it changed; a save that changes nothing does not.
+
+**Importing.** **Import from the collaboration server** lists the server's
+projects. **Import** brings the project and the skills it loads:
+
+- a skill version not here is imported, under the first free `<name>-<n>` if
+  another skill has its name (a renamed copy still counts as that version);
+- a copy of the skill that is older and unchanged here is updated to that version;
+- a newer copy, or one changed here, is kept as it is; a publish from here then
+  publishes that copy first and names it;
+- a bundled skill this VISTA does not ship stays named in the project, but loads
+  nothing, and a publish from here names it as bundled again; if a different
+  skill here has its name, it is left out and the project is marked as
+  differing here;
+- the knowledge bases it searches are handled like its skills: a version not
+  here is imported, under the first free `<slug>-<n>` if another knowledge base
+  has its slug; an older unchanged copy is updated; a newer or changed copy is
+  kept. If one was indexed with an embedding model or chromadb this VISTA cannot
+  search with, nothing is imported, and the page says which.
+
+The page says which of these happened. The imported project gets an id of its
+own, and a name the projects page would accept: if the server's is not one, you
+are asked for another. A copy of the same project here is updated in place, and if it was changed
+here you are asked first. A different project with the same name asks for a new
+name. If its Hypothesis Lab's repository cannot be reached from here, the
+project is imported anyway, and the page gives the reason.
+
+## Knowledge bases on the collaboration server
+
+A knowledge base is shared on its own page, `/knowledge-bases`, the same way.
+Its details say where it stands (*Not published*, *Version 2*, *Changed here
+since version 2*), and **Publish** uploads its PDFs and a snapshot of its index,
+so whoever imports it can search it at once, without indexing anything. It
+cannot be published while it is indexing. Renaming it, editing its description,
+adding a PDF or deleting one marks it changed.
+
+**Import** lists the server's knowledge bases with what each would download and
+which embedding model indexed it. One indexed with another model, or another
+revision of it, is refused before anything is downloaded: its vectors would not
+match the queries this VISTA makes. A slug taken here asks for another; a copy
+of the same knowledge base is updated in place, and if it was changed here you
+are asked first. An update is unpacked into a new folder beside the old one and
+switched to, so a search running at the time reads the old index or the new
+one, never half of either.
+
 ## How a project drives the agent
 
 When you send a chat message, the frontend posts to
@@ -224,6 +312,12 @@ the Next.js proxies in [ui/app/api/projects/](../ui/app/api/projects).
 | `POST`   | `/projects`                   | Create. 409 on duplicate `name`.                                 |
 | `PUT`    | `/projects/{name}`            | Full overwrite. 409 if the new name collides with another row.   |
 | `DELETE` | `/projects/{name}`            | Hard delete. 204 on success.                                     |
+| `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills and knowledge bases first. |
+| `GET`    | `/collaboration/projects`     | The server's projects, with any copy here.                       |
+| `POST`   | `/collaboration/projects/{id}/import` | Import with its skills and knowledge bases (`{version?, rename_to?, replace_modified?}`). |
+| `POST`   | `/knowledge-bases/{slug}/publish` | Publish a knowledge base's PDFs and index (`{on_top_of?, as_new?}`). |
+| `GET`    | `/collaboration/knowledge-bases` | The server's knowledge bases, with any copy here.            |
+| `POST`   | `/collaboration/knowledge-bases/{id}/import` | Import one (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/projects/{name}/agent/run`  | Run one agent turn (stateless; pass `message_history`).           |
 
 ## Troubleshooting
@@ -235,13 +329,13 @@ a different one or delete the existing project first.
 `UsageLimits`. Run `python -c "from pydantic_ai import UsageLimits; help(UsageLimits)"`
 to see the accepted fields.
 
-**Deleted `ai-safety-autonomous-labs`, restarted, it is back.** — It is a
+**Deleted `hello-olcf`, restarted, it is back.** — It is a
 default that is synced on every boot, matched by UUID. Edits to it are kept;
 only a missing project is recreated. See
 [Editing and deleting defaults](#editing-and-deleting-defaults).
 
-**`ai-safety-autonomous-labs` has no literature search.** — Its `ai-safety`
-knowledge base could not be obtained: look for an "AI-safety corpus
+**`hello-olcf` has no documentation search.** — Its `olcf-docs`
+knowledge base could not be obtained: look for an "OLCF docs corpus
 unavailable" warning in the backend log. Set `VISTA_DATA_TOKEN` (or use a
 package built with its payload) and restart.
 

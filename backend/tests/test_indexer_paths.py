@@ -36,8 +36,12 @@ class FakeTextRAG:
         self.force_reindex = force_reindex
         self.llm_credentials = llm_credentials
         self.indexed: list[Path] = []
+        self.corpus_writes = 0
 
-    def index_single_pdf(self, pdf_path, progress_cb=None):
+    def write_bm25_corpus(self):
+        self.corpus_writes += 1
+
+    def index_single_file(self, pdf_path, progress_cb=None):
         self.indexed.append(Path(pdf_path))
         return {
             "filename": Path(pdf_path).name,
@@ -97,6 +101,8 @@ async def test_nested_pdfs_are_indexed(tmp_path, fake_rag):
         pdfs / "thermo/nested.pdf",
         pdfs / "thermo/2024/deep.pdf",
     ]
+    # The BM25 corpus is rebuilt once, after the run's PDFs are in the store.
+    assert fake_rag[0].corpus_writes == 1
 
 
 async def test_traversal_entries_are_dropped(tmp_path, fake_rag):
@@ -154,7 +160,7 @@ async def test_llm_credentials_reach_the_rag_instance(fake_rag, tmp_path):
     """
     The credential the caller resolved has to arrive at `TextRAG`, which is
     what puts it in front of the citation extractor. `knowledge_bases.py`
-    resolves it from the requesting user's row; without this hop a fresh
+    resolves it from the settings row; without this hop a fresh
     install indexes text and produces no citation metadata.
     """
     pdfs_dir = tmp_path / "pdfs"
@@ -180,14 +186,13 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
     chain would otherwise extract with a model the researcher never chose.
     """
     from vista_backend.agents.inference import citation_credentials
-    from vista_backend.db.schemas import UserPublicWithConfig
+    from vista_backend.db.schemas import LocalSettingsPublic
 
     # `fake_rag` replaces the loader that would put `build_rag` on the path.
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[2]))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment")
-    user = UserPublicWithConfig(
-        id=uuid.uuid4(),
-        email="researcher@example.org",
+    local = LocalSettingsPublic(
+        install_id=uuid.uuid4(),
         inference_provider="custom",
         inference_custom_api_key="custom-token",
         inference_base_url="https://custom.example/v1",
@@ -198,9 +203,28 @@ async def test_no_model_indexes_text_without_citations(fake_rag, tmp_path, monke
         rag_db_path=str(tmp_path / "rag_db"),
         pdfs_dir=str(tmp_path / "pdfs"),
         filenames=["paper.pdf"],
-        llm_credentials=citation_credentials(user),
+        llm_credentials=citation_credentials(local),
     )
 
     assert results[0]["status"] == "indexed"
     assert results[0]["citation_status"] == "disabled"
     assert fake_rag[0].extract_citations is False
+
+
+async def test_non_pdf_filename_reaches_index_single_file(fake_rag, tmp_path):
+    (tmp_path / "pdfs").mkdir()
+    (tmp_path / "pdfs" / "runs.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    results = await _index(tmp_path, ["runs.csv"])
+    assert results[0]["status"] == "indexed"
+    assert [p.name for p in fake_rag[0].indexed] == ["runs.csv"]
+
+
+def test_the_store_format_is_build_rags_without_importing_it():
+    """Read from its source, so a publish or import loads no embedding library."""
+    indexer._store_format.cache_clear()
+    got = indexer._store_format()
+    build_rag = indexer._get_build_rag()
+    assert (got.embedding_model, got.embedding_revision) == (
+        build_rag.TEXT_MODEL,
+        build_rag.TEXT_MODEL_REVISION,
+    )

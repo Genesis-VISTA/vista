@@ -16,7 +16,9 @@ import uuid
 from typing import Any, Literal
 
 from ..config import settings
-from ..db.schemas import ChatSessionTable, SlackAuditTable
+from sqlmodel import select
+
+from ..db.schemas import SlackAuditTable, SlackLinkTable
 from ..services import chat_run as chat_run_module
 from .store import now_iso
 
@@ -70,7 +72,7 @@ async def record(
     *,
     team_id: str | None = None,
     slack_user_id: str | None = None,
-    user_id: uuid.UUID | None = None,
+    collab_sub: str | None = None,
     chat_session_id: uuid.UUID | None = None,
     tool_name: str | None = None,
     detail: dict[str, Any] | None = None,
@@ -78,14 +80,22 @@ async def record(
 ) -> None:
     try:
         async with chat_run_module.session_factory() as db:
-            if user_id is None and chat_session_id is not None:
-                chat = await db.get(ChatSessionTable, chat_session_id)
-                user_id = chat.user_id if chat is not None else None
+            if collab_sub is None and slack_user_id is not None:
+                # Who the researcher was on the collaboration server, as the
+                # Slack account's link recorded it.
+                link = (
+                    await db.exec(
+                        select(SlackLinkTable).where(
+                            SlackLinkTable.slack_user_id == slack_user_id
+                        )
+                    )
+                ).first()
+                collab_sub = link.collab_sub if link is not None else None
             row = SlackAuditTable(
                 at=now_iso(),
                 team_id=team_id,
                 slack_user_id=slack_user_id,
-                user_id=user_id,
+                collab_sub=collab_sub,
                 chat_session_id=chat_session_id,
                 event=event,
                 tool_name=tool_name,
@@ -98,7 +108,7 @@ async def record(
                     "event": row.event,
                     "team_id": row.team_id,
                     "slack_user_id": row.slack_user_id,
-                    "user_id": str(row.user_id) if row.user_id else None,
+                    "collab_sub": row.collab_sub,
                     "chat_session_id": (
                         str(row.chat_session_id) if row.chat_session_id else None
                     ),
@@ -121,7 +131,7 @@ async def request(
     *,
     team_id: str,
     slack_user_id: str,
-    user_id: uuid.UUID,
+    collab_sub: str | None = None,
     chat_session_id: uuid.UUID | None,
     channel_id: str,
     thread_ts: str,
@@ -132,7 +142,7 @@ async def request(
         "request",
         team_id=team_id,
         slack_user_id=slack_user_id,
-        user_id=user_id,
+        collab_sub=collab_sub,
         chat_session_id=chat_session_id,
         detail={
             "channel_id": channel_id,

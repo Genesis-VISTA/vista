@@ -1,7 +1,6 @@
-"""Shared fixtures for backend tests: an in-memory DB session and seed users."""
+"""Shared fixtures for backend tests: an in-memory DB session and its settings row."""
 
 import os
-import uuid
 
 os.environ.setdefault("VISTA_BACKEND_MODEL", "test")
 
@@ -12,7 +11,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness.memory_keyring import memory_keyring  # noqa: F401  (fixture)
-from vista_backend.db.schemas import UserPublicWithConfig, UserTable
+from vista_backend.db.schemas import LocalSettingsPublic, LocalSettingsTable
 
 
 def pytest_collection_modifyitems(
@@ -58,6 +57,19 @@ def _no_inherited_vista_data(monkeypatch):
     monkeypatch.setattr(settings, "vista_data_token", None)
 
 
+@pytest.fixture(autouse=True)
+def _no_update_checks_against_github(monkeypatch):
+    """
+    A test that runs the app's lifespan starts the update checker, which asks
+    GitHub unless the version is `dev`. A machine with `VISTA_VERSION` exported
+    would then reach api.github.com from the suite; point it nowhere instead.
+    Update tests serve their own fake.
+    """
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings.updates, "github_api", "http://127.0.0.1:9")
+
+
 @pytest.fixture
 async def engine(tmp_path_factory):
     """
@@ -89,6 +101,10 @@ async def engine(tmp_path_factory):
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    # Like `init_db`: every database has its one settings row.
+    async with AsyncSession(engine) as s:
+        s.add(LocalSettingsTable())
+        await s.commit()
     yield engine
     await engine.dispose()
 
@@ -100,28 +116,64 @@ async def session(engine):
         yield s
 
 
-async def _make_user(session: AsyncSession, *, is_admin: bool) -> UserPublicWithConfig:
-    row = UserTable(
-        id=uuid.uuid4(), email=f"{uuid.uuid4()}@example.com", is_admin=is_admin
+@pytest.fixture
+async def local(session) -> LocalSettingsPublic:
+    """The installation's settings, as the `LocalSettingsDep` routes get them."""
+    from vista_backend.services import local_settings
+
+    return await local_settings.get_public(session)
+
+
+@pytest.fixture
+async def collab_server(tmp_path, monkeypatch):
+    """
+    A real collaboration server on a throwaway data directory, mounted
+    in-process: every backend client talks to it through `httpx.ASGITransport`,
+    whatever address it is given. That transport runs no lifespan, so it is
+    entered here. Yields the app.
+
+    Needs the backend's dev extra (`uv run --extra dev pytest`), which carries
+    the collaboration server as a path dependency.
+    """
+    import httpx
+    from vista_backend.services import collaboration
+    from vista_collaboration_server.api.app import create_app
+    from vista_collaboration_server.config import CollabSettings
+
+    data_dir = tmp_path / "collaboration-server"
+    # The database URL too: a `VISTA_COLLAB_DATABASE_URL` in the environment or
+    # a `.env` would otherwise point the test at a developer's real database.
+    # dev-headers: the server believes the install id the backend sends, so
+    # these tests need no sign-in. `test_collaboration_token.py` covers tokens.
+    app = create_app(
+        CollabSettings(
+            data_dir=data_dir,
+            database_url=f"sqlite+aiosqlite:///{data_dir / 'collaboration.db'}",
+            auth_mode="dev-headers",
+        )
     )
-    session.add(row)
-    await session.flush()
-    return UserPublicWithConfig.model_validate(row)
+    async with app.router.lifespan_context(app):
+        monkeypatch.setattr(collaboration, "transport", httpx.ASGITransport(app=app))
+        yield app
 
 
 @pytest.fixture
-async def admin(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=True)
+def loopback_server(tmp_path, monkeypatch):
+    """
+    The real collaboration server under `uvicorn` on a free loopback port, in
+    `dev-headers` mode with a temporary data directory, for tests that need git
+    over HTTP (hosted forums), which `collab_server`'s in-process transport
+    cannot give. Backend clients use the network, not an ASGI transport.
+    Yields a `harness.hosted.LoopbackServer`; needs the backend's dev extra.
+    """
+    from harness.hosted import run_server
+    from vista_backend.config import settings
+    from vista_backend.services import collaboration
 
-
-@pytest.fixture
-async def alice(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=False)
-
-
-@pytest.fixture
-async def bob(session) -> UserPublicWithConfig:
-    return await _make_user(session, is_admin=False)
+    monkeypatch.setattr(collaboration, "transport", None)
+    monkeypatch.setattr(settings, "collaboration_server_url", None)
+    with run_server(tmp_path) as server:
+        yield server
 
 
 @pytest.fixture
@@ -160,3 +212,42 @@ def client(tmp_path, fake_forum):
     return fake_forum.FakeForumClient(
         ForumSettings(enabled=True, repo_root=tmp_path / "forum", timeout=30.0)
     )
+
+
+@pytest.fixture
+def in_public_team(monkeypatch):
+    """
+    For tests of publishing and importing, where the team is beside the point:
+    every project, skill and knowledge base inserted with no team is put in the
+    public team on the server set in Settings then, as if the researcher had
+    selected it. Without it they are private, and not published.
+    """
+    from sqlalchemy import event, text
+
+    from vista_backend.config import settings
+    from vista_backend.db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
+    from vista_backend.services import local_settings
+    from vista_backend.services.collaboration import PUBLIC_TEAM_ID
+
+    def public(mapper, connection, target) -> None:
+        if target.team_id is not None:
+            return
+        url = (
+            connection.execute(
+                text("SELECT collaboration_server_url FROM local_settings")
+            ).scalar()
+            or settings.collaboration_server_url
+        )
+        target.team_id = PUBLIC_TEAM_ID
+        target.team_server = url
+
+    async def selected(session, row=None):
+        return PUBLIC_TEAM_ID
+
+    monkeypatch.setattr(local_settings, "selected_team", selected)
+    tables = (ProjectTable, SkillTable, KnowledgeBaseTable)
+    for table in tables:
+        event.listen(table, "before_insert", public)
+    yield
+    for table in tables:
+        event.remove(table, "before_insert", public)

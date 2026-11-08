@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, text
 from sqlmodel import Session, SQLModel
 
 from vista_backend.config import settings
-from vista_backend.db.schemas import UserTable
+from vista_backend.db.schemas import LocalSettingsTable
 from vista_backend.utils import crypto, secret_store
 
 pytestmark = pytest.mark.unit
@@ -35,7 +35,9 @@ def _db(tmp_path):
 
 def _raw_token(engine) -> str:
     with engine.connect() as conn:
-        return conn.execute(text("SELECT github_token FROM app_user")).scalar_one()
+        return conn.execute(
+            text("SELECT github_token FROM local_settings")
+        ).scalar_one()
 
 
 def test_a_packaged_install_creates_its_own_key(packaged):
@@ -51,10 +53,10 @@ def test_values_written_under_the_dummy_key_are_moved_once(monkeypatch, tmp_path
     crypto.get_fernet.cache_clear()
     engine = _db(tmp_path)
     with Session(engine) as s:
-        user = UserTable(email="a@example.com", github_token="ghp-secret")
-        s.add(user)
+        row = LocalSettingsTable(github_token="ghp-secret")
+        s.add(row)
         s.commit()
-        user_id = user.id
+        row_id = row.id
 
     # The new version starts.
     monkeypatch.setattr(settings, "encryption_key_in_secret_store", True)
@@ -68,7 +70,8 @@ def test_values_written_under_the_dummy_key_are_moved_once(monkeypatch, tmp_path
         own = Fernet(secret_store.get(secret_store.DB_ENCRYPTION_KEY).encode())
         assert own.decrypt(_raw_token(engine).encode()) == b"ghp-secret"
         with Session(engine) as s:
-            assert s.get(UserTable, user_id).github_token == "ghp-secret"
+            row = s.get(LocalSettingsTable, row_id)
+            assert row is not None and row.github_token == "ghp-secret"
     finally:
         crypto.get_fernet.cache_clear()
 

@@ -30,6 +30,7 @@ import {
   type PartEndEvent,
   type PartStartEvent,
 } from "./agent-events";
+import { provisionalDisplayedFile, type DisplayedFile } from "./displayed-files";
 import { labelForTool } from "./tool-labels";
 import type { ChatMessage, ExecutionResult } from "./types";
 
@@ -60,6 +61,10 @@ export interface RunHost {
   /** Another view answered: stop showing the prompt with this id. */
   promptResolved(id: string): void;
   scrollToLatest(): void;
+  /** A `display_file` just succeeded: show it in the feed until the recorded list is read back. */
+  showFile?(file: DisplayedFile): void;
+  /** The run is over; whatever it recorded can be read back. */
+  runFinished?(): void;
 }
 
 export type RunRendererOptions = {
@@ -247,6 +252,7 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
             role: "assistant",
             content: `Calling \`${toolName}\`…`,
             intermediate: true,
+            ...(ev.part?.tool_call_id ? { tool_call_id: ev.part.tool_call_id } : {}),
           }),
         ]);
         host.setLatestIntermediateId(() => newBubbleId);
@@ -270,6 +276,10 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
             result.tool_name === "display_file"
               ? fileFromToolReturnContent(result.content)
               : null;
+          if (file && runId && result.tool_call_id) {
+            const shown = provisionalDisplayedFile(file, runId, result.tool_call_id);
+            if (shown) host.showFile?.(shown);
+          }
           const html = file ? null : htmlFromToolReturnContent(result.content);
           const ui = file
             ? ({ kind: "file", url: file.url, mimeType: file.mimeType, name: file.name } as const)
@@ -306,16 +316,22 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
 
       case "run_finished": {
         const state = (data as { state?: string }).state;
+        const err = (data as { error?: unknown }).error;
         if (state !== "done" && state !== "failed" && state !== "interrupted" && state !== "stopped") {
           break;
         }
         finishedState = state;
+        host.runFinished?.();
         host.setLiveStatus(null);
         host.setLatestIntermediateId(() => null);
         if (state !== "done") {
+          const note =
+            (state === "failed" && typeof err === "string" && err.length > 0)
+            ? `Agent run failed: ${err}`
+            : FINISH_NOTES[state];
           host.setMessages((prev) => [
             ...prev,
-            tagged({ id: newId(), role: "system", content: FINISH_NOTES[state] }),
+            tagged({ id: newId(), role: "system", content: note }),
           ]);
         }
         break;

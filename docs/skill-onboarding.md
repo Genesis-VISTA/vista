@@ -2,11 +2,13 @@
 
 This doc covers everything around adding skills to VISTA: the on-disk layout
 and frontmatter schema, the three ways to get a new skill into your project
-(write by hand, generate from a chat, or import from GitHub), and how
-publishing to the Skill Hub works.
+(write by hand, generate from a chat, or import from a GitHub or GitLab
+repository), and how publishing to and importing from a collaboration server
+works.
 
-If you just want to consume an existing skill, see the Skill Hub at `/skill-hub`
-and the project's loaded skills at `/skills`.
+If you just want to use an existing skill, see the skills on this computer and
+the project's loaded skills at `/skills`, and the skills published to your
+collaboration server on the Skill Hub at `/skill-hub`.
 
 ## Where skills live
 
@@ -35,10 +37,11 @@ to `../skills` relative to the backend cwd).
 | `compatibility` | string      | no       | Free-form compatibility note.                                                               |
 | `allowed_tools` | string      | no       | Reserved by the AgentSkills spec; not enforced today.                                       |
 | `metadata`      | mapping     | no       | Open key-value bag. By convention we use `metadata.version` and `metadata.tags`.            |
-| `tags`          | string list | no       | Top-level tag list (used by the hub's tag filter).                                          |
-| `author`        | string      | no       | Display name of the skill author. Rendered as "by ..." on cards.                            |
-| `repo_url`      | string      | no       | External URL for the skill's source. Rendered as the "repo ↗" link on cards.                |
-| `is_public`     | bool        | no       | Defaults to `false`. `true` lists the skill on the Skill Hub. **Publishing is one-way** — see below. |
+| `author`        | string      | no       | Display name of the skill author. Kept in SKILL.md and in a published version's manifest.   |
+
+Where a skill came from and whether it is published are not frontmatter: VISTA
+records them beside the skill (`repo_url` for a repository import, and the
+collaboration server, item and version for a published or imported one).
 
 Example:
 
@@ -51,8 +54,6 @@ metadata:
   tags: ["Materials Design", "Molten Salt Tritium Breeding"]
 license: Proprietary
 author: VISTA Team
-repo_url: https://code.ornl.gov/v28/vista
-is_public: true
 ---
 
 # Salt Analysis Skill
@@ -74,7 +75,6 @@ cat > skills/my-new-skill/SKILL.md <<'EOF'
 name: my-new-skill
 description: Describe what it does and when an agent should invoke it.
 author: Your Name
-is_public: false
 ---
 
 ## Overview
@@ -96,36 +96,69 @@ reusable skill:
 3. The modal shows "Drafting from your conversation…" while the LLM runs;
    when the draft arrives, it pre-fills `name`, `description`, and a Markdown
    body that distills the workflow.
-4. Edit any field, then click **Save (private)** or **Save & publish**.
+4. Edit any field, then click **Save**. To share it, publish it from `/skills`
+   (see [Publishing and importing](#publishing-and-importing-through-a-collaboration-server)).
 
 Under the hood this calls `POST /skills/generate` (which does **not** write
 anything) followed by `POST /skills` with the active project's name, so the
 new skill is loaded into that project.
 
-### 3. Import from GitHub
+### 3. Import from a repository
 
-For skills hosted in a Git repository (yours or someone else's):
+For skills hosted in a Git repository on github.com or any GitLab (gitlab.com
+or self-hosted, e.g. `gitlab.osti.gov`), holding one skill or many:
 
 1. Go to `/skills` (the active project's skill tab — **not** the hub).
-2. Click **Import…**.
-3. Paste either:
-   - `https://github.com/<owner>/<repo>` — SKILL.md at the repo root, or
-   - `https://github.com/<owner>/<repo>/tree/<ref>/<subpath>` — SKILL.md inside
-     a sub-directory of a monorepo. Example:
-     `https://github.com/anthropics/skills/tree/main/skills/docx`.
-4. Click **Import**.
+2. Click **Import…** and stay on the **Repository** tab.
+3. Paste a repository or a folder in one:
+   - `https://github.com/<owner>/<repo>`
+   - `https://github.com/<owner>/<repo>/tree/<ref>/<path>`
+   - `https://<gitlab-host>/<group>[/<subgroup>…]/<repo>`
+   - `https://<gitlab-host>/<group>/<repo>/-/tree/<ref>/<path>`
 
-The backend downloads the repo tarball via the GitHub API (no `git` binary
-required), validates that SKILL.md exists at the target path, copies the
-**entire** skill directory (SKILL.md + scripts + any other files) into
-`skills/<name>/`, forces `is_public:false`, and auto-fills `repo_url` from the
-source URL if the imported frontmatter didn't already set it.
+   A link to a `SKILL.md` itself (`/blob/…/SKILL.md`) means its folder.
+4. For a private repository, paste an access token (read access to the
+   repository is enough). It is sent only to the URL's host, for this import,
+   and is not saved. Leave it empty to use your GitHub or gitlab.com token from
+   **Settings → Repositories**; no Settings token is sent to any other host.
+5. Click **Import**.
 
-For private repos, save a GitHub token in **Settings → Repositories** (read
-access to the repository's contents is enough). Each researcher's own token is
-used for their imports. Without a token, public repos work but the API rate
-limit is 60 requests/hour per IP. Public repos look like 404s when you're
-unauthenticated and the repo is actually private.
+VISTA downloads the repository's archive over the host's API (no `git` binary),
+pinned to the commit its branch or tag points at, and finds the skills in it:
+
+- A `SKILL.md` at the linked folder (or the repository root) makes that folder
+  the one skill — a single-skill repository imports exactly as it always did.
+- Otherwise, if the repository has a `.claude-plugin/marketplace.json`, the
+  skill folders it lists (an entry that is a folder of skills means every skill
+  in it; a plugin hosted in another repository is left out).
+- Otherwise every folder below with a `SKILL.md`, at any depth, skipping
+  `.git`, `node_modules` and other dot-folders. A folder holding a `SKILL.md` is
+  one skill, including everything below it.
+
+One skill with no conflict is imported straight away. Otherwise the dialog lists
+every skill found — name, description, folder, file count and HPC jobs — to tick
+the ones to import (or **Select all**). Each skill's folder is copied whole.
+Beyond it, the dialog also shows:
+
+- **Also copied in** — the nearest `LICENSE`, `NOTICE`, `ATTRIBUTION` or
+  `COPYING` from the folders above it, when the skill has none of its own, and
+  any file a symlink in the skill points at elsewhere in the repository (copied
+  in as the file).
+- **⚠ warnings** — a symlink that leaves the repository (left out), or a
+  `../` path in the skill's Markdown that leads out of its folder. That file is
+  not imported; the skill may need it.
+- An error for a skill whose `SKILL.md` is malformed; it cannot be ticked, and
+  the rest still import.
+
+If a skill's name is already taken, choose **Skip**, **Replace my skill** (not
+offered for one bundled with VISTA), or **Import under another name**,
+which rewrites only the `name:` line of its frontmatter. Skills in one
+repository that share a name are ticked only once; give the others a new name
+to import them too. Each skill is imported
+on its own and the dialog says what happened to each. An imported skill is
+loaded into the project, and its `repo_url` is its folder at the
+imported commit (or, for a single URL, the URL given). The upload limits apply
+to each skill: 2,000 files and 50 MB.
 
 ### 4. Have the agent write it (HPC skills)
 
@@ -147,7 +180,7 @@ subgroups included), or upload a `.zip` of a
 folder (or of a private repository) in chat and ask it to wrap that. For a URL, the agent calls the
 `fetch_repository` tool: VISTA's backend, not the sandbox, downloads the repository, pinned to the
 commit its branch or tag points at now, into the agent's `/mnt/data/work/<name>/`. That is the
-same route as **Import → GitHub URL**, so it works on networks whose HTTPS proxy the sandbox does
+same route as **Import → Repository**, so it works on networks whose HTTPS proxy the sandbox does
 not trust, and with a GitHub or gitlab.com token saved in **Settings → Repositories** it reads
 private repositories on that host without the token entering the sandbox (the agent can read
 whatever the token can, so scope it read-only). An upload is unpacked in the sandbox by
@@ -160,7 +193,7 @@ into `cluster_defaults.json`. A repository is not copied into the skill: its job
 folder's needed files are shipped in the job folder. Only github.com and gitlab.com are fetched (for another host, upload an archive). A private
 repository's needed files are shipped in the skill unless you confirm the cluster can clone it
 with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
-import it directly from GitHub or a local folder.
+import it directly from its repository or a local folder.
 
 **Software environments.** The skill tells the agent to prefer an environment you have already
 built on the cluster (its path goes in `cluster_defaults.json`), and to recommend pre-building one
@@ -172,34 +205,70 @@ of 1. The validator warns about a job that creates a conda env without moving th
 See [OLCF's documentation](https://docs.olcf.ornl.gov/) for each cluster's recommended modules.
 
 The import applies the same checks and limits as a local-folder import and refuses a folder
-holding a symlink (the sandbox can create links to files outside it). The skill lands private,
+holding a symlink (the sandbox can create links to files outside it). The skill
 is added to the project's `skills` list, and shows the **Runs HPC jobs** badge; from the next
 message on, the agent can submit its jobs as `<skill>/<job>`. To change it, ask the agent to edit
-the folder and import it again: a folder whose name matches one of your private skills shows
-**Replace**, which swaps that skill's files and keeps it in the project. A published skill's name
-cannot be reused.
+the folder and import it again: a folder whose name matches one of your skills shows
+**Replace**, which swaps that skill's files, keeps it in the project and marks it changed since
+it was last published. The name of a skill bundled with VISTA cannot be reused.
 
 The agent cannot import or load a skill itself; loading a skill lets it run the skill's scripts
 on a cluster under your credentials, so that step stays a click. The routes behind the tab are
 `GET` and `POST /projects/{project}/skills/from-output`; they read only the caller's own output
 folder in that project.
 
-## Publishing to the Skill Hub
+## Publishing and importing through a collaboration server
 
-Every skill starts out **private** (`is_public:false`). It's visible on
-`/skills` for the project that owns it but hidden from the hub. To publish:
+Skills are shared through a collaboration server, explicitly: nothing leaves
+your computer until you publish it, and nothing arrives until you import it.
+Set the server's address in **Settings → Collaboration**; without one that
+answers, the Skill Hub and every Publish button say why and do nothing. (For
+development, `./launch.sh logs --collab` starts a local server.)
 
-1. Open `/skills`.
-2. On the skill's card, click **Publish**.
-3. Confirm the permanence dialog.
+**Teams.** Everything on the server belongs to a team, and only its members see
+it. Everyone is in the **public** team; anyone can create a team and add people
+who have signed in to the server. Here, a skill is either **Private** (on this
+computer only, as everything VISTA bundles or seeds starts out) or in a team.
+The team switcher shows one at a time: Private, or a team. A new skill joins the
+selected one (or, made for a project, the project's), and a project loads only
+skills of its own team. **Copy to team** puts a private skill in a team, or a
+team's skill in another, leaving the original where it is; one a project here
+still uses is copied beside it under a new name.
 
-The card flips to **Published ✓** and the skill now appears on `/skill-hub`
-for anyone with access.
+**Publishing.** On `/skills`, a skill's card says where it stands — *Not
+published*, *Version 3*, *Changed here since version 3*, *Version 4 available* —
+and **Publish** (or **Publish changes**) sends its folder, as an archive, with a
+manifest read from its SKILL.md, as its team's next version; a private skill is
+copied to a team instead. Everyone in its team (for the public team, everyone)
+can see and import it; there is no unpublish, but you can publish newer
+versions. A skill bundled with VISTA is copied to a team like any other.
 
-**Publishing is one-way.** The backend rejects `PATCH /skills/{name}` with
-`is_public: false` if the skill is currently public, returning HTTP 409. There
-is no Unpublish UI. If you really need to take a skill down, delete the
-`skills/<name>/` directory by hand.
+The server numbers versions 1, 2, 3… and accepts a publish only on top of its
+newest one. If someone published since your copy's version, the publish is
+refused and you choose: **Use the server's version** (import it over your
+changes), **Publish mine as version N** (on top of theirs), or **Publish as a
+new skill**. Any edit — a `PATCH`, a **Replace** from project output or a
+repository — marks a published skill changed since its version.
+
+**Importing.** The Skill Hub at `/skill-hub` lists the server's skills with what
+their newest version says about them: description, who published it, and the
+HPC jobs it ships. Importing is your decision to trust a skill; review it first.
+**Import** unpacks it, with the same checks and limits as a local folder, and
+loads it into the active project. A skill you already have from the same item
+shows **Update to version N** instead, which keeps its name and asks before it
+replaces changes made here. A different skill with the same name asks for a new
+name to import it under.
+
+Deleting a skill on `/skills` removes it from this computer only; its published
+versions stay on the server. Skills bundled with VISTA cannot be deleted, only
+unloaded. A new import is named after the skill on the server; a copy that was
+changed here but is at the newest version offers **Revert to version N**.
+
+The routes are `POST /skills/{name}/publish` (`{on_top_of?, as_new?}`),
+`GET /collaboration/skills` and `POST /collaboration/skills/{id}/import`
+(`{version?, rename_to?, replace_modified?, project?}`); a refusal that needs
+your choice is a 409 with a `code` (`version_conflict`, `remote_missing`,
+`modified`, `name_taken`).
 
 ## How a skill becomes "loaded" for a project
 
@@ -210,10 +279,11 @@ agent has.
 
 The list changes in four places, all for every member of the project:
 
-- **Load / Loaded ✓** on the hub, and **Unload** on `/skills`, rewrite the
-  project with `PUT /projects/<name>`.
-- **Import** and **Save** (from a chat) pass the active project to
-  `POST /skills/import`, `POST /skills/import/upload` or `POST /skills`, which
+- **Load** and **Unload** on `/skills`, and **Load / Loaded ✓** on the hub,
+  rewrite the project with `PUT /projects/<name>`.
+- **Import** and **Save** (from a chat), and **Import** on the hub, pass the
+  active project to `POST /skills/import`, `POST /skills/import/upload`,
+  `POST /skills` or `POST /collaboration/skills/{id}/import`, which
   load the new skill into it in the same commit. **Import → From project
   output** does the same through `POST /projects/<name>/skills/from-output`.
 - The project modal's skills picker.
@@ -313,28 +383,42 @@ underscores, no capitals.
 **`409 — A skill named 'X' already exists`** — Pick a different name (the
 slug is the directory name and must be unique).
 
-**`409 — Published skills cannot be unpublished`** — Publishing is one-way;
-delete the directory by hand if you need to remove a skill.
+**`… has been published since version N`** — Someone published the skill
+after your copy's version; choose what to do in the dialog (see
+[Publishing and importing](#publishing-and-importing-through-a-collaboration-server)).
 
-**`400 — URL '…' is not a GitHub repo URL`** — The import endpoint only
-accepts `github.com` URLs in one of the two forms described above.
+**`… is not GitHub, and did not answer as a GitLab server`** — Import reads
+github.com and GitLab hosts only. Check the host; for anything else, download
+the folder and use **Local folder**.
 
-**`GitHub returned 404 for …`** — Either the repo really doesn't exist, or
-it's private and you haven't saved a GitHub token in Settings → Repositories
-(or that token can't read it).
+**`<host> has no public repository '…' (404)`** — Either the repository really
+doesn't exist, or it's private and no token was sent. Paste a token in the
+dialog, or save a GitHub or gitlab.com token in Settings → Repositories.
 
-**`No SKILL.md found at <subpath>`** — Double-check the tree URL points to a
-directory containing a SKILL.md (or skill.md). If you're pointing at a
-monorepo root that doesn't have a SKILL.md, use the `/tree/<ref>/<subpath>`
-form instead.
+**`<host> refused access (401/403)`** — The token was sent but is wrong,
+expired, or cannot read the repository. The message says whether it was the
+dialog's token or the Settings one.
+
+**`Could not reach <host>`** — The host is down, or not reachable from where
+the backend runs (VPN, proxy).
+
+**`No SKILL.md found in …`** — Neither the linked folder nor anything below it
+holds a `SKILL.md`. Check the branch and path in the URL.
+
+**`… holds N skills (…)`** — `POST /skills/import` takes one skill. In the
+dialog you choose among them; over the API, use `POST /skills/import/scan` and
+`POST /skills/import/batch`, or link one skill's folder.
+
+**`SKILL.md in <folder> is invalid: …`** — Its frontmatter is missing, is not
+valid YAML, or lacks a valid `name` or `description`; the message names the field.
 
 **Skill appears in `skills/` but not on `/skills`** — The skill's `name:`
 frontmatter must match the directory name. Backend logs `read_skill` parse
 errors on startup; check there.
 
-**My private skill (alloy-design, etc.) doesn't show on the hub** — That's by
-design — the hub only lists `is_public:true` skills. Private project skills
-live on `/skills` instead.
+**My skill doesn't show on the hub** — The hub lists the collaboration server's
+skills, not this computer's. Publish it from `/skills`; skills bundled with
+VISTA are never published.
 
 ## Reference
 

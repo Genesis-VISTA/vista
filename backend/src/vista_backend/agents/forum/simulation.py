@@ -67,7 +67,7 @@ no chat session, and without this it would be abandoned on its first poll.
 # Which cluster each backend credential unlocks. An S3M token is scoped to one
 # OLCF project, so Odo and Frontier each have their own; NERSC is a separate
 # credential. Mirrors the MCP server's `_default_cluster` enablement, and the two
-# must not drift — a debate that offers a cluster the user cannot reach wastes a
+# must not drift — a debate that offers a cluster VISTA cannot reach wastes a
 # submission.
 CLUSTER_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "odo": ("odo_s3m_token",),
@@ -97,12 +97,12 @@ class BudgetSpent(CommissionRefused):
     """This debate has used its simulation allowance. No later call can work."""
 
 
-def clusters_for(user: Any) -> list[str]:
-    """The clusters this user actually has credentials for."""
+def clusters_for(local: Any) -> list[str]:
+    """The clusters the settings actually have credentials for."""
     return sorted(
         cluster
         for cluster, fields in CLUSTER_CREDENTIALS.items()
-        if any(getattr(user, field, None) for field in fields)
+        if any(getattr(local, field, None) for field in fields)
     )
 
 
@@ -257,7 +257,6 @@ async def commission(
     *,
     debate_run_id: uuid.UUID,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     thread_id: str,
     participant: Participant,
     hpc: HpcTools,
@@ -278,7 +277,6 @@ async def commission(
     run = await campaign_service.create_campaign(
         session,
         project_id=project_id,
-        user_id=user_id,
         domain=DEBATE_DOMAIN,
         planner_skill="",
         title=f"Testing: {prediction[:80]}",
@@ -309,7 +307,6 @@ async def commission(
         session,
         job_id=submitted.job_id,
         step_id=step.id,
-        user_id=user_id,
         cluster=submitted.cluster,
         job_name=job,
         log_path=submitted.log_path,

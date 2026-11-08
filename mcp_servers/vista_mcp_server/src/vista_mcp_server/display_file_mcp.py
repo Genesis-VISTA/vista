@@ -80,6 +80,9 @@ async def display_file(
 ) -> dict[str, str]:
     """
     Display a file (e.g. an image or plot) to the user.
+
+    This is the only way to show a file to the user: saving a file does not display it, and
+    markdown images of sandbox paths (e.g. `![](/mnt/data/output/plot.png)`) do not render.
     """
     vista = get_vista_meta(ctx)
     try:

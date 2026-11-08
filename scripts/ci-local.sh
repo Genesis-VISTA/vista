@@ -8,11 +8,12 @@
 #   ./scripts/ci-local.sh backend          # lint + test backend
 #   ./scripts/ci-local.sh ui lint          # lint UI only
 #   ./scripts/ci-local.sh mcp test         # test vista_mcp_server + dev_mcp_server
+#   ./scripts/ci-local.sh collab           # lint + typecheck + test collaboration_server
 #   ./scripts/ci-local.sh backend ui test  # test backend + UI component suites
 #   ./scripts/ci-local.sh electron         # typecheck + routing tests for the window
 #   ./scripts/ci-local.sh install          # shellcheck + tests for the one-line installers
 #   ./scripts/ci-local.sh launcher         # the package launchers' supervised mode
-#   ./scripts/ci-local.sh docs             # relative links in the Markdown docs
+#   ./scripts/ci-local.sh docs             # relative links in the Markdown docs + the site manifest + a strict build of the published pages
 #   ./scripts/ci-local.sh install-hooks    # point git at .githooks (lint on commit)
 #
 # Flags:
@@ -33,7 +34,7 @@ TARGETS=()
 ACTIONS=()
 
 usage() {
-  sed -n '2,21p' "$0" | sed -E 's/^# ?//'
+  sed -n '2,22p' "$0" | sed -E 's/^# ?//'
 }
 
 die() {
@@ -61,7 +62,8 @@ ci_var() {
 RUFF_VERSION="$(ci_var RUFF_VERSION)"
 PYRIGHT_VERSION="$(ci_var PYRIGHT_VERSION)"
 BANDIT_VERSION="$(ci_var BANDIT_VERSION)"
-export RUFF_VERSION PYRIGHT_VERSION BANDIT_VERSION
+MKDOCS_MATERIAL_VERSION="$(ci_var MKDOCS_MATERIAL_VERSION)"
+export RUFF_VERSION PYRIGHT_VERSION BANDIT_VERSION MKDOCS_MATERIAL_VERSION
 
 run_job() {
   # run_job <name> <allow_failure 0|1> <command...>
@@ -139,7 +141,42 @@ backend_test() {
   log "backend:test"
   (
     cd "$REPO_ROOT/backend"
-    uv sync --frozen --dev
+    # The dev extra carries the collaboration server, mounted in-process by the
+    # collaboration tests. Matches backend:test.
+    uv sync --frozen --extra dev
+    uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
+  )
+}
+
+# The collaboration server (collaboration_server/). Mirrors collab:lint,
+# collab:typecheck and collab:test.
+collab_lint() {
+  ensure_uv
+  local rc=0
+  run_job "collab:lint (ruff $RUFF_VERSION)" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/collaboration_server"
+    uvx "ruff@${RUFF_VERSION}" check src/ tests/
+    uvx "ruff@${RUFF_VERSION}" format --check src/ tests/
+  ' || rc=1
+  if [[ "$FAST" == true ]]; then
+    return "$rc"
+  fi
+  run_job "collab:typecheck" 0 bash -c '
+    set -e
+    cd "'"$REPO_ROOT"'/collaboration_server"
+    uv sync --frozen
+    uv run --with "pyright==${PYRIGHT_VERSION}" pyright src/
+  ' || rc=1
+  return "$rc"
+}
+
+collab_test() {
+  ensure_uv
+  log "collab:test"
+  (
+    cd "$REPO_ROOT/collaboration_server"
+    uv sync --frozen --extra dev
     uv run pytest tests/ -v --tb=short -m "$PYTEST_HERMETIC_MARKERS"
   )
 }
@@ -265,7 +302,8 @@ install_lint() {
     return 0
   fi
   run_job "install:lint (shellcheck)" 0 shellcheck \
-    "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/test_install.sh" "$REPO_ROOT"/.github/scripts/*.sh
+    "$REPO_ROOT/scripts/install.sh" "$REPO_ROOT/scripts/test_install.sh" "$REPO_ROOT"/.github/scripts/*.sh \
+    "$REPO_ROOT/electron/update/apply-update.sh"
 }
 
 install_test() {
@@ -289,9 +327,28 @@ launcher_test() {
   fi
 }
 
-# Relative links and anchors in the tracked Markdown files. Mirrors docs:links.
+# Relative links and anchors in the tracked Markdown files (docs:links), and
+# docs/site.toml accounting for every docs/*.md (docs:manifest). The manifest
+# check needs Python >= 3.11 for tomllib, so it runs under uv here; CI's image has it.
 docs_lint() {
   run_job "docs:links" 0 python3 -I "$REPO_ROOT/scripts/check_md_links.py"
+  ensure_uv
+  run_job "docs:manifest" 0 uv run --no-project --quiet --python 3.14 python -I \
+    "$REPO_ROOT/scripts/docs_site/check_manifest.py"
+  run_job "docs:manifest (tests)" 0 uv run --no-project --quiet --python 3.14 python -I \
+    -m unittest discover -s "$REPO_ROOT/scripts/docs_site" -p 'test_check_manifest.py'
+}
+
+# The pages docs/site.toml publishes, synced into a temporary site and built
+# with mkdocs in strict mode (docs:site). CI runs the same script.
+# Also the OLCF-docs converter's tests (docs:olcf-docs): hermetic, but they need
+# beautifulsoup4 and markdownify, so they run under uv with those, not under bare python.
+docs_test() {
+  ensure_uv
+  run_job "docs:site" 0 bash "$REPO_ROOT/scripts/docs_site/check_site.sh"
+  run_job "docs:olcf-docs" 0 uv run --no-project --quiet --python 3.14 \
+    --with beautifulsoup4 --with markdownify python -I \
+    -m unittest discover -s "$REPO_ROOT/scripts/olcf_docs" -p 'test_*.py'
 }
 
 install_hooks() {
@@ -318,7 +375,7 @@ while [[ $# -gt 0 ]]; do
     install-hooks)
       INSTALL_HOOKS=true
       ;;
-    backend|ui|mcp|electron|install|launcher|docs|all)
+    backend|collab|ui|mcp|electron|install|launcher|docs|all)
       TARGETS+=("$1")
       ;;
     lint|test|tests)
@@ -402,6 +459,12 @@ fi
 if want_target backend && want_action test; then
   run_section "backend test" backend_test
 fi
+if want_target collab && want_action lint; then
+  run_section "collab lint" collab_lint
+fi
+if want_target collab && want_action test; then
+  run_section "collab test" collab_test
+fi
 if want_target mcp && want_action lint; then
   run_section "mcp lint" mcp_lint
 fi
@@ -428,6 +491,9 @@ if want_target install && want_action test; then
 fi
 if want_target docs && want_action lint; then
   run_section "docs lint" docs_lint
+fi
+if want_target docs && want_action test; then
+  run_section "docs test" docs_test
 fi
 if want_target launcher && want_action test; then
   run_section "launcher test" launcher_test

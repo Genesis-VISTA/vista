@@ -232,12 +232,12 @@ def test_write_failure_degrades_without_raising(tmp_path):
 
 
 @pytest.fixture
-def project_agent(alice):
+def project_agent(local):
     from vista_backend.agents.agents import ProjectAgent
     from vista_backend.db.schemas import ProjectPublic
 
     project = ProjectPublic(id=uuid.uuid4(), name="metrics-test")
-    return ProjectAgent(project, alice, uuid.uuid4())
+    return ProjectAgent(project, local, uuid.uuid4())
 
 
 async def fake_call_tool_factory(captured: dict):
@@ -342,14 +342,14 @@ async def test_process_tool_call_times_and_correlates(
 
 
 @pytest.mark.anyio
-async def test_skill_attribution_by_script_path(tmp_path, monkeypatch, alice):
+async def test_skill_attribution_by_script_path(tmp_path, monkeypatch, local):
     """M11/E14: a sandbox call invoking a loaded skill's files is tagged
     with that skill; ambiguous or unrelated calls stay untagged."""
     from vista_backend.agents.agents import ProjectAgent
     from vista_backend.db.schemas import ProjectPublic
 
     project = ProjectPublic(id=uuid.uuid4(), name="t", skills=["salt-analysis"])
-    agent = ProjectAgent(project, alice, uuid.uuid4())
+    agent = ProjectAgent(project, local, uuid.uuid4())
     rec, log_path = make_recorder(tmp_path, level="perf")
     monkeypatch.setattr(metrics_module, "_recorder", rec)
 

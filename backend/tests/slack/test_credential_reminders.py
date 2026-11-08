@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from harness import make_project, say, scripted_model
+from harness import make_local_settings, make_project, say, scripted_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.services import chat_run
 from vista_backend.slack import credentials, limits
@@ -28,18 +28,17 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture(autouse=True)
 def fresh_known(monkeypatch):
-    monkeypatch.setattr(credentials, "_known", {})
+    monkeypatch.setattr(credentials, "_known", [])
 
 
 @pytest.fixture
-async def linked(engine, session, alice, monkeypatch):
+async def linked(engine, session, monkeypatch):
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
-    await link(session, alice, "U1")
-    return alice
+    return await link(session, "U1")
 
 
 def _source(*expiries):
-    async def expiries_for(user):
+    async def expiries_for(local):
         return list(expiries)
 
     return expiries_for
@@ -121,19 +120,16 @@ async def test_after_expiry_a_slack_submit_says_what_is_unavailable(
     ).run_once()
 
     why = await limits.refusal(
-        linked.id, "vista__submit_hpc_job", {"cluster": "frontier", "job": "x"}
+        "vista__submit_hpc_job", {"cluster": "frontier", "job": "x"}
     )
     assert why is not None
     assert "Submission, cancellation and outputs on Frontier are unavailable" in why
     assert "desktop app" in why
+    assert await limits.refusal("vista__submit_hpc_job", {"cluster": "lux"}) is None, (
+        "other systems still work"
+    )
     assert (
-        await limits.refusal(linked.id, "vista__submit_hpc_job", {"cluster": "lux"})
-        is None
-    ), "other systems still work"
-    assert (
-        await limits.refusal(
-            linked.id, "vista__get_hpc_job_status", {"cluster": "frontier"}
-        )
+        await limits.refusal("vista__get_hpc_job_status", {"cluster": "frontier"})
         is None
     ), "read-only status is not refused"
 
@@ -143,7 +139,7 @@ async def test_after_expiry_the_slack_prompt_says_which_systems(linked):
         FakeTransport(), expiries=_source(Expiry("odo", "S3M token", _in(-1)))
     ).run_once()
 
-    agent = ProjectAgent(make_project(tools=["*"]), linked, uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     seen: list[str] = []
 
     def capture(messages, info):
@@ -175,33 +171,32 @@ def test_a_jwt_exp_is_read_and_anything_else_is_not():
 
 
 def test_globus_is_three_days_from_login():
-    class U:
+    class Local:
         odo_globus_token = None
         odo_globus_connected_at = "2026-10-16T10:00:00+00:00"
         frontier_globus_token = "rt"
         frontier_globus_connected_at = "2026-10-16T10:00:00+00:00"
 
-    (e,) = globus_expiries(U())
+    (e,) = globus_expiries(Local())
     assert e.cluster == "frontier" and e.estimated
     assert e.expires_at == datetime(2026, 10, 19, 10, tzinfo=UTC)
 
 
-async def test_connecting_globus_stamps_when(session, alice, monkeypatch):
+async def test_connecting_globus_stamps_when(session, monkeypatch):
     """The three-day estimate starts from this stamp, set by the login itself."""
-    from vista_backend.api.users import GlobusLoginCode, complete_globus_login
-    from vista_backend.db.schemas import UserTable
-    from vista_backend.services import globus_auth
+    from vista_backend.api.settings import GlobusLoginCode, complete_globus_login
+    from vista_backend.services import globus_auth, local_settings
 
     monkeypatch.setattr(
         globus_auth,
         "complete_login",
-        lambda user_id, cluster, code: globus_auth.Connection(
+        lambda cluster, code: globus_auth.Connection(
             refresh_token="rt", https_refresh_token="hrt", identity="a@ornl.gov"
         ),
     )
 
-    await complete_globus_login("frontier", GlobusLoginCode(code="c"), session, alice)
+    await complete_globus_login("frontier", GlobusLoginCode(code="c"), session)
 
-    row = await session.get(UserTable, alice.id)
-    assert row is not None and row.frontier_globus_connected_at
+    row = await local_settings.get(session)
+    assert row.frontier_globus_connected_at
     assert row.odo_globus_connected_at is None

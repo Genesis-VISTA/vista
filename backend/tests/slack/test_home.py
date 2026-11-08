@@ -1,7 +1,6 @@
 """App Home: status, host, credentials, lock and recent jobs."""
 
 import json
-import uuid
 from datetime import UTC, datetime
 
 import pytest
@@ -33,7 +32,6 @@ def _config(**kw) -> SlackConfigTable:
 
 def _job(**kw) -> HpcJobRecordTable:
     return HpcJobRecordTable(
-        user_id=uuid.uuid4(),
         cluster="frontier",
         job_id="4471",
         job="flibe-md",
@@ -137,13 +135,12 @@ def test_offline_locked_and_expired():
     assert "None yet." in text
 
 
-async def test_publish_for_a_linked_user_only(engine, session, alice, monkeypatch):
+async def test_publish_for_a_linked_user_only(engine, session, monkeypatch):
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
-    monkeypatch.setattr(credentials, "_known", {})
-    await link(session, alice, "U1")
+    monkeypatch.setattr(credentials, "_known", [])
+    await link(session, "U1")
     session.add(
         HpcJobRecordTable(
-            user_id=alice.id,
             origin="slack",
             cluster="lux",
             job_id="9",

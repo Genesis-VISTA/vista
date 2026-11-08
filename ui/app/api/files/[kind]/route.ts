@@ -16,6 +16,7 @@ type BackendFile = {
   size: number;
   created: string;
   modified: string;
+  shown_in?: unknown;
 };
 
 function requireProjectName(request: Request): { projectName: string } | NextResponse {
@@ -32,7 +33,7 @@ function requireProjectName(request: Request): { projectName: string } | NextRes
 /**
  * GET /api/files/{kind}?project_name=... — list a project agent's files.
  *
- * Backend returns `{name, size, created, modified}`. The frontend reads
+ * Backend returns `{name, size, created, modified, shown_in}`. The frontend reads
  * `modifiedAt` and a `source` discriminator, so we reshape on the way out:
  * uploaded files are `"upload"`, generated outputs are `"generated"`.
  */
@@ -63,6 +64,8 @@ export async function GET(
       size: file.size,
       modifiedAt: file.modified,
       source: kind === "outputs" ? "generated" : "upload",
+      // The chat that displayed the file, or null; the Files page links to it.
+      shown_in: file.shown_in ?? null,
     }));
     return NextResponse.json(summaries);
   } catch {

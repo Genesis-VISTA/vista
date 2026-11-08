@@ -53,9 +53,14 @@ cp -r $T/job /mnt/data/output/$SKILL/hpc_jobs/$JOB
 grep -rl '__SKILL__\|__JOB__' /mnt/data/output/$SKILL | xargs sed -i "s/__SKILL__/$SKILL/g; s/__JOB__/$JOB/g"
 ```
 
-The templates are a Lux job. For another cluster rename `job.lux.slurm` and
-`setup_lux.sh`, and replace the `lux` section of `cluster_defaults.json` (see
-below). Then fill in every `TODO`.
+The job template has a script and a `cluster_defaults.json` section for Odo,
+Frontier and Lux (and `setup_lux.sh` for Lux). Delete the clusters the job does
+not target: their `job.<cluster>.slurm`, their `setup_<cluster>.sh` and their
+section of `cluster_defaults.json` (see below). Perlmutter has no template:
+write its script and section from the notes below. Then fill in every `TODO`.
+For OLCF software (modules, compilers, Python and ML environments), look it up
+in the `olcf-docs` knowledge base when the project has it, otherwise at
+https://docs.olcf.ornl.gov/.
 
 ```
 <skill>/
@@ -154,7 +159,8 @@ same with `$RUN_DIR_Frontier` / `$RUN_DIR_Odo` from the job script. Fill in its
    ```
 2. **Check the cluster's documentation** for how it wants environments built
    (which conda/Miniforge module, which compilers and MPI to build `mpi4py`
-   against, where envs should live). For OLCF see https://docs.olcf.ornl.gov/.
+   against, where envs should live). For OLCF, search the `olcf-docs`
+   knowledge base when the project has it, otherwise see https://docs.olcf.ornl.gov/.
    Ask the user to confirm anything the docs leave open rather than guessing.
 3. **Do not build directly on Lustre.** It is slow for the many small files an
    environment has. Two fixes:

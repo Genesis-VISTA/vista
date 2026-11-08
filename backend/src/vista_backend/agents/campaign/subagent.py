@@ -223,7 +223,6 @@ class SubAgent:
         session: AsyncSession,
         *,
         step: CampaignStepTable,
-        user_id: uuid.UUID,
         order: SubAgentOrder,
     ) -> DispatchResult:
         """Submit the job for `order`, record it against `step`, and mark the step dispatched."""
@@ -238,7 +237,6 @@ class SubAgent:
             session,
             job_id=info.job_id,
             step_id=step.id,
-            user_id=user_id,
             cluster=info.cluster,
             job_name=order.job,
             log_path=info.log_path,

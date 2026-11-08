@@ -1,42 +1,22 @@
 """
-Import a skill from a GitHub repository or from a folder uploaded by the browser.
-
-For GitHub, two URL forms are accepted:
-
-  https://github.com/<owner>/<repo>
-      The repo's default branch is downloaded and SKILL.md is expected at the
-      repo root.
-
-  https://github.com/<owner>/<repo>/tree/<ref>/<subpath>
-      The given ref (branch / tag / sha) is downloaded and SKILL.md is expected
-      at <subpath>/ inside the repo. This covers monorepos like
-      anthropic-skills where each skill is its own subdirectory.
-
-The tarball is fetched from the GitHub API (no `git` binary needed). The
-caller passes the user's GitHub token from Settings, if they have one, as a
-bearer token, enabling private repos.
+Import a skill from a folder uploaded by the browser, or from a folder on the
+backend's own disk (the agent's output). A repository import is
+`skill_repo.py`.
 
 A local import receives the files of a folder the user picked in the browser,
 each with its path relative to that folder (see `import_skill_from_files`).
 
 Either way we copy the entire skill directory (SKILL.md plus any sibling
 scripts / references / assets) to the caller-provided destination directory.
-`repo_url` is filled in from the source URL when missing, and `is_public` is
-forced to `false` so imports land private (the user can publish them via the
-/skills tab).
+A skill imported from a collaboration server goes through
+`import_skill_from_files` too (`services/skill_collaboration.py`).
 """
 
-import io
 import os
-import re
 import shutil
 import stat
-import tarfile
 import tempfile
-import urllib.request
-import urllib.error
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Collection, Iterable
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from pydantic import ValidationError
@@ -51,127 +31,6 @@ from .skills import (
 
 class SkillImportError(Exception):
     """Raised for any user-facing problem during import (parse / fetch / layout)."""
-
-
-@dataclass
-class ParsedGithubUrl:
-    owner: str
-    repo: str
-    ref: str | None
-    """ Branch/tag/sha. None means "default branch". """
-    subpath: str
-    """ Directory inside the repo containing SKILL.md. "" for repo root. """
-
-
-_GITHUB_TREE_RE = re.compile(
-    r"^https?://github\.com/(?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?"
-    r"(?:/tree/(?P<ref>[^/\s]+)(?:/(?P<subpath>.+))?)?/?$"
-)
-
-
-def parse_github_url(url: str) -> ParsedGithubUrl:
-    """
-    Parse a GitHub web URL into (owner, repo, ref?, subpath).
-
-    Raises:
-        SkillImportError: If the URL isn't a recognized github.com form.
-    """
-    url = url.strip()
-    m = _GITHUB_TREE_RE.match(url)
-    if not m:
-        raise SkillImportError(
-            f"URL {url!r} is not a GitHub repo URL. Expected "
-            "https://github.com/<owner>/<repo> or "
-            "https://github.com/<owner>/<repo>/tree/<ref>/<subpath>."
-        )
-    subpath = m.group("subpath") or ""
-    # Strip a leading/trailing slash and any "./" segments; reject ".." to
-    # prevent escaping the repo via crafted URLs.
-    subpath = subpath.strip("/")
-    if any(part in ("..", "") for part in subpath.split("/") if subpath):
-        raise SkillImportError(f"Invalid subpath in URL: {m.group('subpath')!r}")
-    return ParsedGithubUrl(
-        owner=m.group("owner"),
-        repo=m.group("repo"),
-        ref=m.group("ref"),
-        subpath=subpath,
-    )
-
-
-def _api_request(
-    url: str, accept: str = "application/json", *, token: str | None = None
-) -> bytes:
-    """Send a GET to api.github.com, with the user's GitHub token if they have one."""
-    if not url.startswith("https://"):
-        raise SkillImportError(f"Refusing to fetch non-HTTPS URL: {url}")
-    req = urllib.request.Request(
-        url, headers={"Accept": accept, "User-Agent": "vista-backend"}
-    )
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
-    try:
-        # URL scheme is restricted to https by the guard above.
-        with urllib.request.urlopen(req, timeout=30) as resp:  # nosec B310
-            return resp.read()
-    except urllib.error.HTTPError as e:
-        # GitHub answers 404, not 401, for a private repository the request
-        # cannot see, so a 404 without a token is the private-repo case too.
-        if e.code in (401, 403, 404):
-            hint = (
-                "If the repository is private, add a GitHub token in "
-                "Settings → Repositories."
-                if not token
-                else "Your GitHub token in Settings → Repositories may not have "
-                "access to it."
-            )
-            raise SkillImportError(f"GitHub returned {e.code} for {url}. {hint}") from e
-        raise SkillImportError(f"GitHub request failed ({e.code}): {url}") from e
-    except urllib.error.URLError as e:
-        raise SkillImportError(f"Failed to reach github.com: {e.reason}") from e
-
-
-def _resolve_default_branch(owner: str, repo: str, token: str | None) -> str:
-    import json
-
-    payload = json.loads(
-        _api_request(f"https://api.github.com/repos/{owner}/{repo}", token=token)
-    )
-    return payload.get("default_branch") or "main"
-
-
-def _download_tarball(
-    parsed: ParsedGithubUrl, dest_root: Path, token: str | None
-) -> Path:
-    """
-    Download the repo as a tarball and extract it under `dest_root`.
-
-    Returns the path to the extracted repo root (which contains the subpath, if any).
-    """
-    ref = parsed.ref or _resolve_default_branch(parsed.owner, parsed.repo, token)
-    tar_bytes = _api_request(
-        f"https://api.github.com/repos/{parsed.owner}/{parsed.repo}/tarball/{ref}",
-        accept="application/vnd.github+json",
-        token=token,
-    )
-    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
-        # tarballs from GitHub wrap everything in a single top-level directory
-        # named like "<owner>-<repo>-<shortsha>"; figure out what it's called
-        # so we can return its path.
-        top: str | None = None
-        for member in tar.getmembers():
-            head = member.name.split("/", 1)[0]
-            if top is None:
-                top = head
-            elif head != top:
-                raise SkillImportError(
-                    "Unexpected tarball layout (multiple top-level dirs)."
-                )
-        if top is None:
-            raise SkillImportError("Empty tarball.")
-        # Python 3.12+ requires an explicit filter argument; "data" disallows
-        # absolute paths, links escaping the dest, and setuid bits.
-        tar.extractall(dest_root, filter="data")
-        return dest_root / top
 
 
 def _install_skill(source_dir: Path, dest_dir: Path, where: str) -> Skill:
@@ -191,30 +50,6 @@ def _install_skill(source_dir: Path, dest_dir: Path, where: str) -> Skill:
     return skill
 
 
-def import_skill_from_github(
-    url: str, dest_dir: Path | str, *, token: str | None = None
-) -> Skill:
-    """
-    Import the skill at `url` into `dest_dir` (which must not already exist).
-
-    `token` is the user's GitHub token, from `services/repo_tokens`; without one
-    only public repositories can be read. Returns the imported `Skill`. Raises
-    `SkillImportError` for any user-facing problem.
-    """
-    parsed = parse_github_url(url)
-    dest_dir = Path(dest_dir).resolve()
-
-    with tempfile.TemporaryDirectory() as tmp:
-        extracted = _download_tarball(parsed, Path(tmp), token)
-        source_dir = extracted / parsed.subpath if parsed.subpath else extracted
-        if not source_dir.exists() or not source_dir.is_dir():
-            raise SkillImportError(
-                f"Subpath {parsed.subpath!r} does not exist in {parsed.owner}/{parsed.repo}."
-            )
-        where = f"{parsed.subpath or '<repo root>'} in {parsed.owner}/{parsed.repo}"
-        return _install_skill(source_dir, dest_dir, where)
-
-
 MAX_UPLOAD_FILES = 2000
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
@@ -224,10 +59,12 @@ _IGNORED_DIRS = frozenset({".git", "node_modules", "__pycache__", ".venv"})
 _IGNORED_FILES = frozenset({".DS_Store", "Thumbs.db"})
 
 
-def _clean_relpath(raw: str) -> PurePosixPath:
+def clean_relpath(raw: str) -> PurePosixPath:
     """
     Check one uploaded file's relative path; reject anything that could land
-    outside the skill directory.
+    outside the folder it is unpacked into, on any platform: backslashes and
+    `:` (a Windows drive or stream) included. The knowledge base unpacker uses
+    it too.
     """
     if not raw or "\\" in raw or ":" in raw or "\0" in raw:
         raise SkillImportError(f"Invalid file path in upload: {raw!r}")
@@ -244,7 +81,10 @@ def _is_ignored(path: PurePosixPath) -> bool:
 
 
 def import_skill_from_files(
-    files: Iterable[tuple[str, BinaryIO]], dest_dir: Path | str
+    files: Iterable[tuple[str, BinaryIO]],
+    dest_dir: Path | str,
+    *,
+    executable: Collection[str] = (),
 ) -> Skill:
     """
     Import a skill from uploaded files into `dest_dir` (which must not already exist).
@@ -255,11 +95,15 @@ def import_skill_from_files(
     directory it is stripped, so SKILL.md is expected at the root of the
     picked folder.
 
+    The files whose given path is in `executable` are made executable (0755);
+    every other file is written as the umask leaves it.
+
     Returns the imported `Skill`. Raises `SkillImportError` for any
     user-facing problem.
     """
-    entries = [(_clean_relpath(raw), stream) for raw, stream in files]
-    entries = [(path, stream) for path, stream in entries if not _is_ignored(path)]
+    marked = set(executable)
+    entries = [(clean_relpath(raw), stream, raw in marked) for raw, stream in files]
+    entries = [entry for entry in entries if not _is_ignored(entry[0])]
     if not entries:
         raise SkillImportError("No files were uploaded.")
     if len(entries) > MAX_UPLOAD_FILES:
@@ -267,12 +111,14 @@ def import_skill_from_files(
             f"Too many files ({len(entries)}); a skill may have at most {MAX_UPLOAD_FILES}."
         )
 
-    tops = {path.parts[0] for path, _ in entries}
-    if len(tops) == 1 and all(len(path.parts) > 1 for path, _ in entries):
-        entries = [(PurePosixPath(*path.parts[1:]), stream) for path, stream in entries]
+    tops = {path.parts[0] for path, _, _ in entries}
+    if len(tops) == 1 and all(len(path.parts) > 1 for path, _, _ in entries):
+        entries = [
+            (PurePosixPath(*path.parts[1:]), stream, x) for path, stream, x in entries
+        ]
 
     seen: set[PurePosixPath] = set()
-    for path, _ in entries:
+    for path, _, _ in entries:
         if path in seen:
             raise SkillImportError(f"Duplicate file in upload: {str(path)!r}")
         seen.add(path)
@@ -281,7 +127,7 @@ def import_skill_from_files(
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         total = 0
-        for path, stream in entries:
+        for path, stream, is_executable in entries:
             target = root.joinpath(*path.parts)
             target.parent.mkdir(parents=True, exist_ok=True)
             with open(target, "wb") as out:
@@ -292,6 +138,8 @@ def import_skill_from_files(
                             f"Upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB."
                         )
                     out.write(chunk)
+            if is_executable:
+                target.chmod(0o755)
         return _install_skill(root, dest_dir, "the root of the uploaded folder")
 
 
@@ -366,8 +214,7 @@ def plain_files(source_dir: Path | str) -> list[tuple[str, Path]]:
             mode = (here / name).lstat().st_mode
             if stat.S_ISLNK(mode):
                 raise SkillImportError(
-                    f"{rel} is a symlink; a skill imported from the output folder "
-                    "may not contain symlinks."
+                    f"{rel} is a symlink, and a skill may not contain symlinks."
                 )
             if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
                 raise SkillImportError(f"{rel} is not a regular file or folder.")

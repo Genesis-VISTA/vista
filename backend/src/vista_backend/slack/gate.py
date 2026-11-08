@@ -11,7 +11,6 @@ the tool's result, with no confirmation offered — and then deferred with
 """
 
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -26,8 +25,8 @@ log = logging.getLogger(__name__)
 READ_ONLY = {"annotations": {"readOnlyHint": True}}
 """ `metadata=` for a native tool that only reads, so Slack runs it unconfirmed. """
 
-Refusal = Callable[[uuid.UUID, str, dict[str, Any]], Awaitable[str | None]]
-""" (user id, tool name, args) → why the call may not go ahead, or None. """
+Refusal = Callable[[str, dict[str, Any]], Awaitable[str | None]]
+""" (tool name, args) → why the call may not go ahead, or None. """
 
 
 def is_read_only(tool_def: ToolDefinition) -> bool:
@@ -35,7 +34,7 @@ def is_read_only(tool_def: ToolDefinition) -> bool:
     return annotations.get("readOnlyHint") is True
 
 
-async def no_refusal(user_id: uuid.UUID, tool_name: str, args: dict[str, Any]) -> None:
+async def no_refusal(tool_name: str, args: dict[str, Any]) -> None:
     return None
 
 
@@ -48,10 +47,8 @@ def set_refusal(check: Refusal) -> None:
     _refusal = check
 
 
-async def refusal(
-    user_id: uuid.UUID, tool_name: str, args: dict[str, Any]
-) -> str | None:
-    return await _refusal(user_id, tool_name, args)
+async def refusal(tool_name: str, args: dict[str, Any]) -> str | None:
+    return await _refusal(tool_name, args)
 
 
 class SlackGateCapability(AbstractCapability):
@@ -59,10 +56,8 @@ class SlackGateCapability(AbstractCapability):
         self,
         *,
         channel: Callable[[], str],
-        user_id: uuid.UUID,
     ) -> None:
         self._channel = channel
-        self._user_id = user_id
 
     async def wrap_tool_execute(
         self,
@@ -78,16 +73,13 @@ class SlackGateCapability(AbstractCapability):
         # Confirmed: the Confirm handler rechecked the lock and limits.
         if getattr(ctx, "tool_call_approved", False):
             return await handler(args)
-        why = await refusal(
-            self._user_id, tool_def.name, args if isinstance(args, dict) else {}
-        )
+        why = await refusal(tool_def.name, args if isinstance(args, dict) else {})
         if why is not None:
             log.info("Refused %s from Slack: %s", tool_def.name, why)
             from . import audit  # Here, as the agent imports this module.
 
             await audit.record(
                 "refused",
-                user_id=self._user_id,
                 tool_name=tool_def.name,
                 detail={"args": args, "reason": why},
             )

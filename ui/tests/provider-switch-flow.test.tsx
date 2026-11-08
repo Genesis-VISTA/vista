@@ -10,7 +10,7 @@ import type { Project } from "@/lib/projects";
 /*
  * Settings and the model picker together, with every store real and only
  * the network faked. The fake backend keeps one user row and answers
- * `/users/me/inference` from it the way `resolve_inference_target` does, so
+ * `/settings/inference` from it the way `resolve_inference_target` does, so
  * this covers the whole loop: a choice in Settings saves, the backend clears
  * the model, the store refreshes, and the picker's label follows.
  */
@@ -26,14 +26,16 @@ const PROJECT: Project = {
   skills: [],
   knowledgeBases: [],
   forumRepoUrl: "",
-  hasForumToken: false,
   tools: [],
   usageLimits: {},
+  originServer: null,
+  remoteId: null,
+  remoteVersion: null,
+  modified: true,
 };
 
 const PRESETS = [
-  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet", key: "inference_api_key" },
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null, key: "inference_mag_api_key" },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet", key: "inference_mag_api_key" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b", key: "inference_olcf_api_key" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null, key: "inference_custom_api_key" },
 ] as const;
@@ -42,7 +44,7 @@ let row: Record<string, unknown>;
 let puts: Array<Record<string, unknown>>;
 
 function effectiveProvider(): string {
-  return (row.inference_provider as string | null) ?? "i2";
+  return (row.inference_provider as string | null) ?? "mag";
 }
 
 function inferenceView() {
@@ -58,6 +60,7 @@ function inferenceView() {
     model_is_default: row.inference_model == null && model !== null,
     has_credential: Boolean(row[preset.key]),
     keys_set: Object.fromEntries(PRESETS.map((p) => [p.id, Boolean(row[p.key])])),
+    config_key_set: Boolean(row.inference_api_key),
   };
 }
 
@@ -71,24 +74,26 @@ beforeEach(() => {
   useActiveProjectMock.mockReturnValue(PROJECT);
   puts = [];
   row = {
-    id: "u1",
+    install_id: "00000000-0000-4000-8000-000000000001",
+    display_name: null,
     email: "researcher@ornl.gov",
-    is_admin: false,
     hpc_hidden_clusters: [],
     inference_provider: null,
-    // Chosen on i2 before the switch: it must not follow the researcher to MAG.
+    // Chosen on MAG before the switch: it must not follow the researcher to Custom.
     inference_model: "openai:claude-opus",
-    inference_api_key: "i2-key",
+    inference_api_key: "legacy-key",
     inference_mag_api_key: "mag-token",
+    inference_custom_api_key: "custom-key",
+    inference_base_url: "https://custom.example/v1",
   };
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/users/me?config=true") return json(row);
-      if (url === "/api/users/me" && init?.method === "PUT") {
+      if (url === "/api/settings" && init?.method !== "PUT") return json(row);
+      if (url === "/api/settings" && init?.method === "PUT") {
         const update = JSON.parse(String(init.body)) as Record<string, unknown>;
         puts.push(update);
-        // As `PUT /users/me` does: a new provider clears the chosen model.
+        // As `PUT /settings` does: a new provider clears the chosen model.
         if (
           "inference_provider" in update &&
           !("inference_model" in update) &&
@@ -99,9 +104,19 @@ beforeEach(() => {
         row = { ...row, ...update };
         return json(row);
       }
-      if (url === "/api/users/me/inference") return json(inferenceView());
+      if (url === "/api/settings/inference") return json(inferenceView());
       if (url === "/api/projects/molten-salt/models") return json({ supported: true, models: [] });
-      if (url.startsWith("/api/users/me/hpc-status")) return json({ clusters: [] });
+      if (url.startsWith("/api/settings/hpc-status")) return json({ clusters: [] });
+      if (url === "/api/collaboration/status") {
+        return json({
+          configured: false,
+          reachable: false,
+          reason: "No collaboration server is set.",
+          url: null,
+          source: null,
+          server_version: null,
+        });
+      }
       throw new Error(`unexpected fetch ${init?.method ?? "GET"} ${url}`);
     }),
   );
@@ -112,7 +127,7 @@ afterEach(() => {
 });
 
 describe("switching provider in Settings", () => {
-  it("clears the picker to no model on MAG, and back on i2 shows its default with the key intact", async () => {
+  it("clears the picker to no model on Custom, and back on MAG shows its default with the token intact", async () => {
     render(
       <>
         <ModelPicker />
@@ -123,17 +138,18 @@ describe("switching provider in Settings", () => {
 
     await userEvent.click(screen.getByRole("button", { name: /^Models and providers\b/ }));
     const agent = await screen.findByRole("region", { name: "Models & providers" });
-    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
+    await userEvent.click(within(agent).getByRole("radio", { name: /^Custom/ }));
     expect(await screen.findByRole("button", { name: /^Model: No model/ })).toBeInTheDocument();
+    expect(within(agent).getByLabelText(/^Custom endpoint API key/)).toHaveValue("custom-key");
+
+    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
+    expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
     expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
 
-    await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC i2/ }));
-    expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
-
     // Only the choice was sent, never a key: switching leaves every key as it was.
-    await waitFor(() => expect(puts).toEqual([{ inference_provider: "mag" }, { inference_provider: "i2" }]));
-    expect(row.inference_api_key).toBe("i2-key");
+    await waitFor(() => expect(puts).toEqual([{ inference_provider: "custom" }, { inference_provider: "mag" }]));
+    expect(row.inference_api_key).toBe("legacy-key");
     expect(row.inference_mag_api_key).toBe("mag-token");
+    expect(row.inference_custom_api_key).toBe("custom-key");
   });
 });

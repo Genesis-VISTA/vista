@@ -194,7 +194,7 @@ export function SlackSection({
             hint={
               config.locked
                 ? `Nothing that changes anything runs from Slack until you unlock it here.${
-                    config.locked_by ? ` Locked by ${config.locked_by}` : ""
+                    config.locked_by ? ` Locked ${lockedBy(config.locked_by)}` : ""
                   }${config.locked_at ? ` at ${new Date(config.locked_at).toLocaleString()}` : ""}.`
                 : "Say “lock” to VISTA in Slack to block anything that changes something. Only this switch unlocks it."
             }
@@ -237,6 +237,13 @@ export function SlackSection({
       </div>
     </section>
   );
+}
+
+/** Who locked Slack, from `locked_by`: "desktop" or "slack:<user id>". */
+function lockedBy(who: string): string {
+  if (who === "desktop") return "from this app";
+  if (who.startsWith("slack:")) return `from Slack by ${who.slice("slack:".length)}`;
+  return `by ${who}`;
 }
 
 function ConnectionStatus({
@@ -487,7 +494,7 @@ function NumberField({
 }
 
 /**
- * The Slack accounts linked to you. Linking starts in Slack: DM VISTA "link",
+ * The Slack accounts linked to this VISTA; each acts as you. Linking starts in Slack: DM VISTA "link",
  * and enter the code it replies with here, within 10 minutes.
  */
 function LinkedAccounts() {
@@ -514,12 +521,13 @@ function LinkedAccounts() {
 
   return (
     <div className="project-modal-label">
-      <span>Your linked Slack accounts</span>
+      <span>Linked Slack accounts</span>
       {links?.length === 0 && <span className="user-settings-hint">None yet.</span>}
       {links?.map((link) => (
         <div key={link.id} className="slack-link">
           <span className="slack-link-who">
             {link.slack_user_id} <span className="user-settings-hint">in {link.team_id}</span>
+            {link.collab_name && <span className="user-settings-hint"> · linked as {link.collab_name}</span>}
           </span>
           <label className="user-settings-hint">
             New conversations in{" "}
@@ -589,7 +597,8 @@ function LinkedAccounts() {
       </form>
       <span className="user-settings-hint">
         DM VISTA &ldquo;link&rdquo; in Slack and enter the code it replies with. Codes last 10
-        minutes. Only linked accounts can use VISTA; anyone else is politely turned away.
+        minutes. A linked account acts as you, with this VISTA&rsquo;s credentials; anyone else is
+        politely turned away.
       </span>
       {error && <span className="error settings-field-error">{error}</span>}
     </div>

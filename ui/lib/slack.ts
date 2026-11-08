@@ -1,4 +1,4 @@
-import { extractError } from "./user";
+import { extractError } from "./settings";
 
 /**
  * The desktop's Slack settings, as `GET /slack/config` reports them. The
@@ -48,11 +48,13 @@ export type SlackConfigUpdate = Partial<
   >
 > & { bot_token?: string; app_token?: string };
 
-/** A Slack account linked to the signed-in researcher. */
+/** A Slack account linked to this VISTA: it acts as the researcher here. */
 export type SlackLink = {
   id: string;
   team_id: string;
   slack_user_id: string;
+  /** Who the researcher was on the collaboration server when it was linked, if signed in. */
+  collab_name: string | null;
   /** The project new Slack conversations start in; null is the first project. */
   project_id: string | null;
   /** Job notices in the job's thread rather than a DM. */

@@ -6,12 +6,6 @@ export function formatResultSummary(result: ExecutionResult): string {
   return `${status}${output ? `: ${output}` : ""}`;
 }
 
-export function extractPlotPath(stdout: string): string | null {
-  const match = stdout.match(/Plot saved to\s+(.+)/);
-  if (!match) return null;
-  return match[1].trim();
-}
-
 export function parseReferencesFromStdout(stdout: string): string[] {
   if (!stdout) return [];
   const refs: string[] = [];

@@ -12,7 +12,6 @@ from ..services.project_agent import (
     get_project_agent_key,
     project_agent_pool,
 )
-from ..services.auth import UserDep
 
 
 router = APIRouter(tags=["mcp"])
@@ -22,14 +21,12 @@ router = APIRouter(tags=["mcp"])
 async def mcp_tools(
     project_name: str,
     session: SessionDep,
-    user: UserDep,
     chat_session_id: uuid.UUID | None = None,
 ) -> list[mcp.types.Tool]:
-    project = await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name)
     agent_key = await get_project_agent_key(
         session,
         project_id=project.id,
-        user_id=user.id,
         chat_session_id=chat_session_id,
     )
     async with project_agent_pool.get(agent_key) as agent:
@@ -46,10 +43,9 @@ async def mcp_call(
     project_name: str,
     req: McpCallRequest,
     session: SessionDep,
-    user: UserDep,
 ) -> mcp.types.CallToolResult:
-    project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((None, project.id, user.id)) as agent:
+    project = await project_service.get_project_by_name(session, project_name)
+    async with project_agent_pool.get((None, project.id)) as agent:
         try:
             return await agent.call_tool(req.name, req.arguments)
         except Exception as exc:
@@ -67,12 +63,12 @@ class ElicitationSubmit(BaseModel):
 
 @router.post("/projects/{project_name}/elicitation")
 async def mcp_elicitation(
-    project_name: str, submit: ElicitationSubmit, session: SessionDep, user: UserDep
+    project_name: str, submit: ElicitationSubmit, session: SessionDep
 ):
     """
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
-    await project_service.get_project_by_name(session, project_name, user)
+    await project_service.get_project_by_name(session, project_name)
     if not await resolve_prompt(submit.id, submit.action, submit.content):
         raise HTTPException(
             status_code=404, detail="Elicitation not found or already resolved"

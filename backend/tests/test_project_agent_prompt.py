@@ -13,7 +13,7 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart
 from pydantic_ai.models.function import AgentInfo
 
-from harness import agent_under_test, make_project, make_user, scripted_model
+from harness import agent_under_test, make_local_settings, make_project, scripted_model
 from vista_backend.agents.agents import BASE_SYSTEM_PROMPT
 from vista_backend.config import settings
 
@@ -33,9 +33,9 @@ def _capturing_model(sink: list[str]):
     return scripted_model(driver, name="capture-prompt")
 
 
-async def _system_prompt_for(project, user) -> str:
+async def _system_prompt_for(project, local) -> str:
     sink: list[str] = []
-    with agent_under_test(project, user, _capturing_model(sink)) as (agent, _):
+    with agent_under_test(project, local, _capturing_model(sink)) as (agent, _):
         async for _ in agent.run_stream(user_prompt="hello"):
             pass
     assert sink, "the model was never sent a system prompt"
@@ -43,19 +43,19 @@ async def _system_prompt_for(project, user) -> str:
 
 
 async def test_system_prompt_starts_from_the_base_prompt():
-    prompt = await _system_prompt_for(make_project(), make_user())
+    prompt = await _system_prompt_for(make_project(), make_local_settings())
     assert prompt.startswith(BASE_SYSTEM_PROMPT)
 
 
 async def test_system_prompt_includes_project_system_prompt():
     project = make_project(system_prompt="Prefer FLiBe over FLiNaK.")
-    prompt = await _system_prompt_for(project, make_user())
+    prompt = await _system_prompt_for(project, make_local_settings())
     assert "## Project Information" in prompt
     assert "Prefer FLiBe over FLiNaK." in prompt
 
 
 async def test_system_prompt_includes_the_enabled_research_profile():
-    user = make_user().model_copy(
+    local = make_local_settings().model_copy(
         update={
             "research_role": "Computational materials scientist",
             "research_institution": "Oak Ridge National Laboratory",
@@ -66,7 +66,7 @@ async def test_system_prompt_includes_the_enabled_research_profile():
         }
     )
     prompt = await _system_prompt_for(
-        make_project(system_prompt="Use the project's reporting convention."), user
+        make_project(system_prompt="Use the project's reporting convention."), local
     )
 
     assert "## Researcher Profile" in prompt
@@ -83,14 +83,14 @@ async def test_system_prompt_includes_the_enabled_research_profile():
 
 
 async def test_system_prompt_omits_a_disabled_research_profile():
-    user = make_user().model_copy(
+    local = make_local_settings().model_copy(
         update={
             "research_role": "Nuclear engineer",
             "research_interests": ["corrosion"],
             "personalize_responses": False,
         }
     )
-    prompt = await _system_prompt_for(make_project(), user)
+    prompt = await _system_prompt_for(make_project(), local)
 
     assert "## Researcher Profile" not in prompt
     assert "Nuclear engineer" not in prompt
@@ -98,20 +98,24 @@ async def test_system_prompt_omits_a_disabled_research_profile():
 
 
 async def test_system_prompt_omits_project_section_when_unset():
-    prompt = await _system_prompt_for(make_project(system_prompt=None), make_user())
+    prompt = await _system_prompt_for(
+        make_project(system_prompt=None), make_local_settings()
+    )
     assert "## Project Information" not in prompt
 
 
 async def test_system_prompt_lists_knowledge_base_slugs():
     project = make_project(knowledge_bases=["msre-reports", "salt-corrosion"])
-    prompt = await _system_prompt_for(project, make_user())
+    prompt = await _system_prompt_for(project, make_local_settings())
     assert "kb_slug" in prompt
     assert "  - msre-reports" in prompt
     assert "  - salt-corrosion" in prompt
 
 
 async def test_system_prompt_says_rag_unavailable_without_knowledge_bases():
-    prompt = await _system_prompt_for(make_project(knowledge_bases=[]), make_user())
+    prompt = await _system_prompt_for(
+        make_project(knowledge_bases=[]), make_local_settings()
+    )
     assert "No Knowledge Bases are configured for this project" in prompt
 
 
@@ -123,11 +127,9 @@ async def test_system_prompt_includes_skills_block(monkeypatch, tmp_path: Path):
     """
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project(skills=["salt-analysis"])
-    user = make_user()
+    local = make_local_settings()
 
-    skill_dir = (
-        tmp_path / "volumes" / f"{project.id}-{user.id}" / "skills" / "salt-analysis"
-    )
+    skill_dir = tmp_path / "volumes" / str(project.id) / "skills" / "salt-analysis"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         textwrap.dedent("""\
@@ -141,7 +143,7 @@ async def test_system_prompt_includes_skills_block(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
 
-    prompt = await _system_prompt_for(project, user)
+    prompt = await _system_prompt_for(project, local)
     assert "<available_skills>" in prompt
     assert "salt-analysis" in prompt
     assert "Analyze molten salt thermophysical properties." in prompt
@@ -150,7 +152,7 @@ async def test_system_prompt_includes_skills_block(monkeypatch, tmp_path: Path):
 
 async def test_system_prompt_has_no_skills_block_without_skills(monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    prompt = await _system_prompt_for(make_project(skills=[]), make_user())
+    prompt = await _system_prompt_for(make_project(skills=[]), make_local_settings())
     assert "<available_skills>" not in prompt
 
 
@@ -161,18 +163,16 @@ async def test_system_prompt_composes_all_layers_in_order(monkeypatch, tmp_path:
         knowledge_bases=["msre-reports"],
         skills=["salt-analysis"],
     )
-    user = make_user()
+    local = make_local_settings()
 
-    skill_dir = (
-        tmp_path / "volumes" / f"{project.id}-{user.id}" / "skills" / "salt-analysis"
-    )
+    skill_dir = tmp_path / "volumes" / str(project.id) / "skills" / "salt-analysis"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
         "---\nname: salt-analysis\ndescription: Analyze salts.\n---\n\nBody.\n",
         encoding="utf-8",
     )
 
-    prompt = await _system_prompt_for(project, user)
+    prompt = await _system_prompt_for(project, local)
     positions = [
         prompt.index(BASE_SYSTEM_PROMPT),
         prompt.index("## Project Information"),

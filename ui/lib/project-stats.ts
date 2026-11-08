@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 export type ProjectStats = {
   conversations: number;
-  datasets: number;
+  files: number;
   /** ISO timestamp of the most recent conversation update, or null. */
   lastActive: string | null;
 };
@@ -48,7 +48,7 @@ export function useProjectStats(projectName: string): ProjectStats | null {
           .sort();
         setStats({
           conversations: sessions.length,
-          datasets: uploads.length + outputs.length,
+          files: uploads.length + outputs.length,
           lastActive: updatedAt.length > 0 ? updatedAt[updatedAt.length - 1] : null,
         });
       } catch {

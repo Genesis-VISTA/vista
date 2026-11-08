@@ -33,22 +33,20 @@ def mention(user="U1", channel="C1", text="<@UBOT> status of my last job?", team
 
 
 @pytest.mark.anyio
-async def test_a_linked_user_is_allowed_as_their_vista_user(
-    session, slack_config, alice
+async def test_a_linked_user_is_allowed_as_this_installs_researcher(
+    session, slack_config
 ):
-    await link(session, alice, "U1")
+    row = await link(session, "U1")
 
     for event in (dm(), mention()):
         decision = await decide(session, event, slack_config, UnlinkedReplies())
         assert decision.verdict == "allow"
-        assert decision.linked.user.id == alice.id
+        assert decision.linked.link.id == row.id
 
 
 @pytest.mark.anyio
-async def test_an_unlinked_user_is_refused_politely_and_once(
-    session, slack_config, alice
-):
-    await link(session, alice, "U1")
+async def test_an_unlinked_user_is_refused_politely_and_once(session, slack_config):
+    await link(session, "U1")
     replies = UnlinkedReplies()
 
     first = await decide(session, dm(user="U2"), slack_config, replies)
@@ -74,10 +72,8 @@ async def test_the_refusal_comes_again_after_the_interval(
 
 
 @pytest.mark.anyio
-async def test_an_unlinked_user_tapping_a_button_is_refused(
-    session, slack_config, alice
-):
-    await link(session, alice, "U1")
+async def test_an_unlinked_user_tapping_a_button_is_refused(session, slack_config):
+    await link(session, "U1")
     tap = Action(
         team_id=TEAM,
         channel_id="C1",
@@ -94,9 +90,9 @@ async def test_an_unlinked_user_tapping_a_button_is_refused(
 
 @pytest.mark.anyio
 async def test_a_foreign_workspace_is_ignored_even_for_a_linked_id(
-    session, slack_config, alice
+    session, slack_config
 ):
-    await link(session, alice, "U1", team_id=OTHER_TEAM)
+    await link(session, "U1", team_id=OTHER_TEAM)
 
     for event in (
         dm(team=OTHER_TEAM),
@@ -109,19 +105,17 @@ async def test_a_foreign_workspace_is_ignored_even_for_a_linked_id(
 
 
 @pytest.mark.anyio
-async def test_the_link_is_per_workspace(session, slack_config, alice):
+async def test_the_link_is_per_workspace(session, slack_config):
     slack_config.allowed_team_ids = [TEAM, OTHER_TEAM]
-    await link(session, alice, "U1", team_id=OTHER_TEAM)
+    await link(session, "U1", team_id=OTHER_TEAM)
 
     decision = await decide(session, dm(), slack_config, UnlinkedReplies())
     assert decision.verdict == "reply" and decision.reply == NOT_LINKED
 
 
 @pytest.mark.anyio
-async def test_the_channel_allowlist_admits_its_channels_and_dms(
-    session, slack_config, alice
-):
-    await link(session, alice, "U1")
+async def test_the_channel_allowlist_admits_its_channels_and_dms(session, slack_config):
+    await link(session, "U1")
     slack_config.allowed_channel_ids = ["C1"]
     replies = UnlinkedReplies()
 
@@ -136,8 +130,8 @@ async def test_the_channel_allowlist_admits_its_channels_and_dms(
 
 
 @pytest.mark.anyio
-async def test_slack_off_drops_everything(session, slack_config, alice):
-    await link(session, alice, "U1")
+async def test_slack_off_drops_everything(session, slack_config):
+    await link(session, "U1")
     slack_config.enabled = False
 
     assert (
@@ -174,8 +168,8 @@ async def test_lock_from_an_unlinked_user_is_refused(session, slack_config):
 
 
 @pytest.mark.anyio
-async def test_home_is_shown_only_to_a_linked_user(session, slack_config, alice):
-    await link(session, alice, "U1")
+async def test_home_is_shown_only_to_a_linked_user(session, slack_config):
+    await link(session, "U1")
 
     assert (
         await decide(session, HomeOpened(TEAM, "U1"), slack_config, UnlinkedReplies())

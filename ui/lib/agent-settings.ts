@@ -4,7 +4,7 @@ import { useSyncExternalStore } from "react";
 
 /**
  * The researcher's inference provider and model in effect, from
- * `GET /api/users/me/inference`.
+ * `GET /api/settings/inference`.
  *
  * One store for the whole page, the same pattern as `lib/hpc-status.ts`, so
  * the chat-header picker and Settings always show the same answer: whichever
@@ -28,7 +28,7 @@ export type ProviderOption = {
 export type AgentSettings = {
   providers: ProviderOption[];
   provider: string;
-  /** The researcher's choice, the installation's configuration, or i2 by default. */
+  /** The researcher's choice, the installation's configuration, or the default provider. */
   source: "user" | "config" | "default";
   baseUrl: string;
   /** The model in effect as stored (`openai:<name>`); null when there is none. */
@@ -38,6 +38,8 @@ export type AgentSettings = {
   hasCredential: boolean;
   /** Whether the researcher saved a key for each provider. */
   keysSet: Record<string, boolean>;
+  /** Whether the researcher saved a key for an endpoint set in the installation's configuration. */
+  configKeySet: boolean;
 };
 
 type InferenceView = {
@@ -49,6 +51,7 @@ type InferenceView = {
   model_is_default: boolean;
   has_credential: boolean;
   keys_set: Record<string, boolean>;
+  config_key_set: boolean;
 };
 
 type Snapshot = {
@@ -87,6 +90,7 @@ function fromView(v: InferenceView): AgentSettings {
     modelIsDefault: v.model_is_default,
     hasCredential: v.has_credential,
     keysSet: v.keys_set,
+    configKeySet: v.config_key_set,
   };
 }
 
@@ -98,7 +102,7 @@ export async function refreshAgentSettings(): Promise<void> {
   const id = ++request;
   loaded = true;
   try {
-    const res = await fetch("/api/users/me/inference", {
+    const res = await fetch("/api/settings/inference", {
       headers: { accept: "application/json" },
       cache: "no-store",
     });
@@ -133,10 +137,12 @@ export function requestModelChoice(): void {
 /**
  * Whether a send has to wait for a model: the provider in effect has no
  * default and none is chosen. When it does, the picker is asked to open.
- * Before the first answer this says no, and the backend's own refusal is the
- * backstop.
+ * A chat with a model of its own (`chatModel`) never waits: it can send where
+ * the researcher has no default. Before the first answer this says no, and the
+ * backend's own refusal is the backstop.
  */
-export function holdSendWithoutModel(): boolean {
+export function holdSendWithoutModel(chatModel: string | null = null): boolean {
+  if (chatModel !== null) return false;
   const s = snapshot.settings;
   if (!s || s.model !== null) return false;
   requestModelChoice();

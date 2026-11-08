@@ -7,7 +7,14 @@ import pytest
 from pydantic_ai.messages import FunctionToolResultEvent, ModelResponse, TextPart
 from pydantic_ai.toolsets.function import FunctionToolset
 
-from harness import call, make_project, make_user, say, scripted_model, step_model
+from harness import (
+    call,
+    make_local_settings,
+    make_project,
+    say,
+    scripted_model,
+    step_model,
+)
 from vista_backend.agents.agents import (
     McpFormElicitationEvent,
     McpToolApprovalEvent,
@@ -20,7 +27,7 @@ pytestmark = pytest.mark.anyio
 
 
 def _agent():
-    agent = ProjectAgent(make_project(tools=["*"]), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     ran: list[str] = []
     toolset = FunctionToolset()
 
@@ -116,7 +123,7 @@ async def test_the_app_channel_is_unchanged():
 async def test_a_refusal_is_returned_without_asking(monkeypatch):
     agent, toolset, ran = _agent()
 
-    async def refuse(user_id, tool, args):
+    async def refuse(tool, args):
         return "Slack is locked. Unlock it from the VISTA desktop app."
 
     monkeypatch.setattr(gate, "_refusal", refuse)

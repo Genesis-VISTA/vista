@@ -70,7 +70,7 @@ class AppSettings(BaseSettings):
     disable_servers: CommaSeparatedList[str] = ["agenthpc"]
     """
     Names of MCP subservers to skip mounting in server.py. Valid entries:
-    "submit_job", "display_file", "rag", "agenthpc", "omd".
+    "submit_job", "display_file", "rag", "agenthpc".
     agenthpc is disabled by default — its SSH requirements don't work in the AWS deployment.
     """
 
@@ -147,25 +147,19 @@ class AppSettings(BaseSettings):
     hpc_ssh_user: str | None = None
     """ Legacy SSH user for the agenthpc subserver. No longer required at boot. """
 
-    omd_url: str = "https://api.i2-core.american-science-cloud.org/mcp/openmetadata"
-    omd_api_key: str | None = None
-    """
-    Key for the AmSC Open Metadata Server.
-    Same key as the AmSC inference API, get it from https://api.i2-core.american-science-cloud.org
-    """
-
     data_dir: A[ResolvedPath, Field(validation_alias="VISTA_DATA_DIR")] = Path("../../data")
     """ Directory for data such as sandbox volumes and other created files """
 
     @property
     def knowledge_bases_dir(self) -> Path:
         """
-        Root directory the MCP server scans at startup to discover the
-        Knowledge Bases available to `rag_search`. Each immediate
-        subdirectory whose name is a valid KB slug and that contains a
-        `rag_db/` subfolder (or whose own directory is itself a ChromaDB
-        store) is registered as a KB. The agent then names the KB it wants
-        via the tool's `kb_slug` argument.
+        Root directory the MCP server scans to discover the Knowledge
+        Bases available to `rag_search`. Each immediate subdirectory whose
+        name is a valid KB slug and that holds a ChromaDB store is
+        registered as a KB: the store its `CURRENT` file names (an imported
+        knowledge base), else its `rag_db/` subfolder, else the directory
+        itself. The agent then names the KB it wants via the tool's
+        `kb_slug` argument. See `rag_mcp._store_path`.
 
         Derived from `data_dir`, matching the backend's
         `knowledge_bases_dir` so the two services agree on layout out of
@@ -191,8 +185,8 @@ class AppSettings(BaseSettings):
     Sentence-transformers model used to encode `rag_search` queries.
 
     Ungated (MIT) and 640-dimension, so a fresh install needs no HuggingFace
-    account. Kept byte-identical to `build_rag.TextRAG.__init__`'s
-    `text_model` default, which is the *indexing* encoder: a Chroma
+    account. Kept byte-identical to `build_rag.TEXT_MODEL`, which is the
+    *indexing* encoder: a Chroma
     collection locks to the dimension of its first insert, so the two names
     must never diverge. Change one, change the other.
     """
@@ -205,8 +199,7 @@ class AppSettings(BaseSettings):
     Pinned so a new upload to the model's `main` cannot change the weights
     under a store built with the old ones, and so the package build stages
     exactly this snapshot. Kept byte-identical to
-    `build_rag.TextRAG.__init__`'s `text_model_revision` default, for the
-    same reason as the name. Change the model, change both revisions.
+    `build_rag.TEXT_MODEL_REVISION`, for the same reason as the name. Change the model, change both revisions.
     """
 
     rag_query_instruction: str = (
@@ -305,7 +298,13 @@ class AppSettings(BaseSettings):
 settings = AppSettings()
 if settings.hf_token:
     os.environ['HF_TOKEN'] = settings.hf_token
+# VISTA's own cache, which holds the shipped embedding weights, wins over any
+# the machine names: HF_HUB_CACHE and HUGGINGFACE_HUB_CACHE outrank HF_HOME, and
+# sentence-transformers takes SENTENCE_TRANSFORMERS_HOME as its cache folder.
 os.environ["HF_HOME"] = str(settings.data_dir / 'huggingface')
+os.environ["HF_HUB_CACHE"] = str(settings.data_dir / 'huggingface' / 'hub')
+for _name in ("HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+    os.environ.pop(_name, None)
 # Disable FastAPIs "Rich Logging" that makes it mangle and truncate errors from MCP tools.
 os.environ['FASTMCP_ENABLE_RICH_LOGGING'] = 'false'
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

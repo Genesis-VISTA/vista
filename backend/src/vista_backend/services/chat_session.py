@@ -23,13 +23,11 @@ async def list_chat_sessions(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
 ) -> list[ChatSessionTable]:
     stmt = (
         select(ChatSessionTable)
         .where(
             ChatSessionTable.project_id == project_id,
-            ChatSessionTable.user_id == user_id,
         )
         .order_by(desc(ChatSessionTable.updated_at), desc(ChatSessionTable.created_at))
     )
@@ -40,12 +38,10 @@ async def get_chat_session_optional(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable | None:
     stmt = select(ChatSessionTable).where(
         ChatSessionTable.project_id == project_id,
-        ChatSessionTable.user_id == user_id,
     )
     if chat_session_id is not None:
         stmt = stmt.where(ChatSessionTable.id == chat_session_id)
@@ -60,18 +56,38 @@ async def get_chat_session(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     chat_session_id: uuid.UUID,
 ) -> ChatSessionTable:
     row = await get_chat_session_optional(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Chat session not found")
     return row
+
+
+async def get_chat_model(
+    session: AsyncSession,
+    *,
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID | None = None,
+) -> str | None:
+    """
+    The `provider:name` model a chat overrides the default with, or `None`.
+
+    Work launched from a chat (a report or skill draft) runs on that chat's
+    model. A missing chat, or one that is not this project's (where the caller
+    knows the project), is a 404.
+    """
+    stmt = select(ChatSessionTable).where(ChatSessionTable.id == chat_session_id)
+    if project_id is not None:
+        stmt = stmt.where(ChatSessionTable.project_id == project_id)
+    row = (await session.exec(stmt)).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Chat session not found")
+    return row.inference_model
 
 
 def _default_chat_title(existing_count: int) -> str:
@@ -82,14 +98,12 @@ async def create_chat_session(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     payload: ChatSessionCreate | None = None,
     origin: str = "app",
 ) -> ChatSessionTable:
-    existing = await list_chat_sessions(session, project_id=project_id, user_id=user_id)
+    existing = await list_chat_sessions(session, project_id=project_id)
     now = now_iso()
     row = ChatSessionTable(
-        user_id=user_id,
         project_id=project_id,
         title=(
             payload.title.strip()
@@ -102,6 +116,7 @@ async def create_chat_session(
         run_state="idle",
         run_unseen=False,
         run_events=None,
+        inference_model=None,
         origin=origin,
         created_at=now,
         updated_at=now,
@@ -116,38 +131,32 @@ async def get_or_create_chat_session(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable:
     if chat_session_id is not None:
         return await get_chat_session(
             session,
             project_id=project_id,
-            user_id=user_id,
             chat_session_id=chat_session_id,
         )
 
-    existing = await get_chat_session_optional(
-        session, project_id=project_id, user_id=user_id
-    )
+    existing = await get_chat_session_optional(session, project_id=project_id)
     if existing is not None:
         return existing
 
-    return await create_chat_session(session, project_id=project_id, user_id=user_id)
+    return await create_chat_session(session, project_id=project_id)
 
 
 async def update_chat_session(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     updates: ChatSessionUpdate,
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable:
     row = await get_or_create_chat_session(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     # `updates.message_history` is ignored: only the backend writes model history.
@@ -165,6 +174,12 @@ async def update_chat_session(
         row.run_state = "idle"
     if updates.title is not None and updates.title.strip():
         row.title = updates.title.strip()
+    if "inference_model" in updates.model_fields_set:
+        row.inference_model = (updates.inference_model or "").strip() or None
+        from .project_agent import invalidate_agents  # import cycle
+
+        # Only this chat's pooled agent holds the old model.
+        invalidate_agents(session, chat_session_id=row.id)
     row.updated_at = now_iso()
     session.add(row)
     await session.flush()
@@ -176,13 +191,11 @@ async def delete_chat_session(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     chat_session_id: uuid.UUID,
 ) -> None:
     row = await get_chat_session(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     await session.delete(row)
@@ -193,7 +206,6 @@ async def get_effective_message_history(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     chat_session_id: uuid.UUID | None = None,
     fallback_history: list[ModelMessage] | None = None,
 ) -> list[ModelMessage]:
@@ -207,7 +219,6 @@ async def get_effective_message_history(
     row = await get_or_create_chat_session(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     persisted = _MESSAGE_HISTORY_ADAPTER.validate_python(row.message_history or [])
@@ -226,7 +237,6 @@ async def save_message_history(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     message_history: list[ModelMessage],
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionTable:
@@ -235,7 +245,6 @@ async def save_message_history(
     row = await get_or_create_chat_session(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     normalized_history = _MESSAGE_HISTORY_ADAPTER.validate_python(message_history)
@@ -253,7 +262,6 @@ async def append_message_history(
     session: AsyncSession,
     *,
     project_id,
-    user_id,
     prior_history: list[ModelMessage],
     new_messages: list[ModelMessage],
     chat_session_id: uuid.UUID | None = None,
@@ -264,7 +272,6 @@ async def append_message_history(
     return await save_message_history(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
         message_history=combined,
     )

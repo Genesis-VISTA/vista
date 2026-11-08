@@ -16,7 +16,8 @@ from ..db.db import SessionDep
 from ..db.schemas import SlackLinkTable
 from ..services import background_service
 from ..services import project as project_service
-from ..services.auth import UserDep
+from ..services import collaboration
+from ..services.local_settings import LocalSettingsDep
 from ..slack import access, linking, store
 from ..slack import service as slack_service
 from ..utils import secret_store
@@ -105,7 +106,7 @@ async def _view(session) -> SlackConfigView:
 
 
 @router.get("/config")
-async def get_slack_config(session: SessionDep, user: UserDep) -> SlackConfigView:
+async def get_slack_config(session: SessionDep) -> SlackConfigView:
     view = await _view(session)
     await session.commit()
     return view
@@ -113,7 +114,7 @@ async def get_slack_config(session: SessionDep, user: UserDep) -> SlackConfigVie
 
 @router.put("/config")
 async def update_slack_config(
-    updates: SlackConfigUpdate, session: SessionDep, user: UserDep
+    updates: SlackConfigUpdate, session: SessionDep
 ) -> SlackConfigView:
     row = await store.get_config(session)
     fields = updates.model_dump(
@@ -146,7 +147,7 @@ async def update_slack_config(
     if updates.locked is not None and updates.locked != row.locked:
         row.locked = updates.locked
         row.locked_at = store.now_iso() if updates.locked else None
-        row.locked_by = f"desktop:{user.email}" if updates.locked else None
+        row.locked_by = "desktop" if updates.locked else None
 
     session.add(row)
     await session.commit()
@@ -179,7 +180,7 @@ def _set_background(on: bool) -> None:
 
 
 @router.post("/take-over")
-async def take_over_slack(session: SessionDep, user: UserDep) -> SlackConfigView:
+async def take_over_slack(session: SessionDep) -> SlackConfigView:
     """Handle Slack on this machine now, though another machine is."""
     if slack_service.service is None or slack_service.service.slack is None:
         raise HTTPException(
@@ -193,6 +194,8 @@ class SlackLinkView(BaseModel):
     id: uuid.UUID
     team_id: str
     slack_user_id: str
+    collab_name: str | None
+    """ Who the researcher was on the collaboration server when linked, if signed in. """
     project_id: uuid.UUID | None
     notify_in_thread: bool
     created_at: str
@@ -211,26 +214,37 @@ def _link_view(link: SlackLinkTable) -> SlackLinkView:
     return SlackLinkView.model_validate(link, from_attributes=True)
 
 
-async def _own_link(session, user, link_id: uuid.UUID) -> SlackLinkTable:
+async def _link(session, link_id: uuid.UUID) -> SlackLinkTable:
     link = await session.get(SlackLinkTable, link_id)
-    if link is None or link.user_id != user.id:
+    if link is None:
         raise HTTPException(status_code=404, detail="No such Slack link.")
     return link
 
 
 @router.get("/links")
-async def list_slack_links(session: SessionDep, user: UserDep) -> list[SlackLinkView]:
-    """The Slack accounts linked to the signed-in user."""
-    return [_link_view(link) for link in await access.links_for_user(session, user.id)]
+async def list_slack_links(session: SessionDep) -> list[SlackLinkView]:
+    """The Slack accounts linked to this installation."""
+    return [_link_view(link) for link in await access.all_links(session)]
 
 
 @router.post("/links", status_code=201)
 async def create_slack_link(
-    body: SlackLinkCreate, session: SessionDep, user: UserDep
+    body: SlackLinkCreate, session: SessionDep, local: LocalSettingsDep
 ) -> SlackLinkView:
-    """Link the Slack account a code was shown to, to the signed-in user."""
+    """
+    Link the Slack account a code was shown to, to this installation.
+
+    Records who the researcher is on the collaboration server, when signed in
+    there, for a hosted router to route by later; linking never depends on it.
+    """
+    me = (await collaboration.status(local)).user
     try:
-        link = await linking.redeem_code(session, code=body.code, user_id=user.id)
+        link = await linking.redeem_code(
+            session,
+            code=body.code,
+            collab_sub=me.sub if me else None,
+            collab_name=(me.name or me.email) if me else None,
+        )
     except linking.LinkError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _link_view(link)
@@ -238,12 +252,12 @@ async def create_slack_link(
 
 @router.put("/links/{link_id}")
 async def update_slack_link(
-    link_id: uuid.UUID, body: SlackLinkUpdate, session: SessionDep, user: UserDep
+    link_id: uuid.UUID, body: SlackLinkUpdate, session: SessionDep
 ) -> SlackLinkView:
-    link = await _own_link(session, user, link_id)
+    link = await _link(session, link_id)
     if "project_id" in body.model_fields_set:
         if body.project_id is not None:
-            mine = {p.id for p in await project_service.list_projects(session, user)}
+            mine = {p.id for p in await project_service.list_projects(session)}
             if body.project_id not in mine:
                 raise HTTPException(status_code=400, detail="No such project.")
         link.project_id = body.project_id
@@ -256,9 +270,7 @@ async def update_slack_link(
 
 
 @router.delete("/links/{link_id}", status_code=204)
-async def delete_slack_link(
-    link_id: uuid.UUID, session: SessionDep, user: UserDep
-) -> None:
-    link = await _own_link(session, user, link_id)
+async def delete_slack_link(link_id: uuid.UUID, session: SessionDep) -> None:
+    link = await _link(session, link_id)
     await session.delete(link)
     await session.commit()

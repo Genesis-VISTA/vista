@@ -4,17 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UserSettingsModal } from "@/components/UserSettingsModal";
 import { setThemeChoice } from "@/lib/theme";
 import type { AgentSettings } from "@/lib/agent-settings";
+import type { CollaborationStatus, CollaborationView } from "@/lib/collaboration";
 import type { HpcCluster, HpcClusterStatus, HpcStatusView } from "@/lib/hpc-status";
-import type { UserPublicWithConfig } from "@/lib/user";
+import type { LocalSettings } from "@/lib/settings";
+import { DEBOUNCE_MS } from "@/lib/settings-autosave";
+import type { VersionInfo } from "@/lib/version";
 
-const { fetchCurrentUserWithConfigMock, updateCurrentUserMock, startGlobusLoginMock } = vi.hoisted(() => ({
-  fetchCurrentUserWithConfigMock: vi.fn(),
-  updateCurrentUserMock: vi.fn(),
+const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock } = vi.hoisted(() => ({
+  fetchSettingsMock: vi.fn(),
+  updateSettingsMock: vi.fn(),
   startGlobusLoginMock: vi.fn(),
 }));
-vi.mock("@/lib/user", () => ({
-  fetchCurrentUserWithConfig: fetchCurrentUserWithConfigMock,
-  updateCurrentUser: updateCurrentUserMock,
+vi.mock("@/lib/settings", () => ({
+  fetchSettings: fetchSettingsMock,
+  updateSettings: updateSettingsMock,
   startGlobusLogin: startGlobusLoginMock,
   completeGlobusLogin: vi.fn(),
 }));
@@ -40,11 +43,92 @@ vi.mock("@/lib/agent-settings", () => ({
   refreshAgentSettings: refreshAgentSettingsMock,
 }));
 
-function user(overrides: Partial<UserPublicWithConfig> = {}): UserPublicWithConfig {
+const { useCollaborationMock, refreshCollaborationMock } = vi.hoisted(() => ({
+  useCollaborationMock: vi.fn(),
+  refreshCollaborationMock: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/collaboration", () => ({
+  useCollaboration: useCollaborationMock,
+  refreshCollaborationStatus: refreshCollaborationMock,
+}));
+
+const { useVersionMock, checkNowMock, refreshVersionMock, startDownloadMock } = vi.hoisted(() => ({
+  useVersionMock: vi.fn(),
+  checkNowMock: vi.fn(async () => {}),
+  refreshVersionMock: vi.fn(async () => {}),
+  startDownloadMock: vi.fn(async () => {}),
+}));
+vi.mock("@/lib/version", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/version")>()),
+  useVersion: useVersionMock,
+  checkNow: checkNowMock,
+  refreshVersion: refreshVersionMock,
+  startDownload: startDownloadMock,
+}));
+
+function versionView(info: Partial<VersionInfo> = {}) {
   return {
-    id: "u1",
+    info: {
+      version: "0.2.3",
+      commit: "abc1234def",
+      checks: "on" as const,
+      checked_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+      latest: null,
+      notes_url: null,
+      install_command: null,
+      data_reset: null,
+      ...info,
+    },
+    error: null,
+    checking: false,
+    checkedAt: 0,
+    download: null,
+  };
+}
+
+const NOT_SET =
+  "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.";
+
+function collaborationView(
+  status: Partial<CollaborationStatus> | null = {},
+  error: string | null = null,
+): CollaborationView {
+  const full: CollaborationStatus | null =
+    status === null
+      ? null
+      : {
+          configured: false,
+          reachable: false,
+          reason: NOT_SET,
+          url: null,
+          source: null,
+          server_version: null,
+          signed_in: Boolean(status.reachable),
+          sign_in_required: false,
+          // As the backend does: none for a server that signed in without a token.
+          sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
+          user: null,
+          teams: [],
+          team_id: null,
+          ...status,
+        };
+  const available = Boolean(full?.reachable && full.signed_in);
+  return {
+    status: full,
+    checking: false,
+    available,
+    reason: available ? null : (full?.reason ?? "Checking the collaboration server…"),
+    error,
+    refresh: refreshCollaborationMock,
+  };
+}
+
+function settingsRow(overrides: Partial<LocalSettings> = {}): LocalSettings {
+  return {
+    install_id: "00000000-0000-4000-8000-000000000001",
+    display_name: null,
+    collaboration_server_url: null,
     email: "researcher@ornl.gov",
-    is_admin: false,
     inference_model: null,
     inference_base_url: null,
     inference_api_key: null,
@@ -103,31 +187,37 @@ function statusView(): HpcStatusView {
 function agentSettings(overrides: Partial<AgentSettings> = {}): AgentSettings {
   return {
     providers: [
-      { id: "i2", name: "AmSC i2", takesUrl: false, defaultModel: "claude-sonnet" },
-      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: null },
+      { id: "mag", name: "AmSC MAG", takesUrl: false, defaultModel: "claude-sonnet" },
       { id: "olcf", name: "OLCF Inference", takesUrl: false, defaultModel: "gpt-oss-120b" },
       { id: "custom", name: "Custom", takesUrl: true, defaultModel: null },
     ],
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    baseUrl: "https://api.i2-core.american-science-cloud.org",
+    baseUrl: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     modelIsDefault: true,
     hasCredential: true,
-    keysSet: { i2: true, mag: false, olcf: false, custom: false },
+    keysSet: { mag: true, olcf: false, custom: false },
+    configKeySet: false,
     ...overrides,
   };
 }
 
 beforeEach(() => {
-  fetchCurrentUserWithConfigMock.mockReset();
-  updateCurrentUserMock.mockReset();
-  updateCurrentUserMock.mockResolvedValue(user());
+  fetchSettingsMock.mockReset();
+  updateSettingsMock.mockReset();
+  updateSettingsMock.mockResolvedValue(settingsRow());
   recheckMock.mockClear();
   refreshMock.mockClear();
   refreshAgentSettingsMock.mockClear();
+  refreshCollaborationMock.mockClear();
+  useCollaborationMock.mockReturnValue(collaborationView());
   useHpcStatusMock.mockReturnValue(statusView());
   useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null, modelChoiceRequest: 0 });
+  useVersionMock.mockReturnValue(versionView());
+  checkNowMock.mockClear();
+  refreshVersionMock.mockClear();
+  startDownloadMock.mockClear();
 });
 
 const nav = () => screen.getByRole("navigation", { name: "Settings sections" });
@@ -153,8 +243,8 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists six focused sections and opens on Research profile", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+  it("lists eight focused sections, About last, and opens on Research profile", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
 
@@ -166,8 +256,10 @@ describe("UserSettingsModal navigation", () => {
       "Research profile",
       "Models and providers",
       "Repositories",
+      "Collaboration",
       "Compute",
       "Slack",
+      "About",
     ]);
 
     expect(entry("Research profile")).toHaveAttribute("aria-current", "page");
@@ -177,7 +269,7 @@ describe("UserSettingsModal navigation", () => {
   });
 
   it("shows each resource's status in the Compute section", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     const compute = await openOn("Compute");
     expect(within(compute).getByRole("button", { name: /^Frontier/ })).toHaveTextContent("Ready");
@@ -187,8 +279,8 @@ describe("UserSettingsModal navigation", () => {
     expect(within(compute).getByRole("button", { name: /^Perlmutter/ })).toHaveTextContent("Not connected");
   });
 
-  it("does not show the signed-in account", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ is_admin: true }));
+  it("does not show an account", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(screen.queryByText(/Signed in as/)).toBeNull();
@@ -196,8 +288,8 @@ describe("UserSettingsModal navigation", () => {
   });
 
   it("opened for one cluster, shows that cluster's section only", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
     const frontier = await region("Frontier");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(entry("Models and providers")).not.toHaveAttribute("aria-current");
@@ -206,8 +298,31 @@ describe("UserSettingsModal navigation", () => {
     expect(screen.queryByRole("region", { name: "Odo" })).toBeNull();
   });
 
+  it("opened at the model provider, shows it and marks it current", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="agent" />);
+    await region("Models & providers");
+    expect(screen.getByText("Model provider")).toBeInTheDocument();
+    expect(entry("Models and providers")).toHaveAttribute("aria-current", "page");
+    expect(entry("Research profile")).not.toHaveAttribute("aria-current");
+  });
+
+  it("opened at a section, starts on the section pane, which is what a narrow window shows", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { container } = render(<UserSettingsModal onClose={() => {}} initialSection="agent" />);
+    await region("Models & providers");
+    expect(container.querySelector(".settings-layout")).toHaveAttribute("data-pane", "section");
+  });
+
+  it("opened plainly, starts on the list pane", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { container } = render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(container.querySelector(".settings-layout")).toHaveAttribute("data-pane", "nav");
+  });
+
   it("marks a hidden resource and still lists it under its facility", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ hpc_hidden_clusters: ["perlmutter"] }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["perlmutter"] }));
     render(<UserSettingsModal onClose={() => {}} />);
     const compute = await openOn("Compute");
     const perlmutter = within(compute).getByRole("button", { name: /^Perlmutter/ });
@@ -217,20 +332,214 @@ describe("UserSettingsModal navigation", () => {
   });
 
   it("saves a field left for another section, and still shows it on return", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.type(await screen.findByLabelText(/Odo remote directory/), "/odo/vista");
     await openOn("Frontier");
     // Leaving the field saved it, without waiting for the pause.
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ odo_remote_dir: "/odo/vista" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: "/odo/vista" });
     await openOn("Odo");
     expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue("/odo/vista");
   });
 });
 
+describe("UserSettingsModal collaboration", () => {
+  const OBSIDIAN = "https://obsidian.ccs.ornl.gov/vista/api";
+  const GET_ONE = `Get a token from ${OBSIDIAN}/sign-in and paste it under Settings → Collaboration.`;
+
+  it("asks for a token when the server wants one, and saves the pasted one", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: GET_ONE,
+        url: OBSIDIAN,
+        source: "settings",
+        sign_in_required: true,
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: OBSIDIAN }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, sign in");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(GET_ONE);
+    expect(within(section).getByRole("link", { name: "Open the server's sign-in page" })).toHaveAttribute(
+      "href",
+      `${OBSIDIAN}/sign-in`,
+    );
+    await userEvent.type(within(section).getByLabelText("Token"), "eyJ.abc.def");
+    await userEvent.tab();
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "eyJ.abc.def" });
+    // The same server: its last answer stands while the token is checked, and
+    // keeps the field where it is.
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith());
+    expect(refreshCollaborationMock).not.toHaveBeenCalledWith({ forget: true });
+    expect(within(section).getByLabelText("Token")).toHaveValue("");
+  });
+
+  it("shows a saved token, and removes it", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reachable: true, reason: null, url: OBSIDIAN, source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ collaboration_server_url: OBSIDIAN, has_collaboration_token: true }),
+    );
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toHaveAttribute("placeholder", "Saved. Paste a new one to replace it");
+    await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "" });
+  });
+
+  it("asks for a token when the gateway answers with a redirect", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: `The collaboration server at ${OBSIDIAN} redirects to https://login.example.org.`,
+        url: OBSIDIAN,
+        source: "settings",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: OBSIDIAN }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toBeInTheDocument();
+  });
+
+  it("asks for no token over plain http to another machine", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: false,
+        reason: "VISTA sends its token only over https.",
+        url: "http://collab.example.org",
+        source: "settings",
+        sign_in_required: true,
+        sign_in_url: null,
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://collab.example.org" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+  });
+
+  it("asks for no token from a server that needs none", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reachable: true, reason: null, url: "http://127.0.0.1:8002", source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+  });
+
+  it("says no server is set, and why Publish and Import are off", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, not set");
+
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText(/^Collaboration server/)).toHaveValue("");
+    expect(section).toHaveTextContent(NOT_SET);
+  });
+
+  it("saves the address and checks the server again", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    await userEvent.type(within(section).getByLabelText(/^Collaboration server/), "http://127.0.0.1:8002");
+    // Not on a pause in typing: half an address would be saved and checked.
+    await new Promise((resolve) => setTimeout(resolve, DEBOUNCE_MS + 200));
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    await userEvent.tab();
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_server_url: "http://127.0.0.1:8002" });
+    // The answer about the old address is dropped, not shown as current.
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith({ forget: true }));
+  });
+
+  it("says when a check could not be made, beside the last answer", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView(
+        {
+          configured: true,
+          reachable: true,
+          reason: null,
+          url: "http://127.0.0.1:8002",
+          source: "settings",
+          server_version: "0.1.0",
+        },
+        "request failed (502)",
+      ),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
+    expect(section).toHaveTextContent("Couldn't check again: request failed (502); this is the last answer.");
+  });
+
+  it("shows a connected server", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "settings",
+        server_version: "0.1.0",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, connected");
+    const section = await openOn("Collaboration");
+    expect(within(section).getByLabelText(/^Collaboration server/)).toHaveValue("http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
+  });
+
+  it("shows why a configured server is unreachable, and checks again on request", async () => {
+    const reason = "The collaboration server at http://x:8002 is not answering (Connection refused).";
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ configured: true, reason, url: "http://x:8002", source: "settings" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://x:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, unreachable");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(reason);
+    await userEvent.click(within(section).getByRole("button", { name: "Check again" }));
+    expect(refreshCollaborationMock).toHaveBeenCalled();
+  });
+
+  it("names the installation's own server when the researcher has set none", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "config",
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    const field = within(section).getByLabelText(/^Collaboration server/);
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("This installation's configuration uses http://127.0.0.1:8002");
+  });
+});
+
 describe("UserSettingsModal repositories", () => {
-  it("says a token is saved without showing it, and the order tokens are used in", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true }));
+  it("says a token is saved without showing it, and where tokens are used", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_github_token: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Repositories")).toHaveAccessibleName("Repositories, 1 saved");
@@ -242,52 +551,54 @@ describe("UserSettingsModal repositories", () => {
     expect(within(section).getByLabelText("gitlab.com token")).toHaveAttribute("placeholder", "Not set");
 
     const note = within(section).getByText(/always use the token here/);
-    expect(note.textContent).toMatch(/project.s own token .* else the token here .* else your system git/);
+    expect(note.textContent).toMatch(/Hypothesis Lab forum on github\.com or gitlab\.com/);
+    expect(note.textContent).toMatch(/any other host uses your system git.s credentials/);
+    expect(note.textContent).not.toMatch(/project.s own token/);
   });
 
   it("saves a pasted token once, then shows it as saved and empties the field", async () => {
-    fetchCurrentUserWithConfigMock
-      .mockResolvedValueOnce(user())
-      .mockResolvedValueOnce(user({ has_github_token: true }));
+    fetchSettingsMock
+      .mockResolvedValueOnce(settingsRow())
+      .mockResolvedValueOnce(settingsRow({ has_github_token: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const section = await openOn("Repositories");
 
     await userEvent.click(within(section).getByLabelText("GitHub token"));
     await userEvent.paste("ghp_pasted");
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ github_token: "ghp_pasted" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ github_token: "ghp_pasted" }));
     await waitFor(() => expect(within(section).getByLabelText("GitHub token")).toHaveValue(""));
     expect(within(section).getByLabelText("GitHub token")).toHaveAttribute(
       "placeholder",
       expect.stringMatching(/^Saved/),
     );
     await userEvent.tab();
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
 
   it("leaves an untouched token alone, and only Remove sends a blank", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_github_token: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const section = await openOn("Repositories");
 
     // Focusing and leaving the empty field is not a removal.
     await userEvent.click(within(section).getByLabelText("GitHub token"));
     await userEvent.tab();
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
 
     await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ github_token: "" }));
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ github_token: "" }));
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
 
   it("never sends a token with another setting's save", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ has_github_token: true, has_gitlab_token: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_github_token: true, has_gitlab_token: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const profile = await region("Research profile");
 
     await userEvent.type(within(profile).getByLabelText(/^Role/), "chemist");
     await userEvent.tab();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ research_role: "chemist" }));
-    for (const [update] of updateCurrentUserMock.mock.calls) {
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ research_role: "chemist" }));
+    for (const [update] of updateSettingsMock.mock.calls) {
       expect(update).not.toHaveProperty("github_token");
       expect(update).not.toHaveProperty("gitlab_token");
     }
@@ -296,8 +607,8 @@ describe("UserSettingsModal repositories", () => {
 
 describe("UserSettingsModal cluster sections", () => {
   it("keeps each field in its own cluster's section", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({
         odo_s3m_token: "odo-tok",
         frontier_s3m_token: "fr-tok",
         nersc_account: "m1234",
@@ -338,8 +649,8 @@ describe("UserSettingsModal cluster sections", () => {
 
 describe("UserSettingsModal research profile", () => {
   it("shows saved scientific context and preferences", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({
         research_role: "Computational materials scientist",
         research_institution: "Oak Ridge National Laboratory",
         research_interests: ["Molten salts", "Thermophysical properties"],
@@ -363,7 +674,7 @@ describe("UserSettingsModal research profile", () => {
   });
 
   it("autosaves profile text, interests, and scientific preferences", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     const profile = await region("Research profile");
 
@@ -373,16 +684,74 @@ describe("UserSettingsModal research profile", () => {
     await userEvent.click(within(profile).getByRole("button", { name: "Add" }));
     await userEvent.selectOptions(within(profile).getByLabelText(/^Technical depth/), "expert");
 
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ research_role: "Physical chemist" }));
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ research_interests: ["Phase equilibria"] });
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ technical_depth: "expert" });
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ research_role: "Physical chemist" }));
+    expect(updateSettingsMock).toHaveBeenCalledWith({ research_interests: ["Phase equilibria"] });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ technical_depth: "expert" });
     expect(refreshAgentSettingsMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
+  it("shows and autosaves the name and email", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ display_name: "Ada" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const profile = await region("Research profile");
+
+    const name = within(profile).getByLabelText(/^Name/);
+    expect(name).toHaveValue("Ada");
+    await userEvent.clear(name);
+    await userEvent.type(name, "Ada Lovelace");
+    await userEvent.tab();
+    const email = within(profile).getByLabelText(/^Email/);
+    expect(email).toHaveAttribute("type", "email");
+    await userEvent.clear(email);
+    await userEvent.type(email, "ada@ornl.gov");
+    await userEvent.tab();
+
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ display_name: "Ada Lovelace" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ email: "ada@ornl.gov" }));
+  });
+
+  it("links to the documentation, in a new tab", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const profile = await region("Research profile");
+    const link = within(profile).getByRole("link", { name: "Documentation" });
+    expect(link).toHaveAttribute("href", "https://genesis-vista.github.io/");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", expect.stringContaining("noopener"));
+  });
+
+  it("Replay tutorial restarts it at the welcome step and closes Settings", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    updateSettingsMock.mockResolvedValue(settingsRow());
+    const onClose = vi.fn();
+    render(<UserSettingsModal onClose={onClose} />);
+    const profile = await region("Research profile");
+
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
+
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      onboarding_tour: { status: "in_progress", step: "welcome" },
+    });
+  });
+
+  it("keeps Settings open and says why when Replay cannot be saved", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    updateSettingsMock.mockRejectedValue(new Error("backend down"));
+    const onClose = vi.fn();
+    render(<UserSettingsModal onClose={onClose} />);
+    const profile = await region("Research profile");
+
+    await userEvent.click(within(profile).getByRole("button", { name: "Replay tutorial" }));
+
+    expect(await within(profile).findByText("backend down")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("can turn personalization off without deleting the profile", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ research_role: "Nuclear engineer", research_interests: ["Corrosion"] }),
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ research_role: "Nuclear engineer", research_interests: ["Corrosion"] }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     const profile = await region("Research profile");
@@ -393,13 +762,13 @@ describe("UserSettingsModal research profile", () => {
     expect(entry("Research profile")).toHaveTextContent("Off");
     expect(within(profile).getByLabelText(/^Role/)).toHaveValue("Nuclear engineer");
     expect(within(profile).getByText("Corrosion")).toBeInTheDocument();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ personalize_responses: false }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ personalize_responses: false }));
   });
 });
 
 describe("UserSettingsModal autosave", () => {
   it("has no Save or Cancel, only Close", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
@@ -408,20 +777,20 @@ describe("UserSettingsModal autosave", () => {
   });
 
   it("saves a typed remote directory after a pause, once, trimmed, and refreshes the cards", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
     await userEvent.type(
       await screen.findByLabelText(/Frontier remote directory/),
       " /lustre/orion/abc123/proj-shared/vista ",
     );
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(updateCurrentUserMock).toHaveBeenCalledWith({
+      expect(updateSettingsMock).toHaveBeenCalledWith({
         frontier_remote_dir: "/lustre/orion/abc123/proj-shared/vista",
       }),
     );
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     // The folder is part of the card's settings check, which the backend
     // recomputes on any request: a refresh, not a fresh probe of the facility.
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
@@ -429,58 +798,58 @@ describe("UserSettingsModal autosave", () => {
   });
 
   it("saves a pasted token once, and rechecks only that cluster", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ frontier_s3m_token: "fr-tok" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     await userEvent.click(await screen.findByLabelText(/Odo S3M token/));
     await userEvent.paste("new-odo");
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ odo_s3m_token: "new-odo" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ odo_s3m_token: "new-odo" }));
     await userEvent.tab(); // leaving it changes nothing more
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).toHaveBeenCalledWith("odo");
     expect(refreshAgentSettingsMock).not.toHaveBeenCalled();
   });
 
   it("saves nothing of a token typed by hand until the field loses focus", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     await userEvent.type(await screen.findByLabelText(/Odo S3M token/), "abc");
     await new Promise((r) => setTimeout(r, 1000)); // past the text pause
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     await userEvent.tab();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ odo_s3m_token: "abc" }));
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ odo_s3m_token: "abc" }));
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
 
   it("saves a cleared token as not set", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok" }),
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok" }),
     );
-    render(<UserSettingsModal onClose={() => {}} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
     await userEvent.clear(await screen.findByLabelText(/Frontier S3M token/));
     await userEvent.tab();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ frontier_s3m_token: null }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ frontier_s3m_token: null }));
     expect(recheckMock).toHaveBeenCalledWith("frontier");
   });
 
   it("still saves a change made straight before closing", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     const onClose = vi.fn();
-    render(<UserSettingsModal onClose={onClose} initialCluster="frontier" />);
+    render(<UserSettingsModal onClose={onClose} initialSection="frontier" />);
 
     await userEvent.type(await screen.findByLabelText(/Frontier remote directory/), "/frontier/vista");
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Close settings" }));
     expect(onClose).toHaveBeenCalledTimes(1);
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ frontier_remote_dir: "/frontier/vista" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ frontier_remote_dir: "/frontier/vista" });
   });
 
   it("hiding a cluster saves the list at once, leaves its token alone, and refreshes the rail", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ nersc_iri_token: "iri-tok" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow({ nersc_iri_token: "iri-tok" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const toggle = await screen.findByRole("switch", { name: "Show Perlmutter in sidebar" });
     await userEvent.click(toggle);
@@ -489,26 +858,26 @@ describe("UserSettingsModal autosave", () => {
     const compute = await openOn("Compute");
     expect(within(compute).getByRole("button", { name: /^Perlmutter/ })).toHaveTextContent("Hidden");
 
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["perlmutter"] }));
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["perlmutter"] }));
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     expect(recheckMock).not.toHaveBeenCalled();
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
   it("showing a hidden cluster again sends an empty list", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ hpc_hidden_clusters: ["odo"] }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["odo"] }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: [] }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ hpc_hidden_clusters: [] }));
   });
 
   it("an unchanged field triggers no save and no recheck", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ odo_remote_dir: "/odo" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: "/odo" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByLabelText(/Odo remote directory/));
     await userEvent.tab();
     await userEvent.click(screen.getByRole("button", { name: "Close settings" }));
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
     expect(recheckMock).not.toHaveBeenCalled();
     expect(refreshMock).not.toHaveBeenCalled();
   });
@@ -522,34 +891,34 @@ describe("UserSettingsModal save marks", () => {
   const announced = () => document.querySelector(".visually-hidden[role=status]")?.textContent ?? "";
 
   it("has no save indicator by the title", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Odo in sidebar" }));
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalled());
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalled());
     expect(screen.queryByText("Saving…")).toBeNull();
     expect(screen.queryByText("Saved")).toBeNull();
   });
 
   it("checks the saved field only, shows nothing while it saves, and announces it", async () => {
-    let release: (value: UserPublicWithConfig) => void = () => {};
-    updateCurrentUserMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    let release: (value: LocalSettings) => void = () => {};
+    updateSettingsMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     const dir = await screen.findByLabelText(/Odo remote directory/);
     const token = screen.getByLabelText(/Odo S3M token/);
     await userEvent.type(dir, "/odo/vista");
     await userEvent.tab();
     expect(markOf(dir)).toBeNull(); // in flight: nothing to see
-    await act(async () => release(user()));
+    await act(async () => release(settingsRow()));
     await waitFor(() => expect(markOf(dir)).toBe("saved"));
     expect(markOf(token)).toBeNull();
     expect(announced()).toBe("Odo remote directory saved.");
   });
 
   it("marks a switch beside it", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     const toggle = await screen.findByRole("switch", { name: "Show Odo in sidebar" });
     await userEvent.click(toggle);
     await waitFor(() => expect(markOf(toggle)).toBe("saved"));
@@ -557,23 +926,23 @@ describe("UserSettingsModal save marks", () => {
   });
 
   it("shows a slow save as still saving", async () => {
-    let release: (value: UserPublicWithConfig) => void = () => {};
-    updateCurrentUserMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    let release: (value: LocalSettings) => void = () => {};
+    updateSettingsMock.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
 
     const account = await screen.findByLabelText(/Lux account/);
     await userEvent.type(account, "abc123");
     await userEvent.tab();
     await waitFor(() => expect(markOf(account)).toBe("slow"), { timeout: 2000 });
-    await act(async () => release(user()));
+    await act(async () => release(settingsRow()));
     await waitFor(() => expect(markOf(account)).toBe("saved"));
   });
 
   it("marks a failure with a cross and the reason, keeping what was typed", async () => {
-    updateCurrentUserMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    updateSettingsMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative/dir");
@@ -587,9 +956,9 @@ describe("UserSettingsModal save marks", () => {
 
   it("marks the section in the navigation when its save fails after leaving it, and focuses the field on return", async () => {
     let reject: (e: Error) => void = () => {};
-    updateCurrentUserMock.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    updateSettingsMock.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     await userEvent.type(await screen.findByLabelText(/NERSC remote directory/), "relative/dir");
     await openOn("Models and providers"); // leaving the field sends it
@@ -603,9 +972,9 @@ describe("UserSettingsModal save marks", () => {
   });
 
   it("clears the cross, the reason and the navigation mark once the field saves", async () => {
-    updateCurrentUserMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="perlmutter" />);
+    updateSettingsMock.mockRejectedValueOnce(new Error("The remote directory must be absolute."));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const dir = await screen.findByLabelText(/NERSC remote directory/);
     await userEvent.type(dir, "relative");
@@ -618,7 +987,7 @@ describe("UserSettingsModal save marks", () => {
     await waitFor(() => expect(markOf(dir)).toBe("saved"));
     expect(screen.queryByText("The remote directory must be absolute.")).toBeNull();
     expect(entry("Compute")).not.toHaveAccessibleName(/couldn't save/);
-    expect(updateCurrentUserMock).toHaveBeenLastCalledWith({ nersc_remote_dir: "/pscratch/vista" });
+    expect(updateSettingsMock).toHaveBeenLastCalledWith({ nersc_remote_dir: "/pscratch/vista" });
   });
 });
 
@@ -631,66 +1000,73 @@ describe("UserSettingsModal: Models & providers", () => {
     return within(agent).getByRole("radio", { name: new RegExp(`^${name}`) });
   }
 
-  it("offers the backend's providers in order, with i2's key and no Model or endpoint field", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ inference_api_key: "i2-key" }));
+  it("offers the backend's providers in order, with MAG's token and no Model or endpoint field", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_mag_api_key: "mag-token" }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
     const choices = within(agent).getByRole("radiogroup", { name: "Inference provider" });
     expect(within(choices).getAllByRole("radio").map((choice) => choice.querySelector(".settings-provider-name")?.textContent)).toEqual([
-      "AmSC i2", "AmSC MAG", "OLCF Inference", "Custom",
+      "AmSC MAG", "OLCF Inference", "Custom",
     ]);
-    expect(provider(agent, "AmSC i2")).toBeChecked();
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    expect(provider(agent, "AmSC MAG")).toBeChecked();
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
     expect(agent).toHaveTextContent("Uses claude-sonnet");
     expect(within(agent).queryByLabelText(/^Model/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
   });
 
+  it("neither offers nor links to the retired AmSC i2", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const agent = await providerRegion();
+
+    expect(within(agent).queryByRole("radio", { name: /AmSC i2/ })).toBeNull();
+    expect(agent.querySelector('a[href*="i2-core"]')).toBeNull();
+    expect(agent).not.toHaveTextContent("i2");
+  });
+
   it("switching provider shows that provider's own key field", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ inference_api_key: "i2-key", inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
-    const i2 = provider(agent, "AmSC i2");
-    expect(i2).toHaveAttribute("tabindex", "0");
-    i2.focus();
+    const mag = provider(agent, "AmSC MAG");
+    expect(mag).toHaveAttribute("tabindex", "0");
+    mag.focus();
     await userEvent.keyboard("{ArrowRight}");
-    expect(provider(agent, "AmSC MAG")).toBeChecked();
-    expect(provider(agent, "AmSC MAG")).toHaveFocus();
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
-    expect(within(agent).queryByLabelText(/^AmSC i2 API key/)).toBeNull();
+    expect(provider(agent, "OLCF Inference")).toBeChecked();
+    expect(provider(agent, "OLCF Inference")).toHaveFocus();
+    expect(within(agent).getByLabelText(/^OLCF Inference S3M token/)).toHaveValue("s3m");
+    expect(within(agent).queryByLabelText(/^AmSC MAG project access token/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
+    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
+
+    await userEvent.click(provider(agent, "Custom"));
     expect(agent).toHaveTextContent("no default model");
 
-    await userEvent.click(provider(agent, "OLCF Inference"));
-    const olcf = within(agent).getByLabelText(/^OLCF Inference S3M token/);
-    expect(olcf).toHaveValue("s3m");
-    expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
-    expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
-
-    await userEvent.click(provider(agent, "AmSC i2"));
-    expect(within(agent).getByLabelText(/^AmSC i2 API key/)).toHaveValue("i2-key");
+    await userEvent.click(provider(agent, "AmSC MAG"));
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
   });
 
   it("only Custom shows an endpoint field; the choice saves at once, then the endpoint and key", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
     await userEvent.click(provider(agent, "Custom"));
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_provider: "custom" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ inference_provider: "custom" }));
     await userEvent.type(within(agent).getByLabelText(/^Inference endpoint/), "https://gw.example/v1");
     await userEvent.type(within(agent).getByLabelText(/^Custom endpoint API key/), "c-key");
     await userEvent.tab();
 
     await waitFor(() =>
-      expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_custom_api_key: "c-key" }),
+      expect(updateSettingsMock).toHaveBeenCalledWith({ inference_custom_api_key: "c-key" }),
     );
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_base_url: "https://gw.example/v1" });
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(3);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ inference_base_url: "https://gw.example/v1" });
+    expect(updateSettingsMock).toHaveBeenCalledTimes(3);
     // Each of the three refreshes the picker's view of the provider.
     await waitFor(() => expect(refreshAgentSettingsMock).toHaveBeenCalledTimes(3));
     expect(recheckMock).not.toHaveBeenCalled();
@@ -702,7 +1078,7 @@ describe("UserSettingsModal: Models & providers", () => {
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ inference_api_key: "row-key" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
@@ -717,11 +1093,11 @@ describe("UserSettingsModal: Models & providers", () => {
 
   it("marks the section not ready when the effective provider has no key", async () => {
     useAgentSettingsMock.mockReturnValue({
-      settings: agentSettings({ hasCredential: false, keysSet: { i2: false, mag: false, olcf: false, custom: false } }),
+      settings: agentSettings({ hasCredential: false, keysSet: { mag: false, olcf: false, custom: false } }),
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Not ready");
@@ -732,12 +1108,12 @@ describe("UserSettingsModal: Models & providers", () => {
       settings: agentSettings({
         source: "default",
         hasCredential: true,
-        keysSet: { i2: false, mag: false, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: false },
       }),
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Not ready");
@@ -746,19 +1122,39 @@ describe("UserSettingsModal: Models & providers", () => {
   it("does not call a key-only provider ready before a model is chosen", async () => {
     useAgentSettingsMock.mockReturnValue({
       settings: agentSettings({
-        provider: "mag",
+        provider: "custom",
+        baseUrl: "https://custom.example/v1",
         model: null,
         modelIsDefault: false,
         hasCredential: true,
-        keysSet: { i2: false, mag: true, olcf: false, custom: false },
+        keysSet: { mag: false, olcf: false, custom: true },
       }),
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ inference_provider: "mag" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_provider: "custom" }));
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Not ready");
+  });
+
+  it("reads a configured endpoint's readiness from its own saved key", async () => {
+    useAgentSettingsMock.mockReturnValue({
+      settings: agentSettings({
+        provider: "custom",
+        source: "config",
+        baseUrl: "https://dev.example/v1",
+        keysSet: { mag: false, olcf: false, custom: false },
+        configKeySet: true,
+      }),
+      error: null,
+      modelChoiceRequest: 0,
+    });
+    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Models and providers")).toHaveTextContent("Ready");
+    expect(entry("Models and providers")).not.toHaveTextContent("Not ready");
   });
 });
 
@@ -772,8 +1168,8 @@ describe("UserSettingsModal: Globus address", () => {
   });
 
   async function startOdo() {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="odo" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
     const odo = await region("Odo");
     await userEvent.click(within(odo).getByRole("button", { name: "Connect" }));
     return within(odo).findByRole("textbox", { name: "Odo Globus login address" });
@@ -810,10 +1206,10 @@ describe("UserSettingsModal: Globus address", () => {
 
 describe("UserSettingsModal: Lux", () => {
   it("opened from the Lux card, shows the sidebar switch, the account and the remote directory", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(
-      user({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
+    fetchSettingsMock.mockResolvedValue(
+      settingsRow({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
     );
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     const lux = await region("Lux");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(lux).toHaveTextContent("Ready");
@@ -827,29 +1223,29 @@ describe("UserSettingsModal: Lux", () => {
   });
 
   it("saving the Lux account sends only that field", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
     await userEvent.tab();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_account: "abc123" }));
-    expect(updateCurrentUserMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_account: "abc123" }));
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
     // The Lux card's settings check reads the account.
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
 
   it("clearing the Lux remote directory sends null", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user({ lux_remote_dir: "/lux/vista" }));
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow({ lux_remote_dir: "/lux/vista" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.clear(await screen.findByLabelText(/Lux remote directory/));
     await userEvent.tab();
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ lux_remote_dir: null }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_remote_dir: null }));
   });
 
   it("hiding Lux saves the list and refreshes the rail without a recheck", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
-    render(<UserSettingsModal onClose={() => {}} initialCluster="lux" />);
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     await userEvent.click(await screen.findByRole("switch", { name: "Show Lux in sidebar" }));
-    await waitFor(() => expect(updateCurrentUserMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ hpc_hidden_clusters: ["lux"] }));
     expect(recheckMock).not.toHaveBeenCalled();
     await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
   });
@@ -872,7 +1268,7 @@ describe("UserSettingsModal appearance", () => {
   }
 
   it("starts on System, and says what System means", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await openAppearance();
     expect(radio("System")).toBeChecked();
@@ -885,18 +1281,18 @@ describe("UserSettingsModal appearance", () => {
     ["Dark", "dark"],
     ["Light", "light"],
   ])("selecting %s applies and stores it at once, without Save", async (name, value) => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await openAppearance();
     await userEvent.click(radio(name));
     expect(radio(name)).toBeChecked();
     expect(document.documentElement.getAttribute("data-theme")).toBe(value);
     expect(window.localStorage.getItem("vista.theme")).toBe(value);
-    expect(updateCurrentUserMock).not.toHaveBeenCalled();
+    expect(updateSettingsMock).not.toHaveBeenCalled();
   });
 
   it("selecting System clears the override", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     setThemeChoice("dark");
     render(<UserSettingsModal onClose={() => {}} />);
     await openAppearance();
@@ -908,7 +1304,7 @@ describe("UserSettingsModal appearance", () => {
   });
 
   it("arrow keys move and select together, with one tab stop", async () => {
-    fetchCurrentUserWithConfigMock.mockResolvedValue(user());
+    fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await openAppearance();
     expect(radio("System")).toHaveAttribute("tabindex", "0");
@@ -925,10 +1321,122 @@ describe("UserSettingsModal appearance", () => {
   });
 
   it("is available before the user record loads", async () => {
-    fetchCurrentUserWithConfigMock.mockReturnValue(new Promise(() => {}));
+    fetchSettingsMock.mockReturnValue(new Promise(() => {}));
     render(<UserSettingsModal onClose={() => {}} />);
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     await openAppearance();
     expect(radio("System")).toBeChecked();
+  });
+});
+
+describe("UserSettingsModal About", () => {
+  afterEach(() => {
+    delete window.vistaApp;
+  });
+
+  it("shows the version and commit, each copyable, and the release notes", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    expect(within(about).getByRole("textbox", { name: "Installed version" })).toHaveTextContent("0.2.3");
+    expect(within(about).getByRole("textbox", { name: "Commit" })).toHaveTextContent("abc1234def");
+    expect(within(about).getByRole("button", { name: "Copy version" })).toBeInTheDocument();
+    expect(within(about).getByRole("button", { name: "Copy commit" })).toBeInTheDocument();
+    expect(within(about).getByRole("link", { name: "Release notes for 0.2.3" })).toHaveAttribute(
+      "href",
+      "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.3",
+    );
+    expect(within(about).getByText("VISTA is up to date. Checked 3 hours ago.")).toBeInTheDocument();
+    expect(entry("About")).toHaveTextContent("0.2.3");
+    expect(screen.queryByTestId("about-update-marker")).toBeNull();
+  });
+
+  it("checks now on request", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    await userEvent.click(within(about).getByRole("button", { name: "Check now" }));
+    expect(checkNowMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a development build never checks, with no notes link or Check now", async () => {
+    useVersionMock.mockReturnValue(versionView({ version: "dev", checks: "dev_build", checked_at: null }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    expect(within(about).getByText("Update checks are off for development builds.")).toBeInTheDocument();
+    expect(within(about).queryByRole("button", { name: "Check now" })).toBeNull();
+    expect(within(about).queryByRole("link", { name: /Release notes/ })).toBeNull();
+  });
+
+  it("turns checks off at once, saving like every other setting", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: true, update_prereleases: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    const checks = within(about).getByRole("switch", { name: "Check for updates" });
+    const prereleases = within(about).getByRole("switch", { name: "Include prereleases" });
+    expect(checks).toBeChecked();
+    expect(prereleases).not.toBeChecked();
+
+    await userEvent.click(checks);
+
+    expect(checks).not.toBeChecked();
+    expect(prereleases).toBeDisabled();
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ update_checks: false }));
+    await waitFor(() => expect(refreshVersionMock).toHaveBeenCalled());
+    expect(checkNowMock).not.toHaveBeenCalled();
+  });
+
+  it("checks again when prereleases are opted into", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: true, update_prereleases: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    await userEvent.click(within(about).getByRole("switch", { name: "Include prereleases" }));
+
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ update_prereleases: true }));
+    await waitFor(() => expect(checkNowMock).toHaveBeenCalled());
+  });
+
+  it("says checks are off when they are", async () => {
+    useVersionMock.mockReturnValue(versionView({ checks: "off", checked_at: null }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ update_checks: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+    expect(within(about).getByText("Update checks are off.")).toBeInTheDocument();
+  });
+
+  it("offers an available release with its notes and Update, which starts the download", async () => {
+    useVersionMock.mockReturnValue(
+      versionView({ latest: "0.2.5", notes_url: "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5" }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    expect(screen.getByTestId("about-update-marker")).toBeInTheDocument();
+    const about = await openOn("About");
+
+    expect(within(about).getByText(/VISTA 0\.2\.5 is available/)).toBeInTheDocument();
+    expect(within(about).getByRole("link", { name: "Release notes" })).toHaveAttribute(
+      "href",
+      "https://github.com/Genesis-VISTA/vista/releases/tag/v0.2.5",
+    );
+    await userEvent.click(within(about).getByRole("button", { name: "Update to 0.2.5" }));
+    expect(startDownloadMock).toHaveBeenCalledWith("0.2.5");
+  });
+
+  it("without VISTA's window, Restart now says it needs the window", async () => {
+    useVersionMock.mockReturnValue({
+      ...versionView({ latest: "0.2.5" }),
+      download: { state: "ready", version: "0.2.5", bytes: 1, total: 1, error: null },
+    });
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const about = await openOn("About");
+
+    await userEvent.click(within(about).getByRole("button", { name: "Restart to update" }));
+    await userEvent.click(await within(about).findByRole("button", { name: "Restart now" }));
+    expect(within(about).getByRole("alert")).toHaveTextContent("Restarting into an update needs VISTA's window.");
   });
 });

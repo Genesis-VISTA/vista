@@ -8,11 +8,13 @@ to a real SQLite file through the registry's session factory.
 
 import asyncio
 import json
+import os
 import uuid
 from contextlib import ExitStack, asynccontextmanager
 
 import mcp.types
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
@@ -20,13 +22,16 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from harness import call, make_project, make_user, say, seed_project, seed_user
-from harness import step_model
+from harness import call, make_local_settings, make_project, say, seed_project
+from harness import scripted_model, step_model
 from vista_backend.agents.agents import ProjectAgent
-from vista_backend.db.schemas import ChatSessionTable
+from vista_backend.config import settings
+from vista_backend.db.schemas import ChatSessionTable, DisplayedFileTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.services.displayed_files import file_status
 from vista_backend.services.chat_run import (
     ChatRunRegistry,
     resolve_prompt,
@@ -46,7 +51,7 @@ async def _until(condition, timeout: float = 10) -> None:
 
 
 class Env:
-    """A project, a researcher, and scripted agents keyed by conversation."""
+    """A project and scripted agents keyed by conversation."""
 
     def __init__(self, engine, session, stack: ExitStack) -> None:
         self.engine = engine
@@ -55,17 +60,19 @@ class Env:
         self.agents: dict[uuid.UUID, ProjectAgent] = {}
         self.hang_started = asyncio.Event()
         self.registry = ChatRunRegistry()
+        self.display_errors: set[str] = set()
+        """ uris `display_file` answers with `{error}`, as the real tool does for a bad path. """
 
     async def conversation(self, steps, history=None) -> tuple[ChatSessionTable, tuple]:
         row = await chat_session_service.create_chat_session(
-            self.session, project_id=self.project.id, user_id=self.user.id
+            self.session, project_id=self.project.id
         )
         if history:
             row.message_history = chat_session_service.dump_message_history(history)
         await self.session.commit()
         await self.session.refresh(row)
         self.session.expunge(row)  # later commits must not expire it
-        agent = ProjectAgent(make_project(tools=["*"]), make_user(), row.id)
+        agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), row.id)
         toolset = self._toolset(agent).filtered(
             lambda ctx, tool: agent._tool_allowed(tool.name)
         )
@@ -73,7 +80,7 @@ class Env:
             agent.agent.override(model=step_model(steps), toolsets=[toolset])
         )
         self.agents[row.id] = agent
-        return row, (row.id, self.project.id, self.user.id)
+        return row, (row.id, self.project.id)
 
     def _toolset(self, agent: ProjectAgent) -> FunctionToolset:
         toolset = FunctionToolset()
@@ -98,6 +105,26 @@ class Env:
             """Finishes at once."""
             return "job 42 submitted"
 
+        display_errors = self.display_errors
+
+        @toolset.tool_plain
+        def display_file(uri: str) -> dict[str, str]:
+            """Display a file to the user, shaped like vista_mcp_server's tool."""
+            if uri in display_errors:
+                return {"error": f"Could not resolve {uri}"}
+            return {
+                "uri": uri,
+                "mime_type": "image/png",
+                "filename": uri.rsplit("/", 1)[-1],
+            }
+
+        @toolset.tool_plain
+        def overwrite(path: str) -> str:
+            """Rewrite a file in the output folder, as a later run_bash would."""
+            target = agent.output_dir / path
+            target.write_bytes(target.read_bytes() + b" and more")
+            return "rewritten"
+
         @toolset.tool_plain
         async def hang() -> str:
             """Never finishes."""
@@ -111,7 +138,6 @@ class Env:
         return await self.registry.start(
             chat_session_id=row.id,
             project_id=self.project.id,
-            user_id=self.user.id,
             agent_key=key,
             user_prompt=prompt,
             prior_history=chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
@@ -127,7 +153,9 @@ class Env:
 
 
 @pytest.fixture
-async def env(engine, session, monkeypatch):
+async def env(engine, session, monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "data_dir", tmp_path)  # agents' output folders
+
     @asynccontextmanager
     async def get(key):
         yield holder.agents[key[0]]
@@ -141,9 +169,7 @@ async def env(engine, session, monkeypatch):
     with ExitStack() as stack:
         holder = Env(engine, session, stack)
         monkeypatch.setattr(chat_run, "chat_run_registry", holder.registry)
-        user = await seed_user(session)
-        holder.user = user
-        holder.project = await seed_project(session, user)
+        holder.project = await seed_project(session)
         await session.commit()
         yield holder
 
@@ -191,6 +217,43 @@ async def test_a_finished_run_saves_its_outcome_without_anyone_watching(env):
         saved.message_history
     )
     assert _texts(history) == ["earlier answer", "hello there"]
+
+
+async def test_a_failed_run_reports_why(env):
+    """
+    The reason a turn failed reaches the conversation on `run_finished`, both
+    live and in the saved events a page replays when the conversation is
+    reopened. The ERROR log line stays as it was.
+    """
+    row, key = await env.conversation([])
+
+    def unknown_model(messages, info):
+        raise ModelHTTPError(
+            status_code=404,
+            model_name="claude-sonet",
+            body={"error": {"message": "The model `claude-sonet` does not exist."}},
+        )
+
+    env.stack.enter_context(
+        env.agents[row.id].agent.override(model=scripted_model(unknown_model))
+    )
+
+    run = await env.start(row, key)
+    seen = [event async for event in run.subscribe()]
+    await run.wait()
+
+    finished = json.loads(seen[-1].data)
+    assert seen[-1].kind == "run_finished"
+    assert finished["state"] == "failed"
+    for words in ("404", "claude-sonet", "does not exist"):
+        assert words in finished["error"], finished["error"]
+    assert any(
+        e.kind == "log" and json.loads(e.data)["level"] == "ERROR" for e in seen
+    ), "the ERROR log line is kept"
+
+    saved = await env.row(row.id)
+    assert saved.run_state == "failed"
+    assert (saved.run_events or [])[-1] == {"event": "run_finished", "data": finished}
 
 
 async def test_saved_events_are_compacted_and_hold_no_prompts_or_deltas(env):
@@ -469,7 +532,6 @@ async def test_the_channel_holds_for_its_run_only(env):
     run = await env.registry.start(
         chat_session_id=row.id,
         project_id=env.project.id,
-        user_id=env.user.id,
         agent_key=key,
         user_prompt="go",
         prior_history=[],
@@ -485,3 +547,108 @@ async def test_the_channel_holds_for_its_run_only(env):
     assert run.channel == "slack"
     assert seen == ["slack"]
     assert agent.channel == "app", "the agent is back on the app channel between runs"
+
+
+# ─── Record of displayed files (files-tab-artifacts-feed 2.3) ────────────────
+
+
+def _plot(env: Env, row, path: str = "run1/plot.png") -> os.stat_result:
+    """Put a file in the conversation's output folder, as the agent's code would."""
+    target = env.agents[row.id].output_dir / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"\x89PNG fake")
+    return target.stat()
+
+
+async def _displays(env: Env, row) -> list[DisplayedFileTable]:
+    async with AsyncSession(env.engine) as s:
+        found = await s.exec(
+            select(DisplayedFileTable).where(
+                DisplayedFileTable.chat_session_id == row.id
+            )
+        )
+        return list(found.all())
+
+
+async def _display_call_id(env: Env, row) -> str:
+    saved = await env.row(row.id)
+    history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
+        saved.message_history
+    )
+    return next(
+        p.tool_call_id
+        for m in history
+        if isinstance(m, ModelResponse)
+        for p in m.parts
+        if isinstance(p, ToolCallPart) and p.tool_name == "display_file"
+    )
+
+
+async def test_a_successful_display_is_recorded(env):
+    row, key = await env.conversation(
+        [call("display_file", uri="/mnt/data/output/run1/plot.png"), say("here")]
+    )
+    stat = _plot(env, row)
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    assert record.project_id == env.project.id
+    assert record.run_id == run.run_id
+    assert record.tool_call_id == await _display_call_id(env, row)
+    assert (record.kind, record.path) == ("outputs", "run1/plot.png")
+    assert (record.size, record.mtime_ns) == (stat.st_size, stat.st_mtime_ns)
+    assert record.shown_at
+
+
+async def test_a_display_that_returns_an_error_is_not_recorded(env):
+    row, key = await env.conversation(
+        [call("display_file", uri="/mnt/data/output/run1/plot.png"), say("sorry")]
+    )
+    _plot(env, row)
+    env.display_errors.add("/mnt/data/output/run1/plot.png")
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    assert await _displays(env, row) == []
+
+
+async def test_a_stopped_run_still_records_what_it_displayed(env):
+    row, key = await env.conversation(
+        [
+            call("display_file", uri="/mnt/data/output/run1/plot.png"),
+            call("hang"),
+            say("unreachable"),
+        ]
+    )
+    _plot(env, row)
+
+    run = await env.start(row, key)
+    await _until(env.hang_started.is_set)
+    assert await env.registry.stop(row.id) is True
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    assert (record.kind, record.path) == ("outputs", "run1/plot.png")
+
+
+async def test_a_file_overwritten_later_in_the_run_reads_as_changed(env):
+    row, key = await env.conversation(
+        [
+            call("display_file", uri="/mnt/data/output/run1/plot.png"),
+            call("overwrite", path="run1/plot.png"),
+            say("done"),
+        ]
+    )
+    _plot(env, row)
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    output_dir = env.agents[row.id].output_dir
+    assert (
+        file_status(output_dir, record.path, record.size, record.mtime_ns) == "changed"
+    )

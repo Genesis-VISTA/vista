@@ -13,21 +13,20 @@ Every event reaching here was verified by the Slack SDK (see `transport.py`).
 
 import logging
 import time
-import uuid
 from dataclasses import dataclass
 from typing import Literal
 
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
-from ..db.schemas import SlackConfigTable, SlackLinkTable, UserTable
+from ..db.schemas import SlackConfigTable, SlackLinkTable
 from .events import Action, Event, HomeOpened, Message, keyword
 
 log = logging.getLogger("vista.slack.access")
 
 NOT_LINKED = (
-    "Hi! I'm VISTA, but your Slack account isn't linked to a VISTA user, so I can't act "
+    "Hi! I'm VISTA, but your Slack account isn't linked to this VISTA, so I can't act "
     "for you. To link it, DM me `link` and enter the code I send in the VISTA desktop "
     "app under Settings → Slack."
 )
@@ -39,8 +38,9 @@ LINK_IN_DM = "To link your account, send `link` to me in a direct message."
 
 @dataclass(frozen=True)
 class Linked:
+    """A linked Slack account: it acts as this installation's researcher."""
+
     link: SlackLinkTable
-    user: UserTable
 
 
 Verdict = Literal["drop", "reply", "link", "allow"]
@@ -85,21 +85,15 @@ async def find_link(
             )
         )
     ).first()
-    if link is None:
-        return None
-    user = await session.get(UserTable, link.user_id)
-    if user is None:
-        return None
-    return Linked(link=link, user=user)
+    return Linked(link=link) if link is not None else None
 
 
-async def links_for_user(
-    session: AsyncSession, user_id: uuid.UUID
-) -> list[SlackLinkTable]:
+async def all_links(session: AsyncSession) -> list[SlackLinkTable]:
+    """Every linked Slack account, oldest first. All act as this install's researcher."""
     return list(
         (
             await session.exec(
-                select(SlackLinkTable).where(SlackLinkTable.user_id == user_id)
+                select(SlackLinkTable).order_by(col(SlackLinkTable.created_at))
             )
         ).all()
     )

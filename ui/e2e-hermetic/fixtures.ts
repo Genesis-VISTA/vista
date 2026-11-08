@@ -9,22 +9,25 @@
  */
 
 export const PROJECT_ID = "00000000-0000-4000-8000-000000000001";
-export const USER_ID = "00000000-0000-4000-8000-000000000002";
 export const SESSION_ID = "00000000-0000-4000-8000-000000000003";
 
 const NOW = "2026-01-01T00:00:00+00:00";
 
-export const USER = {
-  id: USER_ID,
+export const SETTINGS = {
+  install_id: "00000000-0000-4000-8000-000000000002",
+  display_name: null,
+  collaboration_server_url: null,
   email: "hermetic@example.invalid",
-  is_admin: false,
   hpc_hidden_clusters: [] as string[],
+  // The first-boot tour would open over every page these specs drive.
+  onboarding_tour: null,
+  onboarding_tour_enabled: false,
 };
 
 const OK = (message: string) => ({ ok: true, reason: null, message });
 
 /**
- * `GET /users/me/hpc-status`: one cluster in each of three different states,
+ * `GET /settings/hpc-status`: one cluster in each of three different states,
  * so the rail's cards are distinguishable by more than their names.
  */
 export const HPC_STATUS = {
@@ -102,6 +105,10 @@ export const PROJECTS = [
     knowledge_bases: ["molten-salt-papers"],
     tools: ["rag_search"],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
   {
     id: "00000000-0000-4000-8000-000000000004",
@@ -112,6 +119,10 @@ export const PROJECTS = [
     knowledge_bases: [],
     tools: [],
     usage_limits: {},
+    origin_server: null,
+    remote_id: null,
+    remote_version: null,
+    modified: true,
   },
 ];
 
@@ -123,10 +134,14 @@ export const SKILLS = [
     path: "skills/salt-analysis/SKILL.md",
     metadata: { version: "0.1.0", tags: ["Materials Design"] },
     tags: ["Materials Design"],
-    author: "VISTA Team",
     repoUrl: null,
-    isPublic: true,
+    hpcJobs: [],
     addedAt: 1767225600000,
+    bundled: true,
+    originServer: null,
+    remoteId: null,
+    remoteVersion: null,
+    modified: false,
   },
 ];
 
@@ -140,13 +155,16 @@ export const KNOWLEDGE_BASE = {
   build_status: "ready",
   publication_count: 0,
   publications: [],
+  origin_server: null,
+  remote_id: null,
+  remote_version: null,
+  modified: true,
 };
 
 export const KNOWLEDGE_BASES = [KNOWLEDGE_BASE];
 
 export const CHAT_SESSION_SUMMARY = {
   id: SESSION_ID,
-  user_id: USER_ID,
   project_id: PROJECT_ID,
   title: "Density of FLiBe",
   created_at: NOW,
@@ -179,24 +197,24 @@ export const MODELS = {
 };
 
 /**
- * `GET /users/me/inference`: a fresh install, on AmSC i2 with its default
+ * `GET /settings/inference`: a fresh install, on AmSC MAG with its default
  * model and a key, so the picker reads "Default (claude-sonnet)" and a send
  * is never held for want of a model.
  */
 export const INFERENCE = {
   providers: [
-    { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
-    { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+    { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
     { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
     { id: "custom", name: "Custom", takes_url: true, default_model: null },
   ],
-  provider: "i2",
+  provider: "mag",
   source: "default",
-  base_url: "https://api.i2-core.american-science-cloud.org",
+  base_url: "https://mag.genesis.americansciencecloud.org/v1",
   model: "openai:claude-sonnet",
   model_is_default: true,
   has_credential: true,
-  keys_set: { i2: true, mag: false, olcf: false, custom: false },
+  keys_set: { mag: true, olcf: false, custom: false },
+  config_key_set: false,
 };
 
 /** Slack as a fresh install has it: off, no tokens, the default limits. */
@@ -224,10 +242,44 @@ export const SLACK_CONFIG = {
   background_problem: "a development checkout",
 };
 
+/**
+ * `GET /collaboration/status`: no collaboration server set, as on a fresh
+ * install, so Publish and Import would be off with this reason.
+ */
+export const COLLABORATION_STATUS = {
+  configured: false,
+  reachable: false,
+  reason:
+    "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.",
+  url: null,
+  source: null,
+  server_version: null,
+  signed_in: false,
+  sign_in_required: false,
+  sign_in_url: null,
+  user: null,
+  teams: [],
+  team_id: null,
+};
+
+/** `GET /api/version` for a development checkout, which never checks for updates. */
+export const VERSION = {
+  version: "dev",
+  commit: "0123456789abcdef0123456789abcdef01234567",
+  checks: "dev_build",
+  checked_at: null,
+  latest: null,
+  notes_url: null,
+  data_reset: null,
+};
+
+export const DOWNLOAD_IDLE = { state: "idle", version: null, bytes: 0, total: 0, error: null };
+
 export const ROUTES: Record<string, unknown> = {
-  "GET /api/users/me": USER,
-  "GET /api/users/me/inference": INFERENCE,
-  "GET /api/users/me/hpc-status": HPC_STATUS,
+  "GET /api/collaboration/status": COLLABORATION_STATUS,
+  "GET /api/settings": SETTINGS,
+  "GET /api/settings/inference": INFERENCE,
+  "GET /api/settings/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
   "GET /api/projects/molten-salt/models": MODELS,
   "GET /api/skills": SKILLS,
@@ -235,6 +287,8 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/chat/sessions": [CHAT_SESSION_SUMMARY],
   "POST /api/chat/sessions": CHAT_SESSION_SUMMARY,
   "GET /api/chat/session": CHAT_SESSION,
+  // Nothing has been displayed in the conversation.
+  "GET /api/chat/displayed-files": [],
   "PUT /api/chat/session": CHAT_SESSION,
   // No conversation is working or has an unseen outcome, so no dots show.
   "GET /api/chat/runs/status": [],
@@ -247,6 +301,11 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/files/outputs": [],
   "GET /api/slack/config": SLACK_CONFIG,
   "GET /api/slack/links": [],
+  // A checkout: no update checks, so no marker. `updates.spec.ts` offers one.
+  "GET /api/version": VERSION,
+  "POST /api/updates/check": VERSION,
+  "GET /api/updates/download": DOWNLOAD_IDLE,
+  "GET /api/activity": { chat_runs: [], debates: 0, watched_jobs: [] },
 };
 
 /** The one route that streams instead of returning JSON. */

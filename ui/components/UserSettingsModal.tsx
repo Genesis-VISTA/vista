@@ -12,13 +12,13 @@ import {
 import { useSettingsAutosave, type FieldMark, type SaveOutcome } from "@/lib/settings-autosave";
 import {
   completeGlobusLogin,
-  fetchCurrentUserWithConfig,
+  fetchSettings,
   startGlobusLogin,
-  updateCurrentUser,
+  updateSettings,
   type GlobusCluster,
-  type UserPublicWithConfig,
-  type UserSelfUpdate,
-} from "@/lib/user";
+  type LocalSettings,
+  type LocalSettingsUpdate,
+} from "@/lib/settings";
 import { refreshAgentSettings, useAgentSettings } from "@/lib/agent-settings";
 import {
   HPC_CLUSTERS,
@@ -32,29 +32,50 @@ import {
   type HpcDisplayState,
 } from "@/lib/hpc-status";
 import { useTheme, type ThemeChoice } from "@/lib/theme";
+import {
+  refreshCollaborationStatus,
+  useCollaboration,
+  type CollaborationView,
+} from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 import { FieldError, SaveMark, SectionHeader, fieldId } from "./SettingsParts";
 import { SlackSection } from "./SlackSection";
 import { fetchSlackConfig, slackNote, type SlackConfig } from "@/lib/slack";
+import { CopyableLine } from "./CopyableLine";
+import { UpdateControls } from "./UpdateControls";
+import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
 
-/** What the modal can show: the four top-level areas, or one cluster's section. */
-type Section = "appearance" | "profile" | "agent" | "repositories" | "compute" | "slack" | HpcCluster;
+/** What the modal can show: the top-level areas, or one cluster's section. */
+export type SettingsSection =
+  | "appearance"
+  | "profile"
+  | "agent"
+  | "repositories"
+  | "collaboration"
+  | "compute"
+  | "slack"
+  | "about"
+  | HpcCluster;
+type Section = SettingsSection;
 
 /**
- * The repository tokens, which unlike every field in `TEXT_FIELDS` are
- * write-only: the backend never sends them back, so each starts empty, an empty
- * field saves nothing, and only Remove sends `""`.
+ * The repository tokens and the collaboration server's, which unlike every
+ * field in `TEXT_FIELDS` are write-only: the backend never sends them back, so
+ * each starts empty, an empty field saves nothing, and only Remove sends `""`.
  */
-const REPO_TOKEN_FIELDS = ["github_token", "gitlab_token"] as const;
-type RepoTokenField = (typeof REPO_TOKEN_FIELDS)[number];
+const TOKEN_FIELDS = ["github_token", "gitlab_token", "collaboration_token"] as const;
+type TokenField = (typeof TOKEN_FIELDS)[number];
 
-/** Every free-text field the modal edits, as named in `UserSelfUpdate`. */
+/** Every free-text field the modal edits, as named in `LocalSettingsUpdate`. */
 const TEXT_FIELDS = [
   "inference_api_key",
   "inference_mag_api_key",
   "inference_olcf_api_key",
   "inference_custom_api_key",
   "inference_base_url",
+  "display_name",
+  "email",
+  "collaboration_server_url",
   "research_role",
   "research_institution",
   "nersc_account",
@@ -66,7 +87,7 @@ const TEXT_FIELDS = [
   "odo_s3m_token",
   "frontier_s3m_token",
   "nersc_iri_token",
-] as const satisfies ReadonlyArray<keyof UserSelfUpdate & keyof UserPublicWithConfig>;
+] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
 type TextField = (typeof TEXT_FIELDS)[number];
 
@@ -77,35 +98,39 @@ type TextField = (typeof TEXT_FIELDS)[number];
 type Draft = {
   text: Record<TextField, string>;
   /** A repository token being typed; cleared once it saves. */
-  tokens: Record<RepoTokenField, string>;
+  tokens: Record<TokenField, string>;
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
   interests: string[];
-  preferredUnits: NonNullable<UserSelfUpdate["preferred_units"]>;
-  technicalDepth: NonNullable<UserSelfUpdate["technical_depth"]>;
-  evidencePreference: NonNullable<UserSelfUpdate["evidence_preference"]>;
+  preferredUnits: NonNullable<LocalSettingsUpdate["preferred_units"]>;
+  technicalDepth: NonNullable<LocalSettingsUpdate["technical_depth"]>;
+  evidencePreference: NonNullable<LocalSettingsUpdate["evidence_preference"]>;
   personalizeResponses: boolean;
+  updateChecks: boolean;
+  updatePrereleases: boolean;
   hidden: Set<HpcCluster>;
 };
 
-function draftFrom(user: UserPublicWithConfig): Draft {
+function draftFrom(user: LocalSettings): Draft {
   const text = {} as Record<TextField, string>;
   for (const field of TEXT_FIELDS) text[field] = user[field] ?? "";
   return {
     text,
-    tokens: { github_token: "", gitlab_token: "" },
+    tokens: { github_token: "", gitlab_token: "", collaboration_token: "" },
     provider: user.inference_provider ?? null,
     interests: user.research_interests ?? [],
     preferredUnits: user.preferred_units ?? "si",
     technicalDepth: user.technical_depth ?? "balanced",
     evidencePreference: user.evidence_preference ?? "cite_when_available",
     personalizeResponses: user.personalize_responses ?? true,
+    updateChecks: user.update_checks ?? true,
+    updatePrereleases: user.update_prereleases ?? false,
     hidden: new Set((user.hpc_hidden_clusters ?? []).filter((c): c is HpcCluster => HPC_CLUSTERS.includes(c as HpcCluster))),
   };
 }
 
 /** The fields the agent settings view reads, so a save refreshes the picker. */
-const AGENT_FIELDS: Array<keyof UserSelfUpdate> = [
+const AGENT_FIELDS: Array<keyof LocalSettingsUpdate> = [
   "inference_provider",
   "inference_api_key",
   "inference_mag_api_key",
@@ -124,7 +149,7 @@ const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
 
 /**
  * The settings each cluster's settings check reads (remote directory,
- * account). The backend recomputes that check from the user row on every
+ * account). The backend recomputes that check from the settings row on every
  * request, even from cache, so a plain refresh shows the change without
  * probing the facility again.
  */
@@ -140,8 +165,12 @@ const SETTING_FIELDS = new Set([
 /** The section each field lives in, for going to a field whose save failed. */
 function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
-  if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
+  if (field.startsWith("collaboration_")) return "collaboration";
+  if (field.startsWith("update_")) return "about";
+  if ((TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
   if (
+    field === "display_name" ||
+    field === "email" ||
     field.startsWith("research_") ||
     field === "preferred_units" ||
     field === "technical_depth" ||
@@ -167,11 +196,14 @@ type FieldBinding = {
 /** How each field is named when its save is announced. */
 const FIELD_LABELS: Record<string, string> = {
   inference_provider: "Inference provider",
-  inference_api_key: "AmSC i2 API key",
+  inference_api_key: "API key for the configured endpoint",
   inference_mag_api_key: "AmSC MAG project access token",
   inference_olcf_api_key: "OLCF Inference S3M token",
   inference_custom_api_key: "Custom endpoint API key",
   inference_base_url: "Inference endpoint",
+  display_name: "Name",
+  email: "Email",
+  collaboration_server_url: "Collaboration server",
   research_role: "Research role",
   research_institution: "Institution or laboratory",
   research_interests: "Research interests",
@@ -179,6 +211,8 @@ const FIELD_LABELS: Record<string, string> = {
   technical_depth: "Technical depth",
   evidence_preference: "Evidence preference",
   personalize_responses: "Response personalization",
+  update_checks: "Check for updates",
+  update_prereleases: "Include prereleases",
   nersc_account: "NERSC account",
   nersc_remote_dir: "NERSC remote directory",
   nersc_iri_token: "NERSC IRI token",
@@ -192,7 +226,14 @@ const FIELD_LABELS: Record<string, string> = {
   gitlab_token: "gitlab.com token",
 };
 
-type Bind = (field: TextField, kind: "text" | "secret") => FieldBinding;
+/**
+ * When a field saves: `debounce` after a pause in typing; `on-blur` when it
+ * loses focus, or at once on a paste. Secrets and the collaboration server's
+ * address save on blur, since half of either is worse than none (a partial
+ * address would be saved and checked, and fail).
+ */
+type SaveWhen = "debounce" | "on-blur";
+type Bind = (field: TextField, when: SaveWhen) => FieldBinding;
 type ProfileChoiceField = "preferred_units" | "technical_depth" | "evidence_preference";
 
 const PROFILE_DRAFT_KEYS = {
@@ -204,36 +245,36 @@ const PROFILE_DRAFT_KEYS = {
 const blankToNull = (s: string) => (s.trim() === "" ? null : s.trim());
 
 /**
- * The settings modal: four top-level areas (Appearance, Research profile,
- * Models & providers, and Compute) beside one section at a time.
+ * The settings modal: its top-level areas (Appearance, Research profile,
+ * Models & providers, Repositories, Collaboration and Compute) beside one
+ * section at a time.
  *
- * Fetches the full `UserPublicWithConfig` view (with decrypted tokens) on
- * open — the nav-rail's cached user is the light view, which intentionally
- * omits secrets. There is no Save: each field saves itself through a
- * single-field `PUT /users/me` (see `lib/settings-autosave.ts`), text after a
+ * Fetches the `LocalSettings` (with decrypted tokens) fresh on open, rather
+ * than reading the nav rail's cached copy. There is no Save: each field saves itself through a
+ * single-field `PUT /settings` (see `lib/settings-autosave.ts`), text after a
  * pause, a secret on blur or paste, a switch or choice at once, and closing
  * sends whatever is still pending. Each field marks its own save (a check, a
  * cross with the reason, or a spinner when slow), a section holding a failed
  * field is marked in the navigation, and a hidden live region announces each
- * outcome. Opened from a cluster's card (`initialCluster`) it shows that
- * cluster's section, and otherwise Research profile. Below about 720 px of modal width the
+ * outcome. Opened at a named section (`initialSection`, as from a
+ * cluster's card) it shows that section, and otherwise Research profile. Below about 720 px of modal width the
  * navigation and the section take turns (see `.settings-layout`).
  */
 export function UserSettingsModal({
   onClose,
-  initialCluster,
+  initialSection,
 }: {
   onClose: () => void;
-  initialCluster?: HpcCluster;
+  initialSection?: Section;
 }) {
-  const [user, setUser] = useState<UserPublicWithConfig | null>(null);
+  const [user, setUser] = useState<LocalSettings | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [section, setSection] = useState<Section>(initialCluster ?? "profile");
+  const [section, setSection] = useState<Section>(initialSection ?? "profile");
   // Only read in a narrow modal, where the list and a section take turns. A
-  // deep link from a card goes straight to its section there too.
-  const [pane, setPane] = useState<"nav" | "section">(initialCluster ? "section" : "nav");
+  // deep link (a card, the tour) goes straight to its section there too.
+  const [pane, setPane] = useState<"nav" | "section">(initialSection ? "section" : "nav");
   const [focusTarget, setFocusTarget] = useState<string | null>(null);
   // The latest draft, for the save callbacks, which outlive a render.
   const draftRef = useRef<Draft | null>(null);
@@ -244,7 +285,7 @@ export function UserSettingsModal({
   const pasted = useRef(new Set<string>());
 
   async function saveField(field: string, value: unknown) {
-    await updateCurrentUser({ [field]: value } as UserSelfUpdate);
+    await updateSettings({ [field]: value } as LocalSettingsUpdate);
     // Fix a credential and see it straight away: recheck just that cluster
     // rather than wait for the next poll.
     const cluster = CREDENTIAL_CLUSTER[field];
@@ -253,13 +294,24 @@ export function UserSettingsModal({
     if (field === HIDDEN_FIELD || SETTING_FIELDS.has(field)) void refreshHpcStatus();
     // The picker's label and list follow the provider, endpoint and key.
     if ((AGENT_FIELDS as string[]).includes(field)) void refreshAgentSettings();
-    // A repository token never comes back, so what to show is "saved" or not:
-    // read that from the server, and empty the field it was typed into.
-    if ((REPO_TOKEN_FIELDS as readonly string[]).includes(field)) {
-      const token = field as RepoTokenField;
-      setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [token]: "" } } : d));
-      setUser(await fetchCurrentUserWithConfig());
+    // Publish and Import follow the server and its token wherever they are shown.
+    // Only a new address drops the last answer: one about the same server
+    // still stands while its new token is checked, and keeps the Token field
+    // (which it decides) in place.
+    if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
+    if (field === "collaboration_token") void refreshCollaborationStatus();
+    // About and the settings marker follow the update switches: turning checks
+    // on, or changing which releases count, asks GitHub again.
+    if (field === "update_checks") void (value ? checkNow() : refreshVersion());
+    if (field === "update_prereleases") void checkNow();
+    // A token never comes back, so empty the field it was typed into.
+    const isToken = (TOKEN_FIELDS as readonly string[]).includes(field);
+    if (isToken) {
+      setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field as TokenField]: "" } } : d));
     }
+    // Whether it is saved is read from the server; a new address forgets the
+    // old server's token, so it is read again then too.
+    if (isToken || field === "collaboration_server_url") setUser(await fetchSettings());
   }
 
   const [announcement, setAnnouncement] = useState("");
@@ -284,23 +336,25 @@ export function UserSettingsModal({
     setLoading(true);
     setLoadError(null);
     try {
-      const loaded = await fetchCurrentUserWithConfig();
+      const loaded = await fetchSettings();
       const next = draftFrom(loaded);
       const seeded: Record<string, unknown> = { inference_provider: next.provider };
       for (const field of TEXT_FIELDS) seeded[field] = blankToNull(next.text[field]);
       // Null is "keep" for a write-only token, so an untouched field never saves.
-      for (const field of REPO_TOKEN_FIELDS) seeded[field] = null;
+      for (const field of TOKEN_FIELDS) seeded[field] = null;
       seeded.research_interests = next.interests;
       seeded.preferred_units = next.preferredUnits;
       seeded.technical_depth = next.technicalDepth;
       seeded.evidence_preference = next.evidencePreference;
       seeded.personalize_responses = next.personalizeResponses;
+      seeded.update_checks = next.updateChecks;
+      seeded.update_prereleases = next.updatePrereleases;
       seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
       autosave.seed(seeded);
       setUser(loaded);
       setDraft(next);
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : "Failed to load user.");
+      setLoadError(e instanceof Error ? e.message : "Failed to load settings.");
     } finally {
       setLoading(false);
     }
@@ -321,6 +375,12 @@ export function UserSettingsModal({
   function close() {
     void autosave.flush();
     onClose();
+  }
+
+  /** Mark the tour as starting over; the tour reads this from the shared settings. */
+  async function replayTour() {
+    await updateSettings({ onboarding_tour: { status: "in_progress", step: "welcome" } });
+    close();
   }
 
   // Close on Escape so the modal behaves like every other dialog in the app.
@@ -357,7 +417,7 @@ export function UserSettingsModal({
     if (failure) setFocusTarget(failure.id);
   }
 
-  const bind: Bind = (field, kind) => {
+  const bind: Bind = (field, when) => {
     const error = autosave.errors[field];
     return {
       error,
@@ -368,10 +428,10 @@ export function UserSettingsModal({
         onChange: (e) => {
           const value = e.target.value;
           setDraft((d) => (d ? { ...d, text: { ...d.text, [field]: value } } : d));
-          const how = kind === "text" ? "debounce" : pasted.current.delete(field) ? "now" : "hold";
+          const how = when === "debounce" ? "debounce" : pasted.current.delete(field) ? "now" : "hold";
           autosave.edit(field, blankToNull(value), how);
         },
-        onPaste: kind === "secret" ? () => void pasted.current.add(field) : undefined,
+        onPaste: when === "on-blur" ? () => void pasted.current.add(field) : undefined,
         onBlur: () => autosave.commit(field),
         "aria-invalid": error ? true : undefined,
         "aria-describedby": error ? `${fieldId(field)}-error` : undefined,
@@ -380,7 +440,7 @@ export function UserSettingsModal({
   };
 
   /** Like `bind`, for a write-only token: a blank field saves null, which keeps it. */
-  const bindToken = (field: RepoTokenField): FieldBinding => {
+  const bindToken = (field: TokenField): FieldBinding => {
     const error = autosave.errors[field];
     return {
       error,
@@ -401,7 +461,7 @@ export function UserSettingsModal({
     };
   };
 
-  function removeToken(field: RepoTokenField) {
+  function removeToken(field: TokenField) {
     setDraft((d) => (d ? { ...d, tokens: { ...d.tokens, [field]: "" } } : d));
     autosave.edit(field, "", "now");
   }
@@ -438,13 +498,19 @@ export function UserSettingsModal({
     autosave.edit("personalize_responses", personalizeResponses, "now");
   }
 
-  // Before the user loads, every cluster reads as shown: the list is the
+  function setUpdateSwitch(field: "update_checks" | "update_prereleases", on: boolean) {
+    const key = field === "update_checks" ? "updateChecks" : "updatePrereleases";
+    setDraft((d) => (d ? { ...d, [key]: on } : d));
+    autosave.edit(field, on, "now");
+  }
+
+  // Before the settings load, every cluster reads as shown: the list is the
   // same either way, and only the "hidden" markers wait for it.
   const hidden = draft?.hidden ?? new Set<HpcCluster>();
 
   let content: ReactNode;
   if (section === "appearance") {
-    // The theme is this machine's, not the user row's, so it needs nothing
+    // The theme is this machine's, not the settings row's, so it needs nothing
     // loaded and applies at once.
     content = <AppearanceSection />;
   } else if (section === "slack") {
@@ -471,6 +537,7 @@ export function UserSettingsModal({
         setInterests={setInterests}
         setChoice={setProfileChoice}
         setPersonalizeResponses={setPersonalizeResponses}
+        onReplayTour={replayTour}
         marks={autosave.marks}
         errors={autosave.errors}
       />
@@ -487,6 +554,24 @@ export function UserSettingsModal({
     );
   } else if (section === "repositories") {
     content = <RepositoriesSection user={user} bindToken={bindToken} onRemove={removeToken} />;
+  } else if (section === "collaboration") {
+    content = (
+      <CollaborationSection
+        bind={bind}
+        user={user}
+        bindToken={bindToken}
+        onRemove={() => removeToken("collaboration_token")}
+      />
+    );
+  } else if (section === "about") {
+    content = (
+      <AboutSection
+        draft={draft}
+        setSwitch={setUpdateSwitch}
+        marks={autosave.marks}
+        errors={autosave.errors}
+      />
+    );
   } else if (section === "compute") {
     content = (
       <ComputeSection
@@ -590,10 +675,12 @@ function SettingsNav({
   const view = useHpcStatus();
   // The Settings badge describes this researcher's setup, not a credential
   // inherited invisibly from the installation environment. A configured
-  // installation uses the legacy i2 key field until the researcher makes an
-  // explicit provider choice; every other provider has its own saved-key flag.
+  // installation uses the legacy key field until the researcher makes an
+  // explicit provider choice; every provider has its own saved-key flag.
   const savedCredential = settings
-    ? settings.keysSet[settings.source === "config" ? "i2" : settings.provider]
+    ? settings.source === "config"
+      ? settings.configKeySet
+      : settings.keysSet[settings.provider]
     : false;
   // A saved credential alone is not enough for providers without a default
   // model, and Custom also needs an endpoint.
@@ -604,7 +691,11 @@ function SettingsNav({
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
   const clusterFailed = HPC_CLUSTERS.some((cluster) => failed.has(cluster));
+  const collaboration = useCollaboration();
+  const collaborationNote = collaborationLabel(collaboration);
   const computeCurrent = section === "compute" || HPC_CLUSTERS.includes(section as HpcCluster);
+  const { info: versionInfo } = useVersion();
+  const updateReady = updateAvailable(versionInfo);
 
   return (
     <nav className="settings-nav" aria-label="Settings sections">
@@ -660,6 +751,22 @@ function SettingsNav({
         <span className="settings-nav-note">{repoTokens ? `${repoTokens} saved` : "None"}</span>
       </NavEntry>
       <NavEntry
+        label={`Collaboration, ${collaborationNote.toLowerCase()}`}
+        current={section === "collaboration"}
+        failed={failed.has("collaboration")}
+        onClick={() => onChoose("collaboration")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="9" cy="8" r="3" />
+          <circle cx="17" cy="10" r="2.5" />
+          <path d="M3 20a6 6 0 0 1 12 0M14.5 20a4.5 4.5 0 0 1 7-3.7" />
+        </svg>
+        <span className="settings-nav-name">Collaboration</span>
+        <span className={`settings-nav-note${collaboration.status?.configured && !collaboration.available ? " hpc-word--warn" : ""}`}>
+          {collaborationNote}
+        </span>
+      </NavEntry>
+      <NavEntry
         label={`Compute, ${ready} of ${visible.length} ready`}
         current={computeCurrent}
         failed={failed.has("compute") || clusterFailed}
@@ -689,6 +796,22 @@ function SettingsNav({
             {slackNote(slack)}
           </span>
         )}
+      </NavEntry>
+      <NavEntry
+        label={["About", versionInfo?.version, updateReady ? `VISTA ${versionInfo?.latest} available` : null]
+          .filter(Boolean)
+          .join(", ")}
+        current={section === "about"}
+        failed={failed.has("about")}
+        onClick={() => onChoose("about")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5M12 8h.01" />
+        </svg>
+        <span className="settings-nav-name">About</span>
+        {updateReady && <span className="update-marker" data-testid="about-update-marker" aria-hidden="true" />}
+        <span className="settings-nav-note">{versionInfo?.version ?? ""}</span>
       </NavEntry>
     </nav>
   );
@@ -730,6 +853,122 @@ function NavEntry({
   );
 }
 
+/** The release VISTA's notes live under. */
+const RELEASES_URL = "https://github.com/Genesis-VISTA/vista/releases";
+
+/**
+ * Which VISTA this is, whether a newer release exists, and the two update
+ * switches (openspec change `in-app-updates`). The version comes from the
+ * backend (`GET /version`), never from a package.json.
+ */
+function AboutSection({
+  draft,
+  setSwitch,
+  marks,
+  errors,
+}: {
+  draft: Draft;
+  setSwitch: (field: "update_checks" | "update_prereleases", on: boolean) => void;
+  marks: Partial<Record<string, FieldMark>>;
+  errors: Partial<Record<string, string>>;
+}) {
+  const { info, error } = useVersion();
+  const release = info && info.checks !== "dev_build";
+  return (
+    <section className="settings-section" aria-label="About">
+      <SectionHeader title="About">
+        <span className="user-settings-hint">The VISTA installed here, and how it stays up to date.</span>
+      </SectionHeader>
+      <div className="settings-section-body">
+        {!info ? (
+          <p className={error ? "error" : "user-settings-hint"}>{error ? `Couldn't read the version: ${error}` : "Loading…"}</p>
+        ) : (
+          <>
+            <div className="settings-about-identity">
+              <span className="user-settings-switch-label">Version</span>
+              <CopyableLine value={info.version} label="Installed version" copyLabel="Copy version" />
+              {info.commit && (
+                <>
+                  <span className="user-settings-switch-label">Commit</span>
+                  <CopyableLine value={info.commit} label="Commit" copyLabel="Copy commit" />
+                </>
+              )}
+              {release && (
+                <a href={`${RELEASES_URL}/tag/v${info.version}`} target="_blank" rel="noreferrer">
+                  Release notes for {info.version}
+                </a>
+              )}
+            </div>
+            <UpdateControls info={info} />
+          </>
+        )}
+        <UpdateSwitch
+          field="update_checks"
+          label="Check for updates"
+          hint="Once a day, VISTA asks GitHub whether a newer release is out. Nothing else is sent."
+          on={draft.updateChecks}
+          onChange={(on) => setSwitch("update_checks", on)}
+          mark={marks.update_checks}
+          error={errors.update_checks}
+        />
+        <UpdateSwitch
+          field="update_prereleases"
+          label="Include prereleases"
+          hint="Also offer release candidates, which are tested less."
+          on={draft.updatePrereleases}
+          disabled={!draft.updateChecks}
+          onChange={(on) => setSwitch("update_prereleases", on)}
+          mark={marks.update_prereleases}
+          error={errors.update_prereleases}
+        />
+      </div>
+    </section>
+  );
+}
+
+function UpdateSwitch({
+  field,
+  label,
+  hint,
+  on,
+  disabled = false,
+  onChange,
+  mark,
+  error,
+}: {
+  field: string;
+  label: string;
+  hint: string;
+  on: boolean;
+  disabled?: boolean;
+  onChange: (on: boolean) => void;
+  mark?: FieldMark;
+  error?: string;
+}) {
+  return (
+    <div className="settings-profile-switch">
+      <span className="user-settings-switch-text">
+        <span className="user-settings-switch-label">{label}</span>
+        <span className="user-settings-hint">{hint}</span>
+        <FieldError field={field} error={error} />
+      </span>
+      <SaveMark mark={mark} />
+      <button
+        id={fieldId(field)}
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label={label}
+        className="user-settings-switch"
+        disabled={disabled}
+        onClick={() => onChange(!on)}
+      >
+        <span className="user-settings-switch-thumb" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
 function AppearanceSection() {
   const titleId = useId();
   return (
@@ -750,6 +989,7 @@ function ResearchProfileSection({
   setInterests,
   setChoice,
   setPersonalizeResponses,
+  onReplayTour,
   marks,
   errors,
 }: {
@@ -758,10 +998,21 @@ function ResearchProfileSection({
   setInterests: (interests: string[]) => void;
   setChoice: (field: ProfileChoiceField, value: string) => void;
   setPersonalizeResponses: (enabled: boolean) => void;
+  onReplayTour: () => Promise<void>;
   marks: Record<string, FieldMark>;
   errors: Record<string, string>;
 }) {
   const [interest, setInterest] = useState("");
+  const [replayError, setReplayError] = useState<string | null>(null);
+
+  async function replay() {
+    setReplayError(null);
+    try {
+      await onReplayTour();
+    } catch (e) {
+      setReplayError(e instanceof Error ? e.message : "Couldn't start the tour.");
+    }
+  }
 
   function addInterest() {
     const value = interest.trim();
@@ -778,6 +1029,30 @@ function ResearchProfileSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body settings-profile-body">
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">About you</h3>
+            <p className="user-settings-hint">Not part of the profile VISTA personalizes responses with.</p>
+          </div>
+          <div className="settings-profile-grid">
+            <SavedField
+              label="Name"
+              field="display_name"
+              binding={bind("display_name", "debounce")}
+              placeholder="e.g. Ada Lovelace"
+              hint="Shown on your posts in the Hypothesis Lab."
+            />
+            <SavedField
+              label="Email"
+              field="email"
+              type="email"
+              binding={bind("email", "debounce")}
+              placeholder="e.g. you@ornl.gov"
+              hint="Where campaign job notifications go. Nothing is sent without it."
+            />
+          </div>
+        </div>
+
         <div className="settings-profile-switch">
           <span className="settings-profile-switch-icon" aria-hidden="true">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -815,14 +1090,14 @@ function ResearchProfileSection({
             <SavedField
               label="Role"
               field="research_role"
-              binding={bind("research_role", "text")}
+              binding={bind("research_role", "debounce")}
               placeholder="e.g. Computational materials scientist"
               hint="Your scientific or technical role."
             />
             <SavedField
               label="Institution or laboratory"
               field="research_institution"
-              binding={bind("research_institution", "text")}
+              binding={bind("research_institution", "debounce")}
               placeholder="e.g. Oak Ridge National Laboratory"
               hint="Optional organizational context."
             />
@@ -917,6 +1192,23 @@ function ResearchProfileSection({
             <path d="M9 12l2 2 4-4" />
           </svg>
           Profile fields are private to this VISTA installation and are sent only as context to the selected model provider.
+        </div>
+
+        <div className="settings-profile-group">
+          <div>
+            <h3 className="settings-profile-heading">Help</h3>
+            <p className="user-settings-hint">
+              <a href="https://genesis-vista.github.io/" target="_blank" rel="noopener noreferrer">
+                Documentation
+              </a>
+            </p>
+          </div>
+          <div className="settings-interest-add">
+            <button type="button" className="button ghost button-xs" onClick={() => void replay()}>
+              Replay tutorial
+            </button>
+          </div>
+          {replayError && <div className="error" style={{ fontSize: 13 }}>{replayError}</div>}
         </div>
       </div>
     </section>
@@ -1045,7 +1337,6 @@ function ComputeResourceRow({
 
 /** Which stored key each provider uses; see `PROVIDER_PRESETS` in the backend. */
 const PROVIDER_KEY_FIELDS: Record<string, TextField> = {
-  i2: "inference_api_key",
   mag: "inference_mag_api_key",
   olcf: "inference_olcf_api_key",
   custom: "inference_custom_api_key",
@@ -1059,19 +1350,6 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
     return { label: "API key", hint: <>Key for the configured endpoint. {KEY_SUFFIX}</> };
   }
   switch (provider) {
-    case "i2":
-      return {
-        label: "AmSC i2 API key",
-        hint: (
-          <>
-            {KEY_SUFFIX}{" "}
-            <a href="https://api.i2-core.american-science-cloud.org" target="_blank" rel="noopener noreferrer">
-              Get a key
-            </a>
-            .
-          </>
-        ),
-      };
     case "mag":
       return {
         label: "AmSC MAG project access token",
@@ -1114,7 +1392,7 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
 
 /**
  * The inference provider and its credential. The options come from the
- * backend (`GET /users/me/inference`), never from a list of the interface's
+ * backend (`GET /settings/inference`), never from a list of the interface's
  * own; there is no Model field, since the model picker is the one place to
  * choose a model.
  */
@@ -1156,7 +1434,7 @@ function AgentSection({
   }
 
   return (
-    <section className="settings-section" aria-label="Models & providers">
+    <section className="settings-section" aria-label="Models & providers" data-tour="model:provider">
       <SectionHeader title="Model provider">
         <span className="user-settings-hint">
           Choose where VISTA runs its assistant. Changes apply from your next message.
@@ -1171,6 +1449,7 @@ function AgentSection({
           </div>
           <div
             id={fieldId("inference_provider")}
+            data-tour="model:providers"
             className="settings-provider-grid"
             role="radiogroup"
             aria-label="Inference provider"
@@ -1239,22 +1518,24 @@ function AgentSection({
           <SavedField
             label="Inference endpoint"
             field="inference_base_url"
-            binding={bind("inference_base_url", "text")}
+            binding={bind("inference_base_url", "debounce")}
             placeholder="https://gateway.example/v1"
             hint="Any OpenAI-compatible endpoint."
           />
         )}
 
         {keyField && copy && (
-          <SavedField
-            key={keyField}
-            label={copy.label}
-            field={keyField}
-            binding={bind(keyField, "secret")}
-            secret
-            placeholder="API key"
-            hint={copy.hint}
-          />
+          <div data-tour="model:credential">
+            <SavedField
+              key={keyField}
+              label={copy.label}
+              field={keyField}
+              binding={bind(keyField, "on-blur")}
+              secret
+              placeholder="API key"
+              hint={copy.hint}
+            />
+          </div>
         )}
       </div>
     </section>
@@ -1286,22 +1567,22 @@ function RepositoriesSection({
   bindToken,
   onRemove,
 }: {
-  user: UserPublicWithConfig;
-  bindToken: (field: RepoTokenField) => FieldBinding;
-  onRemove: (field: RepoTokenField) => void;
+  user: LocalSettings;
+  bindToken: (field: TokenField) => FieldBinding;
+  onRemove: (field: TokenField) => void;
 }) {
   return (
     <section className="settings-section" aria-label="Repositories">
       <SectionHeader title="Repositories">
         <span className="user-settings-hint">
           Tokens VISTA uses to reach your private repositories. Importing a skill and the
-          agent&rsquo;s repository fetches always use the token here. A Hypothesis Lab forum uses
-          its project&rsquo;s own token if it has one, else the token here for the forum&rsquo;s
-          host, else your system git&rsquo;s credentials.
+          agent&rsquo;s repository fetches always use the token here, and so does a Hypothesis
+          Lab forum on github.com or gitlab.com. A forum on any other host uses your system
+          git&rsquo;s credentials: an SSH key or a credential helper.
         </span>
       </SectionHeader>
       <div className="settings-section-body">
-        <RepoTokenField
+        <TokenField
           label="GitHub token"
           field="github_token"
           saved={Boolean(user.has_github_token)}
@@ -1322,7 +1603,7 @@ function RepositoriesSection({
             </>
           }
         />
-        <RepoTokenField
+        <TokenField
           label="gitlab.com token"
           field="gitlab_token"
           saved={Boolean(user.has_gitlab_token)}
@@ -1344,7 +1625,7 @@ function RepositoriesSection({
   );
 }
 
-function RepoTokenField({
+function TokenField({
   label,
   field,
   saved,
@@ -1353,7 +1634,7 @@ function RepoTokenField({
   hint,
 }: {
   label: string;
-  field: RepoTokenField;
+  field: TokenField;
   saved: boolean;
   binding: FieldBinding;
   onRemove: () => void;
@@ -1387,13 +1668,114 @@ function RepoTokenField({
   );
 }
 
+/** The collaboration server's state in a word or two, for the navigation. */
+function collaborationLabel(view: CollaborationView): string {
+  if (!view.status) return view.checking ? "Checking" : "Unknown";
+  if (!view.status.configured) return "Not set";
+  if (view.available) return "Connected";
+  if (view.status.sign_in_required) return "Sign in";
+  return view.status.reachable ? "Refused" : "Unreachable";
+}
+
+/**
+ * Where to publish to and import from: the server's address, and whether it
+ * answers. The status line is the same answer every Publish and Import control
+ * reads (`useCollaboration`), so the reason a control is off is visible here.
+ */
+function CollaborationSection({
+  bind,
+  user,
+  bindToken,
+  onRemove,
+}: {
+  bind: Bind;
+  user: LocalSettings;
+  bindToken: (field: TokenField) => FieldBinding;
+  onRemove: () => void;
+}) {
+  const view = useCollaboration();
+  const { status, checking, available, reason, error, refresh } = view;
+  const binding = bind("collaboration_server_url", "on-blur");
+  const fromConfig = status?.source === "config" && !binding.inputProps.value;
+  const dot = checking ? "checking" : available ? "ready" : "not_connected";
+  return (
+    <section className="settings-section" aria-label="Collaboration">
+      <SectionHeader title="Collaboration">
+        <span className="user-settings-hint">
+          Publish projects, skills and knowledge bases to a collaboration server, and import what
+          others have published. Nothing leaves this computer until you publish it.
+        </span>
+      </SectionHeader>
+      <div className="settings-section-body">
+        <SavedField
+          label="Collaboration server"
+          field="collaboration_server_url"
+          binding={binding}
+          placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
+          hint={
+            fromConfig ? (
+              <>
+                This installation&apos;s configuration uses <code>{status?.url}</code>. An address
+                here takes its place.
+              </>
+            ) : (
+              <>The server&apos;s address.</>
+            )
+          }
+        />
+        <div className="settings-collab-status">
+          <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
+          <span aria-live="polite">
+            {available && status
+              ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
+              : reason}
+            {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
+          </span>
+          <button
+            type="button"
+            className="button ghost button-xs"
+            onClick={() => void refresh()}
+            disabled={checking}
+          >
+            Check again
+          </button>
+        </div>
+        {/* The backend offers the sign-in page only where a token would be sent and is
+            wanted, whatever the server answered: a gateway's redirect to its login or
+            an error can be the token's absence too. */}
+        {(status?.sign_in_url || user.has_collaboration_token) && (
+          <TokenField
+            label="Token"
+            field="collaboration_token"
+            saved={Boolean(user.has_collaboration_token)}
+            binding={bindToken("collaboration_token")}
+            onRemove={onRemove}
+            hint={
+              status?.sign_in_url ? (
+                <>
+                  <a href={status.sign_in_url} target="_blank" rel="noreferrer">
+                    Open the server&apos;s sign-in page
+                  </a>
+                  , log in, and paste the token it shows. When it expires, get a new one there.
+                </>
+              ) : (
+                <>The token from the server&apos;s sign-in page.</>
+              )
+            }
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
 function ClusterFields({
   cluster,
   user,
   bind,
 }: {
   cluster: HpcCluster;
-  user: UserPublicWithConfig;
+  user: LocalSettings;
   bind: Bind;
 }) {
   switch (cluster) {
@@ -1403,13 +1785,13 @@ function ClusterFields({
           <S3mTokenField
             label="Odo S3M token"
             field="odo_s3m_token"
-            binding={bind("odo_s3m_token", "secret")}
+            binding={bind("odo_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
           <SavedField
             label="Odo remote directory"
             field="odo_remote_dir"
-            binding={bind("odo_remote_dir", "text")}
+            binding={bind("odo_remote_dir", "debounce")}
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Odo" />}
           />
@@ -1427,13 +1809,13 @@ function ClusterFields({
           <S3mTokenField
             label="Frontier S3M token"
             field="frontier_s3m_token"
-            binding={bind("frontier_s3m_token", "secret")}
+            binding={bind("frontier_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
           <SavedField
             label="Frontier remote directory"
             field="frontier_remote_dir"
-            binding={bind("frontier_remote_dir", "text")}
+            binding={bind("frontier_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Frontier" />}
           />
@@ -1451,14 +1833,14 @@ function ClusterFields({
           <SavedField
             label="NERSC account"
             field="nersc_account"
-            binding={bind("nersc_account", "text")}
+            binding={bind("nersc_account", "debounce")}
             placeholder="e.g. m1234"
             hint="NERSC project account for Slurm submission."
           />
           <SavedField
             label="NERSC remote directory"
             field="nersc_remote_dir"
-            binding={bind("nersc_remote_dir", "text")}
+            binding={bind("nersc_remote_dir", "debounce")}
             placeholder="/pscratch/sd/<u>/<user>/.vista"
             hint={
               <>
@@ -1470,7 +1852,7 @@ function ClusterFields({
           <SavedField
             label="NERSC IRI token"
             field="nersc_iri_token"
-            binding={bind("nersc_iri_token", "secret")}
+            binding={bind("nersc_iri_token", "on-blur")}
             secret
             placeholder="Globus access token"
             hint="Globus access token for NERSC IRI. Stored encrypted at rest."
@@ -1483,14 +1865,14 @@ function ClusterFields({
           <SavedField
             label="Lux account"
             field="lux_account"
-            binding={bind("lux_account", "text")}
+            binding={bind("lux_account", "debounce")}
             placeholder="e.g. abc123"
             hint="Required for Lux. The OLCF project Lux jobs are charged to."
           />
           <SavedField
             label="Lux remote directory"
             field="lux_remote_dir"
-            binding={bind("lux_remote_dir", "text")}
+            binding={bind("lux_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
           />
@@ -1511,6 +1893,7 @@ function SavedField({
   field,
   binding,
   secret = false,
+  type,
   placeholder,
   hint,
 }: {
@@ -1518,6 +1901,8 @@ function SavedField({
   field: TextField;
   binding: FieldBinding;
   secret?: boolean;
+  /** The input's type, for a field that is not plain text; `secret` wins over it. */
+  type?: "email";
   placeholder: string;
   hint: ReactNode;
 }) {
@@ -1527,7 +1912,7 @@ function SavedField({
       <span className="settings-input-wrap" data-marked={binding.mark ? true : undefined}>
         <input
           className="input"
-          type={secret ? "password" : undefined}
+          type={secret ? "password" : type}
           placeholder={placeholder}
           autoComplete={secret ? "off" : undefined}
           spellCheck={false}
@@ -1695,7 +2080,7 @@ const CREDENTIAL_CLUSTER_FIELDS = new Set(Object.values(CREDENTIAL_CLUSTER));
  * here — which is the prompt to connect again, and the only honest answer.
  */
 function globusConnected(
-  user: UserPublicWithConfig,
+  user: LocalSettings,
   cluster: GlobusCluster,
 ): boolean {
   const transfer =
@@ -1717,7 +2102,7 @@ function globusConnected(
  * single-use, and the backend stores the result itself, so there is nothing
  * for a field save to carry, and it takes effect at once.
  *
- * `initiallyConnected` seeds the display from the loaded user and is not read
+ * `initiallyConnected` seeds the display from the loaded settings and is not read
  * again. Re-fetching after a connection would rebuild the modal's draft under
  * fields still being edited.
  */
@@ -1899,77 +2284,6 @@ function GlobusConnect({
         </div>
       )}
     </div>
-  );
-}
-
-/**
- * A long value on one line that scrolls sideways, with a copy button at its
- * end: a Globus address is hundreds of characters, and wrapped it filled the
- * section. A copy flashes "Copied" over the line; if the clipboard is
- * unavailable, the button selects the value instead and says so.
- */
-function CopyableLine({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState<"copied" | "selected" | null>(null);
-  // Bumped on every copy, so a second click flashes again.
-  const [flash, setFlash] = useState(0);
-  const lineRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(null), 2000);
-    return () => clearTimeout(t);
-  }, [copied, flash]);
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied("copied");
-      setFlash((n) => n + 1);
-    } catch {
-      const line = lineRef.current;
-      if (line) {
-        const range = document.createRange();
-        range.selectNodeContents(line);
-        const selection = window.getSelection();
-        selection?.removeAllRanges();
-        selection?.addRange(range);
-      }
-      setCopied("selected");
-    }
-  }
-
-  return (
-    <>
-      <div className="user-settings-globus-url-row">
-        <div className="user-settings-globus-url-wrap">
-          <div ref={lineRef} className="user-settings-globus-url" role="textbox" aria-readonly="true" aria-label={label} tabIndex={0}>
-            {value}
-          </div>
-          <span className="user-settings-globus-copied" role="status" aria-live="polite">
-            {copied === "copied" && (
-              <span key={flash} className="user-settings-globus-copied-flash">
-                Copied
-              </span>
-            )}
-          </span>
-        </div>
-        <button
-          type="button"
-          className="button ghost button-xs user-settings-copy"
-          aria-label="Copy address"
-          title="Copy address"
-          onClick={() => void copy()}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="9" y="9" width="12" height="12" rx="2" />
-            <path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
-          </svg>
-        </button>
-      </div>
-      {copied === "selected" && (
-        <div className="user-settings-hint">Couldn&apos;t copy here; the address is selected, so press ⌘C or Ctrl+C.</div>
-      )}
-    </>
   );
 }
 

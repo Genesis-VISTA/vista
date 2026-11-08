@@ -1,11 +1,9 @@
 """
-Fernet encryption for sensitive user token fields (testing roadmap Milestone C).
+Fernet encryption for sensitive settings token fields (testing roadmap Milestone C).
 
 `EncryptedStr` encrypts on write and decrypts on read. These tests pin that
 round-trip and that the raw DB value is ciphertext, not plaintext.
 """
-
-import uuid
 
 import pytest
 from cryptography.fernet import Fernet, InvalidToken
@@ -14,7 +12,8 @@ from sqlalchemy import text
 from sqlmodel import select
 
 from vista_backend.config import settings
-from vista_backend.db.schemas import UserTable
+from vista_backend.db.schemas import LocalSettingsTable
+from vista_backend.services import local_settings
 from vista_backend.utils.crypto import EncryptedStr, get_fernet
 
 pytestmark = pytest.mark.unit
@@ -83,7 +82,7 @@ def test_get_fernet_is_cached_until_cleared(ephemeral_key, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# User token fields at rest
+# Settings token fields at rest
 # ---------------------------------------------------------------------------
 
 TOKEN_FIELDS = (
@@ -94,30 +93,30 @@ TOKEN_FIELDS = (
 )
 
 
+async def _raw(session, columns: str):
+    """The settings row's stored values, as SQLite holds them."""
+    return (
+        await session.execute(
+            text(f"SELECT {columns} FROM local_settings WHERE id = 1")
+        )
+    ).one()
+
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("field", TOKEN_FIELDS)
-async def test_user_token_is_encrypted_at_rest(ephemeral_key, session, field):
+async def test_settings_token_is_encrypted_at_rest(ephemeral_key, session, field):
     plaintext = f"plaintext-{field}-value"
-    row = UserTable(
-        id=uuid.uuid4(),
-        email=f"{uuid.uuid4().hex[:8]}@ornl.gov",
-        **{field: plaintext},
-    )
+    row = await local_settings.get(session)
+    setattr(row, field, plaintext)
     session.add(row)
     await session.flush()
 
     # ORM read returns plaintext.
-    loaded = (await session.exec(select(UserTable).where(UserTable.id == row.id))).one()
+    loaded = (await session.exec(select(LocalSettingsTable))).one()
     assert getattr(loaded, field) == plaintext
 
     # Raw SQL sees ciphertext — never the plaintext token.
-    # SQLite stores UUIDs as 32-char hex (no hyphens).
-    raw = (
-        await session.execute(
-            text(f"SELECT {field} FROM app_user WHERE id = :id"),
-            {"id": row.id.hex},
-        )
-    ).scalar_one()
+    (raw,) = await _raw(session, field)
     assert raw is not None
     assert raw != plaintext
     assert plaintext not in raw
@@ -127,55 +126,23 @@ async def test_user_token_is_encrypted_at_rest(ephemeral_key, session, field):
 
 @pytest.mark.anyio
 async def test_null_token_fields_stay_null_at_rest(ephemeral_key, session):
-    row = UserTable(
-        id=uuid.uuid4(),
-        email=f"{uuid.uuid4().hex[:8]}@ornl.gov",
-        s3m_token=None,
-        nersc_iri_token=None,
-        globus_token=None,
-    )
-    session.add(row)
-    await session.flush()
-
-    raw = (
-        await session.execute(
-            text(
-                "SELECT s3m_token, nersc_iri_token, globus_token "
-                "FROM app_user WHERE id = :id"
-            ),
-            {"id": row.id.hex},
-        )
-    ).one()
-    assert raw == (None, None, None)
+    raw = await _raw(session, "odo_s3m_token, nersc_iri_token, globus_token")
+    assert tuple(raw) == (None, None, None)
 
 
 @pytest.mark.anyio
 async def test_updating_a_token_rewrites_ciphertext(ephemeral_key, session):
-    row = UserTable(
-        id=uuid.uuid4(),
-        email=f"{uuid.uuid4().hex[:8]}@ornl.gov",
-        s3m_token="first-token",
-    )
+    row = await local_settings.get(session)
+    row.odo_s3m_token = "first-token"
     session.add(row)
     await session.flush()
+    (first_cipher,) = await _raw(session, "odo_s3m_token")
 
-    first_cipher = (
-        await session.execute(
-            text("SELECT s3m_token FROM app_user WHERE id = :id"),
-            {"id": row.id.hex},
-        )
-    ).scalar_one()
-
-    row.s3m_token = "second-token"
+    row.odo_s3m_token = "second-token"
     session.add(row)
     await session.flush()
+    (second_cipher,) = await _raw(session, "odo_s3m_token")
 
-    second_cipher = (
-        await session.execute(
-            text("SELECT s3m_token FROM app_user WHERE id = :id"),
-            {"id": row.id.hex},
-        )
-    ).scalar_one()
     assert first_cipher != second_cipher
     assert (
         Fernet(ephemeral_key.encode()).decrypt(second_cipher.encode()).decode()

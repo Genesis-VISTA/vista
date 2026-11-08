@@ -17,10 +17,10 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-async def slack(engine, session, alice, bob, monkeypatch):
+async def slack(engine, session, monkeypatch):
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
-    await link(session, alice, "U1")
-    await link(session, bob, "U2")
+    await link(session, "U1")
+    await link(session, "U2")
     return FakeTransport()
 
 
@@ -28,7 +28,7 @@ def _texts(slack):
     return [(m.channel, m.text) for m in slack.messages]
 
 
-async def test_quitting_tells_every_linked_researcher(slack):
+async def test_quitting_tells_every_linked_account(slack):
     await Notices(slack, host="lab-mac").going_offline()
 
     expected = (

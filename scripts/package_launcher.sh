@@ -287,6 +287,9 @@ export PATH="$PACKAGE/bin:$PACKAGE/node/bin:$PATH"
 # on a machine with no network would fail and take the session with it.
 export UV_NO_SYNC=1
 export VISTA_VERSION="$VERSION"
+# The build's commit, which Settings > About shows beside the version.
+VISTA_COMMIT="$(manifest_field commit)"
+export VISTA_COMMIT
 export VISTA_DATA_DIR="$STATE"
 export VISTA_PACKAGE_DIR="$PACKAGE"
 export VISTA_MCP_SERVERS_PATH="$PACKAGE/app/mcp_servers"
@@ -447,18 +450,35 @@ FIRST_RUN=false
 # The payload is extracted out of the package rather than read in place, for
 # two reasons: the knowledge-base row records absolute paths, so reading in
 # place would break when the package is replaced; and the corpus is the
-# researcher's to add to. Each part is skipped when already present, which is
+# researcher's to add to. Each part is skipped once installed, which is
 # what makes a second run cheap and an upgrade a directory replacement.
 #
 # The parts are the members `payload/parts.txt` lists, one per corpus, rather
 # than the tar's top-level folders: an upgraded state directory already has
 # `vista-data/` and `knowledge-bases/`, and a corpus a newer package adds
-# (`vista-data/ai-safety`) must still be installed. An installed member is never
+# (`vista-data/olcf-docs`) must still be installed. An installed member is never
 # replaced or removed.
 #
 # It ships as one tar rather than as folders because some corpus file names
 # are long enough that, under the package folder, they would pass Windows'
 # path-length limit; see build_local_package.sh's pack_payload.
+#
+# A part counts as installed only once its extraction finished. The parts being
+# installed are listed in INSTALLING until tar succeeds, so a part still listed
+# at the next start -- tar failed, or the launcher was stopped -- is half there:
+# it is removed and installed again, rather than skipped because its folder
+# exists. Only parts this launcher created are ever listed.
+INSTALLING="$STATE/.payload-installing"
+remove_unfinished_parts() {
+  [[ -f "$INSTALLING" ]] || return 0
+  local part
+  while IFS= read -r part || [[ -n "$part" ]]; do
+    part="${part%$'\r'}"
+    [[ -z "$part" || "$part" == /* || "$part" == *..* ]] || rm -rf "${STATE:?}/$part"
+  done < "$INSTALLING"
+  rm -f "$INSTALLING"
+}
+remove_unfinished_parts
 missing=()
 if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
   [[ -f "$PACKAGE/payload/parts.txt" ]] \
@@ -470,8 +490,13 @@ if [[ -f "$PACKAGE/payload/payload.tar" ]]; then
 fi
 if (( ${#missing[@]} > 0 )); then
   log "First run: installing ${missing[*]}..."
-  tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}" \
-    || die_with_code resource-extraction-failed "could not install the bundled resources"
+  printf '%s\n' "${missing[@]}" > "$INSTALLING" \
+    || die_with_code resource-extraction-failed "could not write $INSTALLING"
+  if ! tar -xf "$PACKAGE/payload/payload.tar" -C "$STATE" "${missing[@]}"; then
+    remove_unfinished_parts
+    die_with_code resource-extraction-failed "could not install the bundled resources"
+  fi
+  rm -f "$INSTALLING"
   progress_event resources complete
 else
   progress_event resources complete '' true
@@ -660,9 +685,23 @@ interruptible() {
   wait $!
 }
 
+# Waits for `url` to answer, for up to `seconds`. A service that has exited
+# stops the wait at once: the backend writes why to VISTA_STARTUP_FAILURE_FILE
+# (`database-incompatible`, say), and that code is reported if it is a token the
+# protocol accepts; anything else, or no file, is startup-error.
 wait_for() {
-  local url="$1" seconds="$2" logfile="$3" what="$4" i
+  local url="$1" seconds="$2" logfile="$3" what="$4" pid="$5" i code=''
   for (( i = 0; i < seconds; i++ )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      [[ ! -r "$STARTUP_FAILURE_FILE" ]] \
+        || code="$(head -n 1 "$STARTUP_FAILURE_FILE" 2>/dev/null | tr -d '[:space:]')" || code=''
+      [[ "$code" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || code=startup-error
+      echo >&2
+      echo "error: $what stopped before it was ready. Last lines of $logfile:" >&2
+      tail -15 "$logfile" >&2
+      progress_event "$CURRENT_PHASE" failed '' '' '' "$code" "${logfile##*/}"
+      exit 1
+    fi
     interruptible curl -s -o /dev/null -m 5 "$url" && return 0
     interruptible sleep 1
   done
@@ -679,13 +718,18 @@ wait_for() {
 log "VISTA $VERSION"
 log "Starting services (logs in $LOGS)..."
 
+# The backend writes the code of a database it refuses here (see wait_for).
+STARTUP_FAILURE_FILE="$LOGS/startup-failure"
+rm -f "$STARTUP_FAILURE_FILE"
+export VISTA_STARTUP_FAILURE_FILE="$STARTUP_FAILURE_FILE"
+
 CURRENT_PHASE=mcp
 CURRENT_LOG=mcp.log
 progress_event mcp running "Starting scientific tools"
 "$PACKAGE/app/mcp_servers/vista_mcp_server/.venv/bin/vista-mcp-server" \
   --transport=http --port "$MCP_PORT" > "$LOGS/mcp.log" 2>&1 &
 PIDS+=($!)
-wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server"
+wait_for "$VISTA_MCP_URL" 180 "$LOGS/mcp.log" "the MCP server" "${PIDS[${#PIDS[@]}-1]}"
 progress_event mcp ready
 
 if [[ "$FIRST_RUN" == true ]]; then
@@ -696,7 +740,7 @@ CURRENT_LOG=backend.log
 progress_event backend running "Preparing VISTA"
 "$PACKAGE/app/backend/.venv/bin/vista-backend" > "$LOGS/backend.log" 2>&1 &
 PIDS+=($!)
-wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend"
+wait_for "$VISTA_BACKEND_URL/openapi.json" 600 "$LOGS/backend.log" "the backend" "${PIDS[${#PIDS[@]}-1]}"
 progress_event backend ready
 
 CURRENT_PHASE=ui
@@ -705,7 +749,7 @@ progress_event ui running "Starting the interface"
 PORT="$UI_PORT" HOSTNAME=127.0.0.1 "$PACKAGE/node/bin/node" \
   "$PACKAGE/app/ui/server.js" > "$LOGS/ui.log" 2>&1 &
 PIDS+=($!)
-wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface"
+wait_for "http://127.0.0.1:$UI_PORT/" 120 "$LOGS/ui.log" "the web interface" "${PIDS[${#PIDS[@]}-1]}"
 
 # ─── window ─────────────────────────────────────────────────────────────────
 

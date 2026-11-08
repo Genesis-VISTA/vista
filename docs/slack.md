@@ -38,6 +38,8 @@ You need to be allowed to create apps in the workspace (or ask an admin to do th
      Manager, the Secret Service on Linux) and are never shown again or written to a config
      file or log. On a machine with no keychain, Slack can't be turned on, and the section says
      why. On macOS the first access may ask once whether VISTA's Python may use the keychain.
+     A hosted VISTA keeps them in a secrets directory instead (see
+     [Running VISTA hosted](#running-vista-hosted)).
    - add the **workspace ID** (`T…`, from the workspace's URL or *About this workspace*) to the
      allowed workspaces. Events from any other workspace are dropped without a reply.
    - optionally list **channel IDs** (`C…`). If you do, @mentions anywhere else are ignored.
@@ -45,12 +47,18 @@ You need to be allowed to create apps in the workspace (or ask an admin to do th
    - turn on **Slack** and **Handle Slack on this machine**. The status line should say
      *Connected*.
 5. **Link your Slack account.** DM VISTA `link`. It replies with a 6-digit code; enter it under
-   *Your linked Slack accounts* within 10 minutes. Each link can pick which project new Slack
+   *Linked Slack accounts* within 10 minutes. Each link can pick which project new Slack
    conversations start in, and whether job notices come in the job's thread or a DM.
 
 Only linked accounts can use VISTA. Anyone else who messages it is told, politely and at most
-once in a while, that their account isn't linked and how to link it. A link connects a Slack
-account to the VISTA user who entered the code, so only that person can complete it.
+once in a while, that their account isn't linked and how to link it.
+
+A VISTA has one researcher, so a link admits a Slack account to *this* VISTA, and that account
+then acts as you, with your cluster credentials and your projects. Only someone at the desktop
+app can enter the code, so only you can complete a link. Link only your own accounts: one Slack
+app serves one researcher's VISTA. When you are signed in to a collaboration server, the link
+also records who you are there; nothing uses it to decide access yet, but it is what a shared,
+hosted Slack bot would route by (see [the relay design note](slack-relay.md)).
 
 ## Using it
 
@@ -141,9 +149,25 @@ other machine sees it within a minute and lets go. Edits to that message notify 
 ## Audit log
 
 Every Slack request, refusal, confirmation card, confirm, cancel, expiry and tool result is
-recorded with the time, workspace, Slack user, VISTA user, thread, tool and job id, in the
+recorded with the time, workspace, Slack user, collaboration-server identity (when known),
+thread, tool and job id, in the
 database and in `<data dir>/logs/slack-audit.jsonl`. Arguments are redacted first: any key
 naming a token, password, secret or passcode is dropped. Tokens never appear in any log.
+
+## Running VISTA hosted
+
+A VISTA can also run headless, serving one researcher from a server rather than their laptop,
+with `VISTA_BACKEND_DEPLOYMENT=hosted`. Slack then works without the laptop: Socket Mode only
+connects outward, so the server needs no address Slack can reach. In hosted mode:
+
+- secrets (the Slack tokens, and the database's own key when
+  `VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE=true`) are kept one file per secret in
+  `<data dir>/secrets`, or `VISTA_BACKEND_SECRETS__DIRECTORY`. The directory must be mode
+  `0700`, or VISTA refuses to use it, as it refuses a plaintext keyring; an operator may
+  provide a secret by mounting a file of that name. `VISTA_BACKEND_SECRETS__BACKEND` (`os`,
+  `directory`) overrides the choice either way;
+- sleep notices and sleep prevention are off, and background mode is unavailable, since the
+  server is the background service.
 
 ## Troubleshooting
 

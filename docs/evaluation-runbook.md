@@ -1,7 +1,7 @@
 # VISTA Evaluation Runbook
 
 Step-by-step commands to collect platform-overhead, reliability, amortization,
-and multi-tenancy metrics for VISTA using the built-in instrumentation. Run the
+and reuse metrics for VISTA using the built-in instrumentation. Run the
 phases in the order below; each section says what it produces, how to run it,
 and whether it needs a live LLM.
 
@@ -35,12 +35,10 @@ step-by-step for metrics JSONL, amortization, and concurrency curves.
 | Gate / provenance overhead | **agent** | stack + model |
 | Agent quality | **agent** | stack + model |
 | Skill reuse | **agent** | production data |
-| Multi-tenancy + canary | pytest | — |
 
 Not covered here: largest-campaign / node-hours (read from production job
 logs), and the security red-team suite (prompt-injection / knowledge-poisoning
-harness), which is maintained separately; this instrumentation ships only the
-tenant-isolation/canary test.
+harness), which is maintained separately.
 
 ---
 
@@ -100,7 +98,7 @@ adding it to `amortization.yaml`.
 
 ### Deployment statistics
 
-The **DB half** (users, projects, skills, KBs) works any time against a
+The **DB half** (projects, skills, KBs) works any time against a
 `vista.db`. The **usage half** (jobs, campaigns, facilities) is derived from
 collected metric events, so it is only populated after the Phase B/D runs or
 once a deployment has been collecting with `LEVEL=prod`.
@@ -294,28 +292,10 @@ incidents.
 
 ---
 
-## Phase D — Tenancy & reuse
+## Phase D — Reuse
 
-### Multi-tenancy + canary (pytest, no stack)
-
-The isolation/canary assertions run as a unit test — concurrent two-tenant
-campaigns, volume/DB/metadata/metrics isolation, and the canary-credential
-negative result:
-
-```bash
-cd backend
-uv run --extra dev pytest tests/security/test_tenant_isolation.py -v
-```
-
-For a live multi-tenant load (isolation at scale), with the stack running:
-
-```bash
-uv run python scripts/loadgen.py --users 4 --concurrency 4 --campaigns 16
-```
-
-Each tenant gets its own identity (dev-only `X-Vista-User-Email`) and project;
-inspect `data/metrics/metrics.jsonl` to confirm each event carries its own
-tenant's `session_id`/`project_id`.
+Multi-tenancy (E15) is no longer measured: VISTA is single-user, one
+researcher per installation, so there are no tenants to isolate.
 
 ### Skill reuse **[agent-mode, production data]**
 
@@ -331,7 +311,7 @@ export VISTA_BACKEND_METRICS__SAMPLE_RATE=1.0
 # … let it run; then summarize the collected metrics.jsonl with metrics_report.py
 ```
 
-Report per-skill runs/projects/users. A young deployment will be thin — report
+Report per-skill runs/projects. A young deployment will be thin — report
 it descriptively rather than overstating.
 
 ---

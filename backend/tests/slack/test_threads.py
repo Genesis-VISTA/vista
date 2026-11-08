@@ -31,11 +31,10 @@ def msg(text="queue on Frontier?", ts="10.0", thread_ts=None, user="U1", channel
 
 
 @pytest.mark.anyio
-async def test_a_top_level_message_starts_a_slack_conversation(session, alice):
-    p = await project(session, alice)
-    user = alice
+async def test_a_top_level_message_starts_a_slack_conversation(session):
+    p = await project(session)
 
-    convo = await conversation_for(session, msg(), user=user, project_id=None)
+    convo = await conversation_for(session, msg(), project_id=None)
 
     assert convo.is_new and convo.project.id == p.id
     chat = await session.get(ChatSessionTable, convo.chat_session_id)
@@ -44,81 +43,71 @@ async def test_a_top_level_message_starts_a_slack_conversation(session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_reply_in_the_thread_continues_it(session, alice):
-    await project(session, alice)
-    user = alice
-    first = await conversation_for(session, msg(ts="10.0"), user=user, project_id=None)
+async def test_a_reply_in_the_thread_continues_it(session):
+    await project(session)
+    first = await conversation_for(session, msg(ts="10.0"), project_id=None)
 
     again = await conversation_for(
         session,
         msg(text="and Lux?", ts="11.0", thread_ts="10.0"),
-        user=user,
         project_id=None,
     )
-    other = await conversation_for(session, msg(ts="12.0"), user=user, project_id=None)
+    other = await conversation_for(session, msg(ts="12.0"), project_id=None)
 
     assert again.chat_session_id == first.chat_session_id and not again.is_new
     assert other.chat_session_id != first.chat_session_id
 
 
 @pytest.mark.anyio
-async def test_the_same_ts_in_another_channel_is_another_thread(session, alice):
-    await project(session, alice)
-    user = alice
-    a = await conversation_for(session, msg(channel="C1"), user=user, project_id=None)
-    b = await conversation_for(session, msg(channel="C2"), user=user, project_id=None)
+async def test_the_same_ts_in_another_channel_is_another_thread(session):
+    await project(session)
+    a = await conversation_for(session, msg(channel="C1"), project_id=None)
+    b = await conversation_for(session, msg(channel="C2"), project_id=None)
     assert a.chat_session_id != b.chat_session_id
 
 
 @pytest.mark.anyio
-async def test_someone_elses_thread_is_refused(session, alice, bob):
-    await project(session, alice)
-    await project(session, bob, "bobs")
-    a = alice
-    b = bob
-    await conversation_for(session, msg(channel="C1"), user=a, project_id=None)
+async def test_someone_elses_thread_is_refused(session):
+    """Two linked Slack accounts: one may not continue the other's thread."""
+    await project(session)
+    await conversation_for(session, msg(channel="C1"), project_id=None)
 
     with pytest.raises(NotYourThread):
         await conversation_for(
             session,
             msg(channel="C1", ts="11.0", thread_ts="10.0", user="U2"),
-            user=b,
             project_id=None,
         )
 
 
 @pytest.mark.anyio
-async def test_the_chosen_project_is_used_when_still_allowed(session, alice, bob):
-    await project(session, alice, "a-first")
-    chosen = (await project(session, alice, "b-chosen")).id
-    foreign = (await project(session, bob, "c-bobs")).id
-    user = alice
+async def test_the_chosen_project_is_used_while_it_exists(session):
+    await project(session, "a-first")
+    chosen = (await project(session, "b-chosen")).id
+    deleted = uuid.uuid4()
 
     assert (
-        await conversation_for(session, msg(ts="1"), user=user, project_id=chosen)
+        await conversation_for(session, msg(ts="1"), project_id=chosen)
     ).project.id == chosen
-    fallback = await conversation_for(
-        session, msg(ts="2"), user=user, project_id=foreign
-    )
+    fallback = await conversation_for(session, msg(ts="2"), project_id=deleted)
     assert fallback.project.name == "a-first"
 
 
 @pytest.mark.anyio
-async def test_no_project_says_so(session, alice):
+async def test_no_project_says_so(session):
     with pytest.raises(NoProject):
-        await conversation_for(session, msg(), user=alice, project_id=None)
+        await conversation_for(session, msg(), project_id=None)
 
 
 @pytest.mark.anyio
-async def test_a_conversation_deleted_on_the_desktop_starts_again(session, alice):
-    await project(session, alice)
-    user = alice
-    first = await conversation_for(session, msg(), user=user, project_id=None)
+async def test_a_conversation_deleted_on_the_desktop_starts_again(session):
+    await project(session)
+    first = await conversation_for(session, msg(), project_id=None)
     await session.delete(await session.get(ChatSessionTable, first.chat_session_id))
     await session.commit()
 
     again = await conversation_for(
-        session, msg(ts="11.0", thread_ts="10.0"), user=user, project_id=None
+        session, msg(ts="11.0", thread_ts="10.0"), project_id=None
     )
     assert again.is_new and again.chat_session_id != first.chat_session_id
 

@@ -46,6 +46,7 @@ export async function PUT(request: Request) {
     messages?: unknown;
     latest_result?: unknown;
     ack_run?: unknown;
+    inference_model?: unknown;
   };
   try {
     body = await request.json();
@@ -78,6 +79,13 @@ export async function PUT(request: Request) {
           latest_result: body.latest_result ?? null,
           // The researcher has seen the last run: clears its unseen flag and stored events.
           ack_run: body.ack_run === true,
+          // Present means set or clear (null); absent leaves the chat's model alone.
+          ...("inference_model" in body
+            ? {
+                inference_model:
+                  typeof body.inference_model === "string" ? body.inference_model : null,
+              }
+            : {}),
         }),
       }
     );

@@ -21,7 +21,6 @@ from ..db.schemas import (
     ChatSessionTable,
     ProjectTable,
     SlackThreadTable,
-    UserPublicWithConfig,
 )
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
@@ -44,10 +43,10 @@ class Conversation:
 
 
 async def project_for(
-    session: AsyncSession, user: UserPublicWithConfig, project_id: uuid.UUID | None
+    session: AsyncSession, project_id: uuid.UUID | None
 ) -> ProjectTable:
-    """The link's chosen project, if it still has access, else their first."""
-    projects = await project_service.list_projects(session, user)
+    """The link's chosen project, if it still exists, else the first by name."""
+    projects = await project_service.list_projects(session)
     if not projects:
         raise NoProject(
             "You don't have a VISTA project yet. Create one in the desktop app first."
@@ -71,7 +70,6 @@ async def conversation_for(
     session: AsyncSession,
     message: Message,
     *,
-    user: UserPublicWithConfig,
     project_id: uuid.UUID | None,
 ) -> Conversation:
     """
@@ -97,7 +95,7 @@ async def conversation_for(
                 "Mention me in a new message to start your own."
             )
         chat = await session.get(ChatSessionTable, row.chat_session_id)
-        if chat is not None and chat.user_id == user.id:
+        if chat is not None:
             project = await session.get(ProjectTable, chat.project_id)
             if project is not None:
                 return Conversation(chat.id, project, is_new=False)
@@ -105,11 +103,10 @@ async def conversation_for(
         await session.delete(row)
         await session.flush()
 
-    project = await project_for(session, user, project_id)
+    project = await project_for(session, project_id)
     chat = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
-        user_id=user.id,
         payload=ChatSessionCreate(title=_title(message.prompt)),
         origin="slack",
     )

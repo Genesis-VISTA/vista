@@ -3,19 +3,13 @@ import { publishErrorNotice, type PublishError } from "@/lib/debates";
 
 const error = (overrides: Partial<PublishError>): PublishError => ({
   reason: "refused",
-  credential: "project",
+  credential: "settings-github",
   message: "remote: Permission denied",
   at: "2026-10-14T20:00:00Z",
   ...overrides,
 });
 
 describe("publishErrorNotice", () => {
-  it("names the project's token and points at the project", () => {
-    const notice = publishErrorNotice(error({ credential: "project" }));
-    expect(notice.headline).toBe("This project’s forum token was refused by the forum.");
-    expect(notice.detail).toMatch(/Projects page/);
-  });
-
   it("names the Settings token and points at Settings", () => {
     const notice = publishErrorNotice(error({ credential: "settings-github" }));
     expect(notice.headline).toBe("Your GitHub token from Settings was refused by the forum.");
@@ -26,6 +20,8 @@ describe("publishErrorNotice", () => {
     const notice = publishErrorNotice(error({ credential: "system-git" }));
     expect(notice.headline).toBe("Your system git’s credentials were refused by the forum.");
     expect(notice.detail).toMatch(/Add a token in Settings → Repositories/);
+    expect(notice.detail).toMatch(/SSH key or a credential helper/);
+    expect(notice.detail).not.toMatch(/project/i);
   });
 
   it("calls an unreachable forum unreachable, and names no token", () => {

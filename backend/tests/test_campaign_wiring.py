@@ -20,7 +20,8 @@ from vista_backend.agents.campaign.wiring import (
     parse_job_state,
 )
 from vista_backend.config import settings
-from vista_backend.db.schemas import ProjectTable, UserTable
+from vista_backend.db.schemas import ProjectTable
+from vista_backend.services import local_settings
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
 
@@ -46,17 +47,16 @@ class _FakeHpc:
         return ""
 
 
-async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
+async def _make_run_step_job(session, *, planner_skill="mock-planner"):
     project = ProjectTable(name=f"wiring-{planner_skill}")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         domain="testdomain",
         planner_skill=planner_skill,
@@ -65,7 +65,7 @@ async def _make_run_step_job(session, alice, *, planner_skill="mock-planner"):
         session, run_id=run.id, cycle=0, kind="alpha", candidate={"x": 1}
     )
     job = await campaign_service.record_job(
-        session, job_id="job-1", step_id=step.id, user_id=alice.id, cluster="odo"
+        session, job_id="job-1", step_id=step.id, cluster="odo"
     )
     return project, run, step, job
 
@@ -87,12 +87,15 @@ def test_parse_job_state_defaults_to_unknown():
 
 
 @pytest.mark.anyio
-async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
-    _project, run, _step, job = await _make_run_step_job(session, alice)
+async def test_build_invoke_for_job_binds_settings_and_paths(session):
+    _project, run, _step, job = await _make_run_step_job(session)
+    row = await local_settings.get(session)
+    row.odo_s3m_token = "s3m-odo"
+    await session.flush()
     captured = {}
 
-    def fake_builder(user, paths):
-        captured["user"] = user
+    def fake_builder(local, paths):
+        captured["local"] = local
         captured["paths"] = paths
 
         async def invoke(name, args):
@@ -102,19 +105,20 @@ async def test_build_invoke_for_job_binds_user_and_paths(session, alice):
 
     invoke = await build_invoke_for_job(session, job, invoke_builder=fake_builder)
     assert await invoke("get_hpc_job_status", {}) == "OK"
-    assert captured["user"].email == alice.email
-    assert captured["paths"] == project_paths_for(run.project_id, run.user_id)
+    # Read from the settings row when the job is polled, not when it was dispatched.
+    assert captured["local"].odo_s3m_token == "s3m-odo"
+    assert captured["paths"] == project_paths_for(run.project_id)
 
 
 # --- build_status_poll -----------------------------------------------------
 
 
 @pytest.mark.anyio
-async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alice):
-    _project, _run, _step, job = await _make_run_step_job(session, alice)
+async def test_build_status_poll_derives_invoke_per_job_and_parses(session):
+    _project, _run, _step, job = await _make_run_step_job(session)
     calls = []
 
-    def fake_builder(user, paths):
+    def fake_builder(local, paths):
         async def invoke(name, args):
             calls.append((name, args))
             return "STATE=RUNNING\nlogs..."
@@ -134,13 +138,13 @@ async def test_build_status_poll_derives_invoke_per_job_and_parses(session, alic
 
 @pytest.mark.anyio
 async def test_build_planner_for_job_reconstructs_from_skill(
-    session, alice, tmp_path, monkeypatch
+    session, tmp_path, monkeypatch
 ):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
-    _project, run, _step, job = await _make_run_step_job(session, alice)
+    _project, run, _step, job = await _make_run_step_job(session)
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.
-    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
+    skills_dir = Path(project_paths_for(run.project_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(
         MANIFEST_YAML, encoding="utf-8"
@@ -152,7 +156,7 @@ async def test_build_planner_for_job_reconstructs_from_skill(
     planner = await build_planner_for_job(
         session,
         job,
-        invoke_builder=lambda user, paths: _noop_invoke,
+        invoke_builder=lambda local, paths: _noop_invoke,
         parser_factory=lambda d, r: CallableResultParser(
             lambda **_: ParsedResult(ok=True)
         ),
@@ -163,11 +167,11 @@ async def test_build_planner_for_job_reconstructs_from_skill(
 
 
 @pytest.mark.anyio
-async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
-    session, alice, tmp_path, monkeypatch
+async def test_build_planner_for_job_resolves_the_model_from_the_settings(
+    session, tmp_path, monkeypatch
 ):
     """
-    With no explicit model, the parser resolves one from the job's user row.
+    With no explicit model, the parser resolves one from the settings row.
 
     This is the monitor's path: it runs in the background with no request
     context and never passes a model, so the parser used to fall back to
@@ -176,17 +180,17 @@ async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     monkeypatch.setattr(settings, "openai_api_key", None)
     _project, run, _step, job = await _make_run_step_job(
-        session, alice, planner_skill="mock-planner-usermodel"
+        session, planner_skill="mock-planner-usermodel"
     )
 
-    user_row = await session.get(UserTable, alice.id)
-    user_row.inference_model = "openai-chat:row-model"
-    user_row.inference_provider = "custom"
-    user_row.inference_base_url = "https://user.example/v1"
-    user_row.inference_custom_api_key = "row-key"
+    row = await local_settings.get(session)
+    row.inference_model = "openai-chat:row-model"
+    row.inference_provider = "custom"
+    row.inference_base_url = "https://user.example/v1"
+    row.inference_custom_api_key = "row-key"
     await session.flush()
 
-    skills_dir = Path(project_paths_for(run.project_id, run.user_id)["skills_dir"])
+    skills_dir = Path(project_paths_for(run.project_id)["skills_dir"])
     (skills_dir / run.planner_skill).mkdir(parents=True)
     (skills_dir / run.planner_skill / "campaign.yaml").write_text(
         MANIFEST_YAML, encoding="utf-8"
@@ -204,7 +208,7 @@ async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
     # No `parser_factory` and no `model`: the production path, resolving both
     # from the row above.
     planner = await build_planner_for_job(
-        session, job, invoke_builder=lambda user, paths: _noop_invoke
+        session, job, invoke_builder=lambda local, paths: _noop_invoke
     )
 
     client = planner.subagents["alpha"].parser.agent.model.client
@@ -216,7 +220,7 @@ async def test_build_planner_for_job_resolves_the_model_from_the_jobs_user(
 
 
 @pytest.mark.anyio
-async def test_build_collector_routes_to_run_planner(session, alice):
+async def test_build_collector_routes_to_run_planner(session):
     manifest = CampaignManifest.model_validate(
         {
             "domain": "d",
@@ -240,10 +244,10 @@ async def test_build_collector_routes_to_run_planner(session, alice):
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(
-        session, project_id=project.id, user_id=alice.id, domain="d", planner_skill="p"
+        session, project_id=project.id, domain="d", planner_skill="p"
     )
     await planner.dispatch_candidate(
-        session, run_id=run.id, user_id=alice.id, candidate={"x": 1}, cycle=0
+        session, run_id=run.id, candidate={"x": 1}, cycle=0
     )
     job = await campaign_service.get_job(session, "job-1")
 
@@ -262,20 +266,20 @@ async def test_build_collector_routes_to_run_planner(session, alice):
 
 
 @pytest.mark.anyio
-async def test_two_sessions_in_one_project_share_the_project_volume(session, alice):
-    """Two campaigns in two conversations of the same project+user resolve to the SAME sandbox.
+async def test_two_sessions_in_one_project_share_the_project_volume(session):
+    """Two campaigns in two conversations of the same project resolve to the SAME sandbox.
 
-    main keys the sandbox volume by (project, user), not by chat session, so conversations in a
+    main keys the sandbox volume by project, not by chat session, so conversations in a
     project share it. session_id still drives orphan/resume decisions — just not the volume path.
     """
     project = ProjectTable(name="multi-session-iso")
     session.add(project)
     await session.flush()
     chat_a = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     chat_b = await chat_session_service.create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     assert chat_a.id != chat_b.id
 
@@ -283,7 +287,6 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session, ali
         run = await campaign_service.create_campaign(
             session,
             project_id=project.id,
-            user_id=alice.id,
             session_id=chat.id,
             domain="d",
             planner_skill="p",
@@ -292,7 +295,7 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session, ali
             session, run_id=run.id, cycle=0, kind="alpha"
         )
         return await campaign_service.record_job(
-            session, job_id=job_id, step_id=step.id, user_id=alice.id, cluster="odo"
+            session, job_id=job_id, step_id=step.id, cluster="odo"
         )
 
     job_a = await _job_for(chat_a, "job-a")
@@ -300,7 +303,7 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session, ali
 
     seen_paths: list[dict] = []
 
-    def fake_builder(user, paths):
+    def fake_builder(local, paths):
         seen_paths.append(paths)
 
         async def invoke(name, args):
@@ -311,8 +314,8 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session, ali
     await build_invoke_for_job(session, job_a, invoke_builder=fake_builder)
     await build_invoke_for_job(session, job_b, invoke_builder=fake_builder)
 
-    # Keyed by (project, user): both conversations resolve to the same project volume.
-    expected = project_paths_for(project.id, alice.id)
+    # Keyed by project: both conversations resolve to the same project volume.
+    expected = project_paths_for(project.id)
     assert seen_paths[0] == expected
     assert seen_paths[1] == expected
 
@@ -369,10 +372,8 @@ def test_collect_files_for_role_reads_the_manifest():
 
 
 @pytest.mark.anyio
-async def test_collector_fetches_declared_files_and_parser_receives_them(
-    session, alice
-):
-    _project, _run, _step, job = await _make_run_step_job(session, alice)
+async def test_collector_fetches_declared_files_and_parser_receives_them(session):
+    _project, _run, _step, job = await _make_run_step_job(session)
     hpc = _RecordingHpc(payload='{"Tc": 1180}')
     seen: list[str] = []
     planner = _collect_planner(hpc, seen_outputs=seen)
@@ -387,18 +388,17 @@ async def test_collector_fetches_declared_files_and_parser_receives_them(
 
 
 @pytest.mark.anyio
-async def test_collector_without_declared_files_fetches_nothing(session, alice):
+async def test_collector_without_declared_files_fetches_nothing(session):
     """A role that declares no collect_files behaves exactly as before the change."""
     project = ProjectTable(name="wiring-gamma")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id, user_id=alice.id
+        session, project_id=project.id
     )
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         session_id=chat.id,
         domain="testdomain",
         planner_skill="mock-planner",
@@ -407,7 +407,7 @@ async def test_collector_without_declared_files_fetches_nothing(session, alice):
         session, run_id=run.id, cycle=0, kind="gamma", candidate={"x": 1}
     )
     job = await campaign_service.record_job(
-        session, job_id="job-gamma", step_id=step.id, user_id=alice.id, cluster="odo"
+        session, job_id="job-gamma", step_id=step.id, cluster="odo"
     )
 
     hpc = _RecordingHpc()
@@ -422,8 +422,8 @@ async def test_collector_without_declared_files_fetches_nothing(session, alice):
 
 
 @pytest.mark.anyio
-async def test_explicit_files_argument_overrides_the_manifest(session, alice):
-    _project, _run, _step, job = await _make_run_step_job(session, alice)
+async def test_explicit_files_argument_overrides_the_manifest(session):
+    _project, _run, _step, job = await _make_run_step_job(session)
     hpc = _RecordingHpc()
     planner = _collect_planner(hpc, seen_outputs=[])
 

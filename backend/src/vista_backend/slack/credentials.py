@@ -22,22 +22,17 @@ desktop app; Slack never asks for anything.
 import base64
 import json
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, select
 
-from ..db.schemas import (
-    SlackLinkTable,
-    SlackReminderTable,
-    UserPublicWithConfig,
-    UserTable,
-)
+from ..db.schemas import LocalSettingsTable, SlackLinkTable, SlackReminderTable
 from ..services import chat_run as chat_run_module
+from ..services import local_settings
 from . import store
 from .store import now
 from .transport import SlackTransport
@@ -64,7 +59,8 @@ class Expiry:
         return f"{TITLES.get(self.cluster, self.cluster)} {self.what}"
 
 
-ExpiriesFn = Callable[[UserPublicWithConfig], Awaitable[list[Expiry]]]
+ExpiriesFn = Callable[[LocalSettingsTable], Awaitable[list[Expiry]]]
+""" The install's settings row → every credential expiry it implies. """
 
 
 def jwt_expiry(token: str | None) -> datetime | None:
@@ -82,11 +78,11 @@ def jwt_expiry(token: str | None) -> datetime | None:
     return datetime.fromtimestamp(exp, UTC)
 
 
-def globus_expiries(user: Any) -> list[Expiry]:
+def globus_expiries(local: Any) -> list[Expiry]:
     out = []
     for cluster in ("odo", "frontier"):
-        connected = getattr(user, f"{cluster}_globus_connected_at", None)
-        token = getattr(user, f"{cluster}_globus_token", None)
+        connected = getattr(local, f"{cluster}_globus_connected_at", None)
+        token = getattr(local, f"{cluster}_globus_token", None)
         if not connected or not token:
             continue
         try:
@@ -98,13 +94,13 @@ def globus_expiries(user: Any) -> list[Expiry]:
     return out
 
 
-async def known_expiries(user: UserPublicWithConfig) -> list[Expiry]:
-    """Every expiry VISTA can know for `user`; the live source."""
+async def known_expiries(local: LocalSettingsTable) -> list[Expiry]:
+    """Every expiry VISTA can know from the install's settings; the live source."""
     from ..services.hpc_status import hpc_status_service
 
     out: list[Expiry] = []
     try:
-        status = await hpc_status_service.status(user)
+        status = await hpc_status_service.status(local_settings.to_public(local))
     except Exception:
         log.warning("Could not read HPC status for credential reminders")
     else:
@@ -112,10 +108,10 @@ async def known_expiries(user: UserPublicWithConfig) -> list[Expiry]:
             expires = cluster.checks.credential.expires_at
             if expires is not None and cluster.cluster in ("odo", "frontier"):
                 out.append(Expiry(cluster.cluster, "S3M token", expires))
-    nersc = jwt_expiry(user.nersc_iri_token)
+    nersc = jwt_expiry(local.nersc_iri_token)
     if nersc is not None:
         out.append(Expiry("perlmutter", "NERSC IRI token", nersc))
-    return out + globus_expiries(user)
+    return out + globus_expiries(local)
 
 
 def _when(moment: datetime) -> str:
@@ -137,20 +133,24 @@ def reminder_text(kind: str, items: list[Expiry]) -> str:
     return "\n".join(lines)
 
 
-_known: dict[uuid.UUID, list[Expiry]] = {}
-""" The last expiries worked out per researcher, for the gate and the prompt. """
+_known: list[Expiry] = []
+""" The last expiries worked out for the install's researcher, for the gate and the prompt. """
 
 
-def known(user_id: uuid.UUID) -> list[Expiry]:
-    """The expiries last worked out for this researcher (for Home)."""
-    return list(_known.get(user_id, []))
+def known() -> list[Expiry]:
+    """The expiries last worked out (for Home)."""
+    return list(_known)
 
 
-def expired_clusters(user_id: uuid.UUID) -> dict[str, list[str]]:
+def set_known(expiries: list[Expiry]) -> None:
+    _known[:] = expiries
+
+
+def expired_clusters() -> dict[str, list[str]]:
     """Cluster → what has expired, as of now."""
     out: dict[str, list[str]] = {}
     moment = now()
-    for e in _known.get(user_id, []):
+    for e in _known:
         if e.expires_at <= moment:
             out.setdefault(e.cluster, []).append(e.what)
     return out
@@ -165,19 +165,19 @@ def unavailable(cluster: str) -> str:
     )
 
 
-def refusal(user_id: uuid.UUID, tool_name: str, args: dict[str, Any]) -> str | None:
+def refusal(tool_name: str, args: dict[str, Any]) -> str | None:
     """Part of the gate's check: a request for a system whose access has gone."""
     if tool_name.split("__")[-1] not in NEEDS_CREDENTIAL:
         return None
     cluster = args.get("cluster")
-    if isinstance(cluster, str) and cluster in expired_clusters(user_id):
+    if isinstance(cluster, str) and cluster in expired_clusters():
         return unavailable(cluster)
     return None
 
 
-def prompt_note(user_id: uuid.UUID) -> str | None:
+def prompt_note() -> str | None:
     """For the Slack instructions: which systems are out, so the model says so."""
-    gone = expired_clusters(user_id)
+    gone = expired_clusters()
     if not gone:
         return None
     lines = [
@@ -199,32 +199,32 @@ class CredentialReminder:
         self._expiries = expiries
 
     async def run_once(self) -> int:
-        """Remind everyone due a reminder. Returns how many messages went."""
+        """
+        Remind the researcher if a reminder is due. Returns how many messages
+        went. The reminder goes to the first Slack account linked: every link
+        is the same researcher, so one copy is enough.
+        """
         async with chat_run_module.session_factory() as db:
-            links = (await db.exec(select(SlackLinkTable))).all()
-            by_user: dict[uuid.UUID, tuple[str | None, str]] = {}
-            for link in links:
-                by_user.setdefault(
-                    link.user_id, (link.dm_channel_id, link.slack_user_id)
+            link = (
+                await db.exec(
+                    select(SlackLinkTable).order_by(col(SlackLinkTable.created_at))
                 )
-            users = {}
-            for user_id in by_user:
-                row = await db.get(UserTable, user_id)
-                if row is not None:
-                    users[user_id] = UserPublicWithConfig.model_validate(row)
-        sent = 0
-        for user_id, user in users.items():
-            try:
-                sent += await self._remind(user, *by_user[user_id])
-            except Exception:
-                log.exception("Credential reminder failed for a linked user")
-        return sent
+            ).first()
+            local = await local_settings.get(db)
+            db.expunge(local)
+        if link is None:
+            return 0
+        try:
+            return await self._remind(local, link.dm_channel_id, link.slack_user_id)
+        except Exception:
+            log.exception("Credential reminder failed")
+            return 0
 
     async def _remind(
-        self, user: UserPublicWithConfig, dm: str | None, slack_user_id: str
+        self, local: LocalSettingsTable, dm: str | None, slack_user_id: str
     ) -> int:
-        expiries = await self._expiries(user)
-        _known[user.id] = expiries
+        expiries = await self._expiries(local)
+        set_known(expiries)
         moment = now()
         due: dict[str, list[Expiry]] = {}
         for e in expiries:
@@ -232,7 +232,7 @@ class CredentialReminder:
             if left <= timedelta(0):
                 continue
             kind = next((k for k, w in WINDOWS if left <= w), None)
-            if kind is not None and await self._claim(user.id, e, kind):
+            if kind is not None and await self._claim(e, kind):
                 due.setdefault(kind, []).append(e)
         if not due:
             return 0
@@ -241,12 +241,11 @@ class CredentialReminder:
             await self._slack.post(channel, reminder_text(kind, items))
         return len(due)
 
-    async def _claim(self, user_id: uuid.UUID, e: Expiry, kind: str) -> bool:
+    async def _claim(self, e: Expiry, kind: str) -> bool:
         """Record the reminder; False if it was already sent."""
         async with chat_run_module.session_factory() as db:
             db.add(
                 SlackReminderTable(
-                    user_id=user_id,
                     cluster=f"{e.cluster}:{e.what}",
                     kind=kind,
                     expires_at=e.expires_at.isoformat(timespec="seconds"),

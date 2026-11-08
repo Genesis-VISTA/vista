@@ -62,7 +62,9 @@ export async function GET(
 
   let upstream: Response;
   try {
-    upstream = await fetch(backendFileUrl(projectName, kind, segments), {
+    const preview = new URL(request.url).searchParams.get("preview");
+    const query = preview ? `?preview=${encodeURIComponent(preview)}` : "";
+    upstream = await fetch(backendFileUrl(projectName, kind, segments) + query, {
       headers: await backendHeaders(),
     });
   } catch {
@@ -80,6 +82,9 @@ export async function GET(
       "content-type": upstream.headers.get("content-type") ?? "application/octet-stream",
       "content-disposition":
         upstream.headers.get("content-disposition") ?? `attachment; filename="${fallbackName}"`,
+      "x-content-type-options": upstream.headers.get("x-content-type-options") ?? "nosniff",
+      "content-security-policy":
+        upstream.headers.get("content-security-policy") ?? "sandbox; default-src 'none'",
     },
   });
 }

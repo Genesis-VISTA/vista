@@ -101,12 +101,8 @@ async def run_bash(
     The sandbox has Python 3, numpy, matplotlib, and scipy.
     Skills are mounted at /mnt/skills/, output goes to /mnt/data/output/.
 
-    Key paths:
-      Database JSON: /mnt/skills/salt-analysis/assets/Molten_Salt_Thermophysical_Properties.json
-      Analysis script: /mnt/skills/salt-analysis/scripts/analyze_salt.py
-      Phase diagram script: /mnt/skills/salt-analysis/scripts/plot_phase_diagram.py
-
-    When a plot is saved, it is automatically displayed to the user.
+    To show a file to the user, save it (e.g. under /mnt/data/output) and call
+    `display_file` with its path. Saving a file does not display it.
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
     """

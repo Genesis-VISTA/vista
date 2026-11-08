@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from pydantic_ai.models import Model
 
 from vista_backend.agents.agents import ProjectAgent
-from vista_backend.db.schemas import ProjectPublic, UserPublicWithConfig
+from vista_backend.db.schemas import LocalSettingsPublic, ProjectPublic
 
 from .fake_mcp import FakeMcp, fake_mcp
 
@@ -27,7 +27,7 @@ from .fake_mcp import FakeMcp, fake_mcp
 @contextmanager
 def agent_under_test(
     project: ProjectPublic,
-    user: UserPublicWithConfig,
+    local: LocalSettingsPublic,
     model: Model,
     *,
     session_id: uuid.UUID | None = None,
@@ -39,7 +39,7 @@ def agent_under_test(
     The overrides are active only inside the block.
     """
     mcp = mcp or fake_mcp()
-    agent = ProjectAgent(project, user, session_id or uuid.uuid4())
+    agent = ProjectAgent(project, local, session_id or uuid.uuid4())
     filtered = mcp.toolset.filtered(
         lambda ctx, tool: agent._tool_allowed(tool.name)  # noqa: SLF001
     )

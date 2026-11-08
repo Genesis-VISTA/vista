@@ -58,8 +58,10 @@ case "${1:-}" in
 esac
 EOF
 
+# A backend that exits at once never answers, so its health check fails.
 cat > "$PACKAGE/bin/curl" <<'EOF'
 #!/usr/bin/env bash
+[[ -n "${TEST_BACKEND_EXIT:-}" && "$*" == *openapi.json* ]] && exit 7
 exit 0
 EOF
 
@@ -71,6 +73,14 @@ for service in \
 #!/usr/bin/env bash
 PID_FILE="$TEST_SERVICE_PIDS/${0##*/}.pid"
 printf '%s\n' "$$" > "$PID_FILE"
+# What the backend was told about its build, for Settings > About.
+[[ "${0##*/}" != vista-backend ]] \
+  || printf '%s %s\n' "$VISTA_VERSION" "$VISTA_COMMIT" > "$TEST_SERVICE_PIDS/backend.build"
+# TEST_BACKEND_EXIT: the backend stops at once, saying why only for "refuse".
+if [[ "${0##*/}" == vista-backend && -n "${TEST_BACKEND_EXIT:-}" ]]; then
+  [[ "$TEST_BACKEND_EXIT" != refuse ]] || printf 'database-incompatible\n' > "$VISTA_STARTUP_FAILURE_FILE"
+  exit 1
+fi
 exec perl -e '
   my $marker = shift;
   my $stop = sub {
@@ -219,6 +229,46 @@ supervised_suite() {
     printf 'supervised stdout included a non-protocol line\n' >&2
     exit 1
   fi
+
+  # A part counts as installed only once tar finished: one extracted beside a
+  # failure is removed, and one a stopped run left listed is installed afresh.
+  mkdir -p "$TMP/payload-src/vista-data/test-corpus"
+  printf 'paper\n' > "$TMP/payload-src/vista-data/test-corpus/a.pdf"
+  tar -cf "$PACKAGE/payload/payload.tar" -C "$TMP/payload-src" vista-data/test-corpus
+  printf '%s\n' vista-data/test-corpus missing-resource > "$PACKAGE/payload/parts.txt"
+  partial_status=0
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/partial-stdout" 2> "$TMP/partial-stderr" || partial_status=$?
+  [[ "$partial_status" != 0 ]]
+  grep -qx '{"protocol":1,"phase":"resources","state":"failed","code":"resource-extraction-failed"}' \
+    "$TMP/partial-stdout"
+  if [[ -e "$STATE/vista-data/test-corpus" || -e "$STATE/.payload-installing" ]]; then
+    printf 'a failed extraction left a part, or its list, behind\n' >&2
+    exit 1
+  fi
+  printf '%s\n' vista-data/test-corpus > "$PACKAGE/payload/parts.txt"
+  mkdir -p "$STATE/vista-data/test-corpus"
+  printf 'half\n' > "$STATE/vista-data/test-corpus/partial.pdf"
+  printf '%s\n' vista-data/test-corpus > "$STATE/.payload-installing"
+  env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+    TEST_IMAGE_PRESENT=0 TEST_MSB_IMPORT_FAIL=1 \
+    VISTA_UI_PORT="$PORT_BASE" \
+    VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+    VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+    "$PACKAGE/vista" --supervised --progress=jsonl \
+    > "$TMP/resume-stdout" 2> "$TMP/resume-stderr" || true
+  grep -qx '{"protocol":1,"phase":"resources","state":"complete"}' "$TMP/resume-stdout"
+  if [[ -e "$STATE/vista-data/test-corpus/partial.pdf" || ! -f "$STATE/vista-data/test-corpus/a.pdf" \
+    || -e "$STATE/.payload-installing" ]]; then
+    printf 'an unfinished part was not installed afresh\n' >&2
+    exit 1
+  fi
+  rm -rf "$STATE/vista-data"
+  tar -cf "$PACKAGE/payload/payload.tar" -T /dev/null
   : > "$PACKAGE/payload/parts.txt"
 
   image_status=0
@@ -232,6 +282,46 @@ supervised_suite() {
   [[ "$image_status" != 0 ]]
   grep -qx '{"protocol":1,"phase":"sandbox","state":"failed","code":"sandbox-image-import-failed","log":"setup.log"}' \
     "$TMP/image-stdout"
+
+  # A service that exits before it is healthy fails its phase at once, not
+  # after its health timeout (600s for the backend), with the code the backend
+  # left in VISTA_STARTUP_FAILURE_FILE, or startup-error when it left none.
+  for backend_exit in refuse silent; do
+    expected_code=database-incompatible
+    [[ "$backend_exit" == refuse ]] || expected_code=startup-error
+    exit_status=0
+    exit_started=$SECONDS
+    # Held open, as the application does: EOF on stdin would be a stop request.
+    mkfifo "$TMP/exit-$os-$backend_exit.pipe"
+    exec 9<> "$TMP/exit-$os-$backend_exit.pipe"
+    PARENT_PIPE_OPEN=true
+    env "${PLATFORM_ENV[@]}" PATH="$TOOLS:$PATH" VISTA_HOME="$STATE" \
+      TEST_SERVICE_PIDS="$TMP/service-pids" TEST_BACKEND_EXIT="$backend_exit" \
+      VISTA_UI_PORT="$PORT_BASE" \
+      VISTA_MCP_PORT="$(( PORT_BASE + 1 ))" \
+      VISTA_BACKEND_PORT="$(( PORT_BASE + 2 ))" \
+      "$PACKAGE/vista" --supervised --progress=jsonl \
+      < "$TMP/exit-$os-$backend_exit.pipe" 9>&- \
+      > "$TMP/exit-stdout" 2> "$TMP/exit-stderr" || exit_status=$?
+    exec 9>&-
+    PARENT_PIPE_OPEN=false
+    [[ "$exit_status" != 0 ]]
+    if (( SECONDS - exit_started > 60 )); then
+      printf 'a backend that exited was not reported for %ss\n' \
+        "$(( SECONDS - exit_started ))" >&2
+      exit 1
+    fi
+    grep -qx "{\"protocol\":1,\"phase\":\"backend\",\"state\":\"failed\",\"code\":\"$expected_code\",\"log\":\"backend.log\"}" \
+      "$TMP/exit-stdout" || {
+      printf 'expected backend failure %s, got:\n' "$expected_code" >&2
+      cat "$TMP/exit-stdout" "$TMP/exit-stderr" >&2
+      exit 1
+    }
+    grep -q 'stopped before it was ready' "$TMP/exit-stderr"
+    stop_fake_services
+    rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
+      "$TMP"/service-pids/*.alive "$TMP"/service-pids/*.ready
+  done
 
   mkfifo "$TMP/parent-$os.pipe"
   exec 9<> "$TMP/parent-$os.pipe"
@@ -349,7 +439,7 @@ supervised_suite macos Darwin
 supervised_suite linux Linux
 
 # The existing diagnostic CLI remains human-readable and does not emit JSON.
-printf '%s\n' '{"os": "macos", "arch": "arm64", "exe": "missing-window"}' \
+printf '%s\n' '{"commit": "c0ffee1", "os": "macos", "arch": "arm64", "exe": "missing-window"}' \
   > "$PACKAGE/manifest.json"
 stop_fake_services
 rm -f "$TMP"/service-pids/*.pid "$TMP"/service-pids/*.stopped \
@@ -373,6 +463,12 @@ done
 grep -q "VISTA is running at http://127.0.0.1:$PORT_BASE (no window: VISTA_NO_WINDOW is set)" \
   "$TMP/cli-stdout"
 wait_for_fake_services
+# The backend gets the package's version and the manifest's commit.
+if [[ "$(cat "$TMP/service-pids/backend.build")" != "test-version c0ffee1" ]]; then
+  printf 'backend was not given the build identity: %s\n' \
+    "$(cat "$TMP/service-pids/backend.build")" >&2
+  exit 1
+fi
 if grep -q '^{"protocol":' "$TMP/cli-stdout"; then
   printf 'ordinary CLI emitted supervised protocol output\n' >&2
   exit 1

@@ -27,11 +27,41 @@ const FAILURE_MESSAGES = Object.freeze({
   'virtualisation-unavailable': 'This computer cannot run the code-execution sandbox: hardware virtualisation is unavailable. Open Logs says how to enable it.',
   'health-timeout': 'A VISTA service did not become ready in time.',
   'startup-error': 'VISTA could not complete startup.',
+  'database-incompatible': 'Your local data is incompatible with this version of VISTA, please reset.',
   'protocol-error': 'This VISTA application and launcher are not compatible.',
   'execution-policy-all-signed': 'Group Policy on this computer lets PowerShell run only signed scripts (AllSigned), and VISTA\'s launcher is not signed. Ask your IT administrator to allow it.',
 });
 /** Every failure code with a message of its own; anything else reads as startup-error. */
 export const FAILURE_CODES = Object.freeze(Object.keys(FAILURE_MESSAGES));
+
+/** The failure that only Back up and reset remedies; the backend's DATABASE_INCOMPATIBLE. */
+export const DATABASE_INCOMPATIBLE = 'database-incompatible';
+
+/**
+ * The remedies the startup window offers for a failure, decided here and not in
+ * the renderer. Open Logs, Copy Diagnostics and Quit always show; these are the
+ * rest. A later action (an 'upgrade-data' beside 'backup-and-reset') is one more
+ * entry here and one more button.
+ *
+ * @param {string} code
+ * @returns {Array<'retry' | 'backup-and-reset'>}
+ */
+export function failureActionsFor(code) {
+  return code === DATABASE_INCOMPATIBLE ? ['backup-and-reset'] : ['retry'];
+}
+
+/**
+ * Whether a reset may run now: the window is showing the incompatible-data
+ * failure and the launcher has finished stopping.
+ *
+ * @param {{ status?: string, failure?: { code?: string } | null } | null | undefined} snapshot
+ * @param {unknown} child the launcher controller's running child process, or null
+ */
+export function resetAllowed(snapshot, child) {
+  return snapshot?.status === 'failed'
+    && snapshot.failure?.code === DATABASE_INCOMPATIBLE
+    && !child;
+}
 
 const ALLOWED_KEYS = new Set(['protocol', 'phase', 'state', 'label', 'skipped', 'url', 'code', 'log']);
 const SAFE_TOKEN = /^[a-z][a-z0-9-]{0,63}$/;
@@ -284,15 +314,38 @@ export class StartupStateMachine {
       canRetry: this.canRetry,
       url: this.url,
       failure: this.failure ? { ...this.failure } : null,
+      failureCode: this.failure?.code ?? '',
+      failureActions: this.status === 'failed' ? failureActionsFor(this.failure?.code ?? '') : [],
       activities: this.activities.map((activity) => ({ ...activity })),
     };
   }
 }
 
+/** The startup window's state when an update failed and the previous version reopened. */
+export const UPDATE_FAILED = 'update-failed';
+
+/**
+ * What the startup window says when the last update failed (design D6): the
+ * version it was for and why, from the helper's last-failure.json. It shows
+ * above the usual progress, and VISTA goes on starting the installed version.
+ *
+ * @param {{ version: string, reason: string } | null} failure
+ * @returns {{ code: typeof UPDATE_FAILED, title: string, message: string, log: 'update.log' } | null}
+ */
+export function updateFailureNotice(failure) {
+  if (!failure) return null;
+  return {
+    code: UPDATE_FAILED,
+    title: failure.version ? `Update to ${failure.version} failed` : 'The update failed',
+    message: `${failure.reason} The version you had is still installed and is starting now.`,
+    log: 'update.log',
+  };
+}
+
 /**
  * A copyable diagnostic summary made only from normalized, allow-listed state.
  * @param {ReturnType<StartupStateMachine['snapshot']>} snapshot
- * @param {{ version: string, platform: string }} context
+ * @param {{ version: string, platform: string, update?: ReturnType<typeof updateFailureNotice> }} context
  */
 export function formatDiagnostics(snapshot, context) {
   const failure = snapshot.failure;
@@ -302,5 +355,6 @@ export function formatDiagnostics(snapshot, context) {
     `Phase: ${failure?.phase ?? 'unknown'}`,
     `Code: ${failure?.code ?? 'unknown'}`,
     `Log: ${failure?.log || 'window.log'}`,
+    ...(context.update ? [`Update: ${context.update.title}: ${context.update.message}`, `Update log: ${context.update.log}`] : []),
   ].join('\n');
 }

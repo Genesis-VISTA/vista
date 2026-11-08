@@ -14,7 +14,7 @@ import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart
 from pydantic_ai.models.function import AgentInfo
 
-from harness import agent_under_test, make_project, make_user, scripted_model
+from harness import agent_under_test, make_local_settings, make_project, scripted_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.agents.skills import _in_sandbox, read_skill, to_prompt
 from vista_backend.config import settings
@@ -33,23 +33,23 @@ def _capturing_model(sink: list[str]):
     return scripted_model(driver, name="capture-prompt")
 
 
-async def _system_prompt_for(project, user) -> str:
+async def _system_prompt_for(project, local) -> str:
     sink: list[str] = []
-    with agent_under_test(project, user, _capturing_model(sink)) as (agent, _):
+    with agent_under_test(project, local, _capturing_model(sink)) as (agent, _):
         async for _ in agent.run_stream(user_prompt="hello"):
             pass
     assert sink, "the model was never sent a system prompt"
     return sink[0]
 
 
-async def _tools_offered(project, user) -> list[str]:
+async def _tools_offered(project, local) -> list[str]:
     seen: list[list[str]] = []
 
     def driver(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         seen.append([t.name for t in info.function_tools])
         return ModelResponse(parts=[TextPart("ok")])
 
-    with agent_under_test(project, user, scripted_model(driver)) as (agent, _):
+    with agent_under_test(project, local, scripted_model(driver)) as (agent, _):
         async for _ in agent.run_stream(user_prompt="hi"):
             pass
     return seen[0]
@@ -124,14 +124,14 @@ def test_sandbox_paths_are_posix_for_windows_host_paths():
 async def test_project_skills_appear_in_the_system_prompt(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project(skills=["salt-chemistry-md"])
-    user = make_user()
+    local = make_local_settings()
     _write_skill(
-        tmp_path / "volumes" / f"{project.id}-{user.id}" / "skills",
+        tmp_path / "volumes" / str(project.id) / "skills",
         "salt-chemistry-md",
         "Run OpenMM+MACE density jobs.",
     )
 
-    prompt = await _system_prompt_for(project, user)
+    prompt = await _system_prompt_for(project, local)
     assert "<available_skills>" in prompt
     assert "salt-chemistry-md" in prompt
     assert "Run OpenMM+MACE density jobs." in prompt
@@ -144,19 +144,12 @@ async def test_system_prompt_points_at_uploads_and_reports(monkeypatch, tmp_path
     """
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project()
-    user = make_user()
-    reports = (
-        tmp_path
-        / "volumes"
-        / f"{project.id}-{user.id}"
-        / "data"
-        / "uploads"
-        / "reports"
-    )
+    local = make_local_settings()
+    reports = tmp_path / "volumes" / str(project.id) / "data" / "uploads" / "reports"
     reports.mkdir(parents=True)
     (reports / "eutectic-sweep.md").write_text("---\ntitle: x\n---\n", encoding="utf-8")
 
-    prompt = await _system_prompt_for(project, user)
+    prompt = await _system_prompt_for(project, local)
     assert "`/mnt/data/uploads/`" in prompt
     assert "`/mnt/data/uploads/reports/`" in prompt
     assert "eutectic-sweep" not in prompt
@@ -176,10 +169,10 @@ async def test_missing_skill_slug_is_omitted_from_the_prompt(
     """
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     project = make_project(skills=["does-not-exist"])
-    user = make_user()
+    local = make_local_settings()
 
     with caplog.at_level(logging.WARNING):
-        prompt = await _system_prompt_for(project, user)
+        prompt = await _system_prompt_for(project, local)
 
     assert "does-not-exist" not in prompt or "<available_skills>" not in prompt
     # to_prompt warns when SKILL.md is missing under the volume path.
@@ -229,7 +222,7 @@ async def test_setup_volumes_skips_unknown_skill_with_a_warning(
     )
 
     project = make_project(skills=["ghost-skill"])
-    agent = ProjectAgent(project, make_user())
+    agent = ProjectAgent(project, make_local_settings())
 
     with caplog.at_level(logging.WARNING):
         await agent._setup_volumes()
@@ -246,7 +239,7 @@ async def test_setup_volumes_skips_unknown_skill_with_a_warning(
 
 async def test_project_tools_filter_the_model_tool_list():
     project = make_project(tools=["display_file"], knowledge_bases=["kb"])
-    offered = await _tools_offered(project, make_user())
+    offered = await _tools_offered(project, make_local_settings())
     assert "display_file" in offered
     assert "rag_search" not in offered
     assert "submit_hpc_job" not in offered
@@ -257,10 +250,10 @@ async def test_knowledge_bases_toggle_rag_search_and_prompt_text():
     with_kb = make_project(tools=["*"], knowledge_bases=["molten-salt-papers"])
     without_kb = make_project(tools=["*"], knowledge_bases=[])
 
-    assert "rag_search" in await _tools_offered(with_kb, make_user())
-    assert "rag_search" not in await _tools_offered(without_kb, make_user())
+    assert "rag_search" in await _tools_offered(with_kb, make_local_settings())
+    assert "rag_search" not in await _tools_offered(without_kb, make_local_settings())
 
-    prompt_with = await _system_prompt_for(with_kb, make_user())
-    prompt_without = await _system_prompt_for(without_kb, make_user())
+    prompt_with = await _system_prompt_for(with_kb, make_local_settings())
+    prompt_without = await _system_prompt_for(without_kb, make_local_settings())
     assert "molten-salt-papers" in prompt_with
     assert "No Knowledge Bases are configured" in prompt_without

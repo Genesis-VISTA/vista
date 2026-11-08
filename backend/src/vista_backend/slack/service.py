@@ -27,10 +27,10 @@ from ..db.schemas import (
     ProjectPublic,
     SlackConfigTable,
     SlackDetailTable,
-    UserPublicWithConfig,
-    UserTable,
+    SlackLinkTable,
 )
 from ..services import chat_run as chat_run_module
+from ..services import local_settings
 from ..services.chat_run import RunBusy
 from ..services.conversation import start_turn
 from . import access, audit, confirm, credentials, format, gate, limits, linking, store
@@ -77,7 +77,6 @@ PREVIEW_FIELDS = {
 
 
 async def preview_job(
-    user_id: uuid.UUID,
     chat_session_id: uuid.UUID,
     tool_name: str,
     args: dict[str, Any],
@@ -86,13 +85,12 @@ async def preview_job(
     if tool_name.split("__")[-1] != "submit_hpc_job":
         return {}
     async with chat_run_module.session_factory() as db:
-        row = await db.get(UserTable, user_id)
         chat = await db.get(ChatSessionTable, chat_session_id)
-        if row is None or chat is None:
+        if chat is None:
             return {}
-        user = UserPublicWithConfig.model_validate(row)
+        local = await local_settings.get_public(db)
         project_id = chat.project_id
-    invoke = build_mcp_invoke(user, project_paths_for(project_id, user_id))
+    invoke = build_mcp_invoke(local, project_paths_for(project_id))
     text = await invoke("preview_hpc_job", args)
     fields: dict[str, str] = {}
     for line in text.splitlines():
@@ -116,11 +114,14 @@ class SlackService:
         *,
         transport_factory: TransportFactory | None = None,
         host: str | None = None,
-        watch_power: bool = True,
+        watch_power: bool | None = None,
     ) -> None:
         self._factory = transport_factory  # None: `default_transport`, at start.
         self._host = host or host_name()
-        self._watch_power = watch_power
+        # Sleep is a laptop's: a hosted instance has none to watch or prevent.
+        self._watch_power = (
+            settings.deployment == "desktop" if watch_power is None else watch_power
+        )
         self.slack: SlackTransport | None = None
         self.state = "off"
         """ off · connected · standby (another machine has Slack) · error. """
@@ -312,8 +313,11 @@ class SlackService:
             config = await store.get_config(db)
             decision = await access.decide(db, event, config, self._unlinked)
             linked = decision.linked
-            user = UserPublicWithConfig.model_validate(linked.user) if linked else None
-            project_id = linked.link.project_id if linked else None
+            link = (
+                SlackLinkTable.model_validate(linked.link.model_dump())
+                if linked
+                else None
+            )
             await db.commit()
         if decision.verdict == "drop":
             return
@@ -323,14 +327,14 @@ class SlackService:
         if decision.verdict == "link" and isinstance(event, Message):
             await self._link(event)
             return
-        assert user is not None
+        assert link is not None
         if isinstance(event, HomeOpened):
             if self._home is not None:
                 await self._home.publish(event.team_id, event.user_id)
         elif isinstance(event, Action):
             await self._action(event)
         elif isinstance(event, Message):
-            await self._message(event, user, project_id)
+            await self._message(event, link)
 
     async def _reply(self, event: Event, text: str, *, ephemeral: bool) -> None:
         assert self.slack is not None
@@ -360,8 +364,7 @@ class SlackService:
     async def _message(
         self,
         message: Message,
-        user: UserPublicWithConfig,
-        project_id: uuid.UUID | None,
+        link: SlackLinkTable,
     ) -> None:
         word = keyword(message)
         if word == "lock":
@@ -370,7 +373,7 @@ class SlackService:
                 "locked",
                 team_id=message.team_id,
                 slack_user_id=message.user_id,
-                user_id=user.id,
+                collab_sub=link.collab_sub,
             )
             await self._reply(message, limits.LOCKED_REPLY, ephemeral=False)
             if self._home is not None:
@@ -382,7 +385,7 @@ class SlackService:
         try:
             async with chat_run_module.session_factory() as db:
                 conversation = await conversation_for(
-                    db, message, user=user, project_id=project_id
+                    db, message, project_id=link.project_id
                 )
                 chat_id = conversation.chat_session_id
                 project = ProjectPublic.model_validate(conversation.project)
@@ -391,7 +394,7 @@ class SlackService:
             await self._reply(message, str(exc), ephemeral=False)
             return
         queued = await self._queue.run(
-            chat_id, lambda: self._turn(message, user, project, chat_id)
+            chat_id, lambda: self._turn(message, link, project, chat_id)
         )
         if not queued:
             await self._reply(message, QUEUE_FULL, ephemeral=False)
@@ -399,7 +402,7 @@ class SlackService:
     async def _turn(
         self,
         message: Message,
-        user: UserPublicWithConfig,
+        link: SlackLinkTable,
         project: ProjectPublic,
         chat_id: uuid.UUID,
     ) -> None:
@@ -417,7 +420,6 @@ class SlackService:
                 place=place,
                 team_id=message.team_id,
                 chat_session_id=chat_id,
-                user_id=user.id,
             )
 
         relay = RunRelay(self.slack, place, on_prompt=on_prompt)
@@ -425,7 +427,7 @@ class SlackService:
         await audit.request(
             team_id=message.team_id,
             slack_user_id=message.user_id,
-            user_id=user.id,
+            collab_sub=link.collab_sub,
             chat_session_id=chat_id,
             channel_id=message.channel_id,
             thread_ts=message.root_ts,
@@ -435,7 +437,7 @@ class SlackService:
             async with chat_run_module.session_factory() as db:
                 run = await start_turn(
                     db,
-                    user=user,
+                    local=await local_settings.get_public(db),
                     project=project,
                     chat_session_id=chat_id,
                     user_prompt=message.prompt,

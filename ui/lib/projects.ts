@@ -12,12 +12,31 @@
  */
 
 import { useEffect, useReducer, useSyncExternalStore } from "react";
-import type { ProjectCreate, ProjectPublic, UserPublic } from "./agent-events";
+import type { ProjectCreate, ProjectPublic } from "./agent-events";
 
-export type { ProjectCreate, ProjectPublic, UserPublic };
+export type { ProjectCreate, ProjectPublic };
+
+/**
+ * Where a project stands with the collaboration server. Set by publishing and
+ * importing, never by a save; a save that changes the project sets `modified`.
+ */
+export interface ProjectSharing {
+  originServer: string | null;
+  remoteId: string | null;
+  remoteVersion: number | null;
+  /** Changed here since `remoteVersion` (always true for one never published). */
+  modified: boolean;
+  /**
+   * Its collaboration team; null when private (on this computer only). Set
+   * when it is made (the team selected then), imported (its item's) or copied
+   * to a team, never by a save. It uses only skills and knowledge bases of
+   * exactly this team.
+   */
+  teamId?: string | null;
+}
 
 /** The frontend-facing project shape, reconciled from backend `ProjectPublic`. */
-export interface Project {
+export interface Project extends ProjectSharing {
   /** Backend uuid — stable internal identity (not used as the CRUD key). */
   id: string;
   /** Backend `name` — the CRUD key (`{project_name}` on all project routes),
@@ -35,21 +54,32 @@ export interface Project {
    * line of work.
    */
   forumRepoUrl: string;
-  /** Whether the project stores an access token for that repository. */
-  hasForumToken: boolean;
-  /**
-   * Only on a draft being saved: a new token, or "" to remove the stored one.
-   * Absent keeps it, which is what every save that is not editing it wants —
-   * the token is never read back, so there is nothing to echo.
-   */
-  forumRepoToken?: string;
   tools: string[];
   usageLimits: Record<string, unknown>;
 }
 
+/**
+ * Why `name` (already trimmed) cannot be a project's name, or null when it can.
+ * The name is the path segment of every project route, so it is limited to
+ * characters that round-trip cleanly; the backend refuses an imported name by
+ * the same rule.
+ */
+export function projectNameError(name: string): string | null {
+  if (!name) return "Name is required.";
+  if (name.length < 2) return "Name must be at least 2 characters.";
+  if (name.length > 80) return "Name must be at most 80 characters.";
+  if (!/^[\w ._-]+$/.test(name)) {
+    return "Name may only contain letters, numbers, spaces, '.', '_', and '-'.";
+  }
+  return null;
+}
+
+/** The fields a save sets: a project without its id and collaboration state. */
+export type ProjectFields = Omit<Project, "id" | keyof ProjectSharing>;
+
 export const ACTIVE_PROJECT_KEY = "vista.activeProject.v1";
 
-function fromPublic(p: ProjectPublic): Project {
+export function fromPublic(p: ProjectPublic): Project {
   return {
     id: p.id,
     name: p.name,
@@ -58,14 +88,18 @@ function fromPublic(p: ProjectPublic): Project {
     skills: Array.isArray(p.skills) ? p.skills : [],
     knowledgeBases: Array.isArray(p.knowledge_bases) ? p.knowledge_bases : [],
     forumRepoUrl: p.forum_repo_url ?? "",
-    hasForumToken: p.has_forum_token ?? false,
     tools: Array.isArray(p.tools) ? p.tools : [],
     usageLimits: p.usage_limits ?? {},
+    originServer: p.origin_server ?? null,
+    remoteId: p.remote_id ?? null,
+    remoteVersion: p.remote_version ?? null,
+    modified: p.modified ?? true,
+    teamId: p.team_id ?? null,
   };
 }
 
 /** Build a `ProjectCreate` body from a frontend `Project` (full overwrite). */
-export function toCreate(project: Omit<Project, "id">): ProjectCreate {
+export function toCreate(project: ProjectFields): ProjectCreate {
   return {
     name: project.name,
     description: project.description || null,
@@ -73,7 +107,6 @@ export function toCreate(project: Omit<Project, "id">): ProjectCreate {
     skills: project.skills,
     knowledge_bases: project.knowledgeBases,
     forum_repo_url: project.forumRepoUrl.trim() || null,
-    forum_repo_token: project.forumRepoToken ?? null,
     tools: project.tools,
     usage_limits: project.usageLimits ?? {},
   };
@@ -250,16 +283,55 @@ async function extractError(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
-export async function createProject(input: ProjectCreate): Promise<Project> {
-  const res = await fetch("/api/projects", {
+/**
+ * What the Hypothesis Lab's forum is for a new project, as the dialog offers it
+ * to someone signed in to the collaboration server.
+ */
+export type ForumChoice = "hosted" | "url" | "none";
+
+/**
+ * How a choice goes to `POST /projects`: hosted sends a blank URL, a repository
+ * sends it, and none sends a blank URL with `hosted_forum_wanted=false`.
+ */
+export function forumRequest(
+  choice: ForumChoice,
+  url: string,
+): { forumRepoUrl: string; hostedForumWanted: boolean } {
+  if (choice === "url") return { forumRepoUrl: url.trim(), hostedForumWanted: true };
+  return { forumRepoUrl: "", hostedForumWanted: choice === "hosted" };
+}
+
+/** A created project, and why it has no hosted forum when it was to get one. */
+export type CreatedProject = Project & { forumNotice: string | null };
+
+export async function createProject(
+  input: ProjectCreate,
+  { hostedForumWanted = true }: { hostedForumWanted?: boolean } = {},
+): Promise<CreatedProject> {
+  const res = await fetch(`/api/projects${hostedForumWanted ? "" : "?hosted_forum_wanted=false"}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(await extractError(res));
-  const created = (await res.json()) as ProjectPublic;
+  const created = (await res.json()) as ProjectPublic & { forum_notice?: string | null };
   await refreshProjects();
-  return fromPublic(created);
+  return { ...fromPublic(created), forumNotice: created.forum_notice ?? null };
+}
+
+/**
+ * Move the project's forum onto the collaboration server: its threads are
+ * copied and the old repository is left as it was. Slow (it pushes every
+ * thread); a failure carries the server's sentence and leaves the old forum.
+ */
+export async function hostForum(name: string): Promise<Project> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/forum/host`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  const moved = (await res.json()) as ProjectPublic;
+  await refreshProjects();
+  return fromPublic(moved);
 }
 
 export async function updateProject(
@@ -281,27 +353,4 @@ export async function deleteProject(name: string): Promise<void> {
   const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
   await refreshProjects();
-}
-
-/* ------------------------------------------------------------------ */
-/*  Membership helpers                                                 */
-/* ------------------------------------------------------------------ */
-
-export async function listProjectMembers(name: string): Promise<UserPublic[]> {
-  const res = await fetch(
-    `/api/projects/${encodeURIComponent(name)}/members`,
-    { headers: { accept: "application/json" } }
-  );
-  if (!res.ok) throw new Error(await extractError(res));
-  const data = (await res.json()) as UserPublic[];
-  return Array.isArray(data) ? data : [];
-}
-
-export async function addProjectMember(name: string, email: string): Promise<void> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/members`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok && res.status !== 201) throw new Error(await extractError(res));
 }

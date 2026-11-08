@@ -7,7 +7,12 @@ const failure = /** @type {HTMLElement | null} */ (document.querySelector('#fail
 const failureMessage = document.querySelector('#failure-message');
 const firstRunNote = /** @type {HTMLElement | null} */ (document.querySelector('#first-run-note'));
 const retry = /** @type {HTMLButtonElement | null} */ (document.querySelector('#retry'));
+const backupAndReset = /** @type {HTMLButtonElement | null} */ (document.querySelector('#backup-and-reset'));
 const sandboxNotice = /** @type {HTMLElement | null} */ (document.querySelector('#sandbox-notice'));
+const updateFailure = /** @type {HTMLElement | null} */ (document.querySelector('#update-failure'));
+const updateTitle = document.querySelector('#update-failure-title');
+const updateMessage = document.querySelector('#update-failure-message');
+const updateContinue = /** @type {HTMLButtonElement | null} */ (document.querySelector('#update-continue'));
 
 /** @param {unknown} value */
 function text(value) {
@@ -34,7 +39,22 @@ function render(snapshot) {
   if (firstRunNote) firstRunNote.hidden = snapshot.status === 'failed';
   if (failure) failure.hidden = snapshot.status !== 'failed';
   if (failureMessage) failureMessage.textContent = text(snapshot.failureMessage);
-  if (retry) retry.disabled = snapshot.canRetry !== true;
+  const actions = Array.isArray(snapshot.failureActions) ? snapshot.failureActions : [];
+  if (retry) {
+    retry.hidden = !actions.includes('retry');
+    retry.disabled = snapshot.canRetry !== true;
+  }
+  if (backupAndReset) {
+    backupAndReset.hidden = !actions.includes('backup-and-reset');
+    backupAndReset.disabled = snapshot.canRetry !== true;
+  }
+  // The last update failed (in-app-updates D6): said first, with its own way
+  // to the logs, and VISTA opens once the researcher continues.
+  const update = snapshot.update && typeof snapshot.update === 'object' ? snapshot.update : null;
+  if (updateFailure) updateFailure.hidden = !update;
+  if (updateTitle) updateTitle.textContent = text(update?.title);
+  if (updateMessage) updateMessage.textContent = text(update?.message);
+  if (updateContinue) updateContinue.hidden = !update || snapshot.status !== 'ready';
   if (sandboxNotice) {
     sandboxNotice.textContent = text(snapshot.notice);
     sandboxNotice.hidden = !sandboxNotice.textContent;
@@ -43,12 +63,28 @@ function render(snapshot) {
 
 bridge?.onState(render);
 document.querySelector('#retry')?.addEventListener('click', () => bridge?.retry());
-document.querySelector('#open-logs')?.addEventListener('click', () => bridge?.openLogs());
-document.querySelector('#quit')?.addEventListener('click', () => bridge?.quit());
-document.querySelector('#copy-diagnostics')?.addEventListener('click', async (event) => {
+document.querySelector('#backup-and-reset')?.addEventListener('click', async (event) => {
+  // Until the next state update, so a second click cannot start a second reset.
   const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
-  await bridge?.copyDiagnostics();
-  const previous = button.textContent;
-  button.textContent = 'Copied';
-  setTimeout(() => { button.textContent = previous; }, 1200);
+  button.disabled = true;
+  try {
+    const started = await bridge?.resetData();
+    // Cancelled or failed: nothing changes state, so offer it again.
+    if (!started) button.disabled = false;
+  } catch {
+    button.disabled = false;
+  }
 });
+document.querySelector('#open-logs')?.addEventListener('click', () => bridge?.openLogs());
+document.querySelector('#update-open-logs')?.addEventListener('click', () => bridge?.openLogs());
+document.querySelector('#update-continue')?.addEventListener('click', () => bridge?.continue());
+document.querySelector('#quit')?.addEventListener('click', () => bridge?.quit());
+for (const id of ['#copy-diagnostics', '#update-copy-diagnostics']) {
+  document.querySelector(id)?.addEventListener('click', async (event) => {
+    const button = /** @type {HTMLButtonElement} */ (event.currentTarget);
+    await bridge?.copyDiagnostics();
+    const previous = button.textContent;
+    button.textContent = 'Copied';
+    setTimeout(() => { button.textContent = previous; }, 1200);
+  });
+}

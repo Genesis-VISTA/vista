@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
@@ -11,6 +11,9 @@ import CampaignPanel from "@/components/CampaignPanel";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ModelPicker } from "@/components/ModelPicker";
 import { holdSendWithoutModel } from "@/lib/agent-settings";
+import { useTour } from "@/components/TourProvider";
+import { tourFailureForRefusal } from "@/lib/onboarding";
+import { STARTER_QUESTION } from "@/lib/onboarding-copy";
 import { ImageLightbox } from "@/components/ImageLightbox";
 import {
   SkillEditorModal,
@@ -22,7 +25,7 @@ import {
   type ReportDraft,
   type ReportSavePayload,
 } from "@/components/ReportModal";
-import { extractError } from "@/lib/user";
+import { extractError } from "@/lib/settings";
 import type { ChatMessage, ExecutionResult } from "@/lib/types";
 import { fileLinkProps } from "@/lib/file-links";
 import {
@@ -36,7 +39,6 @@ import {
 } from "@/lib/projects";
 import { writePendingDestination } from "@/lib/pending-destination";
 import {
-  extractPlotPath,
   extractPredictionSummary,
   extractReferences,
   formatResultSummary,
@@ -67,8 +69,11 @@ import {
   type RunPrompt,
   type RunRenderer,
 } from "@/lib/run-renderer";
+import { readRefusedSend } from "@/lib/refused-send";
 import { refreshChatRunStatus, useChatRunStatus } from "@/lib/chat-run-status";
 import { RunStatusDot } from "@/components/RunStatusDot";
+import ArtifactFeed, { artifactElementId } from "@/components/ArtifactFeed";
+import { fetchDisplayedFiles, mergeFeed, type DisplayedFile } from "@/lib/displayed-files";
 
 type WorkspaceTab = "artifacts" | "activity" | "jobs";
 
@@ -138,7 +143,27 @@ function ArtifactImage({
   );
 }
 
+/**
+ * `useSearchParams` (the `chat` / `run` / `step` a link from the Files page carries)
+ * needs a Suspense boundary above it for the production build.
+ */
 export default function HomePage() {
+  return (
+    <Suspense fallback={null}>
+      <ChatPage />
+    </Suspense>
+  );
+}
+
+/** The turn's answer: the last reply in the run, or failing that its last bubble. */
+function findTurnAnswer(messages: ChatMessage[], runId: string): ChatMessage | null {
+  const turn = messages.filter((m) => m.run_id === runId && !m.intermediate);
+  return [...turn].reverse().find((m) => m.role === "assistant") ?? turn[turn.length - 1] ?? null;
+}
+
+type DeepLink = { chat: string; run: string | null; step: string | null };
+
+function ChatPage() {
   const mainRef = useRef<HTMLElement | null>(null);
   const outputSplitRef = useRef<HTMLDivElement | null>(null);
   const chatListRef = useRef<HTMLDivElement | null>(null);
@@ -195,6 +220,8 @@ export default function HomePage() {
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
+  /** The open conversation's own model; null follows the researcher's default. */
+  const [activeChatModel, setActiveChatModel] = useState<string | null>(null);
   const [editingChatSessionId, setEditingChatSessionId] = useState<string | null>(null);
   const [draftChatSessionTitle, setDraftChatSessionTitle] = useState("");
   const [deleteSessionTarget, setDeleteSessionTarget] = useState<PersistedChatSessionSummary | null>(null);
@@ -206,6 +233,13 @@ export default function HomePage() {
    */
   const [messageHistory, setMessageHistory] = useState<ModelMessage[]>([]);
   const [input, setInput] = useState("");
+  // The tour's last step puts its starter question in the composer, once.
+  const tour = useTour();
+  const tourAtSend = tour.position?.step === "first-question" && tour.position.subStep === "send";
+  const { claimStarter } = tour;
+  useEffect(() => {
+    if (tourAtSend && claimStarter()) setInput((prev) => (prev === "" ? STARTER_QUESTION : prev));
+  }, [tourAtSend, claimStarter]);
   /**
    * Id of the most recently streamed intermediate agent turn.
    * Rendered expanded while it is the latest; demoted (collapsed) when a
@@ -250,6 +284,28 @@ export default function HomePage() {
    */
   const locallyCreatedSessionIdRef = useRef<string | null>(null);
   const [latestResult, setLatestResult] = useState<ExecutionResult | null>(null);
+  /** The files shown in the open conversation, as recorded; and those shown since, before they are read back. */
+  const [recordedFiles, setRecordedFiles] = useState<DisplayedFile[]>([]);
+  const [provisionalFiles, setProvisionalFiles] = useState<DisplayedFile[]>([]);
+  const [feedLoaded, setFeedLoaded] = useState(false);
+  /** The conversation the loaded feed belongs to, so a jump never reads another's. */
+  const [feedLoadedFor, setFeedLoadedFor] = useState<string | null>(null);
+  const [feedRefresh, setFeedRefresh] = useState(0);
+  const feedItems = useMemo(
+    () => mergeFeed(provisionalFiles, recordedFiles),
+    [provisionalFiles, recordedFiles]
+  );
+  /** A turn to open once its conversation is on screen, and the bubbles it then scrolls to and highlights. */
+  const [pendingJump, setPendingJump] = useState<{
+    chat: string;
+    runId: string | null;
+    stepId: string | null;
+  } | null>(null);
+  const [turnFocus, setTurnFocus] = useState<{ ids: string[] } | null>(null);
+  const [chatNotFound, setChatNotFound] = useState(false);
+  const searchParams = useSearchParams();
+  const [deepLink, setDeepLink] = useState<DeepLink | null>(null);
+  const deepLinkHandledRef = useRef<DeepLink | null>(null);
 
   function toggleIntermediate(id: string) {
     setExpandedIntermediates((prev) => {
@@ -285,6 +341,7 @@ export default function HomePage() {
       hydratedSessionKeyRef.current = null;
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
+      setActiveChatModel(null);
       setIsSessionHydrated(false);
       return;
     }
@@ -292,6 +349,7 @@ export default function HomePage() {
       hydratedSessionKeyRef.current = null;
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
+      setActiveChatModel(null);
       setMessages([]);
       setMessageHistory([]);
       setLatestResult(null);
@@ -310,6 +368,7 @@ export default function HomePage() {
     // an answer with no question.
     if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
       locallyCreatedSessionIdRef.current = null;
+      setActiveChatModel(null);
       hydratedSessionKeyRef.current = sessionKey;
       // Nothing is persisted for it yet, so the next change must save.
       lastPersistedSnapshotRef.current = null;
@@ -331,6 +390,7 @@ export default function HomePage() {
           notifyActiveChatSessionChanged();
         }
         setActiveChatSessionTitle(persisted.title);
+        setActiveChatModel(persisted.inference_model ?? null);
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -351,6 +411,7 @@ export default function HomePage() {
           notifyActiveChatSessionChanged();
         }
         setActiveChatSessionTitle(null);
+        setActiveChatModel(null);
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
@@ -443,6 +504,129 @@ export default function HomePage() {
     ackPending,
   ]);
 
+  // The feed is one conversation's: empty until its own list arrives.
+  useEffect(() => {
+    setRecordedFiles([]);
+    setProvisionalFiles([]);
+    setFeedLoaded(false);
+    setFeedLoadedFor(null);
+  }, [activeProject?.name, activeChatSessionId]);
+
+  // Read the record of displayed files on open, on a switch, and when a run finishes.
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !activeChatSessionId) return;
+    const controller = new AbortController();
+    fetchDisplayedFiles(projectName, activeChatSessionId, controller.signal)
+      .then((files) => {
+        setRecordedFiles(files);
+        // What the run showed is in the record now.
+        setProvisionalFiles([]);
+        setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
+      })
+      .catch(() => {
+        // Keep what is shown; the next run or switch reads it again.
+        if (controller.signal.aborted) return;
+        setFeedLoaded(true);
+        setFeedLoadedFor(activeChatSessionId);
+      });
+    return () => controller.abort();
+  }, [activeProject?.name, activeChatSessionId, feedRefresh]);
+
+  // A link to a conversation (and a turn in it) is read once, then cleared from the URL so a
+  // reload does not jump again. `router.replace("/")` does nothing on the page a full load
+  // opened with a query (the URL stays), so this is the native `history.replaceState` that
+  // Next documents as feeding `useSearchParams`.
+  useEffect(() => {
+    const chat = searchParams.get("chat");
+    if (!chat) return;
+    setDeepLink({ chat, run: searchParams.get("run"), step: searchParams.get("step") });
+    window.history.replaceState(null, "", "/");
+  }, [searchParams]);
+
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!deepLink || !projectName || deepLinkHandledRef.current === deepLink) return;
+    deepLinkHandledRef.current = deepLink;
+    void (async () => {
+      let known = false;
+      try {
+        known = (await listPersistedChatSessions(projectName)).some((s) => s.id === deepLink.chat);
+      } catch {
+        // Treated as not found: nothing to open.
+      }
+      setDeepLink(null);
+      if (!known) {
+        setChatNotFound(true);
+        return;
+      }
+      setChatNotFound(false);
+      setPendingJump({ chat: deepLink.chat, runId: deepLink.run, stepId: deepLink.step });
+      if (readActiveChatSessionId(projectName) !== deepLink.chat) {
+        writeActiveChatSessionId(projectName, deepLink.chat);
+        notifyActiveChatSessionChanged();
+      }
+    })();
+  }, [deepLink, activeProject?.name]);
+
+  // Open the turn once its conversation has loaded. A run the conversation does not
+  // contain opens it at the end, as it would have been.
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    if (!pendingJump || !projectName || !isSessionHydrated) return;
+    if (
+      activeChatSessionId !== pendingJump.chat ||
+      hydratedSessionKeyRef.current !== `${projectName}:${pendingJump.chat}`
+    ) {
+      return;
+    }
+    // A link that names the display waits for the feed, so its card can be shown too.
+    if (pendingJump.stepId && feedLoadedFor !== pendingJump.chat) return;
+    setPendingJump(null);
+    const answer = pendingJump.runId ? findTurnAnswer(messages, pendingJump.runId) : null;
+    if (!answer) return;
+    // The file the researcher came from, in the feed; none for a display from
+    // before they were recorded, which opens the turn alone.
+    const card = pendingJump.stepId
+      ? feedItems.find(
+          (f) => f.run_id === pendingJump.runId && f.tool_call_id === pendingJump.stepId
+        )
+      : undefined;
+    if (card) setWorkspaceTab("artifacts");
+    setTurnFocus({
+      ids: card ? [`msg-${answer.id}`, artifactElementId(card)] : [`msg-${answer.id}`],
+    });
+  }, [
+    pendingJump,
+    activeProject?.name,
+    activeChatSessionId,
+    isSessionHydrated,
+    messages,
+    feedLoadedFor,
+    feedItems,
+  ]);
+
+  useEffect(() => {
+    if (!turnFocus) return;
+    const frame = requestAnimationFrame(() => {
+      for (const id of turnFocus.ids) {
+        document.getElementById(id)?.scrollIntoView({ block: "center" });
+      }
+    });
+    const timer = window.setTimeout(() => setTurnFocus(null), 2600);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
+  }, [turnFocus]);
+
+  useEffect(() => {
+    if (!chatNotFound) return;
+    const timer = window.setTimeout(() => setChatNotFound(false), 8000);
+    return () => window.clearTimeout(timer);
+  }, [chatNotFound]);
+
   // Switching conversation, or leaving the chat page, stops watching a run. The
   // run carries on in the backend, and opening its conversation again re-attaches.
   useEffect(() => {
@@ -514,6 +698,11 @@ export default function HomePage() {
   const conversationMessages = useMemo(
     () => messages.filter((msg) => !msg.intermediate),
     [messages]
+  );
+  /** The tour points at the last answer. */
+  const lastAnswerId = useMemo(
+    () => [...conversationMessages].reverse().find((msg) => msg.role === "assistant")?.id ?? null,
+    [conversationMessages]
   );
   /** What the Activity tab shows: every step the run took. */
   const activitySteps = useMemo(
@@ -613,7 +802,12 @@ export default function HomePage() {
         {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+          body: JSON.stringify({
+            message_history: messageHistory,
+            hint: hint || null,
+            // The chat's own model, if it has one, writes the draft.
+            chat_session_id: activeChatSessionId,
+          }),
         }
       );
       if (resp.ok) draft = (await resp.json()) as ReportDraft;
@@ -684,7 +878,11 @@ export default function HomePage() {
       const resp = await fetch("/api/skills/generate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message_history: messageHistory, hint: hint || null }),
+        body: JSON.stringify({
+          message_history: messageHistory,
+          hint: hint || null,
+          chat_session_id: activeChatSessionId,
+        }),
       });
       if (!resp.ok) {
         const text = await resp.text().catch(() => "");
@@ -693,8 +891,6 @@ export default function HomePage() {
           name: "",
           description: "",
           body: "",
-          author: "",
-          repoUrl: "",
           tags: "",
         });
         return;
@@ -708,8 +904,6 @@ export default function HomePage() {
         name: draft.name_suggestion ?? "",
         description: draft.description_suggestion ?? "",
         body: draft.body ?? "",
-        author: "",
-        repoUrl: "",
         tags: "",
       });
     } catch (err) {
@@ -718,8 +912,6 @@ export default function HomePage() {
         name: "",
         description: "",
         body: "",
-        author: "",
-        repoUrl: "",
         tags: "",
       });
     }
@@ -734,10 +926,7 @@ export default function HomePage() {
         name: payload.name,
         description: payload.description,
         body: payload.body,
-        author: payload.author,
-        repo_url: payload.repoUrl,
         tags: payload.tags,
-        is_public: payload.isPublic,
         // Load it into the active project, so the agent has it next turn.
         project: activeProject?.name ?? null,
       }),
@@ -836,7 +1025,13 @@ export default function HomePage() {
         setPendingElicitation((current) => (current?.id === id ? null : current));
         setPendingToolApproval((current) => (current?.id === id ? null : current));
       },
-      scrollToLatest: () => requestAnimationFrame(() => scrollChatToLatest("smooth"))
+      scrollToLatest: () => requestAnimationFrame(() => scrollChatToLatest("smooth")),
+      showFile: (file) => {
+        if (live()) setProvisionalFiles((prev) => [file, ...prev]);
+      },
+      runFinished: () => {
+        if (live()) setFeedRefresh((n) => n + 1);
+      }
     };
   }
 
@@ -876,6 +1071,12 @@ export default function HomePage() {
       return;
     }
     const finished = renderer.finishedState !== null || renderer.sawResult;
+    // For the tour: only a run that ended "done" (or an older stream's result) answered.
+    if (renderer.finishedState === "done" || (renderer.finishedState === null && renderer.sawResult)) {
+      tour.report("turn-succeeded");
+    } else if (renderer.finishedState !== "stopped") {
+      tour.reportFailure("other");
+    }
     if (!finished) {
       setMessages((prev) => [
         ...prev,
@@ -979,7 +1180,10 @@ export default function HomePage() {
     const text = input.trim();
     if (!text || isRunActive) return;
     // No model and no default (MAG, Custom): keep the text and open the picker.
-    if (holdSendWithoutModel()) return;
+    if (holdSendWithoutModel(activeChatModel)) {
+      tour.reportFailure("model");
+      return;
+    }
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
@@ -1056,35 +1260,33 @@ export default function HomePage() {
         signal: controller.signal
       });
 
-      if (response.status === 409) {
-        // Another view is already running a turn here. Show that run instead,
-        // and give the researcher their unsent text back.
+      if (!response.ok || !response.body) {
+        // The turn never started: give the researcher their unsent text back.
+        // A busy conversation shows the turn another view is running; any other
+        // refusal (no key, no model) says why, so they can fix it and resend.
+        const refusedBody: unknown = await response.json().catch(() => null);
+        const refused = readRefusedSend(response.status, refusedBody);
         setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
         setInput(text);
-        if (streamRef.current?.controller === controller) streamRef.current = null;
-        if (!(await attachToRun(projectName, conversationId))) {
-          setIsRunActive(false);
-          setLiveStatus(null);
-        }
-        return;
-      }
-
-      if (!response.ok || !response.body) {
-        let detail = `Backend returned ${response.status}`;
-        try {
-          const errData = await response.json();
-          detail = errData?.error || errData?.detail || detail;
-        } catch {
-          // ignore
+        if (refused.kind === "attach") {
+          if (streamRef.current?.controller === controller) streamRef.current = null;
+          if (!(await attachToRun(projectName, conversationId))) {
+            setIsRunActive(false);
+            setLiveStatus(null);
+          }
+          return;
         }
         setMessages((prev) => [
           ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: `Agent error: ${detail}` }
+          { id: crypto.randomUUID(), role: "system", content: refused.message }
         ]);
+        tour.reportFailure(tourFailureForRefusal(refusedBody));
         endRun(controller);
         return;
       }
 
+      // The turn is under way: the tour moves from the question to the agent at work.
+      tour.report("turn-started");
       await finishWatching(projectName, conversationId, controller, response.body, renderer);
     } catch {
       if (controller.signal.aborted) return;
@@ -1096,6 +1298,7 @@ export default function HomePage() {
           content: "Agent unavailable: failed to call /api/chat."
         }
       ]);
+      tour.reportFailure("other");
       endRun(controller);
     }
   }
@@ -1306,7 +1509,17 @@ export default function HomePage() {
                 </button>
               </div>
             ) : null}
-            <ModelPicker />
+            <ModelPicker
+              chat={
+                activeChatSessionId
+                  ? {
+                      id: activeChatSessionId,
+                      model: activeChatModel,
+                      onModelChange: setActiveChatModel,
+                    }
+                  : undefined
+              }
+            />
           </div>
         }
       />
@@ -1317,6 +1530,9 @@ export default function HomePage() {
         <div className="panel-body" style={{ flex: 1, position: "relative", overflow: "hidden" }}>
           {isConversationListView ? (
             <div className="chat-list conversation-list-view">
+              {chatNotFound && (
+                <div className="chat-notice" role="status">Conversation not found</div>
+              )}
               {!activeProject && (
                 <div className="chat-bubble">
                   Select a project first to see its conversations.
@@ -1430,6 +1646,9 @@ export default function HomePage() {
           ) : isConversationOpen ? (
             <>
               <div ref={chatListRef} className="chat-list" onScroll={handleChatScroll}>
+                {chatNotFound && (
+                  <div className="chat-notice" role="status">Conversation not found</div>
+                )}
                 {activeChatSessionTitle && (
                   <div className="chat-session-banner">{activeChatSessionTitle}</div>
                 )}
@@ -1454,7 +1673,12 @@ export default function HomePage() {
                     is in the Activity tab, where there is room to say what it
                     was. */}
                 {conversationMessages.map((msg) => (
-                  <div key={msg.id} className={`chat-bubble ${msg.role}`}>
+                  <div
+                    key={msg.id}
+                    id={`msg-${msg.id}`}
+                    data-tour={msg.id === lastAnswerId ? "first-question:answer" : undefined}
+                    className={`chat-bubble ${msg.role}${turnFocus?.ids.includes(`msg-${msg.id}`) ? " turn-highlight" : ""}`}
+                  >
                     {msg.role === "assistant" ? (
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     ) : (
@@ -1503,7 +1727,9 @@ export default function HomePage() {
           )}
         </div>
         {(isConversationOpen || isConversationListView) && (
-          <div className="chat-input-row">
+          // The tour's anchor is the box and Send together, so the starter
+          // question can be edited before it is sent.
+          <div className="chat-input-row" data-tour="first-question:send">
             <textarea
               className="input"
               rows={2}
@@ -1562,7 +1788,7 @@ export default function HomePage() {
         onPointerDown={() => setActiveColumnResizer("right")}
       />
 
-      <section className="panel">
+      <section className="panel" data-tour="model:panel">
         {/* Tabs, not two stacked panes. The Jobs tab appears only when the
             conversation has a campaign — most never do, and a permanently
             empty tab reads worse than an absent one. */}
@@ -1619,7 +1845,12 @@ export default function HomePage() {
                 step.id === latestIntermediateId ||
                 expandedIntermediates.has(step.id);
               return (
-                <div key={step.id} className="activity-step" data-expanded={expanded}>
+                <div
+                  key={step.id}
+                  id={`msg-${step.id}`}
+                  className="activity-step"
+                  data-expanded={expanded}
+                >
                   <span className="activity-step-dot" aria-hidden="true" />
                   <div className="activity-step-body">
                     {hasDetail ? (
@@ -1721,11 +1952,15 @@ export default function HomePage() {
           >
             <div className="output-split" ref={outputSplitRef}>
             <div className="output-top">
-              {!latestResult && <div className="chat-bubble">No figure yet.</div>}
+              {!latestResult && feedItems.length === 0 && (
+                <div className="chat-bubble">No figure yet.</div>
+              )}
               {latestResult && latestResult.ui?.kind === "html" && (
                 <SandboxedHtmlCard html={latestResult.ui.html} />
               )}
-              {latestResult && latestResult.ui?.kind === "file" && (
+              {/* A conversation from before displays were recorded has no feed; its
+                  last figure still shows, as it always did. */}
+              {latestResult && latestResult.ui?.kind === "file" && feedLoaded && feedItems.length === 0 && (
                 latestResult.ui.mimeType?.startsWith("image/") ? (
                   <ArtifactImage
                     url={latestResult.ui.url}
@@ -1738,9 +1973,10 @@ export default function HomePage() {
                   </a>
                 )
               )}
-              {latestResult && latestResult.ui?.kind !== "html" && latestResult.ui?.kind !== "file" && (
+              {latestResult && latestResult.ui?.kind !== "html" && latestResult.ui?.kind !== "file" && feedItems.length === 0 && (
                 <div className="chat-bubble">No image or plot rendered for this result.</div>
               )}
+
               {latestPredictionSummary && (
                 <details className="reference-box" open>
                   <summary>Prediction Summary</summary>
@@ -1773,6 +2009,16 @@ export default function HomePage() {
                   </div>
                 </details>
               )}
+              <ArtifactFeed
+                items={feedItems}
+                projectName={activeProject?.name ?? null}
+                highlighted={turnFocus?.ids ?? []}
+                onZoom={setLightbox}
+                onJumpToTurn={(item) => {
+                  if (!activeChatSessionId) return;
+                  setPendingJump({ chat: activeChatSessionId, runId: item.run_id, stepId: null });
+                }}
+              />
             </div>
             </div>
           </div>

@@ -47,6 +47,7 @@ from urllib.parse import quote
 import globus_sdk
 import httpx
 from fastmcp.exceptions import ToolError
+from globus_sdk import gare
 from globus_sdk.exc import GlobusAPIError
 
 from ..config import settings
@@ -80,6 +81,11 @@ class GlobusSessionExpired(ToolError):
     timeout that refreshing a token does NOT reset, and Frontier queue waits
     routinely exceed that. So this is an expected outcome of a long job, not an
     exceptional one, and it must arrive saying what to do about it.
+
+    Globus signals a lapse by asking for a new session (a GARE), under various
+    statuses: `502 ExternalError.DirListingFailed.LoginFailed` from Transfer,
+    `403 InsufficientSession` over HTTPS; a 401 means the same. Either is
+    recognised before any status rule.
     """
 
 
@@ -88,17 +94,47 @@ class GlobusFileNotFound(ToolError):
 
     Distinct from `GlobusSessionExpired` on purpose, and distinguishable at the
     wire too: a missing file answers `404 text/plain`, an unusable credential
-    answers `401 application/json`. "No outputs yet" is the correct reading of
-    this one and only this one.
+    answers with a GARE (`application/json`) under another status: `403
+    InsufficientSession` over HTTPS, `502` from Transfer, or `401`. "No
+    outputs yet" is the correct reading of this one and only this one.
     """
 
 
-def _gare_message(body: str) -> str | None:
-    """Globus's own account of why it refused, out of a GARE 401 body.
+def _body_is_gare(body: str) -> bool:
+    """True when an HTTPS body is a Globus re-authentication answer (a GARE)."""
+    try:
+        parsed = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and gare.is_gare(parsed)
 
-    Surfaced verbatim rather than reworded. The message names the identity
-    domains the collection accepts, which is both the actual remedy and
-    something VISTA would get wrong if it tried to say it itself.
+
+_GLOBUS_APP_DOMAIN = "clients.auth.globus.org"
+""" Globus's own app-client domain. Every OLCF GARE lists it; no researcher logs in with it. """
+
+
+def _required_login(refusal: dict | GlobusAPIError) -> str | None:
+    """The login a GARE asks for, as a sentence, or None if it names none.
+
+    Built from `session_required_single_domain` rather than quoted from
+    Globus's message, which also lists `clients.auth.globus.org` and, on a
+    Transfer listing, is a raw GridFTP dump.
+    """
+    found = gare.to_gare(refusal)
+    if found is None:
+        return None
+    required = found.authorization_parameters.session_required_single_domain or []
+    domains = [d for d in required if d != _GLOBUS_APP_DOMAIN]
+    if not domains:
+        return None
+    return f"Globus needs a fresh login with {', '.join(domains)}."
+
+
+def _gare_message(body: str) -> str | None:
+    """Why Globus refused, out of an HTTPS refusal body.
+
+    For a GARE, the login it asks for (`_required_login`); failing that,
+    Globus's `session_message`, then its `detail` or `message`.
     """
     try:
         parsed = json.loads(body)
@@ -106,6 +142,9 @@ def _gare_message(body: str) -> str | None:
         return None
     if not isinstance(parsed, dict):
         return None
+    login = _required_login(parsed)
+    if login:
+        return login
     params = parsed.get("authorization_parameters")
     if isinstance(params, dict):
         message = params.get("session_message")
@@ -189,12 +228,17 @@ class GlobusClient:
     def _raise_for_transfer_error(self, error: globus_sdk.TransferAPIError) -> None:
         """Re-raise a Transfer refusal as a session expiry when that is what it is.
 
-        Transfer reports a lapsed High Assurance session as `401
-        AuthenticationFailed`, and a missing consent as `ConsentRequired`; both
-        are fixed by connecting Globus again. Anything else is left alone for
+        Transfer reports a lapsed High Assurance session as `502
+        ExternalError.DirListingFailed.LoginFailed` with a GARE body (checked
+        first, whatever the status); a `401`, an `AuthenticationFailed` or a
+        missing consent (`ConsentRequired`) mean the same. All are fixed by
+        connecting Globus again. Anything else is left alone for
         the caller to handle, which matters because `operation_mkdir` treats
         "already exists" as success.
         """
+        if gare.is_gare(error):
+            # Not `error.message`: on a listing that is the raw GridFTP dump.
+            raise self._session_expired(_required_login(error)) from error
         code = error.code or ""
         if error.http_status == 401 or code in ("ConsentRequired", "AuthenticationFailed"):
             raise self._session_expired(error.message) from error
@@ -256,12 +300,14 @@ class GlobusClient:
     def _check(self, response: httpx.Response, *, remote_path: str, body: str) -> None:
         """Turn a non-2xx HTTPS answer into the right exception type.
 
-        The two that callers branch on are separated by status code alone, so
-        this never inspects a message to decide which happened.
+        A GARE body (whatever the status) or a 401 is an expired session; a 404
+        is `GlobusFileNotFound`; anything else is a generic refusal. It decides
+        from the status and from whether the body is a GARE, never from the
+        wording of a message.
         """
         if response.is_success:
             return
-        if response.status_code == 401:
+        if response.status_code == 401 or _body_is_gare(body):
             raise self._session_expired(_gare_message(body))
         if response.status_code == 404:
             raise GlobusFileNotFound(
@@ -278,19 +324,24 @@ class GlobusClient:
         The ONLY way to learn it. A plain `GET` on these collections returns no
         `Content-Length`, and a ranged `206` reports its total as `*`, so every
         caller that needs to know how much there is has to come through here.
+
+        A `HEAD` carries no body, so on a 401 or 403 it follows up with a
+        one-byte `GET` to read the GARE; the live lapse is `403
+        InsufficientSession`.
         """
         url = await self._url(collection_id, remote_path)
         headers = await self._auth_header()
         async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=True) as client:
             response = await client.head(url, headers=headers)
             body = ""
-            if response.status_code == 401:
+            if response.status_code in (401, 403):
+                # A lapsed session answers 403 InsufficientSession as well as 401.
                 # A HEAD has no body by definition, and the body is where the
-                # GARE `session_message` lives -- the one sentence that names
-                # the identity domains this collection accepts. This is the
-                # first HTTPS request of every status poll, so it is where a
-                # lapsed session is normally caught; losing the message here
-                # would lose it almost always. One byte, on the failure path.
+                # GARE lives, and `_required_login` builds from it the one
+                # sentence that names the login. This is the first HTTPS
+                # request of every status poll, so it is where a lapsed
+                # session is normally caught; losing the message here would
+                # lose it almost always. One byte, on the failure path.
                 body = (await client.get(url, headers={**headers, "Range": "bytes=0-0"})).text
             self._check(response, remote_path=remote_path, body=body)
         length = response.headers.get("Content-Length")
@@ -477,11 +528,13 @@ class GlobusClient:
         self, *, endpoint: str, path: str, recursive: bool = False,
         exclude_segments: tuple[str, ...] = (),
         max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
         """
         List entries under `path` on the given collection. Returns a list of dicts
         each with at least `name`, `type` ("file"/"dir"), `size`, plus a `path`
-        key injected by this wrapper holding the absolute path.
+        key injected by this wrapper holding the absolute path. A folder the walk
+        did not descend into also carries `walked: False`.
 
         On the Transfer API, because the HTTPS interface has no directory
         listing at all -- that division is why the Transfer half of this module
@@ -497,16 +550,24 @@ class GlobusClient:
           - `exclude_segments`: directory names never descended into. Filtering
             these out of the *results* afterwards does not help — the cost is the
             traversal, so they must be pruned from the queue.
+          - `skip_hidden`: also never descend into a folder whose name starts
+            with `.` -- the `.cache/pip` and `.local` trees a job's Python leaves
+            behind, which made one job folder list 1,818 entries to find a PNG.
           - `max_dirs`: hard ceiling on directories visited. On hitting it the walk
             stops and logs; callers get a partial listing rather than a hang.
+
+        `path` itself is always listed, hidden or not: asking for it is asking
+        to look inside.
         """
         return await asyncio.to_thread(
             self._operation_ls, endpoint, path, recursive, exclude_segments, max_dirs,
+            skip_hidden,
         )
 
     def _operation_ls(
         self, endpoint: str, path: str, recursive: bool,
         exclude_segments: tuple[str, ...] = (), max_dirs: int = 200,
+        skip_hidden: bool = False,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         queue = [path]
@@ -548,7 +609,8 @@ class GlobusClient:
                 entry["path"] = full
                 results.append(entry)
                 if recursive and entry.get("type") == "dir":
-                    if name in exclude_segments:
+                    if name in exclude_segments or (skip_hidden and name.startswith(".")):
+                        entry["walked"] = False
                         continue  # prune: never pay for a venv / .git / __pycache__
                     queue.append(full)
             if not recursive:

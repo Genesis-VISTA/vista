@@ -35,7 +35,10 @@ else in the folder is, subfolders included, at the same relative paths under `$R
 (a `README.md` in a subfolder is uploaded like any other file). Names starting with `.`,
 `__pycache__` folders and symlinks are never uploaded. A submission re-sends only files that are
 missing on the cluster or have a different size.
-[`hpc_jobs/example/`](../hpc_jobs/example/) and [`hpc_jobs/lux-hello/`](../hpc_jobs/lux-hello/)
+[`hpc_jobs/example/`](../hpc_jobs/example/) and the bundled hello skills
+([`hello-odo`](../backend/src/vista_backend/db/skills/hello-odo/hpc_jobs/hello/),
+[`hello-frontier`](../backend/src/vista_backend/db/skills/hello-frontier/hpc_jobs/hello/) and
+[`hello-lux`](../backend/src/vista_backend/db/skills/hello-lux/hpc_jobs/hello/))
 are small working examples.
 
 ## job.\<cluster\>.slurm

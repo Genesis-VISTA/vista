@@ -300,7 +300,6 @@
 .chat-list,
 .output-top,
 .output-bottom,
-.upload-list,
 .reference-list,
 .modal-body,
 .output-card {
@@ -312,7 +311,6 @@
 .chat-list::-webkit-scrollbar,
 .output-top::-webkit-scrollbar,
 .output-bottom::-webkit-scrollbar,
-.upload-list::-webkit-scrollbar,
 .reference-list::-webkit-scrollbar,
 .modal-body::-webkit-scrollbar,
 .output-card::-webkit-scrollbar {
@@ -324,7 +322,6 @@
 .chat-list::-webkit-scrollbar-track,
 .output-top::-webkit-scrollbar-track,
 .output-bottom::-webkit-scrollbar-track,
-.upload-list::-webkit-scrollbar-track,
 .reference-list::-webkit-scrollbar-track,
 .modal-body::-webkit-scrollbar-track,
 .output-card::-webkit-scrollbar-track {
@@ -336,7 +333,6 @@
 .chat-list::-webkit-scrollbar-thumb,
 .output-top::-webkit-scrollbar-thumb,
 .output-bottom::-webkit-scrollbar-thumb,
-.upload-list::-webkit-scrollbar-thumb,
 .reference-list::-webkit-scrollbar-thumb,
 .modal-body::-webkit-scrollbar-thumb,
 .output-card::-webkit-scrollbar-thumb {
@@ -349,7 +345,6 @@
 .chat-list::-webkit-scrollbar-thumb:hover,
 .output-top::-webkit-scrollbar-thumb:hover,
 .output-bottom::-webkit-scrollbar-thumb:hover,
-.upload-list::-webkit-scrollbar-thumb:hover,
 .reference-list::-webkit-scrollbar-thumb:hover,
 .modal-body::-webkit-scrollbar-thumb:hover,
 .output-card::-webkit-scrollbar-thumb:hover {
@@ -419,7 +414,7 @@ main {
 }
 
 /* A pane sitting directly in a list-route body must not add a second gutter:
-   the body already carries the artboard's 26/30, and skills and datasets were
+   the body already carries the artboard's 26/30, and skills and files were
    inset 42/46 against skill-hub's 30 because .panel-body added its own. */
 .app-page-body > .panel > .panel-body {
   padding: 0;
@@ -587,6 +582,183 @@ main {
 .project-switcher-manage:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: -2px;
+}
+
+/* ---------- Team switcher (top of the nav rail) ---------------------- */
+
+/* Reuses the project switcher's menu and options; only the button, which sits
+   in the rail rather than a crumb, and the menu's placement are its own. */
+.team-switcher {
+  position: relative;
+  margin: 0 12px 8px;
+}
+
+.team-switcher.collapsed {
+  margin: 0 auto 4px;
+}
+
+.team-switcher-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.team-switcher.collapsed .team-switcher-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+.team-switcher-button:hover,
+.team-switcher-button[aria-expanded="true"] {
+  background: var(--surface-active);
+}
+
+.team-switcher-button:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.team-switcher-text {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.team-switcher-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.team-switcher-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-switcher-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--danger-ink);
+}
+
+.team-switcher-menu {
+  left: 0;
+  top: calc(100% + 4px);
+}
+
+/* Collapsed, the rail is too narrow to hold the menu, so it opens beside it. */
+.team-switcher.collapsed .team-switcher-menu {
+  left: calc(100% + 8px);
+  top: 0;
+}
+
+/* A resource's team, beside its name, when it is not the public team. */
+.team-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--brand-line-strong);
+  background: var(--brand-tint);
+  color: var(--brand);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.teams-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.teams-modal-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.teams-modal-heading {
+  margin: 0;
+  font-size: 14px;
+}
+
+.teams-modal-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.teams-member-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.teams-member {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 0;
+  font-size: 13px;
+}
+
+.teams-member-name {
+  font-weight: 600;
+}
+
+.teams-member-email,
+.member-picker-email {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.teams-create {
+  display: flex;
+  gap: 8px;
+}
+
+.member-picker {
+  position: relative;
+}
+
+.member-picker-menu {
+  left: 0;
+  right: 0;
+  max-width: none;
+}
+
+.member-picker-option {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+
+.member-picker-name {
+  font-weight: 600;
 }
 
 /* ---------- Model picker (chat header, next to the project crumb) ---- */
@@ -1259,21 +1431,10 @@ textarea.input {
   margin-bottom: 12px;
 }
 
-.catalog-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
 .model-label {
   font-size: 12px;
   color: var(--muted);
   font-weight: 600;
-}
-
-.catalog-label {
-  font-size: 14px;
 }
 
 .model-select {
@@ -1379,7 +1540,7 @@ textarea.input {
   margin-top: 6px;
 }
 
-.skill-author {
+.skill-sharing {
   font-weight: 500;
 }
 
@@ -1405,36 +1566,92 @@ textarea.input {
   align-self: flex-start;
 }
 
-.skill-published {
-  font-size: 11px;
-  font-weight: 500;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--panel);
+.skill-section-title {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--muted);
-  border: 1px solid var(--line);
-  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
-.upload-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  max-height: 280px;
-  overflow: auto;
-}
-
-/* A named group of uploads, not an object in its own right. It used to wear
-   a border, a 12px radius and a white fill, which made a card out of the
-   container and left white item cards sitting inside a white card. The label
-   is what separates one group from the next. */
-.upload-section {
+.skill-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.upload-section-title {
+.skill-empty {
+  font-size: 13px;
+  color: var(--muted);
+  padding: 20px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.skill-notice {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hub-unavailable {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
+/* Files page: two trees beside a preview, stacking on narrow widths. */
+.files-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.files-dropzone {
+  min-height: 64px;
+  height: 64px;
+}
+
+.files-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 2fr) minmax(0, 3fr);
+  gap: 18px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .files-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.files-trees {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.files-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.files-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.files-section-title {
   margin: 0;
   font-size: 12px;
   font-weight: 700;
@@ -1443,38 +1660,199 @@ textarea.input {
   color: var(--ink);
 }
 
-.upload-item {
-  position: relative;
-  padding: 8px 10px;
-  padding-right: 132px;
-  border-radius: var(--r-card);
-  border: 1px solid var(--line);
-  background: var(--surface);
+.files-tree,
+.files-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.upload-name {
+.files-tree {
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 4px 0;
+}
+
+.files-folder,
+.files-file {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding-top: 5px;
+  padding-bottom: 5px;
+  padding-right: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
   font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.files-folder {
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
 }
 
-.upload-meta {
-  margin-top: 2px;
+.files-folder:hover,
+.files-row:hover {
+  background: var(--surface-2);
+}
+
+.files-caret {
+  width: 10px;
+  color: var(--muted);
+}
+
+.files-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 8px;
+}
+
+.files-row.selected {
+  background: var(--brand-tint);
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.files-file {
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.files-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.files-file-meta {
   font-size: 11px;
   color: var(--muted);
 }
 
-.upload-actions {
-  position: absolute;
-  top: 6px;
-  right: 8px;
+.files-row-actions {
   display: flex;
   gap: 5px;
+  flex: 0 0 auto;
 }
 
-.upload-action-btn {
-  padding: 4px 6px;
-  font-size: 11px;
-  border-radius: 7px;
+.files-preview-pane {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+
+@media (max-width: 900px) {
+  .files-preview-pane {
+    position: static;
+  }
+}
+
+.files-preview-empty {
+  padding: 24px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-card);
+  text-align: center;
+  font-size: 13px;
+}
+
+/* FilePreview, shared with the artifacts column. */
+.file-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+
+.file-preview-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.file-preview-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 32px 12px;
+  text-align: center;
+}
+
+.file-preview-empty .button {
+  text-decoration: none;
+}
+
+.file-preview-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.file-preview-text {
+  margin: 0;
+  max-height: 60vh;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.file-preview-markdown {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.file-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  display: block;
+  max-height: 60vh;
+  overflow: auto;
+}
+
+.file-preview-table th,
+.file-preview-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.file-preview-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+.file-preview img {
+  max-width: 100%;
+  height: auto;
 }
 
 .chat-list {
@@ -1501,6 +1879,8 @@ textarea.input {
 
 .chat-bubble.assistant {
   white-space: normal;
+  /* Eases the room a turn highlight makes in and out, rather than jumping. */
+  transition: padding 0.3s ease;
 }
 
 .chat-bubble.assistant > :first-child {
@@ -1613,13 +1993,16 @@ textarea.input {
   line-height: 1.5;
 }
 
-/* How a turn ended when it did not finish: "Stopped", "Interrupted when VISTA
-   quit". A quiet line in the thread, not a message from either side. */
+/* How a turn ended when it did not finish ("Stopped", "Agent run failed: …"),
+   or why a send was refused. A quiet line in the thread, not a message from
+   either side. Card corners, not a pill: a reason can wrap to several lines,
+   and a pill's round ends cut into them. */
 .chat-bubble.system {
   align-self: center;
-  padding: 2px 10px;
+  padding: 4px 12px;
   border: 1px solid var(--line);
-  border-radius: var(--r-pill);
+  border-radius: var(--r-card);
+  text-align: center;
   background: var(--surface);
   color: var(--muted);
   font-size: 12px;
@@ -3070,6 +3453,11 @@ button.chat-bubble.intermediate.collapsed:hover {
   line-height: 1.5;
 }
 
+.project-card-sharing {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .project-card-row {
   display: flex;
   flex-direction: column;
@@ -3156,30 +3544,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   font-size: 12px;
   font-weight: 600;
   color: var(--ink);
-}
-
-.project-modal-token-help {
-  margin-top: -4px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.project-modal-token-help > summary {
-  cursor: pointer;
-  width: fit-content;
-}
-
-.project-modal-token-help p,
-.project-modal-token-help ol {
-  margin: 6px 0 0;
-}
-
-.project-modal-token-help ol {
-  padding-left: 18px;
-}
-
-.project-modal-token-help a {
-  color: var(--brand);
 }
 
 .project-modal-skill-list {
@@ -3474,6 +3838,17 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .settings-provider-state.is-ready .hpc-dot {
   background: currentColor;
+}
+
+/* Collaboration: whether the server answers, beside the field for its address. */
+.settings-collab-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .settings-provider-model {
@@ -4042,7 +4417,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Standalone page wrapper (used by /datasets, /skills)               */
+/*  Standalone page wrapper (used by /files, /skills)               */
 /* ------------------------------------------------------------------ */
 
 .standalone-page {
@@ -4245,6 +4620,22 @@ button.chat-bubble.intermediate.collapsed:hover {
   border-radius: 999px;
   background: var(--panel);
   color: var(--muted);
+}
+
+.hub-detail {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.hub-detail dt {
+  color: var(--muted);
+}
+
+.hub-detail dd {
+  margin: 0;
 }
 
 .hub-empty {
@@ -4616,6 +5007,15 @@ button.chat-bubble.intermediate.collapsed:hover {
 .pub-item-meta > span + span::before {
   /* Visual separator that's part of the inline flow. */
   content: " ";
+}
+
+.pub-item-desc {
+  font-size: 12px;
+  color: var(--ink);
+  margin: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pub-item-chev {
@@ -5277,6 +5677,18 @@ textarea.input:focus {
    state, so the states read without color.
    ------------------------------------------------------------------------- */
 
+/* One box around the heading and the cards, so the tour can point at them together. */
+.hpc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-self: stretch;
+}
+
+.nav-rail.collapsed .hpc-section {
+  align-items: center;
+}
+
 .hpc-section-head {
   display: flex;
   align-items: center;
@@ -5796,7 +6208,7 @@ textarea.input:focus {
   font-weight: 400;
 }
 
-.debate-open input,
+.debate-open input:not(.model-picker input),
 .debate-open textarea,
 .debate-say textarea {
   font: inherit;
@@ -5811,9 +6223,9 @@ textarea.input:focus {
   width: 90px;
 }
 
-.debate-open button,
+.debate-open button:not(.model-picker button),
 .debate-say button,
-.debate-detail__head button {
+.debate-detail__head button:not(.model-picker button) {
   justify-self: start;
   font: inherit;
   font-weight: 600;
@@ -5825,14 +6237,14 @@ textarea.input:focus {
   cursor: pointer;
 }
 
-.debate-open button:disabled,
+.debate-open button:disabled:not(.model-picker button),
 .debate-say button:disabled,
-.debate-detail__head button:disabled {
+.debate-detail__head button:disabled:not(.model-picker button) {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.debate-detail__head button {
+.debate-detail__head button:not(.model-picker button) {
   background: transparent;
   color: var(--brand-2);
   border-color: var(--brand-2);
@@ -6230,6 +6642,16 @@ textarea.input:focus {
   );
 }
 
+.debate-post__verified {
+  border: 1px solid var(--brand);
+  color: var(--brand);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  cursor: help;
+}
+
 .debate-post__unverified {
   border: 1px solid var(--brand-2);
   color: var(--brand-2);
@@ -6323,6 +6745,43 @@ textarea.input:focus {
   white-space: nowrap;
 }
 
+/* A model per role, on the open form and on Continue. */
+.debate-role-models {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.debate-role-model {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.debate-role-model__name {
+  text-transform: capitalize;
+}
+
+.debate-detail__continue .debate-role-models {
+  flex-basis: 100%;
+}
+
+.debate-detail__continue {
+  flex-wrap: wrap;
+}
+
+.debate-roster__model {
+  color: var(--ink);
+}
+
+.debate-post__model {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  color: var(--muted);
+}
+
 /* Continuing a concluded debate. Kept beside the status rather than in the
    composer, because it acts on the debate as a whole and not on one post. */
 .debate-detail__continue {
@@ -6346,7 +6805,7 @@ textarea.input:focus {
 
 /* The header's buttons are outlined in red because "End this debate" is the
    destructive one. Continuing is the opposite, so it is the primary button. */
-.debate-detail__head .debate-detail__continue button {
+.debate-detail__head .debate-detail__continue button:not(.model-picker button) {
   background: var(--brand-fill);
   color: var(--on-brand);
   border-color: var(--brand);
@@ -6582,4 +7041,335 @@ textarea.input:focus {
   font-size: 10px;
   font-weight: 600;
   color: var(--brand);
+}
+
+/* The artifacts feed: the files the agent showed in this conversation, newest first. */
+.artifact-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.artifact-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  font-size: 13px;
+}
+
+.artifact-item-name,
+.artifact-item-toggle {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.artifact-item-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-item-note {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* The same small outlined buttons as the Files page's row actions. */
+.artifact-item-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.artifact-item-actions .button {
+  white-space: nowrap;
+}
+
+/* The turn a link from the feed or the Files page opened. The ring is drawn
+   inside the bubble: the chat list scrolls, so one drawn outside is clipped at
+   its edge. */
+.turn-highlight {
+  animation: turn-highlight 2.4s ease-out;
+}
+
+/* An answer has no box of its own and spans the row, so while it is the turn
+   being pointed at it shrinks to its text, with room for the ring. */
+.chat-bubble.turn-highlight {
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: var(--r-control);
+}
+
+@keyframes turn-highlight {
+  0%,
+  60% {
+    box-shadow: inset 0 0 0 3px var(--accent);
+  }
+  100% {
+    box-shadow: inset 0 0 0 3px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-highlight {
+    animation: none;
+    box-shadow: inset 0 0 0 3px var(--accent);
+  }
+}
+
+.chat-notice {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ---------- First-boot tour (driver.js) -------------------------------
+   driver.js ships its own light-only colours; these put the coachmark on the
+   theme tokens. The dimming is its overlay's inline fill, set to --scrim-strong
+   in TourProvider. The popover's text and buttons are VISTA's own markup. */
+.driver-popover.vista-tour {
+  background-color: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  min-width: 280px;
+  max-width: 360px;
+  font-family: var(--font-body);
+  box-shadow: var(--shadow-popover);
+}
+
+/* Nothing is dimmed behind an overview, so its card carries a strong border instead. */
+.driver-popover.vista-tour.vista-tour-overview {
+  border: 2px solid var(--brand-fill);
+}
+
+/* A click outside the target: the coachmark pulses to show where the tour is. */
+@keyframes vista-tour-nudge {
+  0%, 100% { transform: scale(1); }
+  30% { transform: scale(1.05); }
+  65% { transform: scale(0.98); }
+}
+
+.driver-popover.vista-tour.vista-tour-nudge {
+  outline: 3px solid var(--brand-fill);
+  outline-offset: 3px;
+  animation: vista-tour-nudge 420ms ease-out 2;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .driver-popover.vista-tour.vista-tour-nudge {
+    animation: none;
+  }
+}
+
+.vista-tour .driver-popover-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  color: var(--ink);
+}
+
+.vista-tour .driver-popover-description {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.vista-tour .driver-popover-description p {
+  margin: 8px 0 0;
+}
+
+.vista-tour .tour-link {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.vista-tour .driver-popover-arrow {
+  border-color: var(--surface);
+}
+
+.vista-tour .driver-popover-arrow-side-left {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-right {
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-top {
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .driver-popover-arrow-side-bottom {
+  border-top-color: transparent;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+
+.vista-tour .tour-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.vista-tour .tour-btn {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  padding: 6px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.vista-tour .tour-btn:hover {
+  background: var(--surface-active);
+}
+
+.vista-tour .tour-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.vista-tour .tour-btn-quiet {
+  border-color: transparent;
+  color: var(--muted-2);
+  margin-right: auto;
+}
+
+.vista-tour .tour-btn-primary {
+  background: var(--brand-fill);
+  border-color: var(--brand-fill);
+  color: var(--on-brand);
+}
+
+.vista-tour .tour-btn-primary:hover {
+  background: var(--brand-fill-hover);
+}
+
+/* ── In-app updates: the settings marker and Settings > About ─────────────── */
+
+/* A newer release is available. Quiet on purpose: no banner, no toast. */
+.update-marker {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.nav-rail-settings {
+  position: relative;
+}
+
+.nav-rail-settings .update-marker {
+  position: absolute;
+  top: 10px;
+  left: 34px;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.nav-rail.collapsed .nav-rail-settings .update-marker {
+  left: calc(50% + 4px);
+}
+
+/* minmax(0, …): a grid track's default minimum is its content, which would
+   stretch a long line past the box instead of letting it scroll. */
+.settings-about-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.settings-about-update {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  gap: 8px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-sunken);
+}
+
+.settings-about-update[data-update-available] {
+  border-color: var(--brand-line-strong);
+  background: var(--brand-tint);
+}
+
+.settings-about-state {
+  margin: 0;
+  font-size: 13px;
+}
+
+.settings-about-error {
+  margin: 0;
+  font-size: 12px;
+}
+
+.settings-about-progress {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+}
+
+.settings-about-progress progress {
+  width: 100%;
+  accent-color: var(--brand-fill);
+}
+
+.settings-about-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-about-confirm {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.settings-about-activity {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settings-about-reset {
+  margin: 0;
+  font-size: 13px;
 }

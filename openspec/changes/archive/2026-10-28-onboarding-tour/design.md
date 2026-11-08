@@ -1,0 +1,255 @@
+## Context
+
+See proposal.md for why. The UI has no tour, coachmark or component library: popovers such
+as `ModelMenu` and `ProjectSwitcher` are hand-rolled, and all colors go through theme tokens
+checked by `scripts/check-colors.mjs`. The parts the tour drives today:
+
+- **Settings** opens only from the rail. The open state is local to `NavRail`
+  (`NavRail.tsx:166`), and the modal's only deep link is `initialCluster`
+  (`UserSettingsModal.tsx:252-266`). Its default section is `"profile"`.
+- **Inference state** comes from `GET /settings/inference` through `useAgentSettings`
+  (`ui/lib/agent-settings.ts`). It already reports what the tour needs: `providers[].default_model`,
+  `has_credential`, `model` and `model_is_default`.
+- **The active project** is a localStorage pointer, `vista.activeProject.v1` (`ui/lib/projects.ts:73`).
+- **`FilePreview`** builds its URL itself (`fileUrl()`, `FilePreview.tsx:49-56`), so it can
+  only preview files the backend serves.
+- **The chat composer** can already be prefilled: the empty-conversation openers call
+  `setInput` (`ui/app/page.tsx:78`, `:1633`).
+- **Anchors:** the UI has two `data-testid`s. The rail entries are `a.nav-rail-entry[aria-label]`,
+  and two of them are both labelled "Knowledge Bases".
+- **Schema:** schema changes must be additive (`db/schema_check.py`). A nullable column is
+  added at startup by `_add_missing_columns`.
+
+## Goals / Non-Goals
+
+**Goals:**
+- Every rule about which step is current lives in one pure function, testable without a DOM.
+- The tour drives the real UI. Its only fake is the example files.
+- The tour adds no product behaviour beyond what the specs describe. When it is off or
+  finished, every page behaves as it does today.
+
+**Non-Goals:**
+- A general-purpose tour framework, or steps defined in configuration.
+- Per-step documentation links (see the proposal's Non-goals).
+
+## Decisions
+
+### 1. Step logic is a pure function over observed state
+
+`ui/lib/onboarding.ts` exports `nextTourStep(state): TourStep | null`. Its input is:
+- `stored`: the persisted `{status, step}`;
+- `inference`: `{hasCredential, model, modelIsDefault, providerDefault}`;
+- `activeProject`;
+- `events`: a set of tour-relevant actions seen during this session, for example
+  `kb-opened`, `skill-opened`, `example-image-opened`, `example-md-opened`, `hpc-card-opened`
+  and `turn-succeeded`;
+- `skipped` and `acknowledged`: the steps and sub-steps passed with Skip or Next.
+
+It returns the step to show, and its sub-step for multi-coachmark steps, or `null` when the
+tour is closed.
+
+The steps that depend on app state (project, credential, model) read it, so they complete
+at once when already done, as the "Already configured" scenarios require. The other steps
+read `events`. "Model chosen" is `model !== null && !modelIsDefault`, so a provider default
+does not count, matching "walk the researcher through picking a model".
+
+*Alternative:* a step machine that advances by imperative callbacks. It's simpler to start,
+but state-derived completion then has to be re-checked by hand on every change, and that is
+where a resumed or replayed tour goes wrong.
+
+### 2. A `TourProvider` on the app shell, with components reporting events
+
+`TourProvider` wraps `.app-shell` in `ui/app/layout.tsx`. It holds the session's events,
+reads the inference state and the active project, computes `nextTourStep`, persists `step`
+whenever it changes, and renders the coachmark. Pages report events through
+`useTourEvent()`, a no-op when no tour is running. For example, the knowledge-base explorer
+calls `report("kb-opened")` when a knowledge base's detail view opens.
+
+The provider navigates only where the step needs a place the researcher can't click to:
+`/projects` when the project step starts, `openSettings("agent")` for the credential, and
+`closeSettings()` and `/` (chat) for the picker and the first question. Each happens once,
+when its coachmark starts. The knowledge bases, skills and files steps go rail first: the
+step's anchor is on the rail entry while the researcher is on another page, and on the item
+when they are on that page. The rail entry drops the attribute on its own page, because
+`querySelector` would otherwise find it first. The provider re-targets when the pathname
+changes. This teaches where each area lives, at the cost of one extra click per step.
+
+A replay is `/settings` changing, while the provider is mounted, to
+`{status: "in_progress", step: "welcome"}` from anything else, whoever wrote it. It clears
+the session's events, skips and acknowledgements, so the tour really starts over. The off
+switch (§4) only stops the tour opening by itself: with it set, a never-started tour or one
+left in progress by an earlier session stays closed and nothing is written, but a replay in
+this session still opens the tour.
+
+### 3. driver.js for drawing, not for flow
+
+The dimmed backdrop, the cut-out, placement, and re-placement on scroll and resize use
+`driver.js`, pinned exactly. 1.9.0 is the latest release at least two weeks old at the time of
+writing; check again at implementation. The provider calls `driver.highlight()` for the current
+step only, and does not use driver.js's own step list or its Next and Back buttons. Flow belongs
+to `nextTourStep`, and the popover's buttons (Next, Skip this step, Exit tutorial) are VISTA's,
+rendered into driver.js's popover via `onPopoverRender`. Next appears only on a coachmark that
+Next completes, which `completesOnNext(step, subStep)` in `ui/lib/onboarding.ts` says. A
+coachmark that waits for an action offers only Skip and Exit. driver.js hides its footer when
+it has no buttons of its own (`showButtons: []`), so `onPopoverRender` shows it again for
+VISTA's.
+
+Each coachmark's title, text and optional link come from `coachmarkFor(step, subStep, ...)` in
+`ui/lib/onboarding-copy.ts`, kept apart from the step logic so wording can change without
+touching it.
+
+Its CSS is overridden in `globals.css` with theme tokens, so light and dark mode both work and
+`check-colors.mjs` passes. Escape maps to Exit through the provider's own `keydown` listener on
+the document. driver.js's keyboard control is off, because in `highlight()` mode its arrow keys
+would end the highlight and exit the tour. Targets are found by `data-tour` attributes, and a
+missing target waits for it to mount, through a `MutationObserver` with a short timeout. Pages
+render asynchronously, and a missing anchor must not stall the tour.
+
+While a coachmark is up, driver.js makes everything except the highlighted element
+unclickable. A step that needs the researcher to use more than one control, such as the
+provider choice and key field in Settings, highlights the element that contains them all.
+Some steps open UI elsewhere, such as the skill detail modal, the model menu, the HPC
+card's popover or a file preview. So on a coachmark that waits for an action, a click inside
+the highlighted element pauses the tour: the highlight is torn down, keeping the position,
+and the page is fully usable. It is drawn again when the position changes, when an event or a
+failure is reported, or when the pathname changes. A coachmark completed by Next never pauses.
+
+Each screen's step opens with an `overview` coachmark: anchored to the page's top bar with
+the overlay's opacity at 0, so the whole screen is visible, though not clickable, until Next.
+The rail-first steps put a `visit` coachmark before it, on the rail entry. `visit` is done when
+`TourInput.pathname` is that step's page. That's one input field added to the pure function's
+input, so the arrival rule is tested with the rest.
+
+driver.js measures the popover before VISTA's buttons are in it, so the provider turns its
+animation off and calls `refresh()` after rendering. Otherwise an anchored popover sits too
+high and covers its own target.
+
+*Alternatives:*
+- Hand-rolled coachmarks: placement, scroll and resize handling, and focus handling are code
+  we would own for no product gain.
+- react-joyride: it brings its own positioning dependency and styling system, which fight
+  the theme tokens.
+
+### 4. Tour state: a nullable JSON column, and an off switch from backend config
+
+- **Storage:** `LocalSettingsTable.onboarding_tour: dict | None` holds
+  `{"status": "in_progress" | "finished" | "exited", "step": "<id>"}`. `None` means never
+  started, which is what an upgraded installation has, so it sees the tour once, as decided.
+  It is added to `LocalSettingsPublic` and `LocalSettingsUpdate`, and written through the
+  existing `PUT /settings`. A JSON column means new step ids never need a schema change.
+- **Off switch:** `Settings.onboarding_tour: bool = True`, set by
+  `VISTA_BACKEND_ONBOARDING_TOUR`, is reported read-only in `LocalSettingsPublic` as
+  `onboarding_tour_enabled`. It belongs to the backend rather than the UI build because
+  packaged UIs are prebuilt: a `NEXT_PUBLIC_*` flag would be baked in, and screencasts of a
+  package could not turn the tour off.
+
+*Alternative:* localStorage. The origin includes the UI's port, so the tour would reappear
+whenever the port changed.
+
+### 5. Settings opens through a small store
+
+`ui/lib/settings-modal.ts` exposes `openSettings(section?)`, `closeSettings()` and
+`useSettingsModal()`, the same snapshot-store pattern as `requestModelChoice` in
+`agent-settings.ts`. `NavRail` renders the modal from the store instead of from local state.
+Its cluster deep link becomes `openSettings(cluster)`. `UserSettingsModal` gains
+`initialSection?: Section`, which generalises `initialCluster` and also sets
+`pane="section"` in narrow windows.
+
+The tour calls `openSettings("agent")`, the model provider section. It sees the credential
+being saved through `refreshAgentSettings`, which the autosave already triggers.
+
+### 6. Example files go through `FilePreview`'s new `src` prop
+
+`FilePreview` gains `src?: string`. When it is set, preview and download use it instead of
+`fileUrl()`. `useCappedText` and `<img>` already work with `data:` and `blob:` URLs. The three
+examples live in `ui/lib/onboarding-examples.ts` as `ListedFile` entries plus their content
+(markdown and CSV as strings, the chart as an SVG data URL, so no binary is committed).
+
+The Files page merges them into its listing only while `tour.step === "files"`. Example rows
+carry `example: true`, which hides Download, Delete and Show in chat and shows an "Example"
+badge. Nothing is sent to the backend, so the agent never sees them. The report is markdown
+with headings and a GFM table. Markdown previews show embedded images as links, so the chart
+is its own file.
+
+### 7. The first question reuses the composer and the existing error kinds
+
+The step calls the chat page's existing prefill path, the one the openers use. Completion is a
+`turn-succeeded` event, reported where the chat page already learns that a run finished
+without error. A failure is classified from what the page already has: `refused-send`'s
+`inference_not_configured`, `holdSendWithoutModel`, or a stream error. The coachmark then
+points at the settings button or the model picker. This adds no new error classification.
+
+### 8. Rail expansion is borrowed, not saved
+
+While the tour is open, `NavRail` renders expanded and ignores its stored preference without
+writing to it. The stored `vista.navRail.collapsed.v1` is untouched, so closing the tour
+restores the researcher's choice, and ui-shell's "remember the collapse choice" is unchanged.
+
+### 9. The refined script: explain, then act, then explain what happened
+
+Trying the tour showed it zoomed in too soon (opening a cluster card went straight to one
+row). The script was reworked as a storyboard of 46 coachmarks over real screens and
+approved; the storyboard is the source of the wording and of where each one points. The
+step ids, and so the stored state, are unchanged. Only sub-steps, events and anchors change:
+
+| Step | Sub-steps (action ones in **bold**) |
+|---|---|
+| welcome | intro, sidebar |
+| project | overview, card, new, **open** |
+| model | overview, composer, panel, picker, provider, providers, **credential**, saved, **pick**, set |
+| knowledge-bases | **visit**, overview, list, **open-kb**, about, papers, add-files |
+| skills | **visit**, overview, loaded, available, **open-skill**, **detail**, load, import |
+| files | **visit**, overview, outputs, uploads, **open-chart**, chart-preview, **open-report**, review |
+| hpc | resources, **open-card**, card, check, settings |
+| first-question | **send**, **activity**, answer, finish |
+
+- The chat's overview moves from first-question to the model step, where opening a project
+  lands. Settings opens at `model:provider` and closes at `model:pick`, as before.
+- `project:overview|card|new` count as done once a project is active, so a project already
+  open still skips the step. `model:provider|providers` count as done with a credential.
+  `model:saved` ("Key saved", on the key field, which stays editable) shows only when the
+  model step was reached without one: the tour records `credential-missing` itself, and
+  Settings closes on its **Next**, not the moment a pasted key saves.
+- Events: `skill-opened` now fires when a skill's detail opens and `skill-closed` when it
+  closes; `example-image-opened` and `example-md-opened` complete their own sub-steps;
+  `turn-started` completes `send` and `turn-succeeded` completes `activity`. A failure
+  reported during the turn drops `turn-started`, so the coachmark returns to `send` and
+  points at the fix as before.
+- One element may serve two coachmarks: `tourAnchor` maps `model:set` to the picker,
+  `model:composer` to the composer, and `first-question:activity` to the panel.
+- `welcome:intro` and `first-question:finish` are centred. A coachmark may name its primary
+  button ("Start the tour", "Done"). `skills:detail` points into the open skill and does not
+  stand aside on a click inside it, since Close is the action it waits for.
+- Found trying the tour: a Next coachmark's control is look-only, and a click on it pulses
+  the coachmark (it opened Import's dialog under the overlay), except the provider cards,
+  the saved key and the file previews. `model:credential` stays up for Get a token, and
+  `model:pick` follows the picker's anchor onto its open menu.
+
+## Risks / Trade-offs
+
+- **[Anchors rot as pages change]** → `data-tour` attributes are named for the tour, so a
+  refactor keeps them. A Playwright test walks the whole tour on a fresh stack, with a fake
+  model, and fails on a missing anchor.
+- **[The tour fights other overlays]** (the model menu, the settings modal, skill detail) →
+  each step that opens an overlay highlights inside it. driver.js's `stagePadding` and
+  `popoverClass` give the modal enough z-index. Tested in e2e.
+- **[An existing researcher is interrupted mid-work after upgrading]** → accepted, as decided.
+  State-derived steps complete at once for them, and Exit is always one click.
+- **[The suggested model is wrong for the provider]** → the suggestion is read from the
+  backend's `default_model` and never hardcoded in the UI, so it follows `PROVIDER_PRESETS`.
+- **[The starter question cites nothing on a development checkout without the AI Safety
+  corpus]** → accepted (non-goal). Packages always ship the corpus.
+- **[The screencast fake backend and Playwright fixtures start fresh]** → they set
+  `onboarding_tour_enabled: false`, or the env var, in their setup. There is one task for
+  each harness.
+
+## Migration Plan
+
+Additive only: the new nullable column is added by `_add_missing_columns` on first start. No
+reset prompt. Rollback is reverting the change: an older build ignores the extra nullable
+column (`schema_check` ignores unknown nullable columns).
+
+## Open Questions
+
+- The exact wording of each coachmark. It can be settled in review of the UI without
+  changing the steps.

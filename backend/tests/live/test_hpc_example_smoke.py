@@ -17,7 +17,6 @@ import pytest
 
 pytestmark = pytest.mark.hpc
 
-ADMIN_EMAIL = "vista-test-admin@americansciencecloud.org"
 DEFAULT_BASE = "http://127.0.0.1:8001"
 CLUSTER = os.environ.get("VISTA_HPC_SMOKE_CLUSTER", "odo")
 POLL_TIMEOUT_S = float(os.environ.get("VISTA_HPC_SMOKE_TIMEOUT_S", "600"))
@@ -56,10 +55,7 @@ def hpc_http() -> httpx.Client:
     base = _base_url()
     with httpx.Client(base_url=base, timeout=120.0) as client:
         try:
-            resp = client.get(
-                "/projects",
-                headers={"X-Vista-User-Email": ADMIN_EMAIL},
-            )
+            resp = client.get("/projects")
             if resp.status_code >= 500:
                 pytest.skip(f"backend unavailable at {base}: {resp.status_code}")
         except httpx.HTTPError as exc:
@@ -79,11 +75,9 @@ def test_example_job_submits_and_reaches_terminal(hpc_http: httpx.Client) -> Non
     never gate MR merges (this test is excluded from PR CI).
     """
     project = os.environ.get("VISTA_HPC_SMOKE_PROJECT", "molten-salt")
-    headers = {"X-Vista-User-Email": ADMIN_EMAIL}
 
     submit = hpc_http.post(
         f"/projects/{project}/mcp/call",
-        headers=headers,
         json={
             "name": "submit_hpc_job",
             "arguments": {"job": "example", "cluster": CLUSTER},
@@ -107,7 +101,6 @@ def test_example_job_submits_and_reaches_terminal(hpc_http: httpx.Client) -> Non
     while time.monotonic() < deadline:
         status = hpc_http.post(
             f"/projects/{project}/mcp/call",
-            headers=headers,
             json={
                 "name": "get_hpc_job_status",
                 "arguments": {"job_id": job_id, "cluster": CLUSTER},
@@ -135,7 +128,6 @@ def test_example_job_submits_and_reaches_terminal(hpc_http: httpx.Client) -> Non
     # Best-effort output fetch — some clusters withhold outputs; record result.
     outputs = hpc_http.post(
         f"/projects/{project}/mcp/call",
-        headers=headers,
         json={
             "name": "get_hpc_job_outputs",
             "arguments": {"job_id": job_id, "cluster": CLUSTER},

@@ -87,7 +87,6 @@ class CampaignPlanner:
         session: AsyncSession,
         *,
         run_id: uuid.UUID,
-        user_id: uuid.UUID,
         candidate: dict,
         cycle: int,
         cluster: str | None = None,
@@ -107,9 +106,7 @@ class CampaignPlanner:
                 # manifest; roles that declare nothing keep the old JSON encoding.
                 script_args=render_script_args(self.manifest, spec, candidate),
             )
-            result = await subagent.dispatch(
-                session, step=step, user_id=user_id, order=order
-            )
+            result = await subagent.dispatch(session, step=step, order=order)
             job_ids.extend(result.job_ids)
         return job_ids
 

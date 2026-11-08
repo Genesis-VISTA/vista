@@ -26,7 +26,6 @@ export type PostableKind = "ASK" | "FINDING" | "RISK" | "PROPOSAL";
 export type DebateRun = {
   id: string;
   project_id: string;
-  user_id: string;
   topic: string;
   framing: string | null;
   thread_id: string;
@@ -62,7 +61,58 @@ export type DebateParticipant = {
   active: boolean;
   /** What this role was allowed to use. Empty means it had nothing to reach for. */
   granted_tools: string[];
+  /** This role's own model (`openai:<name>`); null follows the default. */
+  model: string | null;
 };
+
+export const DEBATE_ROLES = ["proposer", "reviewer", "referee"] as const;
+export type DebateRoleName = (typeof DEBATE_ROLES)[number];
+
+/** Each role's own model; null is a role on the default. */
+export type RoleModels = Record<DebateRoleName, string | null>;
+
+export const noRoleModels = (): RoleModels => ({
+  proposer: null,
+  reviewer: null,
+  referee: null,
+});
+
+/** The models a debate's roster recorded, one per role. */
+export function modelsOf(participants: DebateParticipant[]): RoleModels {
+  const models = noRoleModels();
+  for (const p of participants) {
+    if ((DEBATE_ROLES as readonly string[]).includes(p.debate_role)) {
+      models[p.debate_role as DebateRoleName] = p.model ?? null;
+    }
+  }
+  return models;
+}
+
+/** The roles with a model of their own, for opening a debate. Omitted roles use the default. */
+export function chosenModels(models: RoleModels): Partial<Record<DebateRoleName, string>> {
+  const chosen: Partial<Record<DebateRoleName, string>> = {};
+  for (const role of DEBATE_ROLES) {
+    const model = models[role];
+    if (model) chosen[role] = model;
+  }
+  return chosen;
+}
+
+/**
+ * The roles whose model differs from `original`, for continuing a debate. A
+ * role returned to the default is sent as null; an unchanged role is left out,
+ * so the backend leaves its row alone.
+ */
+export function changedModels(
+  current: RoleModels,
+  original: RoleModels
+): Partial<Record<DebateRoleName, string | null>> {
+  const changed: Partial<Record<DebateRoleName, string | null>> = {};
+  for (const role of DEBATE_ROLES) {
+    if (current[role] !== original[role]) changed[role] = current[role];
+  }
+  return changed;
+}
 
 /**
  * How much this install actually knows about where a post came from.
@@ -103,7 +153,8 @@ export type ToolUse = {
 
 export type DebatePost = {
   id: string;
-  run_id: string;
+  /** The run of this install's that wrote it; null for a human's or a peer's post. */
+  run_id: string | null;
   post_id: string;
   kind: string;
   /** What the poster said. Always their claim, from anyone. */
@@ -137,14 +188,28 @@ export type DebatePost = {
    */
   peer_votes: number;
   /**
-   * The VISTA account that wrote this, where this deployment authenticated them.
+   * Who wrote this, for a post this installation made: the name in its
+   * Settings at the time. Self-typed, not verified.
    *
    * Null on every post from outside, and that is not a gap to fill: every
    * install's operator posts as `human`, so a peer's post carries no name we
    * could believe.
    */
   authored_by: string | null;
+  /**
+   * On a forum hosted on the collaboration server: the name of the account the
+   * server recorded as pushing this post. Verified, unlike every other name on
+   * a post, because the server took it from the sign-in and not from the post.
+   * Null on a forge forum, an imported post, or one not yet read from the server.
+   */
+  pusher_name?: string | null;
   round_index: number | null;
+  /**
+   * The model that wrote this post, as resolved at the time; null for a human or
+   * peer post and for one from before it was recorded. Ours, never the poster's
+   * claim.
+   */
+  model: string | null;
   /**
    * The tools the agent called for this post.
    *
@@ -190,12 +255,139 @@ export type CommissionedRun = {
   result_collected: boolean;
 };
 
+/**
+ * A run going on in the thread right now, worked out by the backend from the
+ * thread's RUN post and the posts since: whose, how long, how far along.
+ */
+export type LiveRun = {
+  post_id: string;
+  /** Started by this install. Otherwise `origin` is that install's own claim. */
+  ours: boolean;
+  origin: string | null;
+  rounds: number;
+  posts: number;
+  started_at: string;
+  last_post_at: string;
+};
+
+/** The thread's current verdict: its latest DONE post, whoever's Referee wrote it. */
+export type ThreadVerdict = {
+  post_id: string;
+  /** Written by this install's Referee. */
+  ours: boolean;
+  sender: string;
+  /** The verdict as written out; always there. */
+  body: string;
+  /** The structured verdict, when the post carried a valid one. */
+  verdict: Verdict | null;
+};
+
+/**
+ * One thread on the project's forum, whoever opened it.
+ *
+ * The thread is shared; `run` is this install's own run in it, if it has argued
+ * there. A thread may have runs from several installs, one at a time.
+ */
+export type ForumThread = {
+  id: string;
+  thread_id: string;
+  title: string;
+  framing: string | null;
+  created_by: string;
+  /** This install opened it, and so may close it. */
+  opened_here: boolean;
+  opened_at: string;
+  /** What the forum says: open, done, blocked or closed. */
+  status: "open" | "done" | "blocked" | "closed" | string;
+  thread_missing: boolean;
+  current_verdict: ThreadVerdict | null;
+  live_run: LiveRun | null;
+  run: DebateRun | null;
+};
+
 export type DebateState = {
-  run: DebateRun;
+  thread: ForumThread;
+  /** This install's roster in the thread; empty until it has argued here. */
   participants: DebateParticipant[];
   posts: DebatePost[];
   simulations: CommissionedRun[];
 };
+
+/** Some run, this install's or another's, is arguing in the thread now. */
+export function isArguing(thread: ForumThread): boolean {
+  return thread.live_run !== null || (thread.run !== null && isActive(thread.run.status));
+}
+
+/** Whether anyone may post to the thread from here. */
+export function acceptsPosts(thread: ForumThread, posts: DebatePost[]): boolean {
+  // The CLOSED post as well as the status: the copy can lag the thread by a poll.
+  return thread.status !== "closed" && !thread.thread_missing && closedBy(posts) === null;
+}
+
+/** Whether this researcher can start rounds of their own agents in the thread now. */
+export function canContinue(thread: ForumThread, posts: DebatePost[]): boolean {
+  return acceptsPosts(thread, posts) && !isArguing(thread);
+}
+
+/** Only the install that opened a thread may close it. */
+export function canClose(thread: ForumThread, posts: DebatePost[]): boolean {
+  return thread.opened_here && acceptsPosts(thread, posts);
+}
+
+function minutesAgo(iso: string, now: number): string {
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return "";
+  const minutes = Math.max(0, Math.round((now - then) / 60_000));
+  return minutes < 1 ? "just now" : `${minutes} min ago`;
+}
+
+/**
+ * Another install's run, said from what the thread shows: whose, how many
+ * rounds, how far along. A forge forum carries no verified name, so the
+ * researcher is not named there; on a hosted one `runner` names them.
+ */
+export function liveRunLine(
+  live: LiveRun,
+  now: number = Date.now(),
+  /** The server-verified name of whoever started it (`runnerName`), when known. */
+  runner: string | null = null,
+): string {
+  const who = live.ours ? "This install is" : runner ? `${runner} is` : "Another user is";
+  const posts = live.posts === 1 ? "1 post" : `${live.posts} posts`;
+  return `${who} running ${live.rounds} ${live.rounds === 1 ? "round" : "rounds"} · ${posts} so far · last ${minutesAgo(live.last_post_at, now)}`;
+}
+
+/**
+ * The verified name of whoever started the live run, from the server's record of
+ * who pushed its RUN post; null when there is none (a forge, or not read yet).
+ */
+export function runnerName(live: LiveRun | null, posts: DebatePost[]): string | null {
+  if (!live || live.ours) return null;
+  return posts.find((p) => p.post_id === live.post_id)?.pusher_name ?? null;
+}
+
+/**
+ * The thread's state in a few words, said accurately: who closed it, whether
+ * someone is arguing, whether it reached a verdict.
+ */
+export function threadStatusLabel(thread: ForumThread, posts: DebatePost[]): string {
+  if (thread.thread_missing) return "No longer on the forum";
+  const closer = closedBy(posts);
+  if (thread.status === "closed" || closer !== null) {
+    return closer === "peer" ? "Ended by a peer" : "Ended early";
+  }
+  if (thread.run && isActive(thread.run.status)) return "Arguing";
+  if (thread.live_run) return thread.live_run.ours ? "Arguing" : "Another user is arguing";
+  if (thread.run?.status === "failed") return "Failed";
+  if (thread.status === "done") return "Concluded";
+  if (thread.status === "blocked") return "Stopped";
+  return "Open";
+}
+
+/** Posts a reader reads: RUN markers say who argued when, not what was said. */
+export function readablePosts(posts: DebatePost[]): DebatePost[] {
+  return posts.filter((post) => post.kind !== "RUN");
+}
 
 /**
  * What to tell a reader about a commissioned run, in one phrase.
@@ -242,27 +434,54 @@ export type ForumStatus = {
 
 /** Backend `PublishError`: why posts did not reach the forum. */
 export type PublishError = {
-  reason: "refused" | "unreachable" | "failed";
-  credential: "project" | "settings-github" | "settings-gitlab" | "system-git";
-  /** Git's own message. It never holds the token. */
+  /** `rule`: a hosted forum's server refused the push under one of its rules. */
+  reason: "refused" | "no_access" | "rule" | "unreachable" | "failed";
+  /** `collaboration`: the sign-in for a forum hosted on the collaboration server. */
+  credential: "settings-github" | "settings-gitlab" | "system-git" | "collaboration";
+  /** Git's own message, or for a hosted forum the server's rule or sign-in advice. It never holds the token. */
   message: string;
   at: string;
 };
 
 const CREDENTIAL_NAMES: Record<PublishError["credential"], string> = {
-  project: "This project’s forum token",
   "settings-github": "Your GitHub token from Settings",
   "settings-gitlab": "Your gitlab.com token from Settings",
   "system-git": "Your system git’s credentials",
+  collaboration: "Your collaboration sign-in",
 };
 
 const CREDENTIAL_FIXES: Record<PublishError["credential"], string> = {
-  project: "Replace or remove it in the project’s settings on the Projects page.",
-  "settings-github": "Replace it in Settings → Repositories, or give this project its own token.",
-  "settings-gitlab": "Replace it in Settings → Repositories, or give this project its own token.",
+  "settings-github": "Replace it in Settings → Repositories.",
+  "settings-gitlab": "Replace it in Settings → Repositories.",
   "system-git":
-    "Add a token in Settings → Repositories, or give this project its own token on the Projects page.",
+    "Add a token in Settings → Repositories for a github.com or gitlab.com forum; elsewhere, give your system git an SSH key or a credential helper that can push to it.",
+  collaboration:
+    "Get a new token from the server’s sign-in page and paste it under Settings → Collaboration.",
 };
+
+const HOSTED_FORUM_URL =
+  /^(.*?)\/git\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.git\/?$/i;
+
+/**
+ * The collaboration server a hosted forum's remote (`<server>/git/<id>.git`)
+ * is on, or null for any other URL. Pass `serverUrl` to require that it is
+ * that server's: a URL alone cannot say it is the configured one.
+ */
+export function hostedForumServer(
+  remote: string | null | undefined,
+  serverUrl?: string | null,
+): string | null {
+  const match = HOSTED_FORUM_URL.exec((remote ?? "").trim());
+  if (!match) return null;
+  const server = match[1];
+  if (serverUrl !== undefined && server !== (serverUrl ?? "").replace(/\/+$/, "")) return null;
+  return server;
+}
+
+/** The server's `/sign-in` page, where a token comes from (backend `sign_in_page`). */
+export function signInPageUrl(serverUrl: string): string {
+  return `${serverUrl.replace(/\/+$/, "")}/sign-in`;
+}
 
 /**
  * The page a forum's remote can be opened at in a browser, or null.
@@ -288,7 +507,32 @@ export function forumWebUrl(remote: string): string | null {
  * where to change it, or that the forum could not be reached, or git's message.
  * A refusal is never worded as "unreachable", and only a refusal names a token.
  */
-export function publishErrorNotice(error: PublishError): { headline: string; detail: string } {
+export function publishErrorNotice(
+  error: PublishError,
+  /** The collaboration server's address, for the sign-in link. */
+  serverUrl?: string | null,
+): { headline: string; detail: string; link?: { href: string; label: string } } {
+  if (error.reason === "rule") {
+    return {
+      headline: "The server refused a post under one of the forum’s rules.",
+      detail: error.message,
+    };
+  }
+  if (error.reason === "no_access") {
+    return {
+      headline: "The collaboration server turned this account away.",
+      detail: error.message,
+    };
+  }
+  if (error.reason === "refused" && error.credential === "collaboration") {
+    return {
+      headline: "The collaboration sign-in was refused by the server.",
+      detail: CREDENTIAL_FIXES.collaboration,
+      ...(serverUrl
+        ? { link: { href: signInPageUrl(serverUrl), label: "Open the sign-in page" } }
+        : {}),
+    };
+  }
   if (error.reason === "refused") {
     return {
       headline: `${CREDENTIAL_NAMES[error.credential]} ${
@@ -316,6 +560,16 @@ async function unwrap<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** A refused request's `detail` sentence, or null when the body has none. */
+async function detailOf(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.clone().json()) as { detail?: unknown };
+    return typeof body.detail === "string" ? body.detail : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchForumStatus(
   projectName: string,
   signal?: AbortSignal
@@ -324,27 +578,34 @@ export async function fetchForumStatus(
   return unwrap(await fetch(`/api/forum/status?${query}`, { signal }));
 }
 
+/** Every thread on the project's forum, newest first, whoever opened it. */
 export async function listDebates(
   projectName: string,
   signal?: AbortSignal
-): Promise<DebateRun[]> {
+): Promise<ForumThread[]> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(await fetch(`/api/debates?${params}`, { signal }));
 }
 
 export async function fetchDebate(
   projectName: string,
-  runId: string,
+  threadId: string,
   signal?: AbortSignal
 ): Promise<DebateState> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(await fetch(`/api/debates?${params}`, { signal }));
 }
 
 export async function openDebate(
   projectName: string,
-  body: { topic: string; framing?: string | null; rounds?: number | null }
-): Promise<DebateRun> {
+  body: {
+    topic: string;
+    framing?: string | null;
+    rounds?: number | null;
+    /** A model per role; a role left out uses the default. */
+    models?: Partial<Record<DebateRoleName, string>>;
+  }
+): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(
     await fetch(`/api/debates?${params}`, {
@@ -357,10 +618,10 @@ export async function openDebate(
 
 export async function postToDebate(
   projectName: string,
-  runId: string,
+  threadId: string,
   body: { body: string; kind?: PostableKind }
 ): Promise<DebatePost> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(
     await fetch(`/api/debates/posts?${params}`, {
       method: "POST",
@@ -370,31 +631,39 @@ export async function postToDebate(
   );
 }
 
+/** End a thread early. Only the install that opened it may. */
 export async function closeDebate(
   projectName: string,
-  runId: string
-): Promise<DebateRun> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
+  threadId: string
+): Promise<ForumThread> {
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(await fetch(`/api/debates/close?${params}`, { method: "POST" }));
 }
 
 /**
- * Pick a finished debate back up for more rounds, with the same roster: the
- * extra rounds post under the identities the earlier ones used.
+ * Argue a thread for more rounds with this install's own agents: its earlier
+ * roster if it has argued here, a roster of its own otherwise. Refused while
+ * any run is live in the thread.
  */
 export async function continueDebate(
   projectName: string,
-  runId: string,
-  rounds: number
-): Promise<DebateRun> {
-  const params = new URLSearchParams({ project_name: projectName, run_id: runId });
-  return unwrap(
-    await fetch(`/api/debates/continue?${params}`, {
-      method: "POST",
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ rounds }),
-    })
-  );
+  threadId: string,
+  rounds: number,
+  /** Roles to move to another model (null: back to the default); the rest keep theirs. */
+  models: Partial<Record<DebateRoleName, string | null>> = {}
+): Promise<ForumThread> {
+  const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
+  const response = await fetch(`/api/debates/continue?${params}`, {
+    method: "POST",
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ rounds, models }),
+  });
+  if (response.status === 409) {
+    // The one-run rule of a hosted forum's server: say its sentence, not JSON.
+    const detail = await detailOf(response);
+    if (detail) throw new Error(detail);
+  }
+  return unwrap<ForumThread>(response);
 }
 
 /**
@@ -415,9 +684,9 @@ export function closedBy(posts: DebatePost[]): "operator" | "peer" | null {
 }
 
 /**
- * Who wrote a post, where that is actually known: the VISTA account this
- * deployment authenticated when the post was made. Null for everything else —
- * a peer's post carries no name we could believe.
+ * Who wrote a post, where this installation wrote it and its Settings named
+ * the researcher. Null for everything else — a peer's post carries no name we
+ * could believe.
  */
 export function authorOf(post: DebatePost): string | null {
   return post.authored_by ?? null;
@@ -426,34 +695,6 @@ export function authorOf(post: DebatePost): string | null {
 /** Debate statuses that can still produce new posts. */
 export function isActive(status: DebateStatus): boolean {
   return status === "setting_up" || status === "debating";
-}
-
-/**
- * Whether a finished debate can still receive posts from outside.
- *
- * A concluded debate is not a closed thread: the agents ran out of rounds, but
- * the forum thread stays open and a peer can still object to the hypothesis —
- * which is the likeliest moment for one to, since there is finally something to
- * object to. The event stream ends at a terminal status and the UI opens none
- * for a finished run, so this is what keeps such a debate watched.
- *
- * `closed` is excluded because a closed thread takes no further posts, and a
- * thread no longer on the forum has nothing left to read.
- */
-export function watchesForPeerPosts(run: DebateRun, posts: DebatePost[]): boolean {
-  return !isActive(run.status) && acceptsPosts(run, posts);
-}
-
-/**
- * Whether anyone may post to this debate from here. A closed thread refuses
- * every post (readers would never show one written after the close), and a
- * thread no longer on the forum has nowhere to put it.
- */
-export function acceptsPosts(run: DebateRun, posts: DebatePost[]): boolean {
-  // The CLOSED post, not only the status: a debate that concluded and was then
-  // closed by a peer keeps its "converged" status, and its thread is closed all
-  // the same.
-  return run.status !== "closed" && !run.thread_missing && closedBy(posts) === null;
 }
 
 /**

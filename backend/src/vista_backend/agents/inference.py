@@ -10,12 +10,12 @@ exist, and fail with an authentication error that names the wrong host.
 
 Every agent therefore builds its model through `build_inference_model` here,
 which supplies the `provider_factory` hook so the endpoint and credential come
-from `Settings` (and, on a single-user install, from the signed-in user's
-settings row) rather than from whatever happens to be exported.
+from `Settings` (and from the installation's settings row) rather than from whatever happens to be exported.
 
 `resolve_inference_target` is the single place the precedence is decided:
 the provider the researcher chose, else the installation's own `Settings` when
-they differ from the AmSC i2 preset, else i2 (see `PROVIDER_PRESETS`). It never
+they differ from the default preset, else that preset, AmSC MAG (see
+`PROVIDER_PRESETS` and `DEFAULT_PROVIDER`). It never
 raises, because an agent must still build without a credential --
 listing a project's uploads or its MCP tools goes through the same pooled
 agent as chat, and those must keep working on an install where nothing is
@@ -25,7 +25,7 @@ paths that actually reach the model.
 
 import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -33,11 +33,12 @@ from pydantic_ai.models import Model, infer_model, parse_model_id
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.openai import OpenAIProvider
+from pydantic_ai.exceptions import ModelHTTPError
 
-from ..config import settings
+from ..config import AMSC_MAG_BASE_URL, settings
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle avoidance
-    from ..db.schemas import UserPublicWithConfig
+    from ..db.schemas import LocalSettingsPublic
 
 # Provider names that resolve to *our* configured endpoint. The wider
 # `OpenAIChatCompatibleProvider` family (deepseek, together, fireworks, ...)
@@ -48,8 +49,10 @@ _CONFIGURED_ENDPOINT_PROVIDERS = frozenset(
     {"openai", "openai-chat", "openai-responses"}
 )
 
-ProviderId = Literal["i2", "mag", "olcf", "custom"]
+ProviderId = Literal["mag", "olcf", "custom"]
 TargetSource = Literal["user", "config", "default"]
+
+DEFAULT_PROVIDER: ProviderId = "mag"
 
 
 @dataclass(frozen=True)
@@ -67,7 +70,7 @@ class ProviderPreset:
     base_url: str | None
     default_model: str | None
     key_field: str
-    """The `app_user` column holding this provider's API key."""
+    """The `local_settings` column holding this provider's API key."""
 
     @property
     def takes_url(self) -> bool:
@@ -75,22 +78,13 @@ class ProviderPreset:
 
 
 # The one definition of the providers. The interface reads these through
-# `GET /users/me/inference` rather than keeping its own copy, so a URL is
+# `GET /settings/inference` rather than keeping its own copy, so a URL is
 # never taken from the client and a default model changes in one place.
 PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
-    "i2": ProviderPreset(
-        id="i2",
-        name="AmSC i2",
-        base_url="https://api.i2-core.american-science-cloud.org",
-        default_model="claude-sonnet",
-        # The key saved before provider choice existed, which was almost
-        # always for i2.
-        key_field="inference_api_key",
-    ),
     "mag": ProviderPreset(
         id="mag",
         name="AmSC MAG",
-        base_url="https://mag.genesis.americansciencecloud.org/v1",
+        base_url=AMSC_MAG_BASE_URL,
         default_model="claude-sonnet",
         key_field="inference_mag_api_key",
     ),
@@ -189,12 +183,15 @@ def build_inference_model(
     )
 
 
-def build_model_for(user: "UserPublicWithConfig | None" = None) -> Model:
+def build_model_for(
+    local: "LocalSettingsPublic | None" = None, model: str | None = None
+) -> Model:
     """
-    Build the model for `user`, applying the precedence in
-    `resolve_inference_target`. The convenience wrapper agents use.
+    Build the model for these settings, applying the precedence in
+    `resolve_inference_target`. The convenience wrapper agents use; `model` is
+    the per-chat or per-role override.
     """
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(local, model)
     if target.model is None:
         return _no_model(target)
     return build_inference_model(
@@ -247,6 +244,58 @@ def rejected_credential_detail(model_name: str | None) -> str:
     )
 
 
+# How long a failure reason may be before it is cut, so a provider that
+# answers with a page of HTML cannot flood the conversation's note.
+RUN_FAILURE_MAX_CHARS = 500
+
+
+def describe_run_failure(exc: Exception) -> str:
+    """
+    The reason a turn failed, in words for the researcher (design decision 2).
+
+    - An exception with a researcher-facing `detail` returns that `detail`.
+    - `ModelHTTPError` names the status, the model and the provider's own
+      message where its body has one.
+    - Anything else is `str(exc)`, or the type name when that is empty.
+
+    Capped at `RUN_FAILURE_MAX_CHARS`.
+    """
+    if isinstance(
+        exc,
+        (
+            MissingInferenceCredential,
+            MissingInferenceModel,
+            RejectedInferenceCredential,
+        ),
+    ):
+        ret = exc.detail
+    elif isinstance(exc, ModelHTTPError):
+        ret = f"The provider answered {exc.status_code} for model '{exc.model_name}'"
+        if exc.body:
+            add = None
+            if isinstance(exc.body, dict):
+                if (
+                    "error" in exc.body
+                    and isinstance(exc.body["error"], dict)
+                    and "message" in exc.body["error"]
+                ):
+                    add = exc.body["error"]["message"]
+                elif "message" in exc.body:
+                    add = exc.body["message"]
+                elif "detail" in exc.body:
+                    add = exc.body["detail"]
+            elif isinstance(exc.body, str):
+                add = exc.body
+            if add:
+                ret += f": {add}"
+    else:
+        ret = str(exc)
+        if len(ret) == 0:
+            ret = type(exc).__name__
+
+    return ret[:RUN_FAILURE_MAX_CHARS]
+
+
 class MissingInferenceCredential(Exception):
     """
     No inference credential is configured, from any source.
@@ -288,6 +337,22 @@ class MissingInferenceModel(Exception):
         super().__init__(self.detail)
 
 
+class RejectedInferenceCredential(Exception):
+    """
+    The provider refused the configured credential (401/403).
+
+    Raised mid-run, once the provider has been asked, so in a conversation it
+    fails the turn and its `detail` becomes the turn's reason. The same
+    handler as `MissingInferenceCredential` answers it on the paths that call
+    the agent without a conversation.
+    """
+
+    def __init__(self, model_name: str | None) -> None:
+        self.model_name = model_name
+        self.detail = rejected_credential_detail(model_name)
+        super().__init__(self.detail)
+
+
 @dataclass(frozen=True)
 class InferenceTarget:
     """The model, endpoint, and credential one agent will actually use."""
@@ -296,11 +361,11 @@ class InferenceTarget:
     """`None` when the provider has no default and none was chosen."""
     base_url: str
     api_key: str | None
-    provider: ProviderId = "i2"
+    provider: ProviderId = DEFAULT_PROVIDER
     source: TargetSource = "default"
     """
     Where the provider came from: the researcher's choice (`user`), the
-    installation's own `Settings` (`config`), or the i2 preset (`default`).
+    installation's own `Settings` (`config`), or the default preset (`default`).
     """
     model_is_default: bool = False
     """Whether `model` is the provider's default rather than a chosen one."""
@@ -334,41 +399,57 @@ class InferenceTarget:
         return bool(self.api_key)
 
 
-def _differs_from_i2() -> bool:
-    """Whether `Settings` names a target other than the i2 preset's."""
-    i2 = PROVIDER_PRESETS["i2"]
-    assert i2.base_url is not None and i2.default_model is not None
+def _differs_from_default() -> bool:
+    """Whether `Settings` names a target other than the default preset's."""
+    default = PROVIDER_PRESETS[DEFAULT_PROVIDER]
+    assert default.base_url is not None and default.default_model is not None
     return (
-        settings.openai_base_url.rstrip("/") != i2.base_url.rstrip("/")
-        or settings.model.removeprefix("openai:") != i2.default_model
+        settings.openai_base_url.rstrip("/") != default.base_url.rstrip("/")
+        or settings.model.removeprefix("openai:") != default.default_model
     )
 
 
 def resolve_inference_target(
-    user: "UserPublicWithConfig | None" = None,
+    local: "LocalSettingsPublic | None" = None,
+    model: str | None = None,
 ) -> InferenceTarget:
     """
     Decide which model, endpoint, and credential to use.
 
+    `model` is a `provider:name` override -- a chat's or a debate role's own
+    choice. It replaces the row's model and the provider's default; provider,
+    endpoint and key still come from the researcher's settings, so it can name
+    a model on a provider that has no default.
+
     1. The row names a provider: that preset's URL (Custom: the row's
        `inference_base_url`), that provider's key, and the row's model, else
-       the preset's default -- possibly none. i2's key falls back to
-       `Settings.openai_api_key`.
-    2. No provider, and `Settings` differs from the i2 preset: `Settings`, as
+       the preset's default -- possibly none. The default provider's key falls
+       back to `Settings.openai_api_key`.
+    2. No provider, and `Settings` differs from the default preset: `Settings`, as
        before providers existed, reported as Custom from configuration. The
        row's model and key still win over it, as they always have; its
        `inference_base_url` is Custom's endpoint and is not used here.
-    3. Otherwise i2, with the row's `inference_api_key` (the key saved before
-       providers existed), else `Settings.openai_api_key`.
+    3. Otherwise the default preset, with its own key from the row, else
+       `Settings.openai_api_key`. The row's `inference_api_key`, the key saved
+       before providers existed, is used only in step 2: it is not the default
+       provider's credential.
 
-    The row wins where it speaks because on a single-user install it is the
-    only surface a researcher can reach without editing files.
+    The row wins where it speaks because it is the only surface a researcher
+    can reach without editing files.
 
     Never raises: see the module docstring.
     """
+    target = _resolve_from_settings(local)
+    if model is None:
+        return target
+    return replace(target, model=model, model_is_default=False)
 
+
+def _resolve_from_settings(
+    local: "LocalSettingsPublic | None",
+) -> InferenceTarget:
     def row(field: str) -> str | None:
-        return getattr(user, field, None) if user else None
+        return getattr(local, field, None) if local else None
 
     env_key = (
         settings.openai_api_key.get_secret_value() if settings.openai_api_key else None
@@ -380,7 +461,7 @@ def resolve_inference_target(
         preset = PROVIDER_PRESETS[provider]  # type: ignore[index]
         default = _qualify(preset.default_model) if preset.default_model else None
         key = row(preset.key_field)
-        if preset.id == "i2":
+        if preset.id == DEFAULT_PROVIDER:
             key = key or env_key
         return InferenceTarget(
             model=row_model or default,
@@ -391,7 +472,7 @@ def resolve_inference_target(
             model_is_default=row_model is None and default is not None,
         )
 
-    if _differs_from_i2():
+    if _differs_from_default():
         return InferenceTarget(
             model=row_model or settings.model,
             base_url=settings.openai_base_url,
@@ -401,26 +482,26 @@ def resolve_inference_target(
             model_is_default=row_model is None,
         )
 
-    i2 = PROVIDER_PRESETS["i2"]
-    assert i2.base_url is not None and i2.default_model is not None
+    default = PROVIDER_PRESETS[DEFAULT_PROVIDER]
+    assert default.base_url is not None and default.default_model is not None
     return InferenceTarget(
-        model=row_model or _qualify(i2.default_model),
-        base_url=i2.base_url,
-        api_key=row("inference_api_key") or env_key,
-        provider="i2",
+        model=row_model or _qualify(default.default_model),
+        base_url=default.base_url,
+        api_key=row(default.key_field) or env_key,
+        provider=DEFAULT_PROVIDER,
         source="default",
         model_is_default=row_model is None,
     )
 
 
-def citation_credentials(user=None):
+def citation_credentials(local=None):
     """
     The inference credential for citation extraction, as `build_rag` wants it.
 
     Citation extraction lives in `build_rag`, which resolves its LLM from the
     process environment. That cannot see a key entered in the settings modal --
-    it is encrypted in the user's row, and this module is what resolves it --
-    so a user-created knowledge base would index its text and silently get no
+    it is encrypted in the settings row, and this module is what resolves it --
+    so a researcher's own knowledge base would index its text and silently get no
     titles, authors, or DOIs. Callers pass the result of this down to the
     indexer instead.
 
@@ -433,7 +514,7 @@ def citation_credentials(user=None):
     _get_text_rag_cls()  # puts the repo root on sys.path
     from build_rag import LLMCredentials  # type: ignore[import-not-found]
 
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(local)
     if target.model is None:
         # Extraction would have to guess a model the provider may not serve.
         # `disabled` stops the indexer falling back to the environment's
@@ -451,7 +532,7 @@ def citation_credentials(user=None):
 
 
 def require_inference_credential(
-    user: "UserPublicWithConfig | None" = None,
+    local: "LocalSettingsPublic | None" = None, model: str | None = None
 ) -> InferenceTarget:
     """
     Resolve the target and refuse to continue without a credential or a model.
@@ -461,7 +542,7 @@ def require_inference_credential(
     arrives after the status line, where it can only surface as a broken
     stream.
     """
-    target = resolve_inference_target(user)
+    target = resolve_inference_target(local, model)
     if target.uses_configured_endpoint and not target.has_credential:
         raise MissingInferenceCredential(target.model, target.base_url)
     if target.model is None:

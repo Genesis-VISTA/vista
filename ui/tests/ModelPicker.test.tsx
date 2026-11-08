@@ -1,7 +1,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useState } from "react";
 import { ModelPicker } from "@/components/ModelPicker";
+import { RoleModelSelects } from "@/components/RoleModelSelects";
+import { noRoleModels } from "@/lib/debates";
 import {
   holdSendWithoutModel,
   refreshAgentSettings,
@@ -18,8 +21,15 @@ import type { Project } from "@/lib/projects";
 const { useActiveProjectMock } = vi.hoisted(() => ({ useActiveProjectMock: vi.fn() }));
 vi.mock("@/lib/projects", () => ({ useActiveProject: useActiveProjectMock }));
 
-const { updateCurrentUserMock } = vi.hoisted(() => ({ updateCurrentUserMock: vi.fn() }));
-vi.mock("@/lib/user", () => ({ updateCurrentUser: updateCurrentUserMock }));
+const { updateSettingsMock } = vi.hoisted(() => ({ updateSettingsMock: vi.fn() }));
+vi.mock("@/lib/settings", () => ({ updateSettings: updateSettingsMock }));
+
+const { savePersistedChatSessionMock } = vi.hoisted(() => ({
+  savePersistedChatSessionMock: vi.fn(),
+}));
+vi.mock("@/lib/chat-session", () => ({
+  savePersistedChatSession: savePersistedChatSessionMock,
+}));
 
 const PROJECT: Project = {
   id: "p1",
@@ -29,14 +39,16 @@ const PROJECT: Project = {
   skills: [],
   knowledgeBases: [],
   forumRepoUrl: "",
-  hasForumToken: false,
   tools: [],
   usageLimits: {},
+  originServer: null,
+  remoteId: null,
+  remoteVersion: null,
+  modified: true,
 };
 
 const PROVIDERS = [
-  { id: "i2", name: "AmSC i2", takes_url: false, default_model: "claude-sonnet" },
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: null },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
@@ -44,25 +56,27 @@ const PROVIDERS = [
 function view(overrides: Record<string, unknown> = {}) {
   return {
     providers: PROVIDERS,
-    provider: "i2",
+    provider: "mag",
     source: "default",
-    base_url: "https://api.i2-core.american-science-cloud.org",
+    base_url: "https://mag.genesis.americansciencecloud.org/v1",
     model: "openai:claude-sonnet",
     model_is_default: true,
     has_credential: true,
-    keys_set: { i2: true, mag: false, olcf: false, custom: false },
+    keys_set: { mag: true, olcf: false, custom: false },
+    config_key_set: false,
     ...overrides,
   };
 }
 
 const CHOSEN_OPUS = { model: "openai:claude-opus", model_is_default: false };
-const MAG_NO_MODEL = {
-  provider: "mag",
+/** Custom with no model chosen: the one provider that has no default. */
+const CUSTOM_NO_MODEL = {
+  provider: "custom",
   source: "user",
-  base_url: "https://mag.genesis.americansciencecloud.org/v1",
+  base_url: "https://custom.example/v1",
   model: null,
   model_is_default: false,
-  keys_set: { i2: true, mag: true, olcf: false, custom: false },
+  keys_set: { mag: true, olcf: false, custom: true },
 };
 
 let inference: Record<string, unknown>;
@@ -91,15 +105,22 @@ beforeEach(() => {
     },
   };
   modelFetches = 0;
-  updateCurrentUserMock.mockReset();
-  updateCurrentUserMock.mockImplementation(async (update: { inference_model: string }) => {
+  updateSettingsMock.mockReset();
+  savePersistedChatSessionMock.mockReset();
+  savePersistedChatSessionMock.mockImplementation(
+    async (_project: string, update: { inferenceModel: string | null }) => ({
+      id: "c1",
+      inference_model: update.inferenceModel,
+    }),
+  );
+  updateSettingsMock.mockImplementation(async (update: { inference_model: string }) => {
     inference = { ...inference, model: update.inference_model, model_is_default: false };
     return {};
   });
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string) => {
-      if (url === "/api/users/me/inference") return json(200, inference);
+      if (url === "/api/settings/inference") return json(200, inference);
       if (url === "/api/projects/molten-salt/models") {
         modelFetches++;
         return json(models.status, models.body);
@@ -132,7 +153,7 @@ describe("ModelPicker label", () => {
   });
 
   it("says there is no model on a provider without a default", async () => {
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     render(<ModelPicker />);
     expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
   });
@@ -142,10 +163,10 @@ describe("ModelPicker label", () => {
     render(<ModelPicker />);
     expect(
       await screen.findByRole("button", {
-        name: /Model: retired-model, not listed by AmSC i2/,
+        name: /Model: retired-model, not listed by AmSC MAG/,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText("not listed by AmSC i2")).toBeInTheDocument();
+    expect(screen.getByText("not listed by AmSC MAG")).toBeInTheDocument();
   });
 
   it("follows a provider change without a remount, and refetches the list", async () => {
@@ -156,7 +177,7 @@ describe("ModelPicker label", () => {
 
     // What Settings does after saving a provider: the backend has cleared
     // the model, and Settings refreshes the shared store.
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     await act(() => refreshAgentSettings());
 
     expect(await screen.findByRole("button", { name: /Model: No model/ })).toBeInTheDocument();
@@ -189,7 +210,7 @@ describe("ModelPicker menu", () => {
     await openPicker();
     await userEvent.click(await screen.findByRole("option", { name: "claude-opus" }));
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
     expect(await screen.findByRole("button", { name: /^Model: claude-opus\. / })).toBeInTheDocument();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -201,7 +222,7 @@ describe("ModelPicker menu", () => {
     await userEvent.type(screen.getByLabelText("Model name"), "anthropic.claude-sonnet-v1:0");
     await userEvent.click(screen.getByRole("button", { name: "Use" }));
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({
+    expect(updateSettingsMock).toHaveBeenCalledWith({
       inference_model: "openai:anthropic.claude-sonnet-v1:0",
     });
     expect(
@@ -259,7 +280,7 @@ describe("ModelPicker menu", () => {
     await openPicker();
     await userEvent.type(await screen.findByRole("searchbox"), "claude{Enter}");
 
-    expect(updateCurrentUserMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
+    expect(updateSettingsMock).toHaveBeenCalledWith({ inference_model: "openai:claude-opus" });
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
@@ -307,7 +328,7 @@ describe("ModelPicker menu", () => {
 
 describe("sending without a model", () => {
   it("holds the send and opens the picker asking for a model", async () => {
-    inference = view(MAG_NO_MODEL);
+    inference = view(CUSTOM_NO_MODEL);
     render(<ModelPicker />);
     await screen.findByRole("button", { name: /Model: No model/ });
 
@@ -318,7 +339,7 @@ describe("sending without a model", () => {
 
     expect(held).toBe(true);
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Choose a model first. AmSC MAG has no default model.",
+      "Choose a model first. Custom has no default model.",
     );
     expect(screen.getByRole("listbox")).toBeInTheDocument();
   });
@@ -328,5 +349,159 @@ describe("sending without a model", () => {
     await screen.findByRole("button", { name: /Default/ });
     expect(holdSendWithoutModel()).toBe(false);
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+});
+
+describe("ModelPicker in a chat", () => {
+  /** The page's side of it: it holds the chat's model and hears of a change. */
+  function OpenChat({ initial = null }: { initial?: string | null }) {
+    const [model, setModel] = useState<string | null>(initial);
+    return <ModelPicker chat={{ id: "c1", model, onModelChange: setModel }} />;
+  }
+
+  it("follows the default without saying 'this chat'", async () => {
+    render(<OpenChat />);
+    expect(
+      await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the chat's own model with '· this chat'", async () => {
+    inference = view(CHOSEN_OPUS);
+    render(<OpenChat initial="openai:claude-sonnet" />);
+    expect(
+      await screen.findByRole("button", { name: /^Model: claude-sonnet · this chat\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers 'Use default' only while the chat has a model of its own", async () => {
+    const { unmount } = render(<OpenChat />);
+    await openPicker();
+    expect(screen.queryByRole("button", { name: /Use default/ })).not.toBeInTheDocument();
+    unmount();
+
+    render(<OpenChat initial="openai:claude-opus" />);
+    await openPicker();
+    expect(screen.getByRole("button", { name: "Use default (claude-sonnet)" })).toBeInTheDocument();
+  });
+
+  it("selecting a model patches the chat and leaves the default alone", async () => {
+    render(<OpenChat />);
+    await openPicker();
+    await userEvent.click(await screen.findByRole("option", { name: /claude-opus/ }));
+
+    await waitFor(() =>
+      expect(savePersistedChatSessionMock).toHaveBeenCalledWith("molten-salt", {
+        chatSessionId: "c1",
+        inferenceModel: "openai:claude-opus",
+      }),
+    );
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("button", { name: /^Model: claude-opus · this chat\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("clearing the chat's model restores 'Default (<model>)'", async () => {
+    render(<OpenChat initial="openai:claude-opus" />);
+    await openPicker();
+    await userEvent.click(screen.getByRole("button", { name: "Use default (claude-sonnet)" }));
+
+    await waitFor(() =>
+      expect(savePersistedChatSessionMock).toHaveBeenCalledWith("molten-salt", {
+        chatSessionId: "c1",
+        inferenceModel: null,
+      }),
+    );
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("a held send is answered by choosing a model for the chat", async () => {
+    inference = view(CUSTOM_NO_MODEL);
+    render(<OpenChat />);
+    await screen.findByRole("button", { name: /Model: No model/ });
+
+    act(() => {
+      holdSendWithoutModel(null);
+    });
+    await userEvent.click(await screen.findByRole("option", { name: /claude-opus/ }));
+
+    await waitFor(() => expect(savePersistedChatSessionMock).toHaveBeenCalled());
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(holdSendWithoutModel("openai:claude-opus")).toBe(false);
+  });
+
+  /**
+   * The page's shape around a slow save: one model state for whichever chat is
+   * open, a conversation list between chats, and A's save still in flight.
+   */
+  function Chats() {
+    const [open, setOpen] = useState<string | null>("A");
+    const [model, setModel] = useState<string | null>(null);
+    const show = (id: string | null) => {
+      setOpen(id);
+      setModel(null); // the page's hydration: the next chat follows the default
+    };
+    return (
+      <>
+        <button onClick={() => show("B")}>open chat B</button>
+        <button onClick={() => show(null)}>back to the list</button>
+        <output data-testid="open">{`${open}:${model ?? "default"}`}</output>
+        <ModelPicker
+          chat={open ? { id: open, model, onModelChange: setModel } : undefined}
+        />
+      </>
+    );
+  }
+
+  async function chooseOpusAndHoldTheSave() {
+    let finish!: (row: { id: string; inference_model: string }) => void;
+    savePersistedChatSessionMock.mockImplementation(
+      () => new Promise((resolve) => (finish = resolve)),
+    );
+    render(<Chats />);
+    await openPicker();
+    await userEvent.click(await screen.findByRole("option", { name: /claude-opus/ }));
+    expect(savePersistedChatSessionMock).toHaveBeenCalledWith("molten-salt", {
+      chatSessionId: "A",
+      inferenceModel: "openai:claude-opus",
+    });
+    return () => act(async () => finish({ id: "A", inference_model: "openai:claude-opus" }));
+  }
+
+  it("a save that returns after another chat opened leaves that chat alone", async () => {
+    const release = await chooseOpusAndHoldTheSave();
+    await userEvent.click(screen.getByRole("button", { name: "open chat B" }));
+    await release();
+
+    expect(screen.getByTestId("open")).toHaveTextContent("B:default");
+    expect(
+      screen.getByRole("button", { name: /^Model: Default \(claude-sonnet\)\. / }),
+    ).toBeInTheDocument();
+  });
+
+  it("so does one that returns after a trip through the conversation list", async () => {
+    const release = await chooseOpusAndHoldTheSave();
+    await userEvent.click(screen.getByRole("button", { name: "back to the list" }));
+    await userEvent.click(screen.getByRole("button", { name: "open chat B" }));
+    await release();
+
+    expect(screen.getByTestId("open")).toHaveTextContent("B:default");
+  });
+});
+
+describe("RoleModelSelects", () => {
+  it("lists the models once for its three menus", async () => {
+    render(<RoleModelSelects value={noRoleModels()} onChange={() => {}} />);
+    await screen.findByRole("button", { name: /^Referee model: Default \(claude-sonnet\)/ });
+    await waitFor(() => expect(modelFetches).toBe(1));
+
+    // Opening one refreshes the shared list, once.
+    await userEvent.click(screen.getByRole("button", { name: /^Reviewer model: / }));
+    expect(await screen.findByRole("option", { name: /claude-opus/ })).toBeInTheDocument();
+    expect(modelFetches).toBe(2);
   });
 });

@@ -31,6 +31,8 @@ fallbacks but log a deprecation warning the first time they're used.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+import csv
+import io
 import json
 import logging
 import os
@@ -159,6 +161,76 @@ CITATION_QUERY_INSTRUCTION = (
 def query_prompt(instruction: str) -> str:
     """Wrap a task description in the format the encoder was trained on."""
     return f"Instruct: {instruction.strip()}\nQuery: "
+
+
+# ---------------------------------------------------------------------------
+# Embedding model
+# ---------------------------------------------------------------------------
+# Ungated (MIT) and 640-dimension. Kept byte-identical to
+# `vista_mcp_server.config.Settings.rag_model`, which is the *query* encoder:
+# a Chroma collection locks to the dimension of its first insert, so the two
+# names must never diverge. Change one, change the other.
+TEXT_MODEL = "microsoft/harrier-oss-v1-270m"
+# The Hugging Face commit of `TEXT_MODEL`, kept byte-identical to
+# `Settings.rag_model_revision` for the same reason: a store embedded with one
+# snapshot is queried with the other. A published knowledge base records both,
+# and an import refuses a store embedded with anything else.
+TEXT_MODEL_REVISION = "31de22b673913c7d658c0f03f792d77c2dcf8ebd"
+
+
+# ---------------------------------------------------------------------------
+# BM25 corpus
+# ---------------------------------------------------------------------------
+# The lexical half of hybrid retrieval (`vista_mcp_server.bm25`), written next
+# to each ChromaDB store. Format v1 of `BM25Okapi.to_dict`, without the
+# optional `tokens`: the MCP server tokenizes each chunk itself when it loads
+# the file, so the tokenizer exists in one place only and the backend, which
+# cannot import the MCP server's package, writes the same file.
+BM25_CORPUS_FILENAME = "bm25_corpus.json"
+
+
+def write_bm25_corpus(text_collection: Any, db_path: str | Path) -> int | None:
+    """
+    Write `<db_path>/bm25_corpus.json` from every chunk in `text_collection`,
+    replacing the file in one step so a reader never sees half of it. An empty
+    collection removes the file. Returns the number of chunks written, or None
+    when the collection could not be read or the file not written (logged:
+    hybrid retrieval then degrades to vector-only for this store).
+    """
+    path = Path(db_path) / BM25_CORPUS_FILENAME
+    try:
+        raw = text_collection.get(include=["documents"])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("BM25: could not read text_chunks for corpus build: %s", exc)
+        return None
+    ids = raw.get("ids") or []
+    docs = raw.get("documents") or []
+    if len(ids) != len(docs):
+        log.warning(
+            "BM25: text_chunks is malformed (ids=%d docs=%d); skipping corpus build",
+            len(ids), len(docs),
+        )
+        return None
+    try:
+        if not ids:
+            path.unlink(missing_ok=True)
+            return 0
+        payload = {
+            "version": 1,
+            "k1": 1.5,
+            "b": 0.75,
+            "documents": [
+                {"id": str(i), "text": str(d or "")} for i, d in zip(ids, docs)
+            ],
+        }
+        tmp = path.with_name(f".{path.name}.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError as exc:
+        log.warning("BM25: could not write corpus to %s: %s", path, exc)
+        return None
+    log.info("BM25: wrote corpus to %s (%d chunks)", path, len(ids))
+    return len(ids)
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +795,252 @@ def parse_citation_json(raw: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Per-format extraction
+# ---------------------------------------------------------------------------
+# One extractor per file format, chosen by lowercase suffix. Each takes a path
+# (and an optional description, used only by tables) and returns passages of
+# the shape `{"text": str, "metadata": {...}}`. The extractors are plain
+# functions: they need neither the embedding model nor Chroma.
+#
+# Metadata common to every passage: `source` (file name), `type` ("text"),
+# `kind` ("pdf" | "csv" | "tsv" | "text" | "markdown") and `chunk_id`. The
+# location field is `page` for PDFs, `rows` for tables ("summary" or "51-100",
+# 1-based inclusive data-row numbers) and just `chunk_id` for text.
+
+TEXT_CHUNK_WORDS = 512
+TEXT_CHUNK_OVERLAP = 50
+CSV_WINDOW_ROWS = 50          # data rows per window
+CSV_MAX_WINDOWS = 200         # windows indexed per file; later rows are only counted
+CSV_SUMMARY_SAMPLE_ROWS = 5
+CSV_MAX_SUMMARY_COLUMNS = 30  # columns listed in full in the summary
+DESCRIPTION_TEXT_WORDS = 2000  # text sent to the description call for txt/md
+
+DESCRIPTION_PROMPT = """\
+Below is {what} named "{filename}". In 1 to 3 plain sentences, describe what \
+it contains and what it could be used for. Do not invent details that are not \
+in the text. Reply with the description only.
+
+--- BEGIN ---
+{text}
+--- END ---
+"""
+
+
+def chunk_words(
+    text: str,
+    chunk_size: int = TEXT_CHUNK_WORDS,
+    overlap: int = TEXT_CHUNK_OVERLAP,
+) -> List[str]:
+    """Split `text` into overlapping windows of `chunk_size` words."""
+    words = text.split()
+    chunks = []
+    for i in range(0, len(words), chunk_size - overlap):
+        chunk = " ".join(words[i : i + chunk_size])
+        if chunk.strip():
+            chunks.append(chunk)
+    return chunks
+
+
+def _truncate_words(text: str, limit: int = TEXT_CHUNK_WORDS) -> str:
+    """Keep whole leading lines of `text` while they fit in `limit` words."""
+    out: list[str] = []
+    used = 0
+    for line in text.split("\n"):
+        words = line.split()
+        if used + len(words) > limit:
+            remaining = limit - used
+            if remaining > 0 and words:
+                out.append(" ".join(words[:remaining]))
+            break
+        out.append(line)
+        used += len(words)
+    return "\n".join(out)
+
+
+def _extract_pdf(path: Path, description: Optional[str] = None) -> List[Dict[str, Any]]:
+    """PDF pages, chunked: metadata `{source, page, chunk_id, kind, type}`."""
+    doc = fitz.open(path)
+    passages: List[Dict[str, Any]] = []
+    try:
+        for page_num in range(len(doc)):
+            text = doc[page_num].get_text()
+            for idx, chunk in enumerate(chunk_words(text)):
+                passages.append({
+                    "text": chunk,
+                    "metadata": {
+                        "source": path.name,
+                        "page": page_num,
+                        "chunk_id": idx,
+                        "type": "text",
+                        "kind": "pdf",
+                    },
+                })
+    finally:
+        doc.close()
+    return passages
+
+
+def read_text_file(path: Path) -> str:
+    """Read a text file as UTF-8, tolerating a BOM and bad bytes."""
+    return path.read_text(encoding="utf-8-sig", errors="replace")
+
+
+def _extract_text_file(
+    path: Path, description: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """TXT / MD: word chunks, metadata `{source, kind, chunk_id, type}`."""
+    kind = "markdown" if path.suffix.lower() == ".md" else "text"
+    return [
+        {
+            "text": chunk,
+            "metadata": {
+                "source": path.name,
+                "chunk_id": idx,
+                "type": "text",
+                "kind": kind,
+            },
+        }
+        for idx, chunk in enumerate(chunk_words(read_text_file(path)))
+    ]
+
+
+@dataclass
+class _Table:
+    columns: List[str]
+    types: List[str]
+    rows: List[List[str]]   # at most CSV_WINDOW_ROWS * CSV_MAX_WINDOWS
+    row_count: int          # every data row in the file
+    delimiter: str
+
+
+def _infer_type(values: List[str]) -> str:
+    """int, then float, otherwise text; blanks are ignored."""
+    present = [v.strip() for v in values if v.strip()]
+    if not present:
+        return "text"
+    for caster, name in ((int, "int"), (float, "float")):
+        try:
+            for v in present:
+                caster(v)
+            return name
+        except ValueError:
+            continue
+    return "text"
+
+
+def _read_table(path: Path) -> _Table:
+    fallback = "\t" if path.suffix.lower() == ".tsv" else ","
+    keep = CSV_WINDOW_ROWS * CSV_MAX_WINDOWS
+    with open(path, encoding="utf-8-sig", errors="replace", newline="") as f:
+        sample = f.read(8192)
+        try:
+            delimiter = csv.Sniffer().sniff(sample, delimiters=",\t;|").delimiter
+        except csv.Error:
+            delimiter = fallback
+        f.seek(0)
+        reader = csv.reader(f, delimiter=delimiter)
+        columns: List[str] = []
+        rows: List[List[str]] = []
+        count = 0
+        for rec in reader:
+            if not rec or not any(c.strip() for c in rec):
+                continue
+            if not columns:
+                columns = [c.strip() for c in rec]
+                continue
+            count += 1
+            if len(rows) < keep:
+                rows.append(rec)
+    types = [
+        _infer_type([r[i] for r in rows if i < len(r)]) for i in range(len(columns))
+    ]
+    return _Table(columns, types, rows, count, delimiter)
+
+
+def _render_rows(rows: List[List[str]], delimiter: str) -> str:
+    buf = io.StringIO()
+    csv.writer(buf, delimiter=delimiter, lineterminator="\n").writerows(rows)
+    return buf.getvalue().rstrip("\n")
+
+
+def _extract_table(path: Path, description: Optional[str] = None) -> List[Dict[str, Any]]:
+    """CSV / TSV: one summary passage, then header-prefixed row windows."""
+    kind = "tsv" if path.suffix.lower() == ".tsv" else "csv"
+    table = _read_table(path)
+    base = {"source": path.name, "type": "text", "kind": kind}
+
+    shown = list(zip(table.columns, table.types))[:CSV_MAX_SUMMARY_COLUMNS]
+    col_line = ", ".join(f"{n} ({t})" for n, t in shown)
+    extra = len(table.columns) - len(shown)
+    if extra > 0:
+        col_line += f", and {extra} more columns"
+    head = [
+        f"File: {path.name} ({kind.upper()} table)",
+        f"Columns ({len(table.columns)}): {col_line}",
+        f"Data rows: {table.row_count}",
+    ]
+    if description:
+        head.append(f"Description: {description}")
+    if table.row_count > len(table.rows):
+        head.append(
+            f"Note: only the first {len(table.rows)} rows are indexed for search; "
+            f"the file has {table.row_count} data rows in total."
+        )
+    sample = _render_rows(
+        [table.columns] + table.rows[:CSV_SUMMARY_SAMPLE_ROWS], table.delimiter
+    )
+    head_text = "\n".join(head)
+    budget = max(0, TEXT_CHUNK_WORDS - len(head_text.split()) - 6)
+    summary = (
+        f"{head_text}\nFirst {CSV_SUMMARY_SAMPLE_ROWS} rows:\n"
+        + _truncate_words(sample, budget)
+    )
+    passages: List[Dict[str, Any]] = [{
+        "text": summary,
+        "metadata": {
+            **base, "rows": "summary", "chunk_id": 0, "row_count": table.row_count,
+        },
+    }]
+    for w, start in enumerate(range(0, len(table.rows), CSV_WINDOW_ROWS), start=1):
+        window = table.rows[start : start + CSV_WINDOW_ROWS]
+        text = _truncate_words(_render_rows([table.columns] + window, table.delimiter))
+        passages.append({
+            "text": text,
+            "metadata": {
+                **base,
+                "rows": f"{start + 1}-{start + len(window)}",
+                "chunk_id": w,
+            },
+        })
+    return passages
+
+
+# Suffix (lowercase) -> extractor. This is the one list of formats VISTA accepts
+# into a knowledge base; the backend imports `ACCEPTED_SUFFIXES` from here.
+FORMAT_EXTRACTORS: Dict[str, Any] = {
+    ".pdf": _extract_pdf,
+    ".csv": _extract_table,
+    ".tsv": _extract_table,
+    ".txt": _extract_text_file,
+    ".md": _extract_text_file,
+}
+ACCEPTED_SUFFIXES: tuple[str, ...] = tuple(FORMAT_EXTRACTORS)
+
+# Citation-row `record` value for files that carry a description, not a citation.
+SUFFIX_KIND = {
+    ".pdf": "pdf", ".csv": "csv", ".tsv": "tsv", ".txt": "text", ".md": "markdown",
+}
+DESCRIPTION_RECORDS = {
+    "csv": "dataset", "tsv": "dataset", "text": "note", "markdown": "note",
+}
+
+
+def extractor_for(path: Path):
+    """The extractor for `path`'s suffix (case-insensitive), or None."""
+    return FORMAT_EXTRACTORS.get(Path(path).suffix.lower())
+
+
+# ---------------------------------------------------------------------------
 # TextRAG
 # ---------------------------------------------------------------------------
 class TextRAG:
@@ -730,16 +1048,9 @@ class TextRAG:
         self,
         pdf_folder: str,
         db_path: str = "./chroma_db",
-        # Ungated (MIT) and 640-dimension. Kept byte-identical to
-        # `vista_mcp_server.config.Settings.rag_model`, which is the *query*
-        # encoder: a Chroma collection locks to the dimension of its first
-        # insert, so the two names must never diverge. Change one, change
-        # the other.
-        text_model: str = "microsoft/harrier-oss-v1-270m",
-        # The Hugging Face commit of `text_model`, kept byte-identical to
-        # `Settings.rag_model_revision` for the same reason: a store embedded
-        # with one snapshot is queried with the other.
-        text_model_revision: str = "31de22b673913c7d658c0f03f792d77c2dcf8ebd",
+        # See `TEXT_MODEL` and `TEXT_MODEL_REVISION` above.
+        text_model: str = TEXT_MODEL,
+        text_model_revision: str = TEXT_MODEL_REVISION,
         force_reindex: bool = False,
         extract_citations: bool = True,
         citation_max_pages: int = 5,
@@ -845,24 +1156,7 @@ class TextRAG:
     # ------------------------------------------------------------------
     def extract_text_from_pdf(self, pdf_path: Path) -> List[Dict[str, Any]]:
         """Extract text chunks from entire PDF with metadata."""
-        doc = fitz.open(pdf_path)
-        text_chunks = []
-        for page_num in range(len(doc)):
-            page = doc[page_num]
-            text = page.get_text()
-            chunks = self._chunk_text(text, chunk_size=512, overlap=50)
-            for idx, chunk in enumerate(chunks):
-                text_chunks.append({
-                    "text": chunk,
-                    "metadata": {
-                        "source": pdf_path.name,
-                        "page": page_num,
-                        "chunk_id": idx,
-                        "type": "text",
-                    },
-                })
-        doc.close()
-        return text_chunks
+        return _extract_pdf(Path(pdf_path))
 
     def _extract_front_matter_text(self, pdf_path: Path) -> str:
         """Extract text from the first few pages for citation extraction."""
@@ -877,13 +1171,7 @@ class TextRAG:
 
     @staticmethod
     def _chunk_text(text: str, chunk_size: int = 512, overlap: int = 50) -> List[str]:
-        words = text.split()
-        chunks = []
-        for i in range(0, len(words), chunk_size - overlap):
-            chunk = " ".join(words[i : i + chunk_size])
-            if chunk.strip():
-                chunks.append(chunk)
-        return chunks
+        return chunk_words(text, chunk_size, overlap)
 
     # ------------------------------------------------------------------
     # Citation extraction via Azure OpenAI
@@ -956,6 +1244,29 @@ class TextRAG:
         return parsed
 
     # ------------------------------------------------------------------
+    # Description for non-PDF files
+    # ------------------------------------------------------------------
+    def _describe_file(self, path: Path, kind: str, text: str) -> Optional[str]:
+        """
+        One LLM call: a 1-3 sentence plain description of a CSV/TSV/TXT/MD
+        file, through the same provider resolution and reasoning-model
+        fallback as citations. Returns None when the model gives nothing.
+        """
+        what = "the summary of a table" if kind in ("csv", "tsv") else "a text file"
+        prompt = DESCRIPTION_PROMPT.format(what=what, filename=path.name, text=text)
+        raw = send_prompt_to_chatgpt(
+            prompt, max_tokens=4096, credentials=self.llm_credentials
+        )
+        description = " ".join((raw or "").split())
+        return description[:1000] or None
+
+    def _descriptions_enabled(self) -> bool:
+        creds = self.llm_credentials
+        return bool(self.extract_citations) and not (
+            creds is not None and creds.disabled
+        )
+
+    # ------------------------------------------------------------------
     # Embedding
     # ------------------------------------------------------------------
     def embed_text(
@@ -983,7 +1294,7 @@ class TextRAG:
         between batches with `(processed, total)` so callers can drive a
         progress bar. Returns the same shape as `embed_text`.
 
-        Used by `index_single_pdf` to surface per-chunk progress during
+        Used by `index_single_file` to surface per-chunk progress during
         the (otherwise opaque) sentence-transformers encode step, which
         dominates wall time once the citation LLM step is past.
         """
@@ -1050,13 +1361,18 @@ class TextRAG:
     # ------------------------------------------------------------------
     # Indexing
     # ------------------------------------------------------------------
-    def index_single_pdf(
+    def index_single_file(
         self,
         pdf_path: Path,
         progress_cb: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
-        Index a single PDF.
+        Index a single file of any accepted format (see `FORMAT_EXTRACTORS`).
+
+        PDFs get citation extraction. CSV, TSV, TXT and MD get a short LLM
+        description instead, stored as the file's row in the citation
+        collection (`record` "dataset" or "note") and, for tables, also put
+        into the summary passage before it is embedded.
 
         Order of operations (rev. 2026-05-08):
             1. Citation metadata (Azure OpenAI on the front-matter text) —
@@ -1101,6 +1417,12 @@ class TextRAG:
             "citation_status": "disabled" if not self.extract_citations else "pending",
             "citation_error": None,
         }
+        extractor = extractor_for(pdf_path)
+        is_pdf = pdf_path.suffix.lower() == ".pdf"
+        file_kind = SUFFIX_KIND.get(pdf_path.suffix.lower(), "")
+        description: Optional[str] = None
+        if not is_pdf and not self._descriptions_enabled():
+            result["citation_status"] = "disabled"
 
         def _emit(phase: str, **extra: Any) -> None:
             if progress_cb is None:
@@ -1113,17 +1435,22 @@ class TextRAG:
                 # Progress reporting must not break indexing.
                 pass
 
-        # Idempotency: if any text chunks for this source already exist
-        # in the DB, skip unless we're force-reindexing. We use the
-        # citation collection's deterministic id (`<stem>_citation`) as
-        # the cheap check.
-        cite_id = f"{pdf_path.stem}_citation"
+        # Idempotency: a file is identified by its `source` metadata (the full
+        # file name), not by id, so stores indexed under older id schemes
+        # still skip correctly. Skip unless we're force-reindexing.
+        filename = pdf_path.name
+        cite_id = f"{filename}_citation"
         if not self.force_reindex:
             try:
-                existing = self.citation_collection.get(ids=[cite_id])
+                existing = self.text_collection.get(
+                    where={"source": filename}, limit=1
+                )
                 if existing and existing.get("ids"):
                     result["status"] = "skipped"
-                    metas = existing.get("metadatas") or []
+                    cites = self.citation_collection.get(
+                        where={"source": filename}, limit=1
+                    )
+                    metas = (cites or {}).get("metadatas") or []
                     if metas:
                         result["citation"] = metas[0]
                         result["citation_status"] = "skipped"
@@ -1137,8 +1464,46 @@ class TextRAG:
             # The slow, network-bound step. If Azure OpenAI is hung or
             # unreachable, we want to know now — not after we've already
             # written hundreds of text chunks.
+            if extractor is None:
+                raise ValueError(
+                    f"Unsupported file type: {pdf_path.suffix or pdf_path.name}"
+                )
             citation = None
-            if self.extract_citations:
+            if not is_pdf:
+                # Non-PDF files: one description call instead of a citation.
+                # Tables send their deterministic summary passage, text files
+                # their first ~2,000 words. Failure never blocks indexing.
+                if self._descriptions_enabled():
+                    _emit("citation")
+                    try:
+                        if file_kind in ("csv", "tsv"):
+                            sample = extractor(pdf_path)[0]["text"]
+                        else:
+                            sample = " ".join(
+                                read_text_file(pdf_path).split()[:DESCRIPTION_TEXT_WORDS]
+                            )
+                        if sample.strip():
+                            description = self._describe_file(
+                                pdf_path, file_kind, sample
+                            )
+                        if description:
+                            result["citation_status"] = "extracted"
+                        else:
+                            result["citation_status"] = "failed"
+                            result["citation_error"] = (
+                                "LLM returned no description."
+                            )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(
+                            "  ✗ Description failed for %s: %s", pdf_path.name, e
+                        )
+                        result["citation_status"] = "failed"
+                        err_str = str(e)
+                        if len(err_str) > 500:
+                            err_str = err_str[:497] + "..."
+                        result["citation_error"] = err_str
+                        description = None
+            elif self.extract_citations:
                 _emit("citation")
                 try:
                     citation = self._extract_citation(pdf_path)
@@ -1180,7 +1545,7 @@ class TextRAG:
             #                        per-batch progress reporting
             #   2c. upsert_chunks — chromadb write
             _emit("extracting_text")
-            text_chunks = self.extract_text_from_pdf(pdf_path)
+            text_chunks = extractor(pdf_path, description)
             if text_chunks:
                 texts = [c["text"] for c in text_chunks]
                 total_chunks = len(texts)
@@ -1200,7 +1565,7 @@ class TextRAG:
                 embeddings = self.embed_text_batched(
                     texts, batch_size=8, progress_cb=_on_batch,
                 )
-                ids = [f"{pdf_path.stem}_text_{j}" for j in range(len(text_chunks))]
+                ids = [f"{filename}_text_{j}" for j in range(len(text_chunks))]
                 metadatas = [c["metadata"] for c in text_chunks]
 
                 _emit(
@@ -1208,6 +1573,11 @@ class TextRAG:
                     chunk_processed=total_chunks,
                     chunk_total=total_chunks,
                 )
+                # A forced re-index replaces the file's text rows wholesale,
+                # whatever id scheme wrote them. Done after the slow LLM and
+                # embed steps so a failure there leaves the old rows intact.
+                if self.force_reindex:
+                    self._delete_source_rows(filename, citations=False)
                 # Upsert so re-indexing replaces rather than errors.
                 self.text_collection.upsert(
                     embeddings=embeddings,
@@ -1220,9 +1590,15 @@ class TextRAG:
                     "  ✓ Indexed %d text chunks for %s",
                     len(text_chunks), pdf_path.name,
                 )
+            elif self.force_reindex:
+                # The file now yields no chunks: don't keep stale passages.
+                self._delete_source_rows(filename, citations=False)
 
             # --- (3) Citation row upsert (after chunks succeeded) ---
             if citation:
+                # Old citation rows go only when a new one is about to land.
+                if self.force_reindex:
+                    self._delete_source_rows(filename, texts=False)
                 doc_text = self._citation_to_document(citation)
                 doc_embedding = self.embed_text([doc_text])[0]
                 meta = self._citation_to_metadata(citation, pdf_path.name)
@@ -1239,6 +1615,27 @@ class TextRAG:
                     citation.get("title", "(no title)"),
                 )
 
+            if not is_pdf:
+                # Every non-PDF file gets a row in the citation collection, so
+                # the explorer can show its kind and row count whether or not a
+                # description could be written (abstract is empty then).
+                citation = {"title": pdf_path.name, "abstract": description or ""}
+                if self.force_reindex:
+                    self._delete_source_rows(filename, texts=False)
+                doc_text = self._citation_to_document(citation)
+                meta = self._citation_to_metadata(citation, pdf_path.name)
+                meta["record"] = DESCRIPTION_RECORDS[file_kind]
+                meta["kind"] = file_kind
+                if text_chunks and "row_count" in text_chunks[0]["metadata"]:
+                    meta["row_count"] = text_chunks[0]["metadata"]["row_count"]
+                self.citation_collection.upsert(
+                    embeddings=[self.embed_text([doc_text])[0]],
+                    documents=[doc_text],
+                    metadatas=[meta],
+                    ids=[cite_id],
+                )
+                result["citation"] = meta
+
             result["status"] = "indexed"
             _emit("done", status="indexed")
         except Exception as e:  # noqa: BLE001
@@ -1248,6 +1645,36 @@ class TextRAG:
             _emit("done", status="failed", error=str(e))
 
         return result
+
+    def _delete_source_rows(
+        self, filename: str, *, texts: bool = True, citations: bool = True
+    ) -> int:
+        """Delete every row whose `source` is `filename` (text and/or citation)."""
+        removed = 0
+        colls = []
+        if texts:
+            colls.append(self.text_collection)
+        if citations:
+            colls.append(self.citation_collection)
+        for coll in colls:
+            found = coll.get(where={"source": filename})
+            ids = (found or {}).get("ids") or []
+            if ids:
+                coll.delete(ids=ids)
+                removed += len(ids)
+        return removed
+
+    def delete_source(self, filename: str) -> int:
+        """
+        Remove a file from the knowledge base: its chunks and citation row,
+        then rebuild `bm25_corpus.json` (if one exists) from what remains so
+        it no longer lists the deleted ids. Returns the number of rows removed.
+        """
+        removed = self._delete_source_rows(filename)
+        if self._bm25_corpus_path.exists():
+            # With nothing left, this removes the file.
+            self.write_bm25_corpus()
+        return removed
 
     def index_pdfs(self):
         """Process all PDFs: index text chunks + extract citation metadata."""
@@ -1283,16 +1710,20 @@ class TextRAG:
             # ChromaDB contents.
             self._delete_bm25_corpus_if_present()
 
-        pdf_files = sorted(self.pdf_folder.glob("**/*.pdf"))
-        log.info("Found %d PDF(s) to process", len(pdf_files))
+        pdf_files = sorted(
+            p
+            for p in self.pdf_folder.glob("**/*")
+            if p.is_file() and p.suffix.lower() in FORMAT_EXTRACTORS
+        )
+        log.info("Found %d file(s) to process", len(pdf_files))
 
         for i, pdf_path in enumerate(pdf_files, 1):
             log.info("[%d/%d] %s", i, len(pdf_files), pdf_path.name)
-            self.index_single_pdf(pdf_path)
+            self.index_single_file(pdf_path)
 
         # Build the BM25 corpus file from the text_chunks we just
         # wrote to ChromaDB. 
-        self._build_bm25_corpus()
+        self.write_bm25_corpus()
 
         log.info("=" * 50)
         log.info("Indexing complete!")
@@ -1311,7 +1742,7 @@ class TextRAG:
         Filesystem location of the per-KB BM25 corpus file.
 
         """
-        return Path(self.db_path) / "bm25_corpus.json"
+        return Path(self.db_path) / BM25_CORPUS_FILENAME
 
     def _delete_bm25_corpus_if_present(self) -> None:
         """Drop the BM25 corpus file ahead of a force-reindex."""
@@ -1332,68 +1763,15 @@ class TextRAG:
                 self._bm25_corpus_path,
             )
             return
-        self._build_bm25_corpus()
+        self.write_bm25_corpus()
 
-    def _build_bm25_corpus(self) -> None:
+    def write_bm25_corpus(self) -> None:
         """
-        Scan the ChromaDB `text_chunks` collection and write a
-        BM25 corpus file alongside it.
-
+        Scan the ChromaDB `text_chunks` collection and write a BM25 corpus
+        file alongside it (`write_bm25_corpus`). The backend calls it after
+        each run of `index_single_pdf`, which writes none itself.
         """
-        try:
-            from vista_mcp_server.bm25 import BM25Okapi, tokenize  # noqa: WPS433
-        except ImportError as exc:
-            log.warning(
-                "BM25: cannot import vista_mcp_server.bm25 (%s); "
-                "skipping corpus build. The MCP server's hybrid retrieval "
-                "will degrade to vector-only until this is fixed.",
-                exc,
-            )
-            return
-
-        try:
-            raw = self.text_collection.get(include=["documents"])
-        except Exception as exc:  # noqa: BLE001
-            log.warning("BM25: could not read text_chunks for corpus build: %s", exc)
-            return
-
-        ids = raw.get("ids") or []
-        docs = raw.get("documents") or []
-        if not ids or not docs or len(ids) != len(docs):
-            log.warning(
-                "BM25: text_chunks collection is empty or malformed "
-                "(ids=%d docs=%d); skipping corpus build",
-                len(ids), len(docs),
-            )
-            return
-
-        log.info("BM25: building corpus over %d chunks", len(ids))
-        index = BM25Okapi()
-        # Pre-tokenize once so the on-disk corpus already has
-        # tokens cached -- the MCP server then skips re-tokenization
-        # at startup, which keeps cold-start time bounded by I/O
-        # rather than CPU on large KBs.
-        documents = list(zip([str(i) for i in ids], [str(d) for d in docs]))
-        pre_tokenized = [tokenize(text) for _, text in documents]
-        index.add_documents(documents, pre_tokenized=pre_tokenized)
-
-        try:
-            payload = index.to_dict()
-            self._bm25_corpus_path.write_text(
-                json.dumps(payload, ensure_ascii=False),
-                encoding="utf-8",
-            )
-            log.info(
-                "BM25: wrote corpus to %s (%d chunks)",
-                self._bm25_corpus_path,
-                len(documents),
-            )
-        except OSError as exc:
-            log.warning(
-                "BM25: could not write corpus to %s: %s",
-                self._bm25_corpus_path,
-                exc,
-            )
+        write_bm25_corpus(self.text_collection, self.db_path)
 
     def query(self, query: str, n_results: int = 5) -> Dict[str, Any]:
         """Search text chunks collection."""

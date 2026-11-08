@@ -105,8 +105,8 @@ async def test_lifespan_module_start_returns_none_when_off(db, slack):
     await service.stop()
 
 
-async def test_on_it_connects_and_installs_the_checks(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_on_it_connects_and_installs_the_checks(on, slack, session):
+    await link(session, "U1")
     svc = _service()
 
     assert await svc.start() is True
@@ -124,8 +124,8 @@ async def test_on_it_connects_and_installs_the_checks(on, slack, session, alice)
     assert svc._tasks == []
 
 
-async def test_stop_says_offline_and_releases_the_lease(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_stop_says_offline_and_releases_the_lease(on, slack, session):
+    await link(session, "U1")
     svc = _service()
     await svc.start()
 
@@ -138,8 +138,8 @@ async def test_stop_says_offline_and_releases_the_lease(on, slack, session, alic
     assert status.metadata["event_payload"]["released"] is True
 
 
-async def test_another_machine_has_slack_so_stand_by(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_another_machine_has_slack_so_stand_by(on, slack, session):
+    await link(session, "U1")
     other = {
         "event_type": EVENT_TYPE,
         "event_payload": {
@@ -162,9 +162,9 @@ async def test_another_machine_has_slack_so_stand_by(on, slack, session, alice):
     await svc.stop()
 
 
-async def test_a_dm_runs_a_slack_turn(on, slack, session, alice, monkeypatch):
-    await link(session, alice, "U1")
-    await project(session, alice)
+async def test_a_dm_runs_a_slack_turn(on, slack, session, local, monkeypatch):
+    await link(session, "U1")
+    await project(session)
     started: list[dict] = []
 
     async def fake_start(db, **kw):
@@ -172,7 +172,6 @@ async def test_a_dm_runs_a_slack_turn(on, slack, session, alice, monkeypatch):
         run = ChatRun(
             chat_session_id=kw["chat_session_id"],
             project_id=kw["project"].id,
-            user_id=kw["user"].id,
             agent_key=("k",),  # type: ignore[arg-type]
             user_prompt=kw["user_prompt"],
             prior_history=[],
@@ -217,7 +216,8 @@ async def test_a_dm_runs_a_slack_turn(on, slack, session, alice, monkeypatch):
     await slack.deliver(_dm("<@UBOT> how is the Frontier queue?"))
 
     (kw,) = started
-    assert kw["channel"] == "slack" and kw["user"].id == alice.id
+    assert kw["channel"] == "slack"
+    assert kw["local"].install_id == local.install_id, "as the install's researcher"
     assert kw["user_prompt"] == "how is the Frontier queue?"
     answer = [m for m in slack.in_channel("DU1") if m.thread_ts == "10.0"]
     assert answer and "Queue is short." in (answer[-1].edits or [answer[-1].text])[-1]
@@ -227,8 +227,8 @@ async def test_a_dm_runs_a_slack_turn(on, slack, session, alice, monkeypatch):
     await svc.stop()
 
 
-async def test_lock_from_slack_and_unlock_only_from_desktop(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_lock_from_slack_and_unlock_only_from_desktop(on, slack, session):
+    await link(session, "U1")
     svc = _service()
     await svc.start()
 
@@ -246,9 +246,9 @@ async def test_lock_from_slack_and_unlock_only_from_desktop(on, slack, session, 
 
 
 async def test_an_unlinked_user_is_refused_and_nothing_runs(
-    on, slack, session, alice, monkeypatch
+    on, slack, session, monkeypatch
 ):
-    await link(session, alice, "U1")
+    await link(session, "U1")
 
     async def never(*a, **kw):
         raise AssertionError("no turn for an unlinked user")
@@ -263,8 +263,8 @@ async def test_an_unlinked_user_is_refused_and_nothing_runs(
     await svc.stop()
 
 
-async def test_link_issues_a_code_in_the_dm(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_link_issues_a_code_in_the_dm(on, slack, session):
+    await link(session, "U1")
     svc = _service()
     await svc.start()
 
@@ -275,8 +275,8 @@ async def test_link_issues_a_code_in_the_dm(on, slack, session, alice):
     await svc.stop()
 
 
-async def test_home_opened_publishes(on, slack, session, alice):
-    await link(session, alice, "U1")
+async def test_home_opened_publishes(on, slack, session):
+    await link(session, "U1")
     svc = _service()
     await svc.start()
     slack.homes.clear()
@@ -287,20 +287,18 @@ async def test_home_opened_publishes(on, slack, session, alice):
     await svc.stop()
 
 
-async def test_preview_reads_the_mcp_preview(db, session, alice, monkeypatch):
-    p = await project(session, alice)
+async def test_preview_reads_the_mcp_preview(db, session, monkeypatch):
+    p = await project(session)
     project_id = p.id
     from vista_backend.db.schemas import ChatSessionTable
 
-    chat = ChatSessionTable(
-        project_id=project_id, user_id=alice.id, message_history=[], messages=[]
-    )
+    chat = ChatSessionTable(project_id=project_id, message_history=[], messages=[])
     chat_id = chat.id
     session.add(chat)
     await session.commit()
     asked = []
 
-    def builder(user, paths):
+    def builder(local, paths):
         async def invoke(name, args):
             asked.append(name)
             return (
@@ -313,12 +311,22 @@ async def test_preview_reads_the_mcp_preview(db, session, alice, monkeypatch):
     monkeypatch.setattr(service, "build_mcp_invoke", builder)
 
     fields = await service.preview_job(
-        alice.id, chat_id, "vista__submit_hpc_job", {"job": "flibe-md"}
+        chat_id, "vista__submit_hpc_job", {"job": "flibe-md"}
     )
 
     assert asked == ["preview_hpc_job"]
     assert fields["Account"] == "MAT123" and fields["System"] == "frontier"
-    assert await service.preview_job(alice.id, chat_id, "run_bash", {}) == {}
+    assert await service.preview_job(chat_id, "run_bash", {}) == {}
+
+
+def test_sleep_is_watched_on_a_desktop_only(monkeypatch):
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "deployment", "hosted")
+    assert SlackService(host="h")._watch_power is False
+    monkeypatch.setattr(settings, "deployment", "desktop")
+    assert SlackService(host="h")._watch_power is True
+    assert SlackService(host="h", watch_power=False)._watch_power is False
 
 
 def test_the_conversation_module_is_what_is_patched():

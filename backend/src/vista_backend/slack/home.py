@@ -126,7 +126,6 @@ class Home:
             if link is None:
                 await db.commit()
                 return False
-            user_id = link.user_id
             config = await store.get_config(db)
             snapshot = SlackConfigTable.model_validate(config.model_dump())
             jobs = [
@@ -135,7 +134,6 @@ class Home:
                     await db.exec(
                         select(HpcJobRecordTable)
                         .where(
-                            HpcJobRecordTable.user_id == user_id,
                             HpcJobRecordTable.origin == "slack",
                         )
                         .order_by(col(HpcJobRecordTable.submitted_at).desc())
@@ -150,7 +148,7 @@ class Home:
                 online=online,
                 host=self._host,
                 config=snapshot,
-                expiries=credentials.known(user_id),
+                expiries=credentials.known(),
                 jobs=jobs,
                 as_of=store.now_iso(),
             ),

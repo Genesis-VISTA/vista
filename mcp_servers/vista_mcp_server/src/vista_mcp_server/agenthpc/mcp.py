@@ -626,8 +626,8 @@ async def agenthpc_plot_progress(
         lines.append(f"Best so far: {best_label}")
     if skipped:
         lines.append(f"Skipped trials (no parseable stat0.dat): {skipped}")
-    # The chat route matches /Plot saved to\s+(\/\S+\.(?:png|jpg|jpeg|svg|gif))/
-    # to auto-display the figure — keep this line verbatim.
+    # Informational only: printing the path does not display the figure. The
+    # agent must call `display_file` with this sandbox path to show it.
     lines.append(f"Plot saved to {sandbox_path}")
     await ctx.info(f"agenthpc: rendered progress plot → {host_path} (plotted={plotted})")
     return "\n".join(lines)

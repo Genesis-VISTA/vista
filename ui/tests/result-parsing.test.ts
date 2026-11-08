@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  extractPlotPath,
   extractPredictionSummary,
   extractReferences,
   formatResultSummary,
@@ -53,28 +52,6 @@ const ANALYZE_STDOUT = [
 function result(over: Partial<ExecutionResult> = {}): ExecutionResult {
   return { ok: true, stdout: "", stderr: "", artifacts: [], meta: {}, ...over };
 }
-
-describe("extractPlotPath", () => {
-  it("pulls the path a skill printed", () => {
-    expect(extractPlotPath(PREDICT_STDOUT)).toBe(
-      "/mnt/data/output/salt-prediction-LiF-BeF2-66-34-20260914-101500.png",
-    );
-  });
-
-  it("returns null when nothing was plotted", () => {
-    expect(extractPlotPath("Samples: 412\nMAE: 24.117 K")).toBeNull();
-    expect(extractPlotPath("")).toBeNull();
-  });
-
-  it("takes the first path when a script plots more than once", () => {
-    const two = "Plot saved to /out/a.png\nmore work\nPlot saved to /out/b.png";
-    expect(extractPlotPath(two)).toBe("/out/a.png");
-  });
-
-  it("trims trailing whitespace off the path", () => {
-    expect(extractPlotPath("Plot saved to /out/a.png   ")).toBe("/out/a.png");
-  });
-});
 
 describe("extractPredictionSummary", () => {
   it("parses the SUMMARY_JSON line out of a full run", () => {

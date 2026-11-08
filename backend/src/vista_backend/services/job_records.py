@@ -46,12 +46,10 @@ class SubmitWatcher:
         self,
         *,
         session_factory: Callable[[], AsyncSession],
-        user_id: uuid.UUID,
         chat_session_id: uuid.UUID,
         channel: str,
     ) -> None:
         self._session_factory = session_factory
-        self._user_id = user_id
         self._chat_session_id = chat_session_id
         self._channel = channel
         self._args: dict[str, dict[str, Any]] = {}
@@ -74,6 +72,8 @@ class SubmitWatcher:
             found = parse_submit_summary(summary)
         except ValueError:
             return  # Not a summary: the submit failed, or was refused.
+        # The Slack (team, user) who asked, so the audit row names their link.
+        asker: tuple[str | None, str | None] = (None, None)
         try:
             async with self._session_factory() as db:
                 thread = None
@@ -86,9 +86,10 @@ class SubmitWatcher:
                             )
                         )
                     ).first()
+                if thread is not None:
+                    asker = (thread.team_id, thread.slack_user_id)
                 db.add(
                     HpcJobRecordTable(
-                        user_id=self._user_id,
                         chat_session_id=self._chat_session_id,
                         origin=self._channel,
                         slack_team_id=thread.team_id if thread else None,
@@ -115,7 +116,8 @@ class SubmitWatcher:
 
             await audit.record(
                 "tool_result",
-                user_id=self._user_id,
+                team_id=asker[0],
+                slack_user_id=asker[1],
                 chat_session_id=self._chat_session_id,
                 tool_name=SUBMIT,
                 detail={"args": args, "cluster": found["cluster"]},
@@ -132,10 +134,10 @@ def _str(value: Any) -> str | None:
 
 
 async def recent_jobs(
-    db: AsyncSession, user_id: uuid.UUID, *, cluster: str | None = None, limit: int = 10
+    db: AsyncSession, *, cluster: str | None = None, limit: int = 10
 ) -> list[HpcJobRecordTable]:
     """The researcher's recorded jobs, newest first."""
-    query = select(HpcJobRecordTable).where(HpcJobRecordTable.user_id == user_id)
+    query = select(HpcJobRecordTable)
     if cluster:
         query = query.where(HpcJobRecordTable.cluster == cluster)
     query = query.order_by(col(HpcJobRecordTable.submitted_at).desc()).limit(

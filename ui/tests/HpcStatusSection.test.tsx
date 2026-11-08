@@ -304,6 +304,26 @@ describe("HpcStatusSection", () => {
     expect(odo).not.toHaveTextContent(/expire|lapse|3 days/i);
   });
 
+  it("shows the Globus detail on an expired session row", async () => {
+    const message =
+      "The Globus session for Odo has expired: Globus needs a fresh login with opensso.ccs.ornl.gov. Connect Globus again.";
+    useHpcStatusMock.mockReturnValue(
+      view([
+        {
+          status: status("odo", "globus_session_expired", {
+            globus: { ok: false, reason: "session_expired", message, http_status: 502 },
+          }),
+        },
+      ]),
+    );
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Globus session expired" }));
+    const dialog = screen.getByRole("dialog", { name: "Odo connection details" });
+    expect(within(dialog).getAllByText("Globus session expired").length).toBeGreaterThan(0);
+    expect(within(dialog).getByText(message)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("Connect Globus again to reach this cluster's files.");
+  });
+
   it("notes a stale result in the section header", () => {
     useHpcStatusMock.mockReturnValue(
       view([{ status: status("odo", "ready") }], { failing: true, lastSuccessAt: NOW - 12 * 60_000 }),
@@ -317,6 +337,44 @@ describe("HpcStatusSection", () => {
     renderSection({ visible: ["odo"] });
     await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
     await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("HpcStatusSection: the tour's anchors", () => {
+  beforeEach(() => {
+    useHpcStatusMock.mockReturnValue(
+      view([{ status: status("odo", "ready") }, { status: status("frontier", "ready") }]),
+    );
+  });
+
+  it("anchors the whole section, and the first card in it", () => {
+    renderSection({ visible: ["frontier", "odo"] });
+    const section = document.querySelector('[data-tour="hpc:resources"]');
+    expect(section).toHaveTextContent("Resources");
+    expect(section).toContainElement(document.querySelector('[data-tour="hpc:open-card"]'));
+    expect(document.querySelector('[data-tour="hpc:open-card"]')).toHaveAccessibleName("Odo: Ready");
+  });
+
+  it("anchors the open card and its first check", async () => {
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
+    const card = document.querySelector('[data-tour="hpc:card"]');
+    expect(card).toHaveAccessibleName("Odo connection details");
+    const check = document.querySelector('[data-tour="hpc:check"]');
+    expect(card).toContainElement(check as HTMLElement);
+    expect(check).toHaveTextContent("Facility is up");
+    expect(document.querySelector('[data-tour="hpc:settings"]')).toBeInTheDocument();
+  });
+
+  it("stays open when a coachmark is pressed, which is no click elsewhere", async () => {
+    renderSection({ visible: ["odo"] });
+    await userEvent.click(screen.getByRole("button", { name: "Odo: Ready" }));
+    const coachmark = document.body.appendChild(document.createElement("div"));
+    coachmark.className = "driver-popover";
+    await userEvent.click(coachmark);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await userEvent.click(document.body);
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

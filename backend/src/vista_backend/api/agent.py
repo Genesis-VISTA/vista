@@ -2,7 +2,7 @@ import uuid
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
@@ -13,9 +13,9 @@ from ..db.schemas import ProjectPublic
 from ..services import project as project_service
 from ..services.chat_run import RunBusy
 from ..services.conversation import start_turn
-from ..services.project_agent import get_project_agent_key, project_agent_pool
+from ..services.project_agent import ProjectAgentKey, project_agent_pool
 from ..agents.inference import require_inference_credential
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 
 router = APIRouter()
 
@@ -50,7 +50,7 @@ async def agent_run(
     project_name: str,
     body: AgentRunRequest,
     session: SessionDep,
-    user: UserDep,
+    local: LocalSettingsDep,
 ) -> ProjectAgentResult | Response:
     """
     Session-backed chat completion that runs the full agent loop for one turn.
@@ -79,33 +79,38 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
-    # Checked before either branch: in the streaming case the response status
-    # is committed the moment `EventSourceResponse` is returned, so a raise
-    # from inside the generator could only surface as a truncated stream.
-    require_inference_credential(user)
-
-    project_row = await project_service.get_project_by_name(session, project_name, user)
+    project_row = await project_service.get_project_by_name(session, project_name)
     project = ProjectPublic.model_validate(project_row)
-
-    if body.stream and body.chat_session_id is None:
-        raise HTTPException(
-            status_code=400, detail="chat_session_id is required to stream a turn"
-        )
+    if body.chat_session_id is None:
+        # Checked before anything runs. With a conversation, `start_turn` makes
+        # the same check from the chat's one lookup (its own model counts, so
+        # it can send on a provider with no default), and a chat not in this
+        # project is a 404, all before the stream's status is committed.
+        require_inference_credential(local, None)
+        if body.stream:
+            raise HTTPException(
+                status_code=400, detail="chat_session_id is required to stream a turn"
+            )
 
     if body.chat_session_id is not None:
         try:
             run = await start_turn(
                 session,
-                user=user,
+                local=local,
                 project=project,
                 chat_session_id=body.chat_session_id,
                 user_prompt=body.user_prompt,
                 fallback_history=body.message_history,
             )
         except RunBusy:
-            raise HTTPException(
+            # HTTPException can't carry a sibling field without making `detail`
+            # an object, so the machine-readable code goes in a plain response.
+            return JSONResponse(
                 status_code=409,
-                detail="This conversation already has a turn running.",
+                content={
+                    "detail": "This conversation already has a turn running.",
+                    "code": "run_busy",
+                },
             )
 
         if body.stream:
@@ -123,9 +128,7 @@ async def agent_run(
             raise HTTPException(status_code=500, detail=f"Turn {run.state}.")
         return run.result
 
-    agent_key = await get_project_agent_key(
-        session, project_id=project.id, user_id=user.id, chat_session_id=None
-    )
+    agent_key: ProjectAgentKey = (None, project.id)
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.run(
             user_prompt=body.user_prompt,

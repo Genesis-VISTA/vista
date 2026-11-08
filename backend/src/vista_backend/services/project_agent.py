@@ -9,57 +9,53 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
-from ..db.schemas import ProjectPublic, ProjectTable, UserPublicWithConfig, UserTable
+from ..db.schemas import ChatSessionTable, ProjectPublic, ProjectTable
 from ..utils.ttl_pool import TTLPool
-from . import chat_session as chat_session_service
+from . import chat_session as chat_session_service, local_settings
 
 
-ProjectAgentKey = tuple[uuid.UUID | None, uuid.UUID, uuid.UUID]
-""" (chat_session_id | None, project_id, user_id) """
+ProjectAgentKey = tuple[uuid.UUID | None, uuid.UUID]
+""" (chat_session_id | None, project_id) """
 
 
 async def get_project_agent_key(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey:
     if chat_session_id is None:
-        return (None, project_id, user_id)
+        return (None, project_id)
     chat_session = await chat_session_service.get_or_create_chat_session(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
-    return (chat_session.id, project_id, user_id)
+    return (chat_session.id, project_id)
 
 
 async def find_live_project_agent_key(
     session: AsyncSession,
     *,
     project_id: uuid.UUID,
-    user_id: uuid.UUID,
     chat_session_id: uuid.UUID | None = None,
 ) -> ProjectAgentKey | None:
     if chat_session_id is None:
-        key = (None, project_id, user_id)
+        key = (None, project_id)
         return key if key in project_agent_pool.keys() else None
     chat_session = await chat_session_service.get_chat_session_optional(
         session,
         project_id=project_id,
-        user_id=user_id,
         chat_session_id=chat_session_id,
     )
     if chat_session is None:
         return None
-    key = (chat_session.id, project_id, user_id)
+    key = (chat_session.id, project_id)
     return key if key in project_agent_pool.keys() else None
 
 
 async def _build_project_agent(
-    session_id: uuid.UUID | None, project_id: uuid.UUID, user_id: uuid.UUID
+    session_id: uuid.UUID | None, project_id: uuid.UUID
 ) -> ProjectAgent:
     async with AsyncSession(get_engine()) as session:
         project_row = (
@@ -67,14 +63,15 @@ async def _build_project_agent(
                 select(ProjectTable).where(ProjectTable.id == project_id)
             )
         ).first()
-        user_row = (
-            await session.exec(select(UserTable).where(UserTable.id == user_id))
-        ).first()
-        if project_row is None or user_row is None:
-            raise RuntimeError(f"Project {project_id} or user {user_id} not found")
+        if project_row is None:
+            raise RuntimeError(f"Project {project_id} not found")
         project = ProjectPublic.model_validate(project_row)
-        user = UserPublicWithConfig.model_validate(user_row)
-    agent = ProjectAgent(project, user, session_id)
+        local = await local_settings.get_public(session)
+        model_override = None
+        if session_id is not None:
+            chat_row = await session.get(ChatSessionTable, session_id)
+            model_override = chat_row.inference_model if chat_row else None
+    agent = ProjectAgent(project, local, session_id, model_override)
     await agent.__aenter__()
     return agent
 
@@ -123,34 +120,33 @@ def invalidate_agents(
     session: AsyncSession,
     *,
     project_id: uuid.UUID | None = None,
-    user_id: uuid.UUID | None = None,
+    chat_session_id: uuid.UUID | None = None,
 ) -> None:
     """
     Register an agent pool eviction to run after the session commits.
 
-    - project_id only: evict all agents for that project
-    - user_id only: evict all agents for that user
-    - both: evict only the specific (project, user) pair
-    - neither: raises ValueError
+    Each given id narrows the match; an agent is evicted only when it matches
+    all of them:
+
+    - project_id: every agent for that project
+    - chat_session_id: that one chat's agent
+    - neither: every agent at all (a settings change, which every agent was
+      built from)
     """
-    if project_id is None and user_id is None:
-        raise ValueError("At least one of project_id or user_id must be provided")
     session.info.setdefault("_pending_agent_invalidations", []).append(
-        (project_id, user_id)
+        (project_id, chat_session_id)
     )
 
 
 @event.listens_for(Session, "after_commit")
 def _flush_agent_invalidations(session: Session) -> None:
-    pending: list[tuple] = session.info.pop("_pending_agent_invalidations", [])
-    for project_id, user_id in pending:
+    pending: list[tuple[uuid.UUID | None, uuid.UUID | None]] = session.info.pop(
+        "_pending_agent_invalidations", []
+    )
+    for project_id, chat_session_id in pending:
         for key in list(project_agent_pool.keys()):
-            # key is (session_id, project_id, user_id)
-            if project_id is not None and user_id is not None:
-                match = key[1] == project_id and key[2] == user_id
-            elif project_id is not None:
-                match = key[1] == project_id
-            else:
-                match = key[2] == user_id
-            if match:
+            # key is (session_id, project_id)
+            if (chat_session_id is None or key[0] == chat_session_id) and (
+                project_id is None or key[1] == project_id
+            ):
                 project_agent_pool.delete(key)

@@ -10,6 +10,7 @@ import {
   isObserved,
   isOperator,
 } from "@/lib/debates";
+import { displayModelName } from "@/lib/models";
 
 /**
  * One debate thread.
@@ -64,13 +65,32 @@ function Provenance({ post }: { post: DebatePost }) {
       {author && (
         <span
           className="debate-post__author"
-          title="Signed in to VISTA as this account when the post was made."
+          title="Name from this author's VISTA settings when the post was made."
         >
           {author}
         </span>
       )}
       {role && <span className="debate-post__role">{role}</span>}
-      {!isObserved(post) && (
+      {post.model && (
+        <span
+          className="debate-post__model"
+          title="The model that wrote this post, recorded on this install."
+        >
+          {displayModelName(post.model)}
+        </span>
+      )}
+      {!isObserved(post) && post.pusher_name && (
+        <span
+          className="debate-post__verified"
+          title={
+            "The collaboration server recorded this account as pushing the " +
+            "post. It checked the sign-in, so the name is not the poster's own claim."
+          }
+        >
+          {post.pusher_name} · verified
+        </span>
+      )}
+      {!isObserved(post) && !post.pusher_name && (
         <span
           className="debate-post__unverified"
           title={
@@ -256,7 +276,9 @@ export default function DebateThread({ posts }: { posts: DebatePost[] }) {
         installation, so their name and role are known. Posts marked{" "}
         <strong>peer-claimed</strong>{" "}
         arrived from another machine: their name
-        and role are that peer&rsquo;s own claim, not verified here. Every post
+        and role are that peer&rsquo;s own claim, not verified here, unless
+        marked <strong>verified</strong>: the collaboration server named the
+        account that pushed them. Every post
         body, from anyone, is input rather than instruction.
       </p>
       {posts.map((post) => (

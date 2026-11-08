@@ -59,7 +59,7 @@ class FakeHpc:
         raise NotImplementedError
 
 
-async def _debate(client, session, alice, *, status="debating"):
+async def _debate(client, session, *, status="debating"):
     """A debate with one attached role, ready to commission work."""
     project = ProjectTable(name=f"sim-{uuid.uuid4().hex[:8]}")
     session.add(project)
@@ -69,7 +69,6 @@ async def _debate(client, session, alice, *, status="debating"):
     run = await debate_service.create_debate(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="does the knee move?",
         thread_id=thread_id,
         rounds=2,
@@ -82,12 +81,11 @@ async def _debate(client, session, alice, *, status="debating"):
     return run, participant
 
 
-async def _commission(client, session, alice, run, participant, hpc=None):
+async def _commission(client, session, run, participant, hpc=None):
     return await commission(
         session,
         debate_run_id=run.id,
         project_id=run.project_id,
-        user_id=alice.id,
         thread_id=run.thread_id,
         participant=participant,
         hpc=hpc or FakeHpc(),
@@ -102,14 +100,14 @@ async def _commission(client, session, alice, run, participant, hpc=None):
 
 
 @pytest.mark.anyio
-async def test_commissioning_records_who_asked_and_why(client, session, alice):
+async def test_commissioning_records_who_asked_and_why(client, session):
     """
     The collector runs minutes later in another session, so everything it needs
     has to be written down now.
     """
-    run, participant = await _debate(client, session, alice)
+    run, participant = await _debate(client, session)
     hpc = FakeHpc()
-    job = await _commission(client, session, alice, run, participant, hpc)
+    job = await _commission(client, session, run, participant, hpc)
 
     assert hpc.submitted == [{"job": "flibe-viscosity", "script_args": None}]
     assert job.job_name == "flibe-viscosity"
@@ -125,11 +123,11 @@ async def test_commissioning_records_who_asked_and_why(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_open_simulations_are_scoped_to_their_debate(client, session, alice):
-    first, p1 = await _debate(client, session, alice)
-    await _commission(client, session, alice, first, p1, FakeHpc("job-a"))
+async def test_open_simulations_are_scoped_to_their_debate(client, session):
+    first, p1 = await _debate(client, session)
+    await _commission(client, session, first, p1, FakeHpc("job-a"))
 
-    second, _ = await _debate(client, session, alice)
+    second, _ = await _debate(client, session)
     assert len(await open_simulations(session, debate_run_id=first.id)) == 1
     assert await open_simulations(session, debate_run_id=second.id) == []
 
@@ -140,7 +138,7 @@ async def test_open_simulations_are_scoped_to_their_debate(client, session, alic
 
 
 @pytest.mark.anyio
-async def test_the_monitor_does_not_abandon_a_debate_job(client, session, alice):
+async def test_the_monitor_does_not_abandon_a_debate_job(client, session):
     """
     The integration hazard. `_is_orphaned` abandons any campaign job whose run has
     no chat session, and a debate-commissioned run never has one — so without the
@@ -148,15 +146,15 @@ async def test_the_monitor_does_not_abandon_a_debate_job(client, session, alice)
     """
     from vista_backend.services.campaign_monitor import CampaignMonitor
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
 
     monitor = CampaignMonitor(poll=_never_polled, collect=_never_collected)
     assert await monitor._is_orphaned(session, job) is False  # noqa: SLF001
 
 
 @pytest.mark.anyio
-async def test_a_campaign_job_without_a_session_is_still_abandoned(session, alice):
+async def test_a_campaign_job_without_a_session_is_still_abandoned(session):
     """The exemption must not weaken the rule it is an exception to."""
     from vista_backend.services.campaign_monitor import CampaignMonitor
 
@@ -166,7 +164,6 @@ async def test_a_campaign_job_without_a_session_is_still_abandoned(session, alic
     campaign = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
     )
@@ -174,7 +171,7 @@ async def test_a_campaign_job_without_a_session_is_still_abandoned(session, alic
         session, run_id=campaign.id, cycle=0, kind="neutronics"
     )
     job = await campaign_service.record_job(
-        session, job_id="j9", step_id=step.id, user_id=alice.id, cluster="odo"
+        session, job_id="j9", step_id=step.id, cluster="odo"
     )
 
     monitor = CampaignMonitor(poll=_never_polled, collect=_never_collected)
@@ -195,15 +192,13 @@ async def _never_collected(session, job, raw):  # pragma: no cover - guard
 
 
 @pytest.mark.anyio
-async def test_the_result_is_posted_under_the_commissioning_identity(
-    client, session, alice
-):
+async def test_the_result_is_posted_under_the_commissioning_identity(client, session):
     """
     Evidence has to carry the same host-stamped identity as the claim it bears on.
     A result attributed to the host would read as the operator vouching for it.
     """
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
 
     landed = await post_result(
         session, client, job, state="COMPLETED", ok=True, outputs="viscosity: flat"
@@ -219,9 +214,9 @@ async def test_the_result_is_posted_under_the_commissioning_identity(
 
 
 @pytest.mark.anyio
-async def test_the_step_records_the_result_either_way(client, session, alice):
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+async def test_the_step_records_the_result_either_way(client, session):
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
 
     await post_result(
         session, client, job, state="FAILED", ok=False, outputs="solver diverged"
@@ -232,14 +227,14 @@ async def test_the_step_records_the_result_either_way(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_closed_thread_does_not_lose_the_result(client, session, alice):
+async def test_a_closed_thread_does_not_lose_the_result(client, session):
     """
     The human can end a debate while a job is still running — that is allowed and
     common. The thread will not take the post, and the result still has to survive
     somewhere, so it is written to the step regardless.
     """
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
     await client.close_thread(run.thread_id)
 
     landed = await post_result(
@@ -258,7 +253,6 @@ def test_the_finding_leads_with_the_result():
     job = HpcJobTable(
         job_id="j1",
         step_id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
         cluster="odo",
         job_name="flibe-viscosity",
     )
@@ -282,11 +276,11 @@ def test_the_commissioning_role_is_rebuilt_from_its_identity():
 
 @pytest.mark.anyio
 async def test_a_result_after_the_verdict_posts_as_the_commissioning_role(
-    client, session, alice
+    client, session
 ):
     """Nothing retires the roster, so a late result still carries its asker's name."""
-    run, participant = await _debate(client, session, alice, status="converged")
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session, status="converged")
+    job = await _commission(client, session, run, participant)
 
     assert await post_result(
         session, client, job, state="COMPLETED", ok=True, outputs="flat"
@@ -306,7 +300,7 @@ async def test_a_result_after_the_verdict_posts_as_the_commissioning_role(
 
 
 @pytest.mark.anyio
-async def test_the_tool_hands_the_agent_the_job_output(client, session, alice):
+async def test_the_tool_hands_the_agent_the_job_output(client, session):
     """
     The role that asked the question sees the answer.
 
@@ -339,7 +333,7 @@ async def test_the_tool_hands_the_agent_the_job_output(client, session, alice):
 
     toolset = build_toolset("reviewer", Grounding(simulation=commissioner))
     assert toolset is not None
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
 
     from pydantic_ai import RunContext
     from pydantic_ai.usage import RunUsage
@@ -370,7 +364,7 @@ async def test_the_tool_hands_the_agent_the_job_output(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failed_run_hands_the_agent_the_log(client, session, alice):
+async def test_a_failed_run_hands_the_agent_the_log(client, session):
     """
     Why it failed is the part the debate can use.
 
@@ -396,7 +390,7 @@ async def test_a_failed_run_hands_the_agent_the_log(client, session, alice):
 
     toolset = build_toolset("proposer", Grounding(simulation=commissioner))
     assert toolset is not None
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
 
     from pydantic_ai import RunContext
     from pydantic_ai.usage import RunUsage
@@ -432,7 +426,7 @@ def test_the_referee_cannot_commission_work():
 
 
 @pytest.mark.anyio
-async def test_a_refused_submission_is_reported_not_raised(client, session, alice):
+async def test_a_refused_submission_is_reported_not_raised(client, session):
     from vista_backend.agents.forum.grounding import Grounding, build_toolset
     from vista_backend.agents.forum.roles import DebateDeps
 
@@ -441,7 +435,7 @@ async def test_a_refused_submission_is_reported_not_raised(client, session, alic
 
     toolset = build_toolset("proposer", Grounding(simulation=commissioner))
     assert toolset is not None
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
 
     from pydantic_ai import RunContext
     from pydantic_ai.usage import RunUsage
@@ -471,7 +465,7 @@ def test_simulation_module_exports_what_the_wiring_needs():
 
 @pytest.mark.anyio
 async def test_the_collector_routes_a_debate_job_to_the_forum(
-    client, session, alice, monkeypatch
+    client, session, monkeypatch
 ):
     """
     One monitor serves both features, so the collector has to tell them apart. A
@@ -480,13 +474,13 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _user: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _local: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
 
     collect = wiring.build_debate_aware_collector(planner_must_not_run)
     await collect(session, job, "STATE=COMPLETED\nviscosity: flat", True)
@@ -497,7 +491,7 @@ async def test_the_collector_routes_a_debate_job_to_the_forum(
 
 
 @pytest.mark.anyio
-async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, alice):
+async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session):
     """The debate branch must not swallow the path it was added beside."""
     from vista_backend.agents.campaign import wiring
 
@@ -507,7 +501,6 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, a
     campaign = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
     )
@@ -515,7 +508,7 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, a
         session, run_id=campaign.id, cycle=0, kind="neutronics"
     )
     job = await campaign_service.record_job(
-        session, job_id="j7", step_id=step.id, user_id=alice.id, cluster="odo"
+        session, job_id="j7", step_id=step.id, cluster="odo"
     )
 
     seen: list[str] = []
@@ -533,9 +526,7 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session, a
 
 
 @pytest.mark.anyio
-async def test_a_failed_run_is_posted_to_the_thread_too(
-    client, session, alice, monkeypatch
-):
+async def test_a_failed_run_is_posted_to_the_thread_too(client, session, monkeypatch):
     """
     A debate that loses a run should say so on the thread.
 
@@ -547,13 +538,13 @@ async def test_a_failed_run_is_posted_to_the_thread_too(
     """
     from vista_backend.agents.campaign import wiring
 
-    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _user: client)
+    monkeypatch.setattr(wiring, "build_client_for", lambda _project, _local: client)
 
     async def planner_must_not_run(session, job):  # pragma: no cover - guard
         raise AssertionError("a debate job has no planner to collect through")
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant)
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant)
 
     collect = wiring.build_debate_aware_collector(planner_must_not_run)
     await collect(
@@ -571,7 +562,7 @@ async def test_a_failed_run_is_posted_to_the_thread_too(
 
 
 @pytest.mark.anyio
-async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session, alice):
+async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session):
     """
     Same for an ordinary campaign, where there is no planner run to parse it.
 
@@ -586,7 +577,6 @@ async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session, alice):
     campaign = await campaign_service.create_campaign(
         session,
         project_id=project.id,
-        user_id=alice.id,
         domain="splash",
         planner_skill="splash-planner",
     )
@@ -594,7 +584,7 @@ async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session, alice):
         session, run_id=campaign.id, cycle=0, kind="neutronics"
     )
     job = await campaign_service.record_job(
-        session, job_id="j8", step_id=step.id, user_id=alice.id, cluster="odo"
+        session, job_id="j8", step_id=step.id, cluster="odo"
     )
     await campaign_service.update_job(session, job_id="j8", state="FAILED")
 
@@ -664,7 +654,7 @@ def test_a_missing_catalog_is_not_a_crash(tmp_path):
 # --------------------------------------------------------------------------- #
 
 
-class _User:
+class _Settings:
     def __init__(self, **kw):
         self.odo_s3m_token = kw.get("odo_s3m_token")
         self.frontier_s3m_token = kw.get("frontier_s3m_token")
@@ -673,20 +663,14 @@ class _User:
 
 def test_each_olcf_token_unlocks_only_its_own_machine():
     """An S3M token belongs to one OLCF project, so it reaches one cluster."""
-    assert simulation.clusters_for(_User(odo_s3m_token="t")) == ["odo"]
-    assert simulation.clusters_for(_User(frontier_s3m_token="t")) == ["frontier"]
-    both = _User(odo_s3m_token="t", frontier_s3m_token="t")
+    assert simulation.clusters_for(_Settings(odo_s3m_token="t")) == ["odo"]
+    assert simulation.clusters_for(_Settings(frontier_s3m_token="t")) == ["frontier"]
+    both = _Settings(odo_s3m_token="t", frontier_s3m_token="t")
     assert simulation.clusters_for(both) == ["frontier", "odo"]
 
 
-def test_the_legacy_shared_token_unlocks_nothing():
-    legacy = _User()
-    legacy.s3m_token = "t"  # the old single field, no longer read anywhere
-    assert simulation.clusters_for(legacy) == []
-
-
 def test_the_nersc_token_unlocks_perlmutter():
-    assert simulation.clusters_for(_User(nersc_iri_token="t")) == ["perlmutter"]
+    assert simulation.clusters_for(_Settings(nersc_iri_token="t")) == ["perlmutter"]
 
 
 def test_no_tokens_means_no_clusters():
@@ -694,7 +678,7 @@ def test_no_tokens_means_no_clusters():
     Which is why the tool is not granted at all in that case: a model handed a
     tool that can only fail keeps calling it until its request budget is gone.
     """
-    assert simulation.clusters_for(_User()) == []
+    assert simulation.clusters_for(_Settings()) == []
 
 
 # --------------------------------------------------------------------------- #
@@ -703,15 +687,15 @@ def test_no_tokens_means_no_clusters():
 
 
 @pytest.mark.anyio
-async def test_commissioned_count_includes_finished_jobs(client, session, alice):
+async def test_commissioned_count_includes_finished_jobs(client, session):
     """
     The cap is on what a debate may spend, and a finished job still spent it —
     counting only the open ones would let a debate submit without limit as long
     as it waited.
     """
-    run, participant = await _debate(client, session, alice)
-    first = await _commission(client, session, alice, run, participant, FakeHpc("a"))
-    await _commission(client, session, alice, run, participant, FakeHpc("b"))
+    run, participant = await _debate(client, session)
+    first = await _commission(client, session, run, participant, FakeHpc("a"))
+    await _commission(client, session, run, participant, FakeHpc("b"))
 
     await campaign_service.update_job(
         session, job_id=first.job_id, result_collected=True, state="COMPLETED"
@@ -722,10 +706,10 @@ async def test_commissioned_count_includes_finished_jobs(client, session, alice)
 
 
 @pytest.mark.anyio
-async def test_commissioned_count_is_scoped_to_one_debate(client, session, alice):
-    first, p1 = await _debate(client, session, alice)
-    await _commission(client, session, alice, first, p1, FakeHpc("a"))
-    second, _ = await _debate(client, session, alice)
+async def test_commissioned_count_is_scoped_to_one_debate(client, session):
+    first, p1 = await _debate(client, session)
+    await _commission(client, session, first, p1, FakeHpc("a"))
+    second, _ = await _debate(client, session)
 
     assert await simulation.commissioned_count(session, debate_run_id=first.id) == 1
     assert await simulation.commissioned_count(session, debate_run_id=second.id) == 0
@@ -736,11 +720,11 @@ async def test_commissioned_count_is_scoped_to_one_debate(client, session, alice
 # --------------------------------------------------------------------------- #
 
 
-async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
-    """A debate whose project and opener are set up for `build_simulation`."""
+async def _wired(session, monkeypatch, tmp_path, *, skills, tokens):
+    """A debate whose project and settings are set up for `build_simulation`."""
     from vista_backend.agents.forum import wiring
     from vista_backend.config import settings as app_settings
-    from vista_backend.db.schemas import UserTable
+    from vista_backend.services import local_settings
 
     # Each job carries a `cluster_defaults.json`, as every real one does, and they
     # deliberately support *different* clusters. A catalogue of bare directories
@@ -758,10 +742,10 @@ async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
         )
     monkeypatch.setattr(app_settings, "hpc_jobs_dir", tmp_path)
 
-    user = await session.get(UserTable, alice.id)
+    row = await local_settings.get(session)
     for field, value in tokens.items():
-        setattr(user, field, value)
-    session.add(user)
+        setattr(row, field, value)
+    session.add(row)
 
     project = ProjectTable(name=f"wired-{uuid.uuid4().hex[:8]}", skills=skills)
     session.add(project)
@@ -770,7 +754,6 @@ async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
     run = await debate_service.create_debate(
         session,
         project_id=project.id,
-        user_id=alice.id,
         topic="t",
         thread_id="t1",
         rounds=1,
@@ -787,18 +770,17 @@ async def _wired(session, alice, monkeypatch, tmp_path, *, skills, tokens):
     run = await debate_service.require_debate(session, run_id)
 
     # The MCP boundary is the one thing a test cannot have.
-    monkeypatch.setattr(wiring, "build_mcp_invoke", lambda user, paths: None)
+    monkeypatch.setattr(wiring, "build_mcp_invoke", lambda local, paths: None)
     monkeypatch.setattr(wiring, "McpHpcTools", lambda invoke: FakeHpc())
     return wiring, run
 
 
 @pytest.mark.anyio
-async def test_the_tool_is_wired_when_the_project_and_user_allow_it(
-    session, alice, monkeypatch, tmp_path
+async def test_the_tool_is_wired_when_the_project_and_settings_allow_it(
+    session, monkeypatch, tmp_path
 ):
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr", "splash-planner"],
@@ -814,11 +796,10 @@ async def test_the_tool_is_wired_when_the_project_and_user_allow_it(
 
 
 @pytest.mark.anyio
-async def test_no_tool_without_credentials(session, alice, monkeypatch, tmp_path):
+async def test_no_tool_without_credentials(session, monkeypatch, tmp_path):
     """Never grant a tool that can only fail — the lesson from the usage-limit bug."""
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -834,11 +815,10 @@ async def test_no_tool_without_credentials(session, alice, monkeypatch, tmp_path
 
 @pytest.mark.anyio
 async def test_no_tool_when_the_project_has_no_simulation_skills(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-prediction"],
@@ -850,12 +830,11 @@ async def test_no_tool_when_the_project_has_no_simulation_skills(
 
 @pytest.mark.anyio
 async def test_the_commissioner_refuses_a_job_outside_the_project(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     """`forge-tune` is in the catalog; a salt project still may not reach it."""
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -869,11 +848,10 @@ async def test_the_commissioner_refuses_a_job_outside_the_project(
 
 @pytest.mark.anyio
 async def test_the_commissioner_refuses_a_cluster_without_credentials(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -885,8 +863,8 @@ async def test_the_commissioner_refuses_a_cluster_without_credentials(
     )
     commissioner, _ = await wiring.build_simulation(session, run)
 
-    # Refused because *this job* cannot run there for this user: the job supports
-    # odo and perlmutter, and the opener has no NERSC credential.
+    # Refused because *this job* cannot run there with these settings: the job
+    # supports odo and perlmutter, and Settings has no NERSC credential.
     with pytest.raises(simulation.BadCommission, match="cannot run on 'perlmutter'"):
         await commissioner(
             participant=PARTICIPANT,
@@ -897,15 +875,12 @@ async def test_the_commissioner_refuses_a_cluster_without_credentials(
 
 
 @pytest.mark.anyio
-async def test_the_budget_stops_a_third_simulation(
-    session, alice, monkeypatch, tmp_path
-):
+async def test_the_budget_stops_a_third_simulation(session, monkeypatch, tmp_path):
     """Two per debate: test the sharpest prediction, not everything it wonders about."""
     from vista_backend.config import settings as app_settings
 
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -1005,7 +980,7 @@ def test_usage_covers_only_the_jobs_asked_for(tmp_path):
 
 @pytest.mark.anyio
 async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
-    client, session, alice
+    client, session
 ):
     """
     The gap a reader actually hit: a post's provenance proves a job was
@@ -1018,8 +993,8 @@ async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
     """
     from vista_backend.agents.forum.simulation import commissioned_runs
 
-    run, participant = await _debate(client, session, alice)
-    await _commission(client, session, alice, run, participant, FakeHpc("57719697"))
+    run, participant = await _debate(client, session)
+    await _commission(client, session, run, participant, FakeHpc("57719697"))
 
     (record,) = await commissioned_runs(session, debate_run_id=run.id)
 
@@ -1032,7 +1007,7 @@ async def test_commissioned_runs_report_state_not_just_that_a_job_was_sent(
 
 
 @pytest.mark.anyio
-async def test_commissioned_runs_keep_reporting_a_finished_job(client, session, alice):
+async def test_commissioned_runs_keep_reporting_a_finished_job(client, session):
     """
     Unlike `open_simulations`, which lists only jobs still out, this is
     for reading — and "it finished and posted nothing" is precisely the state
@@ -1043,8 +1018,8 @@ async def test_commissioned_runs_keep_reporting_a_finished_job(client, session, 
         open_simulations,
     )
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant, FakeHpc("job-z"))
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant, FakeHpc("job-z"))
 
     await campaign_service.update_job(
         session, job_id=job.job_id, state="COMPLETED", result_collected=True
@@ -1061,15 +1036,15 @@ async def test_commissioned_runs_keep_reporting_a_finished_job(client, session, 
 
 
 @pytest.mark.anyio
-async def test_waiting_returns_the_collected_output(engine, client, session, alice):
+async def test_waiting_returns_the_collected_output(engine, client, session):
     """
     The point of waiting: the role that asked the question gets the answer while
     it is still its turn to speak.
     """
     from vista_backend.agents.forum.simulation import wait_for_result
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant, FakeHpc("job-w"))
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant, FakeHpc("job-w"))
     await campaign_service.update_step(
         session,
         step_id=job.step_id,
@@ -1088,7 +1063,7 @@ async def test_waiting_returns_the_collected_output(engine, client, session, ali
 
 
 @pytest.mark.anyio
-async def test_giving_up_is_not_the_same_as_failing(engine, client, session, alice):
+async def test_giving_up_is_not_the_same_as_failing(engine, client, session):
     """
     A job that has not finished is not a job that failed, and a role told
     otherwise would argue from a false negative — treating "no answer yet" as
@@ -1096,8 +1071,8 @@ async def test_giving_up_is_not_the_same_as_failing(engine, client, session, ali
     """
     from vista_backend.agents.forum.simulation import wait_for_result
 
-    run, participant = await _debate(client, session, alice)
-    await _commission(client, session, alice, run, participant, FakeHpc("job-slow"))
+    run, participant = await _debate(client, session)
+    await _commission(client, session, run, participant, FakeHpc("job-slow"))
     await session.commit()
 
     outcome = await wait_for_result(
@@ -1110,11 +1085,11 @@ async def test_giving_up_is_not_the_same_as_failing(engine, client, session, ali
 
 
 @pytest.mark.anyio
-async def test_a_failed_job_is_reported_as_failed(engine, client, session, alice):
+async def test_a_failed_job_is_reported_as_failed(engine, client, session):
     from vista_backend.agents.forum.simulation import wait_for_result
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant, FakeHpc("job-x"))
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant, FakeHpc("job-x"))
     await campaign_service.update_step(
         session,
         step_id=job.step_id,
@@ -1131,7 +1106,7 @@ async def test_a_failed_job_is_reported_as_failed(engine, client, session, alice
 
 
 @pytest.mark.anyio
-async def test_waiting_leaves_the_database_writable(engine, client, session, alice):
+async def test_waiting_leaves_the_database_writable(engine, client, session):
     """
     The deadlock this design exists to avoid.
 
@@ -1145,8 +1120,8 @@ async def test_waiting_leaves_the_database_writable(engine, client, session, ali
 
     from vista_backend.agents.forum.simulation import wait_for_result
 
-    run, participant = await _debate(client, session, alice)
-    job = await _commission(client, session, alice, run, participant, FakeHpc("job-c"))
+    run, participant = await _debate(client, session)
+    job = await _commission(client, session, run, participant, FakeHpc("job-c"))
     step_id = job.step_id
     await session.commit()
 
@@ -1177,9 +1152,7 @@ async def test_waiting_leaves_the_database_writable(engine, client, session, ali
 
 
 @pytest.mark.anyio
-async def test_no_monitor_means_no_wait_and_no_promise(
-    session, alice, monkeypatch, tmp_path
-):
+async def test_no_monitor_means_no_wait_and_no_promise(session, monkeypatch, tmp_path):
     """
     Nothing polls jobs unless the campaign monitor is running, and it is off by
     default — which is how five jobs sat at `submitted` for three days.
@@ -1193,7 +1166,6 @@ async def test_no_monitor_means_no_wait_and_no_promise(
 
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -1247,12 +1219,12 @@ async def test_the_tool_says_plainly_that_nothing_will_collect_the_job():
 
 @pytest.mark.anyio
 async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     """
     The bug that launched nothing.
 
-    The opener has credentials for frontier, odo and perlmutter. `clusters_for`
+    Settings has credentials for frontier, odo and perlmutter. `clusters_for`
     returns them sorted, and the default used to be `clusters[0]` — frontier,
     picked alphabetically, with no reference to the job. `salt-neutronics-tbr` has
     no frontier section, so `submit_hpc_job` refused it, twice, and the agent had
@@ -1260,7 +1232,6 @@ async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
     """
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-neutronics-tbr"],
@@ -1274,7 +1245,7 @@ async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
 
     assert runnable == {"salt-neutronics-tbr": ["odo", "perlmutter"]}
     assert "frontier" not in runnable["salt-neutronics-tbr"], (
-        "frontier is reachable for this user but this job has no section for it"
+        "frontier is reachable but this job has no section for it"
     )
 
     outcome = await commissioner(
@@ -1290,7 +1261,7 @@ async def test_the_default_cluster_is_one_the_job_can_actually_run_on(
 
 @pytest.mark.anyio
 async def test_a_frontier_only_job_is_offered_on_frontier(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     """
     The same rule the other way round, which is why it cannot be a fixed default:
@@ -1299,7 +1270,6 @@ async def test_a_frontier_only_job_is_offered_on_frontier(
     """
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-chemistry-md"],
@@ -1315,15 +1285,14 @@ async def test_a_frontier_only_job_is_offered_on_frontier(
 
 @pytest.mark.anyio
 async def test_a_job_with_no_reachable_cluster_is_not_offered_at_all(
-    session, alice, monkeypatch, tmp_path
+    session, monkeypatch, tmp_path
 ):
     """
-    Never grant what can only fail. A NERSC-only opener cannot run a frontier-only
+    Never grant what can only fail. NERSC-only settings cannot run a frontier-only
     job, so it is dropped rather than offered and refused on every attempt.
     """
     wiring, run = await _wired(
         session,
-        alice,
         monkeypatch,
         tmp_path,
         skills=["salt-chemistry-md"],
@@ -1366,11 +1335,11 @@ def _sim_tool(commissioner):
 
 
 @pytest.mark.anyio
-async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
+async def test_a_credential_refusal_is_not_asked_twice(client, session):
     """
     Retrying a refused credential only spends the request budget.
 
-    This is what the live forum did: odo refused the opener's S3M token, and
+    This is what the live forum did: odo refused the Settings S3M token, and
     the role asked again with identical arguments and was refused identically.
     Two of twelve requests for one fact that was already on the table.
     """
@@ -1384,7 +1353,7 @@ async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
         )
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     first = await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
@@ -1398,7 +1367,7 @@ async def test_a_credential_refusal_is_not_asked_twice(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_another_cluster_is_still_worth_trying(client, session, alice):
+async def test_another_cluster_is_still_worth_trying(client, session):
     """
     The memo is per (job, cluster), not per turn.
 
@@ -1412,7 +1381,7 @@ async def test_another_cluster_is_still_worth_trying(client, session, alice):
         raise RuntimeError("no credentials")
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     await tool(ctx, job="salt-neutronics-tbr", prediction="p", cluster="odo")
@@ -1421,9 +1390,7 @@ async def test_another_cluster_is_still_worth_trying(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_default_cluster_is_the_same_attempt_as_naming_it(
-    client, session, alice
-):
+async def test_the_default_cluster_is_the_same_attempt_as_naming_it(client, session):
     """
     Otherwise omitting an argument is a way to retry a dead credential.
 
@@ -1438,7 +1405,7 @@ async def test_the_default_cluster_is_the_same_attempt_as_naming_it(
         raise RuntimeError("no credentials")
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     await tool(ctx, job="salt-neutronics-tbr", prediction="p")
@@ -1448,7 +1415,7 @@ async def test_the_default_cluster_is_the_same_attempt_as_naming_it(
 
 
 @pytest.mark.anyio
-async def test_a_mistyped_job_can_be_corrected(client, session, alice):
+async def test_a_mistyped_job_can_be_corrected(client, session):
     """
     The one refusal worth another go, so it must *not* be remembered.
 
@@ -1464,7 +1431,7 @@ async def test_a_mistyped_job_can_be_corrected(client, session, alice):
         raise simulation.BadCommission("'md' is not runnable in this project.")
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     out = await tool(ctx, job="md", prediction="p")
@@ -1476,14 +1443,14 @@ async def test_a_mistyped_job_can_be_corrected(client, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_spent_budget_says_to_stop_rather_than_to_retry(client, session, alice):
+async def test_a_spent_budget_says_to_stop_rather_than_to_retry(client, session):
     """No later call can work either, and the reply has to say so."""
 
     async def commissioner(**kwargs):
         raise simulation.BudgetSpent("already commissioned 2 of 2 permitted.")
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo"]})
 
     out = await tool(ctx, job="salt-neutronics-tbr", prediction="p")
@@ -1492,7 +1459,7 @@ async def test_a_spent_budget_says_to_stop_rather_than_to_retry(client, session,
 
 
 @pytest.mark.anyio
-async def test_the_receipt_names_the_cluster_the_job_went_to(client, session, alice):
+async def test_the_receipt_names_the_cluster_the_job_went_to(client, session):
     """
     "the default cluster" is not provenance.
 
@@ -1507,7 +1474,7 @@ async def test_the_receipt_names_the_cluster_the_job_went_to(client, session, al
         )
 
     tool = _sim_tool(commissioner)
-    _, participant = await _debate(client, session, alice)
+    _, participant = await _debate(client, session)
     ctx = _ctx(participant, runnable={"salt-neutronics-tbr": ["odo", "perlmutter"]})
 
     await tool(ctx, job="salt-neutronics-tbr", prediction="p")

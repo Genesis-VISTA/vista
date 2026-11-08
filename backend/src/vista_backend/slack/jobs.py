@@ -22,17 +22,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.campaign.mcp_invoke import build_mcp_invoke, project_paths_for
 from ..agents.campaign.wiring import parse_job_state
-from ..db.schemas import (
-    ChatSessionTable,
-    HpcJobRecordTable,
-    SlackLinkTable,
-    UserPublicWithConfig,
-    UserTable,
-)
+from ..db.schemas import ChatSessionTable, HpcJobRecordTable, SlackLinkTable
 from ..services import chat_run as chat_run_module
+from ..services import local_settings
 from ..services.campaign_monitor import is_success, is_terminal, normalize_state
 from . import store
-from .access import links_for_user
+from .access import all_links
 from .transport import SlackTransport
 
 log = logging.getLogger(__name__)
@@ -44,10 +39,7 @@ PollFn = Callable[[AsyncSession, HpcJobRecordTable], Awaitable[str]]
 
 
 async def poll_status(session: AsyncSession, record: HpcJobRecordTable) -> str:
-    """The live poll: `get_hpc_job_status` as the researcher who submitted it."""
-    user_row = await session.get(UserTable, record.user_id)
-    if user_row is None:
-        raise ValueError(f"no user for job {record.job_id}")
+    """The live poll: `get_hpc_job_status` with the install's credentials."""
     chat = (
         await session.get(ChatSessionTable, record.chat_session_id)
         if record.chat_session_id
@@ -55,8 +47,8 @@ async def poll_status(session: AsyncSession, record: HpcJobRecordTable) -> str:
     )
     if chat is None:
         raise ValueError(f"job {record.job_id} has lost its conversation")
-    user = UserPublicWithConfig.model_validate(user_row)
-    invoke = build_mcp_invoke(user, project_paths_for(chat.project_id, user.id))
+    local = await local_settings.get_public(session)
+    invoke = build_mcp_invoke(local, project_paths_for(chat.project_id))
     text = await invoke(
         "get_hpc_job_status", {"job_id": record.job_id, "cluster": record.cluster}
     )
@@ -159,7 +151,7 @@ class JobMonitor:
     async def _link(
         self, db: AsyncSession, record: HpcJobRecordTable
     ) -> SlackLinkTable | None:
-        links = await links_for_user(db, record.user_id)
+        links = await all_links(db)
         if record.slack_team_id and record.slack_user_id:
             for link in links:
                 if (link.team_id, link.slack_user_id) == (

@@ -46,14 +46,26 @@ Several clients MAY watch the same run at once and SHALL each receive every even
 ### Requirement: One active run per conversation
 
 A conversation SHALL have at most one active run. Starting a turn in a conversation that
-already has an active run SHALL be refused without affecting the running turn. Different
-conversations SHALL be able to run at the same time.
+already has an active run SHALL be refused without affecting the running turn, and the refusal
+SHALL identify itself as a busy conversation, distinct from any other refusal of the same
+request. Different conversations SHALL be able to run at the same time.
 
 #### Scenario: Send while busy
 
 - **WHEN** a client starts a turn in a conversation whose run is still active
-- **THEN** the request is refused with a conflict error
+- **THEN** the request is refused with a conflict error identified as a busy conversation
 - **AND** the running turn and its eventual saved result are unchanged
+
+#### Scenario: Busy refusal shows the running turn
+
+- **WHEN** the chat page's send is refused because the conversation is busy
+- **THEN** the page shows the running turn and puts the unsent text back in the input
+
+#### Scenario: Other refusals are not mistaken for busy
+
+- **WHEN** the chat page's send is refused for any reason other than a busy conversation
+- **THEN** the page shows the refusal's message in the conversation and puts the unsent text
+  back in the input, and does not try to show a running turn
 
 #### Scenario: Busy conversation disables input
 
@@ -164,3 +176,47 @@ status changes.
 
 - **WHEN** exactly one conversation needs the researcher and they activate the Chat entry
 - **THEN** that conversation opens and its prompt is shown
+
+### Requirement: A failed turn says why
+
+A turn that fails SHALL end with a note in the conversation that states the reason it failed,
+not only that it failed. When the failure came from the model provider, the reason SHALL name
+the model, the provider's HTTP status, and the provider's own message where it gave one, and
+SHALL NOT be a raw dump of the provider's response. The reason SHALL be kept with the turn's
+events, so a conversation opened after the turn ended shows the same note. A turn saved without
+a reason SHALL still show that it failed.
+
+#### Scenario: Unknown model name
+
+- **WHEN** a researcher sends a message and the provider answers 404 because the chosen model
+  does not exist
+- **THEN** the turn ends with a note saying it failed, naming the model, the 404, and the
+  provider's message
+
+#### Scenario: Failure seen after returning
+
+- **WHEN** a turn failed while the researcher was on another page
+- **THEN** opening the conversation shows the same failure note with its reason
+
+#### Scenario: Older failed turn
+
+- **WHEN** a conversation is opened whose failed turn was saved without a reason
+- **THEN** the turn ends with a note saying it failed
+
+### Requirement: A prompt offering one choice is shown as buttons
+
+An MCP form elicitation whose only field is a required choice among a few fixed answers SHALL be
+shown as its message with one button per answer, labelled with that answer, and no form, Submit,
+Decline or Cancel. A button SHALL accept the prompt with its answer. Closing the prompt without
+answering SHALL dismiss it, as it does any prompt. Any other elicitation SHALL be shown as before.
+
+#### Scenario: A transfer approval
+
+- **WHEN** a tool asks the researcher to approve an upload, offering the answers Approve and Decline
+- **THEN** the prompt shows the tool's message with an Approve and a Decline button, and nothing else
+- **AND** pressing Decline accepts the prompt with the answer Decline
+
+#### Scenario: A login form is unchanged
+
+- **WHEN** a Lux submission asks for an SSH login
+- **THEN** the prompt shows its fields with Submit, Decline and Cancel, as before

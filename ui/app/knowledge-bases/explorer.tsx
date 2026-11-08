@@ -2,24 +2,44 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { toCreate, updateProject, useActiveProject } from "@/lib/projects";
+import { refreshProjects, toCreate, updateProject, useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
+import { useTourEvent } from "@/components/TourProvider";
+import { KnowledgeBaseImportModal } from "@/components/KnowledgeBaseImportModal";
+import { PublishConfirmModal } from "@/components/PublishConfirmModal";
+import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishConflictModal } from "@/components/PublishConflictModal";
+import { publishAudience, useCollaboration, useTeams } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamSwitcher";
+import {
+  formatSize,
+  importRemoteKnowledgeBase,
+  isKnowledgeBaseOnServer,
+  kbSharingLabel,
+  listRemoteKnowledgeBases,
+  publishKnowledgeBase,
+  type KnowledgeBaseImported,
+} from "@/lib/kb-sharing";
+import type { SharingRefusal } from "@/lib/skill-sharing";
 import type {
   IndexProgress,
   KnowledgeBase,
   KnowledgeBaseSummary,
   Publication,
 } from "@/lib/types";
+import {
+  KB_ACCEPT_ATTR,
+  formatBadge,
+  isAcceptedKbFile,
+  rowCountLabel,
+  unsupportedFileMessage,
+} from "@/lib/kb-formats";
+import { fileLinkProps } from "@/lib/file-links";
+import { OLCF_DOCS_SLUG } from "@/lib/default-project";
 
 /* ---------------------------------------------------------------------- */
 /*  Helpers                                                               */
 /* ---------------------------------------------------------------------- */
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
 
 function formatDate(iso?: string | null): string {
   if (!iso) return "—";
@@ -122,6 +142,22 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
   const [filter, setFilter] = useState("");
   const [topMessage, setTopMessage] = useState("");
   const [topError, setTopError] = useState("");
+  const [showImport, setShowImport] = useState(false);
+  const collab = useCollaboration();
+  const teams = useTeams();
+  /** The server's newest version of each item, by id, for "version N available". */
+  const [heads, setHeads] = useState<Record<string, number>>({});
+  const reportTour = useTourEvent();
+
+  const refreshHeads = useCallback(() => {
+    listRemoteKnowledgeBases({ manifests: false })
+      .then((remote) => setHeads(Object.fromEntries(remote.map((r) => [r.id, r.head_version]))))
+      .catch(() => setHeads({}));
+  }, []);
+
+  useEffect(() => {
+    if (collab.available) refreshHeads();
+  }, [collab.available, refreshHeads]);
 
   /**
    * Project scoping. `/knowledge-bases/project` restricts the list to the
@@ -195,10 +231,12 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
    * project's canonical KB list from the backend DB.
    */
   const projectScopedList = useMemo(() => {
-    if (!scopedToProject) return list;
+    // The global view lists only the selected team's (Private's when none); the
+    // project's view lists what it searches, whichever team is selected.
+    if (!scopedToProject) return list.filter((kb) => teams.show(kb.team_id));
     const allowed = new Set<string>(activeProject?.knowledgeBases ?? []);
     return list.filter((kb) => allowed.has(kb.slug));
-  }, [list, scopedToProject, activeProject]);
+  }, [list, scopedToProject, activeProject, teams]);
 
   const filteredList = useMemo(() => {
     const term = filter.trim().toLowerCase();
@@ -210,6 +248,9 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
         kb.slug.toLowerCase().includes(term)
     );
   }, [projectScopedList, filter]);
+
+  // The tour points at OLCF User Documentation, or at the first one when there is none.
+  const tourKbSlug = (filteredList.find((kb) => kb.slug === OLCF_DOCS_SLUG) ?? filteredList[0])?.slug;
 
   // Auto-select the first KB so the right pane isn't blank, and re-select
   // when the current selection falls outside the active scope (e.g. user
@@ -285,6 +326,58 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
     await loadList();
   }
 
+  async function handleShared(kb: KnowledgeBase) {
+    await handleUpdated(kb);
+    refreshHeads();
+  }
+
+  /**
+   * Copied to a team: it joined the team, or a copy was imported beside it
+   * under a new slug, so the list (and any project using it) is asked again.
+   */
+  function handleCopied() {
+    void loadList();
+    refreshHeads();
+    void refreshProjects();
+    if (selectedSlug) void loadDetail(selectedSlug);
+  }
+
+  async function handleImported(result: KnowledgeBaseImported) {
+    setShowImport(false);
+    const kb = result.knowledgeBase;
+    await loadList();
+    refreshHeads();
+    setSelectedSlug(kb.slug);
+    if (selectedSlug === kb.slug) void loadDetail(kb.slug);
+    flashMessage(
+      result.status === "unchanged"
+        ? `${kb.name} is already here at version ${kb.remote_version}.`
+        : `Imported ${kb.name} (${kb.slug}) version ${kb.remote_version}.`
+    );
+  }
+
+  const importButton = (
+    <button
+      type="button"
+      className="button ghost button-sm"
+      disabled={!collab.available}
+      title={
+        collab.available
+          ? "Import a knowledge base from the collaboration server"
+          : (collab.reason ?? undefined)
+      }
+      onClick={() => setShowImport(true)}
+    >
+      Import
+    </button>
+  );
+  const importModal = showImport && (
+    <KnowledgeBaseImportModal
+      onClose={() => setShowImport(false)}
+      onImported={(result) => void handleImported(result)}
+    />
+  );
+
   // Project-scoped layout: tabs across the top, single detail panel
   // below. No left list column, no search box, no per-KB list-item
   // cards. The set of KBs is small and known (the project's
@@ -315,6 +408,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
               >
                 {isLoadingList ? "…" : "Refresh"}
               </button>
+              {importButton}
               <button
                 type="button"
                 className="button button-sm"
@@ -395,6 +489,9 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
                 ) : selected ? (
                   <KbDetailView
                     kb={selected}
+                    head={selected.remote_id ? heads[selected.remote_id] : undefined}
+                    onShared={handleShared}
+                    onCopied={handleCopied}
                     onUpdated={handleUpdated}
                     onDeleted={() => void handleDeleted(selected.slug)}
                     onError={flashError}
@@ -417,10 +514,12 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
         {createOpen && (
           <CreateKbModal
             existingSlugs={new Set(list.map((kb) => kb.slug))}
+            project={scopedToProject ? activeProject?.name : undefined}
             onCancel={() => setCreateOpen(false)}
             onCreated={handleCreated}
           />
         )}
+        {importModal}
       </div>
     );
   }
@@ -438,7 +537,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
         showProject={false}
         actions={
           <>
-            <span className="tag">{list.length} total</span>
+            <span className="tag">{projectScopedList.length} total</span>
             <button
               type="button"
               className="button ghost button-sm"
@@ -447,6 +546,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
             >
               {isLoadingList ? "…" : "Refresh"}
             </button>
+            {importButton}
             <button
               type="button"
               className="button button-sm"
@@ -460,7 +560,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       <div className="app-page-body flush">
       <div className="kb-layout">
         {/* ---- Left: list ---- */}
-        <section className="panel kb-list-panel">
+        <section className="panel kb-list-panel" data-tour="knowledge-bases:list">
           <div className="panel-body kb-list-body">
             <input
               className="input"
@@ -494,8 +594,14 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
                   <KbListItem
                     key={kb.slug}
                     kb={kb}
+                    tourTarget={kb.slug === tourKbSlug}
                     selected={kb.slug === selectedSlug}
-                    onSelect={() => setSelectedSlug(kb.slug)}
+                    onSelect={() => {
+                      setSelectedSlug(kb.slug);
+                      // The list opens the first one by itself, so only a click
+                      // is the researcher opening one.
+                      reportTour("kb-opened");
+                    }}
                   />
                 ))}
               </div>
@@ -516,6 +622,9 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
           ) : selected ? (
             <KbDetailView
               kb={selected}
+              head={selected.remote_id ? heads[selected.remote_id] : undefined}
+              onShared={handleShared}
+              onCopied={handleCopied}
               onUpdated={handleUpdated}
               onDeleted={() => void handleDeleted(selected.slug)}
               onError={flashError}
@@ -533,10 +642,12 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       {createOpen && (
         <CreateKbModal
           existingSlugs={new Set(list.map((kb) => kb.slug))}
+          project={scopedToProject ? activeProject?.name : undefined}
           onCancel={() => setCreateOpen(false)}
           onCreated={handleCreated}
         />
       )}
+      {importModal}
     </div>
   );
 }
@@ -547,10 +658,13 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
 
 function KbListItem({
   kb,
+  tourTarget,
   selected,
   onSelect,
 }: {
   kb: KnowledgeBaseSummary;
+  /** The knowledge base the first-boot tour points at. */
+  tourTarget: boolean;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -559,11 +673,15 @@ function KbListItem({
     <button
       type="button"
       className="kb-list-item"
+      data-tour={tourTarget ? "knowledge-bases:open-kb" : undefined}
       onClick={onSelect}
       data-selected={selected ? "true" : "false"}
     >
       <div className="kb-list-item-head">
-        <div className="kb-list-item-name">{kb.name}</div>
+        <div className="kb-list-item-name">
+          {kb.name}
+          <TeamBadge teamId={kb.team_id} />
+        </div>
       </div>
       <div className="kb-list-item-meta">
         {kb.publications.length}{" "}
@@ -583,12 +701,21 @@ function KbListItem({
 
 function KbDetailView({
   kb,
+  head,
+  onShared,
+  onCopied,
   onUpdated,
   onDeleted,
   onError,
   onMessage,
 }: {
   kb: KnowledgeBase;
+  /** The collaboration server's newest version of it, if known. */
+  head?: number;
+  /** It was published or imported: the list and the server's heads follow. */
+  onShared: (kb: KnowledgeBase) => void;
+  /** It was copied to a team. */
+  onCopied: () => void;
   onUpdated: (kb: KnowledgeBase) => void;
   onDeleted: () => void;
   onError: (msg: string) => void;
@@ -706,6 +833,62 @@ function KbDetailView({
 
   const status = buildStatusLabel(kb.build_status);
 
+  const collab = useCollaboration();
+  const teams = useTeams();
+  const serverUrl = collab.status?.reachable ? collab.status.url : null;
+  const onServer = isKnowledgeBaseOnServer(kb, serverUrl);
+  const [publishing, setPublishing] = useState(false);
+  const [confirmPublish, setConfirmPublish] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const canCopy = teams.shown && copyTargets(teams.teams, kb.team_id).length > 0;
+  const [conflict, setConflict] = useState<SharingRefusal | null>(null);
+  const publishOff = !collab.available
+    ? collab.reason
+    : indexingInProgress
+      ? "Publish once indexing has finished."
+      : null;
+
+  async function publish(opts: { onTopOf?: number; asNew?: boolean } = {}) {
+    setPublishing(true);
+    try {
+      const result = await publishKnowledgeBase(kb.slug, opts);
+      if (result.ok) {
+        onShared(result.knowledgeBase);
+        onMessage(
+          result.status === "unchanged"
+            ? `Nothing new to publish: ${kb.name} is version ${result.knowledgeBase.remote_version} on the server.`
+            : `Published ${kb.name} as version ${result.knowledgeBase.remote_version}.`
+        );
+        return;
+      }
+      if (result.code === "version_conflict" || result.code === "remote_missing") {
+        setConflict(result);
+        return;
+      }
+      onError(result.detail);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  /** Replace it here with the server's version `version`, the one the researcher was shown. */
+  async function takeServers(version?: number) {
+    if (!kb.remote_id) return;
+    setPublishing(true);
+    try {
+      const result = await importRemoteKnowledgeBase(kb.remote_id, {
+        version,
+        replaceModified: true,
+      });
+      if (result.ok) {
+        onShared(result.knowledgeBase);
+        onMessage(`${kb.name} is now version ${result.knowledgeBase.remote_version}.`);
+      } else onError(result.detail);
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   async function saveMeta() {
     setSavingMeta(true);
     try {
@@ -735,9 +918,9 @@ function KbDetailView({
   async function uploadFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const arr = Array.from(files);
-    const nonPdf = arr.find((f) => !/\.pdf$/i.test(f.name));
-    if (nonPdf) {
-      onError(`'${nonPdf.name}' is not a PDF. Only PDF files are accepted.`);
+    const rejected = arr.find((f) => !isAcceptedKbFile(f.name));
+    if (rejected) {
+      onError(unsupportedFileMessage(rejected.name));
       return;
     }
     setIsUploading(true);
@@ -754,7 +937,7 @@ function KbDetailView({
         return;
       }
       onUpdated(data.kb as KnowledgeBase);
-      onMessage(`${arr.length} PDF${arr.length === 1 ? "" : "s"} added.`);
+      onMessage(`${arr.length} file${arr.length === 1 ? "" : "s"} added.`);
     } catch {
       onError("Upload failed.");
     } finally {
@@ -824,7 +1007,7 @@ function KbDetailView({
       </div>
       <div className="panel-body kb-detail-body">
         {/* ---- Metadata block ---- */}
-        <div className="kb-detail-meta">
+        <div className="kb-detail-meta" data-tour="knowledge-bases:about">
           {editing ? (
             <>
               <label className="project-modal-label">
@@ -881,6 +1064,9 @@ function KbDetailView({
                 </span>
                 <span>Created: {formatDate(kb.created_at)}</span>
                 <span>Last built: {formatDate(kb.last_built_at)}</span>
+                <span>
+                  {kbSharingLabel(kb, serverUrl, head)}
+                </span>
               </div>
               {kb.shared_with_mcp && (
                 <div
@@ -899,7 +1085,7 @@ function KbDetailView({
                     rebuild step required.
                   </span>
                   <span>
-                    PDFs: <code>{kb.pdfs_dir}</code>
+                    Files: <code>{kb.pdfs_dir}</code>
                   </span>
                   <span>
                     ChromaDB: <code>{kb.rag_db_path}</code>
@@ -921,10 +1107,93 @@ function KbDetailView({
                 >
                   Delete KB
                 </button>
+                {canCopy && (
+                  <button
+                    type="button"
+                    className="button ghost button-sm"
+                    disabled={publishing || indexingInProgress}
+                    title={
+                      indexingInProgress
+                        ? "Copy once indexing has finished."
+                        : "Copy its PDFs and index to a team"
+                    }
+                    onClick={() => setCopying(true)}
+                  >
+                    Copy to team…
+                  </button>
+                )}
+                {/* A private one is shared by copying it to a team; one in a
+                    team publishes new versions to it. */}
+                {kb.team_id && (
+                <button
+                  type="button"
+                  className="button ghost button-sm"
+                  disabled={publishing || publishOff !== null}
+                  title={
+                    publishOff ??
+                    "Publish its PDFs and index to its team"
+                  }
+                  onClick={() => {
+                    if (onServer) void publish();
+                    else setConfirmPublish(true);
+                  }}
+                >
+                  {publishing
+                    ? "Publishing…"
+                    : !onServer
+                      ? "Publish"
+                      : kb.modified
+                        ? "Publish changes"
+                        : "Republish"}
+                </button>
+                )}
               </div>
             </>
           )}
         </div>
+
+        {copying && (
+          <CopyToTeamModal
+            kind="knowledge-base"
+            name={kb.slug}
+            label={kb.name}
+            teamId={kb.team_id}
+            onClose={() => setCopying(false)}
+            onCopied={onCopied}
+          />
+        )}
+        <PublishConfirmModal
+          open={confirmPublish}
+          title="Publish knowledge base"
+          message={`Publish "${kb.name}" to the collaboration server at ${serverUrl ?? "?"}?\n\nIts PDFs and its index are uploaded, which can take a while for a large one. ${publishAudience(kb.team_id, teams)} A published version stays there; you can publish newer ones.`}
+          confirmLabel="Publish"
+          onCancel={() => setConfirmPublish(false)}
+          onConfirm={() => {
+            setConfirmPublish(false);
+            void publish();
+          }}
+        />
+        {conflict && (
+          <PublishConflictModal
+            name={kb.name}
+            noun="knowledge base"
+            refusal={conflict}
+            onCancel={() => setConflict(null)}
+            onTakeServers={() => {
+              const version = conflict.headVersion ?? undefined;
+              setConflict(null);
+              void takeServers(version);
+            }}
+            onPublishOnTop={(version) => {
+              setConflict(null);
+              void publish({ onTopOf: version });
+            }}
+            onPublishAsNew={() => {
+              setConflict(null);
+              void publish({ asNew: true });
+            }}
+          />
+        )}
 
         {/* ---- Publications ---- */}
         <div className="kb-pubs-header">
@@ -944,10 +1213,11 @@ function KbDetailView({
             <button
               type="button"
               className="button button-sm"
+              data-tour="knowledge-bases:add-files"
               onClick={() => uploadInputRef.current?.click()}
               disabled={isUploading}
             >
-              {isUploading ? "Uploading…" : "+ Add PDFs"}
+              {isUploading ? "Uploading…" : "+ Add files"}
             </button>
           </div>
         </div>
@@ -1008,13 +1278,13 @@ function KbDetailView({
             }
           }}
         >
-          Drag and drop PDFs here, or click to browse.
+          Drag and drop files here (PDF, CSV, TSV, TXT, MD), or click to browse.
         </div>
         <input
           ref={uploadInputRef}
           type="file"
           multiple
-          accept="application/pdf,.pdf"
+          accept={KB_ACCEPT_ATTR}
           style={{ display: "none" }}
           onChange={(e) => {
             void uploadFiles(e.target.files);
@@ -1022,10 +1292,10 @@ function KbDetailView({
           }}
         />
 
-        <div className="kb-pubs-list">
+        <div className="kb-pubs-list" data-tour="knowledge-bases:papers">
           {kb.publications.length === 0 ? (
             <div className="kb-empty-block">
-              No publications yet. Upload PDFs to populate this knowledge base.
+              No publications yet. Upload files to populate this knowledge base.
             </div>
           ) : visiblePublications.length === 0 ? (
             <div className="kb-empty-block">
@@ -1258,6 +1528,11 @@ function PublicationItem({
   // hasPdf defaults to true for backwards compatibility with older
   // records that didn't set the field.
   const hasPdf = publication.has_pdf !== false;
+  // Non-PDF files carry their description in `abstract` and have no citation.
+  const badge = formatBadge(publication);
+  const isFile = badge !== null;
+  const rowLabel = rowCountLabel(publication);
+  const description = isFile ? publication.abstract?.trim() || null : null;
 
   return (
     <div className="pub-item">
@@ -1274,8 +1549,17 @@ function PublicationItem({
         }}
       >
         <div className="pub-item-text">
-          <div className="pub-item-title">{displayTitle}</div>
+          <div className="pub-item-title">
+            {isFile && (
+              <span className="pub-item-tag pub-item-kind" style={{ marginRight: 6 }}>
+                {badge}
+              </span>
+            )}
+            {displayTitle}
+          </div>
+          {description && <div className="pub-item-desc">{description}</div>}
           <div className="pub-item-meta">
+            {rowLabel && <span>{rowLabel}</span>}
             {authorLine && <span>{authorLine}</span>}
             {publication.journal && <span>· {publication.journal}</span>}
             {publication.year && <span>· {publication.year}</span>}
@@ -1313,7 +1597,7 @@ function PublicationItem({
               instead of waiting indefinitely for something that's not
               coming.
             */}
-            {!authorLine && !publication.journal && !publication.year && (() => {
+            {!isFile && !authorLine && !publication.journal && !publication.year && (() => {
               const ix = publication.index_status;
               const cs = publication.citation_status ?? "pending";
               if (ix === "queued" || ix === "indexing") {
@@ -1380,12 +1664,12 @@ function PublicationItem({
           <dl className="pub-fields">
             <Field label="Filename" value={publication.filename} mono />
             {hasPdf && publication.size > 0 && (
-              <Field label="Size" value={formatBytes(publication.size)} />
+              <Field label="Size" value={formatSize(publication.size)} />
             )}
             {hasPdf && (
               <Field label="Added" value={formatDate(publication.added_at)} />
             )}
-            {publication.title && (
+            {!isFile && publication.title && (
               <Field label="Title" value={publication.title} />
             )}
             {publication.authors && publication.authors.length > 0 && (
@@ -1413,8 +1697,9 @@ function PublicationItem({
             {publication.keywords && publication.keywords.length > 0 && (
               <Field label="Keywords" value={publication.keywords.join(", ")} />
             )}
+            {rowLabel && <Field label="Rows" value={rowLabel} />}
             {publication.abstract && (
-              <Field label="Abstract" value={publication.abstract} />
+              <Field label={isFile ? "Description" : "Abstract"} value={publication.abstract} />
             )}
           </dl>
           {!hasPdf && (
@@ -1433,10 +1718,11 @@ function PublicationItem({
                   href={`/api/knowledge-bases/${encodeURIComponent(
                     slug
                   )}/publications/${encodeURIComponent(publication.filename)}`}
-                  target="_blank"
-                  rel="noreferrer"
+                  {...(isFile
+                    ? fileLinkProps("/")
+                    : { target: "_blank", rel: "noreferrer" })}
                 >
-                  Open PDF
+                  {isFile ? "Download" : "Open PDF"}
                 </a>
                 <button
                   type="button"
@@ -1490,10 +1776,16 @@ function Field({
 
 function CreateKbModal({
   existingSlugs,
+  project,
   onCancel,
   onCreated,
 }: {
   existingSlugs: Set<string>;
+  /**
+   * The project it is made for, from a project's page: the backend puts it in
+   * that project's team, so the project can then search it.
+   */
+  project?: string;
   onCancel: () => void;
   onCreated: (kb: KnowledgeBase) => void;
 }) {
@@ -1508,9 +1800,9 @@ function CreateKbModal({
   function addFiles(list: FileList | null) {
     if (!list) return;
     const incoming = Array.from(list);
-    const nonPdf = incoming.find((f) => !/\.pdf$/i.test(f.name));
-    if (nonPdf) {
-      setError(`'${nonPdf.name}' is not a PDF. Only PDF files are accepted.`);
+    const rejected = incoming.find((f) => !isAcceptedKbFile(f.name));
+    if (rejected) {
+      setError(unsupportedFileMessage(rejected.name));
       return;
     }
     setError("");
@@ -1588,6 +1880,7 @@ function CreateKbModal({
           name: name.trim(),
           description: description.trim() || null,
           overwrite,
+          ...(project ? { project } : {}),
         }),
       });
       const createData = await createRes.json();
@@ -1710,13 +2003,13 @@ function CreateKbModal({
                 }
               }}
             >
-              Drag and drop PDFs here, or click to browse.
+              Drag and drop files here (PDF, CSV, TSV, TXT, MD), or click to browse.
             </div>
             <input
               ref={inputRef}
               type="file"
               multiple
-              accept="application/pdf,.pdf"
+              accept={KB_ACCEPT_ATTR}
               style={{ display: "none" }}
               onChange={(e) => {
                 addFiles(e.target.files);
@@ -1729,7 +2022,7 @@ function CreateKbModal({
                   <div key={f.name} className="kb-create-file-row">
                     <div className="kb-create-file-name">{f.name}</div>
                     <span className="kb-create-file-size">
-                      {formatBytes(f.size)}
+                      {formatSize(f.size)}
                     </span>
                     <button
                       type="button"

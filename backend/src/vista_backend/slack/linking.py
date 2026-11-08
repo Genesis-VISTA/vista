@@ -1,5 +1,5 @@
 """
-Linking a Slack user to a VISTA user.
+Linking a Slack user to this VISTA installation (and so to its one researcher).
 
 The Slack user DMs the bot `link` and is shown a 6-digit code; the researcher
 enters it in the desktop app (`POST /slack/links`). A link therefore needs both
@@ -9,7 +9,6 @@ only as a hash, usable once, and expire after `SlackSettings.link_code_ttl`.
 
 import hashlib
 import secrets
-import uuid
 from datetime import datetime, timedelta
 
 from sqlmodel import delete, select
@@ -74,9 +73,18 @@ async def _drop_expired(session: AsyncSession) -> None:
 
 
 async def redeem_code(
-    session: AsyncSession, *, code: str, user_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    code: str,
+    collab_sub: str | None = None,
+    collab_name: str | None = None,
 ) -> SlackLinkTable:
-    """Link the Slack user the code was issued to, to `user_id`. One use only."""
+    """
+    Link the Slack user the code was issued to, to this installation. One use only.
+
+    `collab_sub`/`collab_name` are who the researcher is on the collaboration
+    server, when they are signed in there: recorded, never checked.
+    """
     pending = await session.get(SlackLinkCodeTable, _hash(code))
     if pending is None:
         raise LinkError("That code isn't right. DM the VISTA bot `link` for a new one.")
@@ -97,10 +105,10 @@ async def redeem_code(
         link = SlackLinkTable(
             team_id=pending.team_id,
             slack_user_id=pending.slack_user_id,
-            user_id=user_id,
             created_at=now_iso(),
         )
-    link.user_id = user_id
+    link.collab_sub = collab_sub
+    link.collab_name = collab_name
     link.dm_channel_id = pending.dm_channel_id
     session.add(link)
     await session.commit()

@@ -66,7 +66,8 @@ cd alloy-thermo-skill-main
 
 Do **not** try to build or run the engine in the sandbox — it is an MPI code and the
 sandbox has one core and no MPI. Write all artifacts under `/mnt/data/output/...` and
-print `Plot saved to <path>` for any image so the UI auto-displays it.
+then call `display_file` with the sandbox path of any image or file you want the user to
+see; saving or printing a path does not display it.
 
 ## The workflow
 

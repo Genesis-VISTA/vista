@@ -103,4 +103,4 @@ print(f'Salt: {best_salt}, Composition: {best_comp}')
 ## Output
 - Plots go to `/mnt/data/output/salt-plots/`
 - Always use `MPLBACKEND=Agg` before matplotlib
-- Always print "Plot saved to <path>" so the UI can auto-display the image
+- After saving a plot, call `display_file` with its sandbox path (e.g. `/mnt/data/output/salt-plots/x.png`) to show it; saving or printing the path does not display it

@@ -45,9 +45,10 @@ from pydantic_ai.messages import (
     TextPart,
 )
 from .inference import (
+    RejectedInferenceCredential,
     build_model_for,
-    rejected_credential_detail,
     require_inference_credential,
+    resolve_inference_target,
 )
 import mcp.client.session
 import mcp.shared.context
@@ -58,10 +59,10 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
-from ..db.schemas import ProjectPublic, SkillTable, UserPublicWithConfig
+from ..db.schemas import LocalSettingsPublic, ProjectPublic, SkillTable
 from ..services.job_records import describe as describe_jobs
 from ..services.job_records import recent_jobs
-from ..services.repo_tokens import user_repo_token
+from ..services.repo_tokens import settings_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
 from palisade import PalisadeSidecar
@@ -80,8 +81,13 @@ from .eval_metrics import EvalMetricsCapability
 from ..slack.choices import choice_schema, register_choice_tool
 from ..slack.gate import READ_ONLY, SLACK_INSTRUCTIONS, SlackGateCapability
 from . import source_fetch
+from .kb_fetch import copy_kb_file, kb_prompt_block
 from .skills import to_prompt
-from .campaign.agent_tools import CampaignDriverDeps, register_campaign_tools
+from .campaign.agent_tools import (
+    CampaignDriverDeps,
+    campaign_model_for,
+    register_campaign_tools,
+)
 from .campaign.hpc_tools import McpHpcTools
 from .campaign.manifest import load_manifest
 from .campaign.mcp_invoke import build_invoke
@@ -93,9 +99,9 @@ BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text
 )
 
 
-def research_profile_prompt(user: UserPublicWithConfig) -> str:
+def research_profile_prompt(local: LocalSettingsPublic) -> str:
     """Render the researcher's explicit, global personalization for the agent."""
-    if not user.personalize_responses:
+    if not local.personalize_responses:
         return ""
 
     labels: dict[str, str] = {
@@ -113,17 +119,17 @@ def research_profile_prompt(user: UserPublicWithConfig) -> str:
         return labels.get(value, value) if value else None
 
     facts: list[tuple[str, str | None]] = [
-        ("Role", user.research_role),
-        ("Institution or laboratory", user.research_institution),
+        ("Role", local.research_role),
+        ("Institution or laboratory", local.research_institution),
         (
             "Research interests",
-            ", ".join(user.research_interests) if user.research_interests else None,
+            ", ".join(local.research_interests) if local.research_interests else None,
         ),
-        ("Preferred units", label(user.preferred_units)),
-        ("Technical depth", label(user.technical_depth)),
+        ("Preferred units", label(local.preferred_units)),
+        ("Technical depth", label(local.technical_depth)),
         (
             "Evidence preference",
-            label(user.evidence_preference),
+            label(local.evidence_preference),
         ),
     ]
     lines = [f"- {name}: {value}" for name, value in facts if value]
@@ -256,39 +262,63 @@ def _add_mode(path: Path, bits: int) -> None:
         os.chmod(path, mode | bits)
 
 
-def _reset_dir(path: Path) -> None:
+def agent_volume_root(project_id: uuid.UUID | str) -> Path:
     """
-    Empty `path`, creating it if needed. A failed cleanup raises rather than being ignored:
-    whatever it left behind would stay mounted in the sandbox.
+    The host folder mounted at `/mnt` in the sandbox of `project_id`'s agents.
+    Its `data/output` is the sandbox's `/mnt/data/output`.
     """
-    if path.exists():
+    return settings.data_dir / "volumes" / str(project_id)
+
+
+def _remove(path: Path) -> None:
+    """Delete a file, symlink or folder. A failure raises: it would stay mounted."""
+    if path.is_symlink() or not path.is_dir():
+        path.unlink()
+    else:
         shutil.rmtree(path)
-    path.mkdir()
-
-
-def agent_volume_root(project_id: uuid.UUID | str, user_id: uuid.UUID | str) -> Path:
-    """
-    The host folder mounted at `/mnt` in the sandbox of `user_id`'s agent in
-    `project_id`. Its `data/output` is the sandbox's `/mnt/data/output`.
-    """
-    return settings.data_dir / "volumes" / f"{project_id}-{user_id}"
 
 
 def stage_skills(
     skills_volume_dir: Path, names: list[str], skill_dirs: dict[str, Path]
 ) -> None:
     """
-    Rebuild a sandbox's skills volume: each of `names` copied from its folder in
-    `skill_dirs` to `<skills_volume_dir>/<name>`, which is how the MCP server
+    Bring a project's skills volume to exactly `names`: each copied from its folder
+    in `skill_dirs` to `<skills_volume_dir>/<name>`, which is how the MCP server
     finds a skill's jobs as `<name>/<job>`. A name without a folder is skipped.
+
+    The volume is shared: every chat of the project has this folder mounted in its
+    sandbox, and a new chat stages it while the others run. So it is synced in
+    place and never deleted or recreated, or each running sandbox would lose its
+    mount. A skill is replaced by building the new copy beside it under a dot name
+    (the MCP server ignores names that do not start with a letter or digit) and
+    renaming it into place, so a sandbox reads the old copy or the new one.
     """
-    _reset_dir(skills_volume_dir)
+    skills_volume_dir.mkdir(parents=True, exist_ok=True)
+    sources: dict[str, Path] = {}
     for name in names:
         src = skill_dirs.get(name)
         if src is None or not src.is_dir():
             logging.warning(f"Skill {name!r} not found at {src}; skipping")
             continue
-        shutil.copytree(src, skills_volume_dir / name, symlinks=True)
+        sources[name] = src
+    for entry in skills_volume_dir.iterdir():
+        # Also clears any dot-named leftover of an interrupted run.
+        if entry.name not in sources:
+            _remove(entry)
+    for name, src in sources.items():
+        target = skills_volume_dir / name
+        fresh = skills_volume_dir / f".new-{name}"
+        old = skills_volume_dir / f".old-{name}"
+        for leftover in (fresh, old):
+            if leftover.exists() or leftover.is_symlink():
+                _remove(leftover)
+        shutil.copytree(src, fresh, symlinks=True)
+        _make_readable_by_others(fresh)
+        if target.exists() or target.is_symlink():
+            target.rename(old)
+        fresh.rename(target)
+        if old.exists() or old.is_symlink():
+            _remove(old)
     _make_readable_by_others(skills_volume_dir)
 
 
@@ -374,7 +404,7 @@ def get_dev_mcp_server(
     """
     Launch an dev_mcp_server instance via STDIO for sandbox tools (run_bash, create_file, view).
 
-    This is intended to be called once per `ProjectAgent` so that each (user, project) pair gets an
+    This is intended to be called once per `ProjectAgent` so that each project gets an
     isolated sandbox.
     """
     dev_server_dir = settings.mcp_servers_path / "dev_mcp_server"
@@ -401,16 +431,20 @@ class ProjectAgent:
     def __init__(
         self,
         project: ProjectPublic,
-        user: UserPublicWithConfig,
+        local: LocalSettingsPublic,
         session_id: uuid.UUID | None = None,
+        model_override: str | None = None,
     ):
         self.project = project
-        self.user = user
+        self.local = local
+        """ The installation's settings, as they were when this agent was pooled. """
         self.session_id = session_id
-        # Id per project agent. A new ProjectAgent with the same input Project x User will have the
-        # same id
-        self.id = f"{project.id}-{user.id}"
-        self.volume_root = agent_volume_root(project.id, user.id)
+        # This chat's own `provider:name` model, loaded when the agent is
+        # pooled; changing it evicts the agent (see `update_chat_session`).
+        self.model_override = model_override
+        # Id per project agent. A new ProjectAgent for the same project will have the same id
+        self.id = str(project.id)
+        self.volume_root = agent_volume_root(project.id)
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
@@ -537,11 +571,11 @@ class ProjectAgent:
         intent_extraction_agent = None
         code_intent_extraction_agent = None
         # One `Model` for this agent and its Q-LLM sub-agents. Built from the
-        # user's settings row where they set one, falling back to `Settings`
+        # installation's settings row where they set one, falling back to `Settings`
         # -- see `agents.inference.resolve_inference_target`. Shared rather
         # than rebuilt per sub-agent so all four talk to the same endpoint
         # with the same credential, and so a single HTTP client is reused.
-        model = build_model_for(self.user)
+        model = build_model_for(self.local, self.model_override)
         if settings.palisade.quarantine_enabled:
             quarantine_agent = build_quarantine_agent(model)
             intent_extraction_agent = build_intent_extraction_agent(model)
@@ -569,9 +603,7 @@ class ProjectAgent:
         )
         # A Slack turn's side effects wait for the requester's Confirm, through
         # the approval path above. Inert on every other channel.
-        capabilities.append(
-            SlackGateCapability(channel=lambda: self._cur_channel, user_id=self.user.id)
-        )
+        capabilities.append(SlackGateCapability(channel=lambda: self._cur_channel))
 
         agent = Agent(
             model=model,
@@ -583,7 +615,7 @@ class ProjectAgent:
         @agent.system_prompt
         def system_prompt(ctx: RunContext[None]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
-            profile = research_profile_prompt(self.user)
+            profile = research_profile_prompt(self.local)
             if profile:
                 parts.append(profile)
             if self.project.system_prompt:
@@ -591,19 +623,7 @@ class ProjectAgent:
                 parts.append(self.project.system_prompt)
 
             # TODO Should cache these, but do need them to update when the project is edited
-            if self.project.knowledge_bases:
-                kb_lines = "\n".join(
-                    f"  - {slug}" for slug in self.project.knowledge_bases
-                )
-                kb_block = (
-                    "Knowledge Bases available to this project (pass one of these "
-                    "slugs as the `kb_slug` argument to `rag_search`):\n" + kb_lines
-                )
-            else:
-                kb_block = (
-                    "No Knowledge Bases are configured for this project; the "
-                    "`rag_search` tool is not available."
-                )
+            kb_block = kb_prompt_block(self.project.knowledge_bases)
             parts.append(kb_block)
 
             skills_block = to_prompt(
@@ -623,10 +643,10 @@ class ProjectAgent:
             # Imported here: `slack.credentials` reaches `chat_run`, which imports this.
             from ..slack.credentials import prompt_note
 
-            note = prompt_note(self.user.id)
+            note = prompt_note()
             return f"{SLACK_INSTRUCTIONS}\n{note}" if note else SLACK_INSTRUCTIONS
 
-        register_campaign_tools(agent, self._campaign_driver_deps(model))
+        register_campaign_tools(agent, self._campaign_driver_deps())
         register_choice_tool(
             agent, channel=lambda: self._cur_channel, ask=lambda: self._cur_choice_ask
         )
@@ -643,9 +663,7 @@ class ProjectAgent:
             than guessing a job id. `cluster` narrows it to one system.
             """
             async with AsyncSession(get_engine()) as session:
-                jobs = await recent_jobs(
-                    session, self.user.id, cluster=cluster, limit=limit
-                )
+                jobs = await recent_jobs(session, cluster=cluster, limit=limit)
                 return describe_jobs(jobs)
 
         @agent.tool_plain
@@ -658,10 +676,10 @@ class ProjectAgent:
             credentials and may not trust the network's proxy. Returns the folder
             and its SOURCE.json record (clone URL, commit, whether it is private).
             """
-            # The user's token for this host, read from their row now: it is not
-            # on `self.user`, so a token changed in Settings applies at once.
+            # The Settings token for this host, read from the row now: it is not
+            # on `self.local`, so a token changed in Settings applies at once.
             async with AsyncSession(get_engine()) as session:
-                token = await user_repo_token(session, url, self.user.id)
+                token = await settings_repo_token(session, url)
             try:
                 record = await asyncio.to_thread(
                     source_fetch.fetch_repository,
@@ -680,33 +698,62 @@ class ProjectAgent:
                 f"SOURCE.json: {json.dumps(record)}"
             )
 
+        @agent.tool_plain
+        async def fetch_kb_file(kb_slug: str, filename: str) -> str:
+            """
+            Copy a file from one of this project's knowledge bases into the sandbox, so
+            you can read or compute on it with run_bash. Use it after `rag_search`
+            returns a hit from a CSV, TSV, TXT, MD (or PDF) file that you need in full;
+            the hit names the `kb_slug` and `filename`. The whole file is copied, even
+            if only part of it was indexed. Returns the sandbox path
+            (/mnt/data/work/kb/<kb_slug>/<filename>) and the size in bytes.
+
+            Args:
+                kb_slug: Slug of an attached knowledge base.
+                filename: The file's name in that knowledge base, as shown in the hit.
+            """
+            work = self.output_dir.parent / "work"
+            async with AsyncSession(get_engine()) as session:
+                dest, size = await copy_kb_file(
+                    session,
+                    attached=self.project.knowledge_bases,
+                    kb_slug=kb_slug,
+                    filename=filename,
+                    work_dir=work,
+                )
+            _make_readable_by_others(work / "kb")
+            rel = dest.relative_to(work).as_posix()
+            return (
+                f"Copied to /mnt/data/work/{rel} ({size} bytes). "
+                "For a table, read it with pandas or csv in run_bash."
+            )
+
         return agent
 
-    def _campaign_driver_deps(self, model: Model | None = None) -> CampaignDriverDeps:
-        """Deps for the campaign tools, bound to this agent's project/user + per-run hooks."""
+    def _campaign_driver_deps(self) -> CampaignDriverDeps:
+        """Deps for the campaign tools, bound to this agent's project + per-run hooks."""
 
         def emit_progress(message: str) -> None:
             cb = self._cur_progress_emitter
             if cb is not None:
                 cb(message)
 
-        # The same resolved `Model` the agent and its Q-LLM sub-agents use, so
-        # a campaign's parser agents reach the same endpoint with the same
-        # credential. `_build_agent` passes the one it already built; resolved
-        # here otherwise, so a caller that forgets cannot fall back to
-        # `Settings` alone -- which on a single-user install cannot see the key
-        # from the researcher's settings row.
-        campaign_model = model or build_model_for(self.user)
+        # What this agent resolved is recorded on the runs it starts. A run's
+        # planner is rebuilt on the run's own model, the same way the monitor
+        # rebuilds it (`campaign_model_for`), not on this agent's: the chat may
+        # have moved to another model since the campaign launched.
+        target = resolve_inference_target(self.local, self.model_override)
 
         return CampaignDriverDeps(
             project_id=self.project.id,
-            user_id=self.user.id,
             session_id=self.session_id,
             get_session=lambda: self._cur_db_session,
             get_planner=lambda session, run: self._build_campaign_planner_for_run(
-                session, run, model=campaign_model
+                session, run, model=campaign_model_for(self.local, run)
             ),
             emit_progress=emit_progress,
+            model=target.model,
+            provider=target.provider,
         )
 
     async def _build_campaign_planner_for_run(
@@ -720,7 +767,7 @@ class ProjectAgent:
         }
         invoke = build_invoke(
             self._mcp_servers[0].direct_call_tool,
-            user=self.user,
+            local=self.local,
             project_paths=project_paths,
         )
         manifest = load_manifest(self.skills_volume_dir / run.planner_skill)
@@ -790,11 +837,11 @@ class ProjectAgent:
     def _build_vista_metadata(self, name: str) -> dict[str, Any]:
         """
         Build the `vista` MCP request metadata for a tool call: project
-        sandbox paths always, per-user HPC credentials for HPC tools, and
+        sandbox paths always, the HPC credentials from Settings for HPC tools, and
         (when metrics are on) the run/session correlation ids the server-side
         probes join against (M3).
 
-        TODO Temporary scaffolding for getting per-user HPC credentials to the
+        TODO Temporary scaffolding for getting HPC credentials to the
         MCP server via MCP metadata. Later we'll launch isolated, per-project
         MCP server instances configured with the right env vars/headers, and
         move project_paths off metadata too.
@@ -833,9 +880,13 @@ class ProjectAgent:
             "cancel_hpc_job",
             "get_hpc_queue_status",
             "preview_hpc_job",
+            "hpc_list_files",
+            "hpc_download_files",
+            "hpc_upload_files",
         }
         if name in HPC_TOOLS:
-            metadata["vista"]["user"] = self.user.model_dump(mode="json")
+            # Still `user` on the wire: the MCP server's `VistaMeta` reads it.
+            metadata["vista"]["user"] = self.local.model_dump(mode="json")
         if get_recorder().enabled:
             metadata["vista"]["metrics"] = {
                 "run_id": run_id_var.get(),
@@ -1139,11 +1190,11 @@ class ProjectAgent:
                 plain method returning an iterator, not an async generator, so
                 the raise happens on the call and not on first iteration.
         """
-        # `self.user` is the snapshot taken when this agent was pooled. It
-        # stays current because `services.user.update_user` evicts this user's
-        # agents after every commit, which is also what lets a key pasted into
+        # `self.local` is the snapshot taken when this agent was pooled. It
+        # stays current because `services.local_settings.update` evicts every
+        # agent after each commit, which is also what lets a key pasted into
         # the settings modal take effect without a restart.
-        require_inference_credential(self.user)
+        require_inference_credential(self.local, self.model_override)
 
         usage_limits = UsageLimits(**(self.project.usage_limits or {}))
 
@@ -1307,23 +1358,13 @@ class ProjectAgent:
                     # an absent one -- a typo'd key is the likeliest first-run
                     # failure -- but it can only be discovered by asking the
                     # provider, which happens after the response has started.
-                    # Reported in-stream on the SEV1 pattern above rather than
-                    # as a broken stream. Anything else propagates: an outage
-                    # or a bad request is not a configuration problem and must
-                    # not be described as one.
+                    # Raised as a named condition, which fails the turn with
+                    # its message as the reason. Anything else propagates
+                    # as it is: an outage or a bad request is not a
+                    # configuration problem and must not be described as one.
                     if exc.status_code not in (401, 403):
                         raise
-                    yield log(
-                        "ERROR", "Agent", rejected_credential_detail(exc.model_name)
-                    )
-                    yield ProjectAgentResultEvent(
-                        result=ProjectAgentResult(
-                            new_messages=[],
-                            usage=RunUsage(),
-                            logs=list(logs),
-                        )
-                    )
-                    return
+                    raise RejectedInferenceCredential(exc.model_name) from exc
                 finally:
                     self._cur_mcp_elicitation_callback = None
                     self._cur_mcp_process_tool_call = None

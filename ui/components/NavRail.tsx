@@ -10,10 +10,14 @@ import {
 import { useChatRunStatus } from "@/lib/chat-run-status";
 import { useActiveProject } from "@/lib/projects";
 import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
-import { useCurrentUser } from "@/lib/user";
+import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
+import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
+import { updateAvailable, useVersion } from "@/lib/version";
 import { UserSettingsModal } from "./UserSettingsModal";
+import { TeamSwitcher } from "./TeamSwitcher";
+import { useTour } from "./TourProvider";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
 
@@ -107,6 +111,18 @@ const GLOBAL_ENTRIES: NavEntry[] = [
   },
 ];
 
+/**
+ * The tour's anchors on the entries it first points at, by href. An entry
+ * carries its anchor only while the researcher is not on its page: there the
+ * page's own item has it, and the rail comes first in the document, so it
+ * would win the lookup.
+ */
+const TOUR_ENTRY_ANCHORS: Record<string, string> = {
+  "/knowledge-bases": "knowledge-bases:visit",
+  "/skills": "skills:visit",
+  "/files": "files:visit",
+};
+
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
   {
     label: "Chat",
@@ -127,13 +143,11 @@ const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
     ),
   },
   {
-    label: "Datasets",
-    href: "/datasets",
+    label: "Files",
+    href: "/files",
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <ellipse cx="12" cy="5" rx="8" ry="3" />
-        <path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
-        <path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" />
+        <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H9l2 2.5h7.5A2.5 2.5 0 0 1 21 9v8.5a2.5 2.5 0 0 1 -2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5Z" />
       </svg>
     ),
   },
@@ -163,21 +177,25 @@ export function NavRail() {
   const router = useRouter();
   const pathname = usePathname();
   const activeProject = useActiveProject();
-  const { user, loading: userLoading } = useCurrentUser();
+  const { settings, loading: settingsLoading } = useSettings();
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  /** Set when settings were opened from a cluster's card, to expand only that section. */
-  const [settingsCluster, setSettingsCluster] = useState<HpcCluster | undefined>();
+  const settingsModal = useSettingsModal();
+  const updateReady = updateAvailable(useVersion().info);
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
-  const collapsed = useSyncExternalStore(
+  const storedCollapsed = useSyncExternalStore(
     railSubscribe,
     railGetSnapshot,
     railGetServerSnapshot
   );
+  // The tour points at labelled entries, so it borrows an expanded rail. The
+  // stored choice is neither read nor written meanwhile, and returns after.
+  const { running: touring } = useTour();
+  const collapsed = storedCollapsed && !touring;
 
   function toggle() {
+    if (touring) return;
     setTip(null);
-    setRailCollapsed(!collapsed);
+    setRailCollapsed(!storedCollapsed);
   }
 
   /**
@@ -196,13 +214,12 @@ export function NavRail() {
     return { onMouseEnter: show, onFocus: show, onMouseLeave: hide, onBlur: hide };
   }
 
-  // VISTA runs locally as a single user, so the rail ends in a settings
-  // button rather than an identity chip. `user` is still read because the
-  // settings modal edits that user's row — there is nothing to open until it
-  // has loaded.
-  const settingsHint = user
+  // VISTA runs locally for one researcher, so the rail ends in a settings
+  // button rather than an identity chip. There is nothing to open until the
+  // settings have loaded.
+  const settingsHint = settings
     ? "Settings"
-    : userLoading
+    : settingsLoading
       ? "Loading settings…"
       : "Settings unavailable";
 
@@ -257,6 +274,7 @@ export function NavRail() {
         href={entry.href!}
         className={`nav-rail-entry${isActive ? " active" : ""} ${className}`.trim()}
         aria-label={entry.label}
+        data-tour={pathname === entry.href ? undefined : TOUR_ENTRY_ANCHORS[entry.href]}
         {...tipProps(entry.label)}
       >
         {inner}
@@ -292,22 +310,22 @@ export function NavRail() {
     ? `Chat, ${RUN_STATUS_LABELS[runSummary.status].toLowerCase()}`
     : "Chat";
 
-  // Nothing until the user has loaded, so a hidden cluster never flashes in.
-  const hidden = new Set(user?.hpc_hidden_clusters ?? []);
-  const visibleClusters: HpcCluster[] = user
+  // Nothing until the settings have loaded, so a hidden cluster never flashes in.
+  const hidden = new Set(settings?.hpc_hidden_clusters ?? []);
+  const visibleClusters: HpcCluster[] = settings
     ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
     : [];
 
   function openSettingsFor(cluster: HpcCluster) {
     setTip(null);
-    setSettingsCluster(cluster);
-    setSettingsOpen(true);
+    openSettings(cluster);
   }
 
   return (
     <aside
       className={`nav-rail ${collapsed ? "collapsed" : "expanded"}`}
       aria-label="Primary navigation"
+      data-tour="welcome:sidebar"
     >
       <div className="nav-rail-header">
         {/* The white lockup needs a solid dark plate under it — see the AmSC
@@ -345,6 +363,10 @@ export function NavRail() {
           </svg>
         </button>
       </div>
+
+      {/* Above New project because a new project joins the team chosen here.
+          It draws nothing without a collaboration server that signed in. */}
+      <TeamSwitcher collapsed={collapsed} tipProps={tipProps} />
 
       <Link
         href="/projects?new=1"
@@ -404,18 +426,16 @@ export function NavRail() {
         />
       </nav>
 
-      {/* settingsHint changes as the user record loads, so it is the tooltip's
+      {/* settingsHint changes as the settings load, so it is the tooltip's
           text but not the accessible name: a name that differs between the
           server render and the first client one is a hydration mismatch. */}
       <button
         type="button"
         className="nav-rail-settings"
-        onClick={() => {
-          setSettingsCluster(undefined);
-          setSettingsOpen(true);
-        }}
-        disabled={!user}
-        aria-label="Open settings"
+        onClick={() => openSettings()}
+        disabled={!settings}
+        aria-label={updateReady ? "Open settings, update available" : "Open settings"}
+        data-tour="first-question:settings"
         {...tipProps(settingsHint)}
       >
         <span className="nav-rail-icon" aria-hidden="true">
@@ -425,6 +445,8 @@ export function NavRail() {
           </svg>
         </span>
         {!collapsed && <span className="nav-rail-settings-label">Settings</span>}
+        {/* A newer release: the only place outside About that says so. */}
+        {updateReady && <span className="update-marker" data-testid="settings-update-marker" />}
       </button>
 
       {/* Fixed rather than absolute: the entry list scrolls, and anything
@@ -435,11 +457,8 @@ export function NavRail() {
         </div>
       )}
 
-      {settingsOpen && (
-        <UserSettingsModal
-          initialCluster={settingsCluster}
-          onClose={() => setSettingsOpen(false)}
-        />
+      {settingsModal.open && (
+        <UserSettingsModal initialSection={settingsModal.section} onClose={closeSettings} />
       )}
     </aside>
   );

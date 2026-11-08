@@ -5,10 +5,19 @@ from starlette.convertors import Convertor, register_url_convertor
 from ..db.db import SessionDep
 from ..services import files as files_service
 from ..services.files import FileInfo, FileKind
-from ..services.auth import UserDep
 
 
 router = APIRouter()
+
+# Types a browser may show inline, decided by extension alone. HTML and SVG are
+# deliberately absent: they are active content and are only ever downloaded.
+INLINE_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp", "pdf"})
+
+# Sent with every file response: no sniffing, and a CSP that sandboxes the document.
+FILE_SAFETY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "sandbox; default-src 'none'",
+}
 
 
 class FileKindConvertor(Convertor):
@@ -34,9 +43,8 @@ async def list_files(
     project_name: str,
     kind: FileKind,
     session: SessionDep,
-    user: UserDep,
 ) -> list[FileInfo]:
-    return await files_service.list_files(session, project_name, kind, user)
+    return await files_service.list_files(session, project_name, kind)
 
 
 @router.post("/projects/{project_name}/uploads")
@@ -44,9 +52,8 @@ async def upload_files(
     project_name: str,
     files: list[UploadFile],
     session: SessionDep,
-    user: UserDep,
 ) -> list[str]:
-    return await files_service.save_uploads(session, project_name, files, user)
+    return await files_service.save_uploads(session, project_name, files)
 
 
 @router.get("/projects/{project_name}/{kind:file_kind}/{name:path}")
@@ -55,10 +62,17 @@ async def download_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
-    user: UserDep,
+    preview: bool = False,
 ) -> Response:
-    path = await files_service.get_file_path(session, project_name, kind, name, user)
-    return FileResponse(path, filename=path.name, content_disposition_type="attachment")
+    path = await files_service.get_file_path(session, project_name, kind, name)
+    extension = path.suffix.lstrip(".").lower()
+    inline = preview and extension in INLINE_EXTENSIONS
+    return FileResponse(
+        path,
+        filename=path.name,
+        content_disposition_type="inline" if inline else "attachment",
+        headers=FILE_SAFETY_HEADERS,
+    )
 
 
 @router.delete("/projects/{project_name}/{kind:file_kind}/{name:path}")
@@ -67,7 +81,6 @@ async def delete_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
-    user: UserDep,
 ):
-    await files_service.delete_file(session, project_name, kind, name, user)
+    await files_service.delete_file(session, project_name, kind, name)
     return {"ok": True}

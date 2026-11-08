@@ -23,6 +23,10 @@ class ParseError(SkillError):
     pass
 
 
+SKILL_NAME_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+""" A skill's name: kebab case, so it is also a safe folder name. """
+
+
 class SkillMetadata(BaseModel):
     """
     AgentSkills-spec properties parsed from a skill's SKILL.md frontmatter.
@@ -37,7 +41,7 @@ class SkillMetadata(BaseModel):
         author: Display name of the skill author (optional).
     """
 
-    name: A[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")]
+    name: A[str, Field(pattern=SKILL_NAME_PATTERN)]
     description: StrippedStr
     license: str | None = None
     compatibility: str | None = None

@@ -201,6 +201,8 @@ class BackgroundService:
         )
 
     def why_unavailable(self) -> str | None:
+        if settings.deployment == "hosted":
+            return "A hosted VISTA already runs as a service."
         if self.package is None:
             return "Background mode is only available in an installed VISTA package."
         if self.platform.startswith("linux") and shutil.which("systemctl") is None:

@@ -13,7 +13,7 @@ from pydantic_ai.messages import (
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from harness import call, make_project, say, step_model
+from harness import call, make_local_settings, make_project, say, step_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.db.schemas import (
     ChatSessionTable,
@@ -41,21 +41,18 @@ SUMMARY = (
 )
 
 
-async def _chat(session, alice) -> uuid.UUID:
-    p = await project(session, alice)
-    row = ChatSessionTable(
-        project_id=p.id, user_id=alice.id, message_history=[], messages=[]
-    )
+async def _chat(session) -> uuid.UUID:
+    p = await project(session)
+    row = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
     session.add(row)
     await session.commit()
     await session.refresh(row)
     return row.id
 
 
-def _watcher(engine, alice, chat_id, channel="app") -> SubmitWatcher:
+def _watcher(engine, chat_id, channel="app") -> SubmitWatcher:
     return SubmitWatcher(
         session_factory=lambda: AsyncSession(engine),
-        user_id=alice.id,
         chat_session_id=chat_id,
         channel=channel,
     )
@@ -81,10 +78,10 @@ async def _records(engine) -> list[HpcJobRecordTable]:
         return list((await s.exec(select(HpcJobRecordTable))).all())
 
 
-async def test_a_desktop_submit_is_recorded(engine, session, alice):
-    chat_id = await _chat(session, alice)
+async def test_a_desktop_submit_is_recorded(engine, session):
+    chat_id = await _chat(session)
 
-    await _submit(_watcher(engine, alice, chat_id))
+    await _submit(_watcher(engine, chat_id))
 
     (job,) = await _records(engine)
     assert (job.cluster, job.job_id, job.job) == ("frontier", "4471", "flibe-md")
@@ -94,11 +91,11 @@ async def test_a_desktop_submit_is_recorded(engine, session, alice):
         "--steps 1000",
     )
     assert job.origin == "app" and job.slack_thread_ts is None
-    assert job.user_id == alice.id and job.chat_session_id == chat_id
+    assert job.chat_session_id == chat_id
 
 
-async def test_a_slack_submit_remembers_its_thread(engine, session, alice):
-    chat_id = await _chat(session, alice)
+async def test_a_slack_submit_remembers_its_thread(engine, session):
+    chat_id = await _chat(session)
     session.add(
         SlackThreadTable(
             team_id=TEAM,
@@ -111,7 +108,7 @@ async def test_a_slack_submit_remembers_its_thread(engine, session, alice):
     )
     await session.commit()
 
-    await _submit(_watcher(engine, alice, chat_id, channel="slack"))
+    await _submit(_watcher(engine, chat_id, channel="slack"))
 
     (job,) = await _records(engine)
     assert job.origin == "slack"
@@ -123,9 +120,9 @@ async def test_a_slack_submit_remembers_its_thread(engine, session, alice):
     assert job.slack_user_id == "U1"
 
 
-async def test_a_failed_or_refused_submit_records_nothing(engine, session, alice):
-    chat_id = await _chat(session, alice)
-    watcher = _watcher(engine, alice, chat_id)
+async def test_a_failed_or_refused_submit_records_nothing(engine, session):
+    chat_id = await _chat(session)
+    watcher = _watcher(engine, chat_id)
 
     await _submit(watcher, fail=True)
     await _submit(watcher, "The researcher declined this call.")
@@ -133,17 +130,17 @@ async def test_a_failed_or_refused_submit_records_nothing(engine, session, alice
     assert await _records(engine) == []
 
 
-async def test_other_tools_are_not_recorded(engine, session, alice):
-    chat_id = await _chat(session, alice)
+async def test_other_tools_are_not_recorded(engine, session):
+    chat_id = await _chat(session)
 
-    await _submit(_watcher(engine, alice, chat_id), tool="vista__get_hpc_job_status")
+    await _submit(_watcher(engine, chat_id), tool="vista__get_hpc_job_status")
 
     assert await _records(engine) == []
 
 
-async def test_the_same_job_twice_is_one_record(engine, session, alice):
-    chat_id = await _chat(session, alice)
-    watcher = _watcher(engine, alice, chat_id)
+async def test_the_same_job_twice_is_one_record(engine, session):
+    chat_id = await _chat(session)
+    watcher = _watcher(engine, chat_id)
 
     await _submit(watcher)
     await _submit(watcher)
@@ -151,14 +148,10 @@ async def test_the_same_job_twice_is_one_record(engine, session, alice):
     assert len(await _records(engine)) == 1
 
 
-async def test_my_recent_jobs_are_newest_first_and_mine_only(session, alice, bob):
-    other = bob.id
-    for i, (user, cluster) in enumerate(
-        [(alice.id, "lux"), (alice.id, "frontier"), (other, "frontier")]
-    ):
+async def test_my_recent_jobs_are_newest_first_and_capped(session):
+    for i, cluster in enumerate(["lux", "frontier", "frontier"]):
         session.add(
             HpcJobRecordTable(
-                user_id=user,
                 cluster=cluster,
                 job_id=str(100 + i),
                 job="flibe-md",
@@ -167,19 +160,19 @@ async def test_my_recent_jobs_are_newest_first_and_mine_only(session, alice, bob
         )
     await session.commit()
 
-    jobs = await job_records.recent_jobs(session, alice.id)
-    assert [j.job_id for j in jobs] == ["101", "100"]
-    lux = await job_records.recent_jobs(session, alice.id, cluster="lux")
+    jobs = await job_records.recent_jobs(session, limit=2)
+    assert [j.job_id for j in jobs] == ["102", "101"]
+    every = await job_records.recent_jobs(session)
+    assert [j.job_id for j in every] == ["102", "101", "100"]
+    lux = await job_records.recent_jobs(session, cluster="lux")
     assert [j.job_id for j in lux] == ["100"]
-    assert "job_id: 101; cluster: frontier" in job_records.describe(jobs)
+    assert "job_id: 102; cluster: frontier" in job_records.describe(jobs)
     assert "No jobs are recorded" in job_records.describe([])
 
 
-async def test_the_agent_can_list_my_recent_jobs(engine, session, alice, monkeypatch):
-    user = alice
+async def test_the_agent_can_list_my_recent_jobs(engine, session, monkeypatch):
     session.add(
         HpcJobRecordTable(
-            user_id=user.id,
             cluster="frontier",
             job_id="4471",
             job="flibe-md",
@@ -190,7 +183,7 @@ async def test_the_agent_can_list_my_recent_jobs(engine, session, alice, monkeyp
     monkeypatch.setattr(
         "vista_backend.agents.agents.get_engine", lambda: engine, raising=True
     )
-    agent = ProjectAgent(make_project(tools=["*"]), user, uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     results = []
     model = step_model([call("list_my_recent_jobs"), say("done")])
     with agent.agent.override(model=model, toolsets=[]):

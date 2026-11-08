@@ -157,6 +157,16 @@ verify the connection with a live call to the cluster's collection, so that an
 expired High Assurance session is detected rather than reported as connected.
 It SHALL NOT estimate when a session will lapse.
 
+The check SHALL fail as Session expired whenever Globus refuses in a way that
+reconnecting Globus fixes: a refusal that asks the researcher to authenticate
+again, whatever its HTTP status, or a refresh token Globus will no longer
+exchange. Its detail SHALL say to connect Globus again for that cluster and,
+when Globus names the login it requires, name that login. Any other failure
+SHALL be Couldn't verify, with a detail that says what Globus answered or that
+it did not answer in time; it SHALL NOT be reported as Session expired. Every
+failure SHALL be logged with Globus's HTTP status, error code and the start of
+its response, and no detail or log line SHALL carry a token.
+
 #### Scenario: Globus verified
 - **WHEN** the researcher has a complete Globus credential for the cluster and a read-only call to its collection succeeds
 - **THEN** the Globus check passes
@@ -172,6 +182,18 @@ It SHALL NOT estimate when a session will lapse.
 #### Scenario: Globus session expired
 - **WHEN** the collection answers 401
 - **THEN** the Globus check fails as Session expired, distinct from Not connected
+
+#### Scenario: High Assurance login lapsed
+- **WHEN** the token exchange succeeds and Globus refuses the call to Odo's collection with HTTP 502, code `ExternalError.DirListingFailed.LoginFailed`, asking for a new session in `opensso.ccs.ornl.gov`
+- **THEN** the Globus check fails as Session expired, and its detail says to connect Globus again for Odo and that Globus needs a login with opensso.ccs.ornl.gov
+
+#### Scenario: Saved connection no longer accepted
+- **WHEN** Globus refuses to exchange the researcher's refresh token for Frontier with HTTP 400 `invalid_grant`
+- **THEN** the Globus check fails as Session expired, and its detail says Globus no longer accepts the saved Frontier connection and to connect Globus again
+
+#### Scenario: Globus fails otherwise
+- **WHEN** Globus answers the token exchange or the call to the collection with HTTP 503, or does not answer within the check's time limit
+- **THEN** the Globus check fails as Couldn't verify, not Session expired, and its detail names the HTTP status or says Globus did not answer in time
 
 ### Requirement: Cluster state
 The system SHALL resolve each cluster to exactly one state, by taking the first
@@ -241,7 +263,7 @@ including a cluster added after the researcher last changed the setting.
 Hiding a cluster SHALL NOT delete or change any of its credentials.
 
 #### Scenario: Hide Perlmutter
-- **WHEN** a researcher turns off "Show in sidebar" for Perlmutter and saves
+- **WHEN** a researcher turns off "Show in sidebar" for Perlmutter
 - **THEN** the rail no longer shows Perlmutter, including after a reload, and the saved NERSC IRI token is unchanged
 
 #### Scenario: New user
@@ -253,58 +275,66 @@ Hiding a cluster SHALL NOT delete or change any of its credentials.
 - **THEN** Lux appears and Perlmutter stays hidden
 
 #### Scenario: Hide Lux
-- **WHEN** a researcher turns off "Show in sidebar" for Lux and saves
+- **WHEN** a researcher turns off "Show in sidebar" for Lux
 - **THEN** the rail no longer shows Lux, and the Lux host is not probed for that researcher
 
 #### Scenario: All hidden
 - **WHEN** every cluster is hidden
-- **THEN** the rail's HPC section is not shown
+- **THEN** the rail's Resources section is not shown
 
 ### Requirement: Settings modal organisation
-The settings modal SHALL keep account and model settings at the top, always
-visible, followed by one collapsible section per supported cluster. Each
-cluster's section SHALL contain:
-- its "Show in sidebar" switch;
+Each supported cluster SHALL have its own section in the settings modal's
+resource tree, under its institution and facility: Odo, Frontier and Lux under
+ORNL › OLCF, and Perlmutter under LBNL › NERSC. Each cluster's section SHALL
+contain:
+- its institution and facility, its status dot and word as the rail shows
+  them, and its "Show in sidebar" switch;
 - all of its settings: for Odo and Frontier, the S3M token, the remote
-  directory, and the Globus connection; for Perlmutter, the NERSC account,
-  remote directory, and IRI token; for Lux, the Lux account and remote directory;
-- in its header, the same status dot and word the rail shows.
+  directory, and its own Globus connection; for Perlmutter, the NERSC account,
+  remote directory, and IRI token; for Lux, the Lux account and remote directory.
 
 The S3M token fields SHALL say that a token from any OLCF project with S3M
 access works. The Odo and Frontier remote directory fields SHALL say that VISTA
 keeps `<dir>.<user>.jobs` and `<dir>.out` beside the directory, and that the
-folder containing them must be writable by the project's group.
+folder containing them must be writable by the project's group. A Globus
+connection SHALL belong to its cluster's section only; there SHALL be no
+separate Globus section.
 
-Opened from the rail's settings button, every cluster section SHALL start
-collapsed. Opened from a cluster's details, only that cluster's section SHALL
-be expanded. Saving a cluster's credentials, or connecting its Globus account,
-SHALL trigger a fresh check of that cluster.
+Opened from a cluster's details, the modal SHALL show that cluster's section.
+Saving a cluster's credentials, or connecting its Globus account, SHALL trigger
+a fresh check of that cluster.
 
 #### Scenario: Deep link from a card
 - **WHEN** a researcher opens Frontier's details and follows its Settings link
-- **THEN** the settings modal opens with only the Frontier section expanded
+- **THEN** the settings modal opens showing Frontier's section
 
 #### Scenario: Default open
 - **WHEN** a researcher opens settings from the rail's settings button
-- **THEN** all cluster sections are collapsed
+- **THEN** the modal opens on the Agent section, with every cluster listed in the resource tree and none of their sections shown
 
 #### Scenario: Fix and see it
-- **WHEN** a researcher pastes a new Odo token and saves
-- **THEN** Odo is rechecked immediately, and its section header and rail card update without waiting for the next poll
+- **WHEN** a researcher pastes a new Odo token
+- **THEN** Odo is rechecked immediately, and its status in the modal and its rail card update without waiting for the next poll
+
+#### Scenario: Globus connected from the cluster
+- **WHEN** a researcher connects Globus from Frontier's section
+- **THEN** Frontier's Globus check passes on its recheck, and Odo's Globus state is unchanged
 
 #### Scenario: Lux section
-- **WHEN** a researcher expands the Lux section
+- **WHEN** a researcher opens the Lux section
 - **THEN** it shows the "Show in sidebar" switch, the Lux account and the Lux remote directory, and no credential fields
 
 #### Scenario: Remote directory saved
-- **WHEN** a researcher enters a Frontier remote directory and saves
+- **WHEN** a researcher enters a Frontier remote directory
 - **THEN** it is stored for that researcher, and a cleared field is stored as not set
 
 ### Requirement: NavRail presentation
-The expanded rail SHALL show an HPC section with one card per visible cluster.
-Each card SHALL show a status dot, whose shape differs between states as well
-as its color, and a status word. Clicking any card, in any state, SHALL open a
-details view containing:
+The expanded rail SHALL show a Resources section with one card per visible
+cluster, grouped under a header naming each cluster's facility (OLCF, NERSC),
+in the same facility order as the settings tree. A facility with no visible
+cluster SHALL have no header. Each card SHALL show a status dot, whose shape
+differs between states as well as its color, and a status word. Clicking any
+card, in any state, SHALL open a details view containing:
 - each check with its reason;
 - for Odo and Frontier, the S3M token's project and planned expiration;
 - the settings check, with the remote directory once it is set;
@@ -315,10 +345,10 @@ details view containing:
 No other credential expiry SHALL be shown. Hovering a card that is not Ready
 SHALL show why, from the message of each check that failed, in both the
 expanded and the collapsed rail. The collapsed rail SHALL show each
-visible cluster's dot with a short label, and an accessible name that includes
-the state. The rail SHALL run checks on load, on Recheck, and every 5 minutes
-while the page is visible. While a check runs it SHALL keep showing the last
-known state.
+visible cluster's dot with a short label, grouped under a short facility label,
+and an accessible name that includes the state. The rail SHALL run checks on
+load, on Recheck, and every 5 minutes while the page is visible. While a check
+runs it SHALL keep showing the last known state.
 
 If the status request itself fails, the rail SHALL keep showing the last known
 states, noting how long ago they were checked. Once that result is more than
@@ -327,6 +357,14 @@ states, noting how long ago they were checked. Once that result is more than
 #### Scenario: Ready card
 - **WHEN** a cluster's state is Ready
 - **THEN** its card shows a filled green dot and the word "Ready"
+
+#### Scenario: Grouped by facility
+- **WHEN** Odo, Frontier, Lux and Perlmutter are all visible
+- **THEN** the rail's Resources section shows Odo, Frontier and Lux under OLCF, then Perlmutter under NERSC
+
+#### Scenario: Facility with nothing visible
+- **WHEN** Perlmutter is hidden
+- **THEN** the Resources section has no NERSC header
 
 #### Scenario: Details explain a failure
 - **WHEN** a researcher opens a card whose state is not Ready

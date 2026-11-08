@@ -8,7 +8,14 @@ import pytest
 from pydantic_ai.messages import FunctionToolResultEvent, ModelResponse, TextPart
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from harness import call, make_project, make_user, say, scripted_model, step_model
+from harness import (
+    call,
+    make_local_settings,
+    make_project,
+    say,
+    scripted_model,
+    step_model,
+)
 from vista_backend.agents.agents import McpFormElicitationEvent, ProjectAgent
 from vista_backend.config import settings
 from vista_backend.db.schemas import ChatSessionTable
@@ -35,7 +42,7 @@ def test_a_choice_schema_is_recognised_and_a_form_is_not():
 
 
 async def _turn(channel, args, answer=None):
-    agent = ProjectAgent(make_project(tools=["*"]), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     events = []
     model = step_model([call("offer_choices", **args), say("done")])
     with agent.agent.override(model=model, toolsets=[]):
@@ -91,7 +98,7 @@ async def test_more_than_five_options_are_refused_without_asking():
 
 
 async def test_the_tool_is_hidden_outside_slack():
-    agent = ProjectAgent(make_project(tools=["*"]), make_user(), uuid.uuid4())
+    agent = ProjectAgent(make_project(tools=["*"]), make_local_settings(), uuid.uuid4())
     seen: dict[str, list[str]] = {}
 
     def model(messages, info):
@@ -123,11 +130,9 @@ def answers(engine, monkeypatch):
     return told
 
 
-async def _offer(slack, session, alice) -> Confirmations:
-    p = await project(session, alice)
-    chat = ChatSessionTable(
-        project_id=p.id, user_id=alice.id, message_history=[], messages=[]
-    )
+async def _offer(slack, session) -> Confirmations:
+    p = await project(session)
+    chat = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
@@ -145,7 +150,6 @@ async def _offer(slack, session, alice) -> Confirmations:
         place=PLACE,
         team_id=TEAM,
         chat_session_id=chat.id,
-        user_id=alice.id,
     )
     return confirmations
 
@@ -162,9 +166,9 @@ def _tap(index, user="U1") -> Action:
     )
 
 
-async def test_one_button_per_option(answers, session, alice):
+async def test_one_button_per_option(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     (posted,) = slack.messages
     (actions,) = [b for b in posted.blocks if b["type"] == "actions"]
@@ -173,9 +177,9 @@ async def test_one_button_per_option(answers, session, alice):
     confirmations.stop()
 
 
-async def test_the_requesters_tap_answers_with_the_option(answers, session, alice):
+async def test_the_requesters_tap_answers_with_the_option(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap(2))
 
@@ -184,9 +188,9 @@ async def test_the_requesters_tap_answers_with_the_option(answers, session, alic
     assert "chose *nacl-dft 4466*" in text and CHOOSE not in text
 
 
-async def test_someone_elses_tap_does_not_count(answers, session, alice):
+async def test_someone_elses_tap_does_not_count(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap(0, user="U2"))
 
@@ -195,9 +199,9 @@ async def test_someone_elses_tap_does_not_count(answers, session, alice):
     confirmations.stop()
 
 
-async def test_an_index_out_of_range_is_ignored(answers, session, alice):
+async def test_an_index_out_of_range_is_ignored(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap(7))
 
@@ -205,10 +209,10 @@ async def test_an_index_out_of_range_is_ignored(answers, session, alice):
     confirmations.stop()
 
 
-async def test_an_unanswered_choice_expires(answers, session, alice, monkeypatch):
+async def test_an_unanswered_choice_expires(answers, session, monkeypatch):
     monkeypatch.setattr(settings.slack, "confirmation_ttl", 0.01)
     slack = FakeTransport()
-    await _offer(slack, session, alice)
+    await _offer(slack, session)
 
     for _ in range(100):
         if answers:

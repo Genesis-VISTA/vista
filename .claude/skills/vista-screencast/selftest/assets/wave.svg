@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="480" viewBox="0 0 800 480">
+  <rect width="800" height="480" fill="#ffffff"/>
+  <text x="400" y="40" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="bold" fill="#111">Damped sine wave</text>
+  <line x1="60" y1="260" x2="770" y2="260" stroke="#999" stroke-width="1"/>
+  <line x1="60" y1="70" x2="60" y2="440" stroke="#999" stroke-width="1"/>
+  <path fill="none" stroke="#0b4f8a" stroke-width="3" d="M60 260 C 77 160, 95 120, 113 145 S 148 330, 166 352 S 201 220, 219 196 S 254 290, 272 305 S 307 238, 325 225 S 360 277, 378 285 S 413 250, 431 244 S 466 270, 484 274 S 519 255, 537 252 S 572 265, 590 267 S 625 257, 643 256 S 678 262, 696 263 S 731 259, 770 260"/>
+  <path fill="none" stroke="#e4572e" stroke-width="2" stroke-dasharray="6 6" d="M60 90 Q 300 230 770 255"/>
+  <path fill="none" stroke="#e4572e" stroke-width="2" stroke-dasharray="6 6" d="M60 430 Q 300 290 770 265"/>
+  <text x="415" y="470" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#333">t (s)</text>
+</svg>

@@ -7,15 +7,15 @@ export const dynamic = "force-dynamic";
 /**
  * Debate proxy. Query params:
  *   project_name (required)
- *   run_id  -> GET  /projects/{name}/debates/{run_id}  (run + participants + posts)
- *   (none)  -> GET  /projects/{name}/debates           (every debate in the project)
+ *   thread_id -> GET /projects/{name}/threads/{thread_id} (thread + roster + posts)
+ *   (none)    -> GET /projects/{name}/threads             (every thread on the forum)
  *
  * POST opens a debate. It returns as soon as the thread and roster exist; the
  * argument then runs in the background and the client follows `/api/debates/events`.
  */
-function debatePath(projectName: string, runId?: string | null): string {
-  const base = `/projects/${encodeURIComponent(projectName)}/debates`;
-  return runId ? `${base}/${encodeURIComponent(runId)}` : base;
+function debatePath(projectName: string, threadId?: string | null): string {
+  const base = `/projects/${encodeURIComponent(projectName)}/threads`;
+  return threadId ? `${base}/${encodeURIComponent(threadId)}` : base;
 }
 
 async function relay(path: string, init?: RequestInit): Promise<NextResponse> {
@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   if (!projectName) {
     return NextResponse.json({ error: "Missing project_name." }, { status: 400 });
   }
-  return relay(debatePath(projectName, params.get("run_id")), {
+  return relay(debatePath(projectName, params.get("thread_id")), {
     headers: await backendHeaders({ accept: "application/json" }),
   });
 }

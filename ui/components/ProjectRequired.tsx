@@ -3,14 +3,14 @@
 import { activateProject, useProjects, type Project } from "@/lib/projects";
 
 type Props = {
-  /** What the page would show once a project is chosen, e.g. "datasets". */
+  /** What the page would show once a project is chosen, e.g. "Files". */
   what: string;
 };
 
 /**
  * One panel for every page that needs a project and does not have one.
  *
- * Datasets, skills and chat each used to handle this differently — one showed
+ * Files, skills and chat each used to handle this differently — one showed
  * an empty list, one a sentence in a chat bubble, one nothing at all. Choosing
  * here keeps you on the page you opened, because you already said where you
  * wanted to be.

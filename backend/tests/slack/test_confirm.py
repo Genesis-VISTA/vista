@@ -47,11 +47,9 @@ def answers(engine, monkeypatch):
     return told
 
 
-async def _chat(session, alice) -> uuid.UUID:
-    p = await project(session, alice)
-    row = ChatSessionTable(
-        project_id=p.id, user_id=alice.id, message_history=[], messages=[]
-    )
+async def _chat(session) -> uuid.UUID:
+    p = await project(session)
+    row = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -70,14 +68,13 @@ def _approval(tool="vista__submit_hpc_job", args=SUBMIT, eid="e1") -> RunEvent:
     )
 
 
-async def _offer(slack, session, alice, **kw) -> Confirmations:
+async def _offer(slack, session, **kw) -> Confirmations:
     confirmations = Confirmations(slack)
     await confirmations.offer(
         _approval(**kw),
         place=PLACE,
         team_id=TEAM,
-        chat_session_id=await _chat(session, alice),
-        user_id=alice.id,
+        chat_session_id=await _chat(session),
     )
     return confirmations
 
@@ -98,10 +95,10 @@ def _card_text(posted) -> str:
     return json.dumps(posted.blocks)
 
 
-async def test_the_card_shows_what_would_be_submitted(answers, session, alice):
+async def test_the_card_shows_what_would_be_submitted(answers, session):
     slack = FakeTransport()
 
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     (card,) = slack.messages
     assert card.thread_ts == "10.0"
@@ -113,23 +110,24 @@ async def test_the_card_shows_what_would_be_submitted(answers, session, alice):
     confirmations.stop()
 
 
-async def test_the_preview_adds_the_account(answers, session, alice, monkeypatch):
-    async def preview(user_id, chat_session_id, tool, args):
-        assert user_id == alice.id
+async def test_the_preview_adds_the_account(answers, session, monkeypatch):
+    async def preview(chat_session_id, tool, args):
+        assert isinstance(chat_session_id, uuid.UUID)
+        assert tool == "vista__submit_hpc_job" and args == SUBMIT
         return {"Account": "MAT123"}
 
     monkeypatch.setattr(confirm, "_preview", preview)
     slack = FakeTransport()
 
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     assert "MAT123" in _card_text(slack.messages[0])
     confirmations.stop()
 
 
-async def test_confirm_by_the_requester_goes_ahead(answers, engine, session, alice):
+async def test_confirm_by_the_requester_goes_ahead(answers, engine, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap())
 
@@ -141,9 +139,9 @@ async def test_confirm_by_the_requester_goes_ahead(answers, engine, session, ali
         assert row is not None and row.outcome == "confirmed"
 
 
-async def test_someone_else_cannot_confirm(answers, session, alice):
+async def test_someone_else_cannot_confirm(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap(user="U2"))
 
@@ -153,9 +151,9 @@ async def test_someone_else_cannot_confirm(answers, session, alice):
     confirmations.stop()
 
 
-async def test_cancel_declines(answers, session, alice):
+async def test_cancel_declines(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap(CANCEL))
 
@@ -163,9 +161,9 @@ async def test_cancel_declines(answers, session, alice):
     assert "Cancelled by <@U1>" in _card_text(slack.messages[0])
 
 
-async def test_a_second_tap_does_nothing(answers, session, alice):
+async def test_a_second_tap_does_nothing(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap())
     await confirmations.on_action(_tap(CANCEL))
@@ -174,10 +172,10 @@ async def test_a_second_tap_does_nothing(answers, session, alice):
     assert slack.ephemerals[-1][2] == "That request is already closed."
 
 
-async def test_an_unanswered_card_expires(answers, session, alice, monkeypatch):
+async def test_an_unanswered_card_expires(answers, session, monkeypatch):
     monkeypatch.setattr(settings.slack, "confirmation_ttl", 0.01)
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     for _ in range(100):
         if answers:
@@ -190,11 +188,9 @@ async def test_an_unanswered_card_expires(answers, session, alice, monkeypatch):
     assert answers == [("e1", "decline")], "a tap after expiry does nothing"
 
 
-async def test_a_tap_after_the_deadline_is_refused(
-    answers, session, alice, monkeypatch
-):
+async def test_a_tap_after_the_deadline_is_refused(answers, session, monkeypatch):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
     later = now() + timedelta(seconds=settings.slack.confirmation_ttl + 1)
     monkeypatch.setattr(confirm, "now", lambda: later)
 
@@ -205,12 +201,12 @@ async def test_a_tap_after_the_deadline_is_refused(
 
 
 async def test_lock_and_limits_are_checked_again_on_confirm(
-    answers, session, alice, monkeypatch
+    answers, session, monkeypatch
 ):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
-    async def locked(user_id, tool, args):
+    async def locked(tool, args):
         assert args == SUBMIT
         return "Slack is locked. Unlock it from the VISTA desktop app."
 
@@ -223,32 +219,32 @@ async def test_lock_and_limits_are_checked_again_on_confirm(
 
 
 async def test_a_confirm_for_a_run_that_is_gone_says_nothing_ran(
-    answers, engine, session, alice, monkeypatch
+    answers, engine, session, monkeypatch
 ):
     async def gone(elicitation_id, action, content=None):
         return False
 
     monkeypatch.setattr(chat_run, "resolve_prompt", gone)
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     await confirmations.on_action(_tap())
 
     assert "Expired" in _card_text(slack.messages[0])
 
 
-async def test_cards_left_open_at_a_restart_are_expired(answers, session, alice):
+async def test_cards_left_open_at_a_restart_are_expired(answers, session):
     slack = FakeTransport()
-    first = await _offer(slack, session, alice)
+    first = await _offer(slack, session)
     first.stop()  # VISTA quit.
 
     assert await Confirmations(slack).close_stale() == 1
     assert "Expired" in _card_text(slack.messages[0])
 
 
-async def test_a_tap_from_another_workspace_is_ignored(answers, session, alice):
+async def test_a_tap_from_another_workspace_is_ignored(answers, session):
     slack = FakeTransport()
-    confirmations = await _offer(slack, session, alice)
+    confirmations = await _offer(slack, session)
 
     tap = _tap()
     await confirmations.on_action(Action(**{**tap.__dict__, "team_id": "T9999"}))
@@ -257,7 +253,7 @@ async def test_a_tap_from_another_workspace_is_ignored(answers, session, alice):
     confirmations.stop()
 
 
-async def test_url_prompts_are_declined_not_shown(answers, session, alice):
+async def test_url_prompts_are_declined_not_shown(answers, session):
     slack = FakeTransport()
     confirmations = Confirmations(slack)
     event = RunEvent(
@@ -271,8 +267,7 @@ async def test_url_prompts_are_declined_not_shown(answers, session, alice):
         event,
         place=PLACE,
         team_id=TEAM,
-        chat_session_id=await _chat(session, alice),
-        user_id=alice.id,
+        chat_session_id=await _chat(session),
     )
 
     assert slack.messages == [] and answers == [("u1", "decline")]

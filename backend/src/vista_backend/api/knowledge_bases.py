@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import re
 import shutil
 import uuid
@@ -28,9 +29,10 @@ from typing import Any, cast
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from ..agents.inference import citation_credentials
-from ..services.auth import UserDep
+from ..services.local_settings import LocalSettingsDep
 from ..config import settings
 from ..db.db import SessionDep, commit_with_retry, get_engine
 from ..db.schemas import (
@@ -41,6 +43,9 @@ from ..db.schemas import (
     Publication,
 )
 from ..services import knowledge_base as kb_service
+from ..services import knowledge_base_collaboration as kb_collaboration
+from ..services import team_copy
+from .skills import TeamCopyRequest
 from ..utils import indexer
 from ..utils.misc import write_file_unique
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -55,20 +60,53 @@ router = APIRouter(prefix="/knowledge-bases", tags=["knowledge-bases"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-# PDF filename sanitization — collapse anything outside [A-Za-z0-9._-]
+# Filename sanitization — collapse anything outside [A-Za-z0-9._-]
 # to underscores, strip path components. Mirrors uploads.py's helper.
-_PDF_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
-MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024  # 50 MiB per file
+_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]")
+MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024  # 50 MiB per file
+
+_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".csv": "text/csv",
+    ".tsv": "text/tab-separated-values",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+}
 
 
-def _sanitize_pdf_filename(name: str | None) -> str:
+def _accepted_formats_text() -> str:
+    return ", ".join(s.lstrip(".").upper() for s in indexer.ACCEPTED_SUFFIXES)
+
+
+def _unsupported_detail(name: str | None) -> str:
+    return (
+        f"File '{name or ''}' is not a supported format. "
+        f"Accepted formats: {_accepted_formats_text()}."
+    )
+
+
+def _sanitize_kb_filename(name: str | None) -> str:
+    """
+    Collapse `name` to a safe basename, keeping its own extension. Raises 400
+    (nothing is stored) when the extension is not one a knowledge base indexes.
+    """
     if not name or name in (".", ".."):
-        name = "upload.pdf"
-    base = Path(name).name
-    cleaned = _PDF_FILENAME_RE.sub("_", base)
-    if not cleaned.lower().endswith(".pdf"):
-        cleaned = cleaned + ".pdf"
+        raise HTTPException(status_code=400, detail=_unsupported_detail(name))
+    cleaned = _FILENAME_RE.sub("_", Path(name).name)
+    if Path(cleaned).suffix.lower() not in indexer.ACCEPTED_SUFFIXES:
+        raise HTTPException(status_code=400, detail=_unsupported_detail(name))
     return cleaned
+
+
+def _kind_for(filename: str) -> str:
+    return indexer.SUFFIX_KIND.get(Path(filename).suffix.lower(), "pdf")
+
+
+def _media_type_for(filename: str) -> str:
+    suffix = Path(filename).suffix.lower()
+    if suffix in _MEDIA_TYPES:
+        return _MEDIA_TYPES[suffix]
+    return mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
 
 def _now_iso() -> str:
@@ -92,7 +130,8 @@ def _reconcile_with_disk(
     changed)`. The input list is not mutated; callers that want the new
     state get it via the return value.
 
-      - Adds stub Publication entries for files on disk we don't track.
+      - Adds stub Publication entries for files on disk we don't track
+        (every accepted format, not only PDFs).
       - Flips `has_pdf=False` for tracked publications whose files are
         no longer on disk (kept around because chroma may still hold
         their chunks/citation).
@@ -103,7 +142,7 @@ def _reconcile_with_disk(
         for entry in pdfs_dir.iterdir():
             if not entry.is_file():
                 continue
-            if entry.suffix.lower() != ".pdf":
+            if entry.suffix.lower() not in indexer.ACCEPTED_SUFFIXES:
                 continue
             try:
                 on_disk[entry.name] = entry.stat().st_size
@@ -128,6 +167,7 @@ def _reconcile_with_disk(
                     added_at=now,
                     has_pdf=True,
                     index_status="unindexed",
+                    kind=_kind_for(name),  # type: ignore[arg-type]
                 )
             )
             changed = True
@@ -233,7 +273,8 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
 
     try:
         # Settings MUST match build_rag.TextRAG's client or ChromaDB will throw
-        client = chromadb.PersistentClient(
+        # `Any`: the client's `close`, which the declared `ClientAPI` lacks.
+        client: Any = chromadb.PersistentClient(
             path=str(db_path),
             settings=ChromaSettings(anonymized_telemetry=False),
         )
@@ -241,27 +282,41 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
         logger.warning("Failed to open chroma at %s: %s", rag_db_path, exc)
         return None
 
+    # Closed when done: chromadb keeps one client per path for the process,
+    # and one left open would keep the store open after its KB is replaced
+    # or deleted (`indexer.invalidate_rag_cache`).
     try:
-        collection = client.get_collection("citations")
-    except Exception:
-        # Collection doesn't exist — happens for fresh KBs that have
-        # never been indexed. Cache an empty result so we don't keep
-        # paying the open cost.
-        _CHROMA_CITATIONS_CACHE[cache_key] = []
-        return []
+        try:
+            collection = client.get_collection("citations")
+        except Exception:
+            # Collection doesn't exist — happens for fresh KBs that have
+            # never been indexed. Cache an empty result so we don't keep
+            # paying the open cost.
+            result = None
+        else:
+            try:
+                result = collection.get(include=["metadatas"])
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Failed to query chroma citations at %s: %s", rag_db_path, exc
+                )
+                return None
+    finally:
+        client.close()
 
-    try:
-        result = collection.get(include=["metadatas"])
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to query chroma citations at %s: %s", rag_db_path, exc)
-        return None
-
-    metas = list(result.get("metadatas") or [])
+    metas = list(result.get("metadatas") or []) if result is not None else []
     # Filter to only dict-shaped rows with a `source` filename — anything
     # else is malformed and would just break the merge.
     citations = [
         m for m in metas if isinstance(m, dict) and isinstance(m.get("source"), str)
     ]
+    # Keyed by the file as this read left it: opening a store with no client
+    # open on it in this process writes `chroma.sqlite3`, so the mtime from
+    # before the open would never match again, and every GET would reopen it.
+    try:
+        cache_key = (cache_key[0], sqlite_file.stat().st_mtime)
+    except OSError:
+        return citations
     _CHROMA_CITATIONS_CACHE[cache_key] = citations
 
     # Don't let the cache grow unbounded — keep just the most recent
@@ -272,6 +327,27 @@ def _read_chroma_citations(rag_db_path: str) -> list[dict] | None:
             _CHROMA_CITATIONS_CACHE.pop(stale_key, None)
 
     return citations
+
+
+def _merge_kind_and_rows(pub: Publication, meta: dict) -> bool:
+    """
+    Copy `kind` and `row_count` from a citation row's metadata. Rows written
+    before other formats existed carry no `kind` and are left as they are (a
+    PDF unless the file's suffix said otherwise). Returns True if anything
+    changed.
+    """
+    changed = False
+    kind = meta.get("kind")
+    if kind in indexer.SUFFIX_KIND.values() and pub.kind != kind:
+        pub.kind = kind  # type: ignore[assignment]
+        changed = True
+    rows = meta.get("row_count")
+    if isinstance(rows, str) and rows.isdigit():
+        rows = int(rows)
+    if isinstance(rows, int) and not isinstance(rows, bool) and pub.row_count != rows:
+        pub.row_count = rows
+        changed = True
+    return changed
 
 
 def _merge_chroma_metadata_into_pub(pub: Publication, meta: dict) -> bool:
@@ -318,6 +394,8 @@ def _merge_chroma_metadata_into_pub(pub: Publication, meta: dict) -> bool:
             elif isinstance(value, list) and value:
                 setattr(pub, field, list(value))
                 changed = True
+    if _merge_kind_and_rows(pub, meta):
+        changed = True
     return changed
 
 
@@ -369,6 +447,7 @@ def _reconcile_with_chroma(
                 has_pdf=False,
                 index_status="indexed",
                 indexed_at=None,
+                kind=_kind_for(filename),  # type: ignore[arg-type]
             )
             _merge_chroma_metadata_into_pub(new_pub, meta)
             pubs.append(new_pub)
@@ -662,10 +741,11 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
       - rmtree the KB's ChromaDB directory
       - clear any in-memory indexer progress for this KB
 
-    Built-in KBs cannot be deleted. For everything else we apply a
-    safety check: the on-disk paths must live underneath the configured
-    `knowledge_bases_dir`. A misconfigured DB row pointing at, say,
-    `/` or `~` would otherwise be a catastrophic footgun.
+    A safety check applies: the on-disk paths must live underneath the
+    configured `knowledge_bases_dir`. A misconfigured DB row pointing at,
+    say, `/` or `~` would otherwise be a catastrophic footgun. The KB's own
+    folder there (`<knowledge_bases_dir>/<slug>`) goes too, with any store
+    an import replaced and could not remove at the time.
 
     The DB row is dropped first so concurrent reads stop seeing the KB
     immediately; filesystem cleanup happens after. If the filesystem
@@ -673,7 +753,19 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
     orphaned directories can be cleaned up manually — that's a strictly
     better failure mode than leaving the DB out of sync with disk.
     """
+    # Its files may be being packed or replaced: deleting them meanwhile would
+    # fail the publish or import and leave its folder half there.
+    async with kb_service.kb_writing(slug, "delete it"):
+        await _delete_knowledge_base(slug, session)
+
+
+async def _delete_knowledge_base(slug: str, session: SessionDep) -> None:
+    """`delete_knowledge_base` under the slug's lock."""
     pdfs_dir_str, rag_db_path_str = await kb_service.delete_kb(session, slug)
+    if not await commit_with_retry(session, context="delete_knowledge_base"):
+        raise HTTPException(
+            status_code=503, detail="Database is busy; try the delete again."
+        )
     pdfs_dir = Path(pdfs_dir_str)
     rag_db_path = Path(rag_db_path_str)
 
@@ -690,7 +782,7 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
         except ValueError:
             return False
 
-    for target in (pdfs_dir, rag_db_path):
+    for target in (pdfs_dir, rag_db_path, kb_root / slug):
         if not target.exists():
             continue
         if not _is_safe(target):
@@ -730,6 +822,47 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
             pass
 
 
+class KnowledgeBasePublishRequest(BaseModel):
+    """Body for `POST /knowledge-bases/{slug}/publish`; empty for an ordinary publish."""
+
+    on_top_of: int | None = Field(default=None, ge=1)
+    """
+    Publish over this head, which a refused publish reported, rather than over
+    the version the knowledge base was last published as or imported from.
+    """
+    as_new: bool = False
+    """ Publish as a new knowledge base on the server, not as a version of its own. """
+
+
+@router.post("/{slug}/publish")
+async def publish_knowledge_base(
+    slug: str,
+    body: KnowledgeBasePublishRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> kb_collaboration.KnowledgeBasePublishResult:
+    """
+    Publish the knowledge base's PDFs and index to the collaboration server.
+    409 while it is indexing, and with `code` when the server's head has moved
+    on (`version_conflict`, with `head_version`) or the item is gone
+    (`remote_missing`).
+    """
+    return await kb_collaboration.publish_knowledge_base(
+        session, local, slug, on_top_of=body.on_top_of, as_new=body.as_new
+    )
+
+
+@router.post("/{slug}/copy")
+async def copy_knowledge_base(
+    slug: str, body: TeamCopyRequest, session: SessionDep, local: LocalSettingsDep
+) -> team_copy.TeamCopyResult:
+    """
+    Copy the knowledge base to a team on the collaboration server (`team_copy`).
+    Used by a project here, the copy is imported beside it under a free slug.
+    """
+    return await team_copy.copy_knowledge_base(session, local, slug, body.team_id)
+
+
 # ---------------------------------------------------------------------------
 # Publications
 # ---------------------------------------------------------------------------
@@ -741,11 +874,22 @@ async def add_publications(
     files: list[UploadFile],
     background_tasks: BackgroundTasks,
     session: SessionDep,
-    user: UserDep,
+    local: LocalSettingsDep,
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
+    async with kb_service.kb_writing(slug, "add papers"):
+        return await _add_publications(slug, files, background_tasks, session, local)
 
+
+async def _add_publications(
+    slug: str,
+    files: list[UploadFile],
+    background_tasks: BackgroundTasks,
+    session: SessionDep,
+    local: LocalSettingsDep,
+) -> dict[str, Any]:
+    """`add_publications` under the slug's lock."""
     kb = await kb_service.get_kb(session, slug)
     pdfs_dir = Path(kb.pdfs_dir)
     pdfs_dir.mkdir(parents=True, exist_ok=True)
@@ -760,16 +904,16 @@ async def add_publications(
 
     for file in files:
         contents = await file.read()
-        if len(contents) > MAX_PDF_SIZE_BYTES:
+        if len(contents) > MAX_FILE_SIZE_BYTES:
             raise HTTPException(
                 status_code=400,
                 detail=(
                     f"File '{file.filename}' exceeds the "
-                    f"{MAX_PDF_SIZE_BYTES // (1024 * 1024)} MiB upload limit."
+                    f"{MAX_FILE_SIZE_BYTES // (1024 * 1024)} MiB upload limit."
                 ),
             )
         # Sanitize, then de-dupe within this KB by appending -1, -2, ...
-        safe = _sanitize_pdf_filename(file.filename)
+        safe = _sanitize_kb_filename(file.filename)
         # Re-use the unique-write helper from uploads.py.
         target = pdfs_dir / safe
         saved = write_file_unique(target, contents)
@@ -790,6 +934,7 @@ async def add_publications(
                 has_pdf=True,
                 index_status="queued",
                 index_error=None,
+                kind=_kind_for(final_name),  # type: ignore[arg-type]
             )
         )
         added_names.append(final_name)
@@ -800,6 +945,7 @@ async def add_publications(
     kb.publications = cast(list[Publication], [_publication_dict(p) for p in pubs])
     kb.build_status = new_build_status
     kb.updated_at = now
+    kb.modified = True
     session.add(kb)
     await session.flush()
     await session.refresh(kb)
@@ -833,12 +979,12 @@ async def add_publications(
         rag_db_path=rag_db_path,
         pdfs_dir=pdfs_dir_str,
         filenames=list(added_names),
-        # Resolved here, inside the request, because the background task has no
-        # user. Without it citation extraction falls back to the process
+        # Resolved here, inside the request, because the background task does
+        # not read the settings. Without it citation extraction falls back to the process
         # environment, which cannot see a key entered in the settings modal --
         # so a fresh install would index this knowledge base and silently
         # produce no citation metadata.
-        llm_credentials=citation_credentials(user),
+        llm_credentials=citation_credentials(local),
     )
 
     return _public_with_progress(kb)
@@ -882,7 +1028,7 @@ async def download_publication(
     return FileResponse(
         pdf_path,
         filename=filename,
-        media_type="application/pdf",
+        media_type=_media_type_for(filename),
     )
 
 
@@ -892,13 +1038,20 @@ async def delete_publication(
     filename: str,
     session: SessionDep,
 ) -> None:
+    """
+    Delete a PDF, its passages and citation from the index, and its entry,
+    so `rag_search` no longer returns it. Refused while the knowledge base
+    is indexing, which writes the same index, or being published or imported.
+    """
+    async with kb_service.kb_writing(slug, "delete the paper"):
+        await _delete_publication(slug, filename, session)
+
+
+async def _delete_publication(slug: str, filename: str, session: SessionDep) -> None:
+    """`delete_publication` under the slug's lock."""
     kb = await kb_service.get_kb(session, slug)
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
-    pdf_path = Path(kb.pdfs_dir) / filename
-    if pdf_path.is_file():
-        pdf_path.unlink()
-
     pubs = [
         Publication.model_validate(p) if isinstance(p, dict) else p
         for p in kb.publications
@@ -906,13 +1059,34 @@ async def delete_publication(
     new_pubs = [p for p in pubs if p.filename != filename]
     if len(new_pubs) == len(pubs):
         raise HTTPException(status_code=404, detail="Publication not found.")
+    if indexer.get_progress(kb.rag_db_path) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{kb.name} is indexing; delete the paper once it has finished.",
+        )
+
+    # The index first: if it cannot be changed, nothing is, and the delete
+    # can be tried again. The indexer records a chunk's source as the PDF's
+    # file name, which is what `filename` is here.
+    try:
+        await indexer.delete_source(kb.rag_db_path, filename)
+    except Exception as exc:  # noqa: BLE001 -- chromadb raises its own types
+        logger.exception("Could not delete %s's rows from %s", filename, slug)
+        raise HTTPException(
+            status_code=500,
+            detail=f"{filename} could not be removed from the index: {exc}",
+        ) from exc
+    pdf_path = Path(kb.pdfs_dir) / filename
+    if pdf_path.is_file():
+        pdf_path.unlink()
     kb.publications = cast(list[Publication], [_publication_dict(p) for p in new_pubs])
     kb.updated_at = _now_iso()
+    kb.modified = True
     session.add(kb)
-    # NB: this leaves the chroma rows behind. Deleting from chroma
-    # would require opening the collection and calling .delete(...)
-    # with the row IDs. Acceptable trade-off for now; the rag_search
-    # tool will still return them but the UI hides them via has_pdf.
+    if not await commit_with_retry(session, context="delete_publication"):
+        raise HTTPException(
+            status_code=503, detail="Database is busy; try the delete again."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -952,7 +1126,7 @@ async def _run_indexer_and_persist(
         # index_publications didn't reach its own cleanup. Otherwise
         # the reconciler would refuse to open chromadb for this path
         # for the next 30 minutes.
-        indexer._clear_progress(rag_db_path)
+        indexer.clear_progress(rag_db_path)
         results = [
             {
                 "filename": f,
@@ -1098,3 +1272,5 @@ def _merge_citation_into_pub(pub: Publication, citation: dict) -> None:
                     pass
             elif isinstance(value, list):
                 setattr(pub, field, list(value))
+
+    _merge_kind_and_rows(pub, citation)

@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,15 +12,32 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import get_vista_mcp_server
 from ..agents.campaign.wiring import build_default_monitor
-from ..agents.inference import MissingInferenceCredential, MissingInferenceModel
+from ..agents.inference import (
+    MissingInferenceCredential,
+    MissingInferenceModel,
+    RejectedInferenceCredential,
+)
 from ..config import settings
-from ..db.db import get_engine, init_db
-from ..services.auth import get_user
+from ..db.db import DatabaseIncompatible, get_engine, init_db
+from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
+from ..services.collaboration import (
+    CollaborationError,
+    CollaborationForbidden,
+    CollaborationRefused,
+    CollaborationUnauthorized,
+    CollaborationUnavailable,
+    SharingConflict,
+    server_url,
+)
+from ..services.local_settings import LocalSettingsDep
 from ..services.project_agent import project_agent_pool
+from ..services.update_check import update_checker
+from ..services.update_download import clean_cache, update_downloader
 from .agent import router as agent_router
 from .campaign import router as campaign_router
 from .chat_runs import router as chat_runs_router
+from .collaboration import router as collaboration_router
 from .debate import router as debate_router
 from .chat_sessions import router as chat_sessions_router
 from .files import router as files_router
@@ -29,14 +47,41 @@ from .models import router as models_router
 from .palisade import router as palisade_router
 from .projects import router as projects_router
 from .reports import router as reports_router
+from .settings import router as settings_router
 from .skills import router as skills_router
 from .slack import router as slack_router
-from .users import router as users_router
+from .updates import router as updates_router
+
+
+def _report_database_incompatible(refusal: DatabaseIncompatible) -> None:
+    """
+    Say why the database was refused, for the log and for the launcher.
+
+    The launcher sets `VISTA_STARTUP_FAILURE_FILE` and reads the code back when
+    this process exits before it is healthy; run on its own, nothing is written.
+    The caller re-raises, which makes uvicorn exit non-zero.
+    """
+    logging.getLogger(__name__).error(
+        "Refusing to start: %s (%s)", refusal.message, refusal.code
+    )
+    failure_file = os.environ.get("VISTA_STARTUP_FAILURE_FILE")
+    if failure_file:
+        try:
+            with open(failure_file, "w", encoding="utf-8") as f:
+                f.write(refusal.code + "\n")
+        except OSError:
+            logging.getLogger(__name__).exception(
+                "Could not write the startup failure file %s", failure_file
+            )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    await init_db()
+    try:
+        await init_db()
+    except DatabaseIncompatible as refusal:
+        _report_database_incompatible(refusal)
+        raise
     # No run survives a restart: a row still `running` died with the last process.
     if await sweep_interrupted_runs():
         logging.getLogger(__name__).info(
@@ -56,6 +101,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from ..services.repo_tokens import check_legacy_token_env
 
     check_legacy_token_env()
+
+    # Nothing a publish or import was working on survives a restart.
+    from ..services.knowledge_base_collaboration import clear_incoming
+
+    await asyncio.to_thread(clear_incoming)
 
     # Check that the vista MCP server is up so we fail early if there's an issue.
     async with get_vista_mcp_server() as mcp_server:
@@ -77,6 +127,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         logging.getLogger("vista.campaign_monitor").info("Campaign monitor started.")
 
+    # Whether a newer release exists: on start, then daily, unless the researcher
+    # turned checks off or this is a development build (`services/update_check`).
+    update_task = asyncio.create_task(update_checker.run())
+    # A cached download of the version now running is the update that worked.
+    await asyncio.to_thread(clean_cache, settings.version)
     # Slack, when it is on and this machine handles it; otherwise nothing starts.
     # A failure here costs only Slack, never the app.
     from ..slack import service as slack_service
@@ -92,6 +147,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # First, while runs and the connection are still up: the offline notice.
         with contextlib.suppress(Exception):
             await slack_service.stop()
+        update_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await update_task
+        await update_downloader.stop()
         if monitor_stop is not None:
             monitor_stop.set()
         if monitor_task is not None:
@@ -110,26 +169,73 @@ app = FastAPI(
     title="vista-backend",
     version=settings.version,
     lifespan=lifespan,
-    dependencies=[Depends(get_user)],  # Require login for all routes
 )
 
 
 @app.exception_handler(MissingInferenceCredential)
 @app.exception_handler(MissingInferenceModel)
+@app.exception_handler(RejectedInferenceCredential)
 async def _missing_inference_credential(
-    request: Request, exc: MissingInferenceCredential | MissingInferenceModel
+    request: Request,
+    exc: MissingInferenceCredential
+    | MissingInferenceModel
+    | RejectedInferenceCredential,
 ) -> JSONResponse:
     """
-    Report a missing inference credential, or a provider with no model chosen
-    and no default, as a named condition.
+    Report a missing or rejected inference credential, or a provider with no
+    model chosen and no default, as a named condition.
 
     409 rather than a 5xx: nothing has failed. On a fresh install this is the
     expected state, and the request cannot be satisfied until the researcher
     supplies a value the server has no way to obtain. `detail` carries the
     message naming the setting and where to enter it, which is the shape
-    `ui/lib/user.ts:extractError` already surfaces.
+    `ui/lib/user.ts:extractError` already surfaces. `code` tells it apart from
+    the chat endpoint's other 409, a conversation that is already running a
+    turn (`run_busy`).
     """
-    return JSONResponse(status_code=409, content={"detail": exc.detail})
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.detail, "code": "inference_not_configured"},
+    )
+
+
+@app.exception_handler(CollaborationError)
+async def _collaboration_error(
+    request: Request, exc: CollaborationError
+) -> JSONResponse:
+    """
+    A collaboration server that cannot be reached is 503, one that refused the
+    token 401, one that refused the account 403, one that refused otherwise or
+    answered nonsense 502; `detail` is the sentence to show.
+    """
+    if isinstance(exc, CollaborationUnavailable):
+        status, code = 503, "collaboration_unavailable"
+    elif isinstance(exc, CollaborationUnauthorized):
+        status, code = 401, "collaboration_sign_in_required"
+    elif isinstance(exc, CollaborationForbidden):
+        status, code = 403, "collaboration_forbidden"
+    elif isinstance(exc, CollaborationRefused):
+        status, code = 502, "collaboration_refused"
+    else:
+        status, code = 502, "collaboration_error"
+    return JSONResponse(status_code=status, content={"detail": str(exc), "code": code})
+
+
+@app.exception_handler(SharingConflict)
+async def _sharing_conflict(request: Request, exc: SharingConflict) -> JSONResponse:
+    """A publish or import that needs the researcher's choice: 409 with `code`."""
+    return JSONResponse(
+        status_code=409,
+        content={"detail": exc.detail, "code": exc.code, **exc.extra},
+    )
+
+
+async def _server_in_effect(local: LocalSettingsDep) -> None:
+    """
+    For the routes that answer with projects, skills and knowledge bases: each
+    one's team is sent as its team on the server in effect (`TeamSharing`).
+    """
+    server_in_effect.set(server_url(local)[0])
 
 
 app.include_router(agent_router)
@@ -137,15 +243,17 @@ app.include_router(campaign_router)
 app.include_router(debate_router)
 app.include_router(chat_sessions_router)
 app.include_router(chat_runs_router)
+app.include_router(collaboration_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(mcp_router)
-app.include_router(knowledge_bases_router)
+app.include_router(knowledge_bases_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(models_router)
-app.include_router(projects_router)
+app.include_router(projects_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(reports_router)
-app.include_router(skills_router)
+app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(slack_router)
 app.include_router(files_router)
-app.include_router(users_router)
+app.include_router(settings_router)
+app.include_router(updates_router)
 
 # PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when

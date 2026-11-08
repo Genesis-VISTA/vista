@@ -1,11 +1,20 @@
 import os
 from pathlib import Path
 from typing import Annotated as A, Literal
-from pydantic import AliasChoices, BaseModel, Field, ByteSize, SecretStr
+from urllib.parse import urlsplit
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    Field,
+    ByteSize,
+    PrivateAttr,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
-from .utils.types import CommaSeparatedList, ResolvedPath, LogLevel
+from .utils.types import CommaSeparatedList, OptionalHttpUrl, ResolvedPath, LogLevel
 from palisade.config import PalisadeSettings
 from .metrics import MetricsSettings
 
@@ -82,6 +91,38 @@ class SlackSettings(BaseModel):
     """ An unlinked user is told how to link at most this often. """
 
 
+class SecretSettings(BaseModel):
+    """
+    Where secrets kept out of the database live (`utils/secret_store.py`): Slack's
+    tokens and the database's own key. Override via `VISTA_BACKEND_SECRETS__BACKEND=...`.
+    """
+
+    backend: Literal["auto", "os", "directory"] = "auto"
+    """
+    `os`: the OS secret store (Keychain, Credential Manager, Secret Service).
+    `directory`: one file per secret in `directory`, for a hosted VISTA with no
+    OS store. `auto`: `directory` when `deployment` is `hosted`, else `os`.
+    """
+
+    directory: Path | None = None
+    """ For the `directory` backend; must be mode 0700. Defaults to `<data_dir>/secrets`. """
+
+
+class UpdateSettings(BaseModel):
+    """
+    Where the backend looks for newer releases (`services/update_check.py`).
+    Whether it looks at all is the researcher's, on `LocalSettingsTable`.
+    Override via `VISTA_BACKEND_UPDATES__GITHUB_API=...`, as tests and the
+    end-to-end run do to serve a fake release.
+    """
+
+    github_api: str = "https://api.github.com"
+    """ Base URL of the GitHub REST API. """
+
+    repo: str = "Genesis-VISTA/vista"
+    """ The repository whose published releases are VISTA's. """
+
+
 class ForumSettings(BaseModel):
     """
     Agent-forum settings — the git-backed debate forum (see
@@ -154,6 +195,18 @@ class ForumSettings(BaseModel):
     this bounds the stall rather than deciding whether the evidence is used.
     """
 
+    run_expiry_margin_seconds: float = 900.0
+    """ How much longer than a turn's longest job wait a silent run is still live. """
+
+    @property
+    def run_expiry_seconds(self) -> float:
+        """
+        How long a run may go without a post before others may Continue the
+        thread: the longest a turn may wait for a simulation, plus a margin.
+        A run waiting on a job posts nothing for that long and is not dead.
+        """
+        return self.max_job_wait_seconds + self.run_expiry_margin_seconds
+
     job_poll_seconds: float = 15.0
     """
     How often a waiting role re-checks its job.
@@ -183,15 +236,28 @@ class ForumSettings(BaseModel):
     """
     Access token git sends to an `https://` `remote_url`. Not configuration either.
 
-    Filled in per project from `Project.forum_repo_token`. None leaves git to the
-    system's own credentials — an SSH key in the agent, or a credential helper.
+    Filled in per project from the user's Settings token for the forum's host
+    (`services/repo_tokens.repo_token`). None leaves git to the system's own
+    credentials — an SSH key in the agent, or a credential helper.
     """
 
     remote_token_source: str | None = None
     """
-    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or None
-    when there is none and git uses the system's credentials. A failed publish
-    names it, so the person knows which token to fix. Not configuration.
+    Where `remote_token` came from (`services/repo_tokens.TokenSource`), or
+    `collaboration` for a forum hosted on the collaboration server (see
+    `remote_headers`), or None when there is none and git uses the system's
+    credentials. A failed publish names it, so the person knows which credential
+    to fix. Not configuration.
+    """
+
+    remote_headers: dict[str, SecretStr] | None = None
+    """
+    For a forum hosted on the collaboration server: the sign-in headers git
+    sends to `remote_url` instead of a forge token (the bearer token, and the
+    installation's id and name, as the collaboration client sends them). Set by
+    `forum_config_for` and only for a URL under the server's address; a forge
+    URL never has them, and a hosted one never has `remote_token`. Not
+    configuration.
     """
 
     max_simulations: int = 2
@@ -223,6 +289,13 @@ _ENV_FILES: list[Path] = [
 ]
 
 
+AMSC_MAG_BASE_URL = "https://mag.genesis.americansciencecloud.org/v1"
+""" The AmSC MAG gateway: the default inference endpoint, and the MAG preset's. """
+
+RETIRED_I2_HOST = "api.i2-core.american-science-cloud.org"
+""" The AmSC i2-core API, deactivated on 2026-10-31. A configured URL on it is ignored. """
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES,
@@ -238,10 +311,26 @@ class Settings(BaseSettings):
 
     env: A[Literal["dev", "prod"], Field(validation_alias="VISTA_ENV")] = "dev"
 
+    deployment: Literal["desktop", "hosted"] = "desktop"
+    """
+    Where this VISTA runs. `desktop`: a researcher's own computer, the only kind
+    packaged today. `hosted`: a headless instance serving one researcher on a
+    facility service (a container), which keeps secrets in a directory rather
+    than an OS store and has no sleep, login item or window. Override via
+    `VISTA_BACKEND_DEPLOYMENT=hosted`.
+    """
+
     host: str = "127.0.0.1"
     port: int = 8001
 
     log_level: LogLevel = "INFO"
+
+    onboarding_tour: bool = True
+    """
+    Whether the first-boot tour may open. Set `VISTA_BACKEND_ONBOARDING_TOUR=false`
+    for a managed or demo installation. Reported read-only by `GET /settings`;
+    the researcher's own progress lives in `LocalSettingsTable.onboarding_tour`.
+    """
 
     model: str = "openai:claude-sonnet"
     """
@@ -265,10 +354,11 @@ class Settings(BaseSettings):
                 "VISTA_BACKEND_OPENAI_BASE_URL", "OPENAI_BASE_URL"
             )
         ),
-    ] = "https://api.i2-core.american-science-cloud.org"
+    ] = AMSC_MAG_BASE_URL
     """
-    Base URL of the OpenAI-compatible inference endpoint. Defaults to the AmSC
-    Inference API.
+    Base URL of the OpenAI-compatible inference endpoint. Defaults to AmSC MAG.
+    A URL on the retired i2-core API (`RETIRED_I2_HOST`) is replaced by the
+    default, and `ignored_openai_base_url` records it so startup can say so.
 
     Resolved here rather than left to the OpenAI SDK's own `OPENAI_BASE_URL`
     lookup, whose fallback is `api.openai.com` — a host where the default model
@@ -293,6 +383,35 @@ class Settings(BaseSettings):
     credential is reported when inference is first attempted. On a single-user
     install this is normally supplied through the settings UI instead, which
     takes precedence over this value.
+    """
+
+    _ignored_openai_base_url: str | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def _ignore_the_retired_i2_api(self) -> "Settings":
+        """
+        A `.env` copied from an older `.env.sample` still names i2-core. Left
+        alone, it would show as "Custom, from configuration" aimed at a host
+        that no longer answers, so it is treated as unset.
+        """
+        if urlsplit(self.openai_base_url).hostname == RETIRED_I2_HOST:
+            self._ignored_openai_base_url = self.openai_base_url
+            self.openai_base_url = AMSC_MAG_BASE_URL
+        return self
+
+    @property
+    def ignored_openai_base_url(self) -> str | None:
+        """The configured i2-core URL that was replaced by the default, if any."""
+        return self._ignored_openai_base_url
+
+    collaboration_server_url: OptionalHttpUrl = None
+    """
+    The collaboration server to use when the researcher has set none in
+    Settings, which takes precedence. For development: `./launch.sh --collab`
+    sets it to the local server it starts. With neither, publishing and
+    importing are off, with the reason shown. Validated like the Settings
+    field, so a malformed address stops the backend at startup, naming it;
+    a blank one (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset.
     """
 
     mcp_url: str = Field(
@@ -403,7 +522,7 @@ class Settings(BaseSettings):
     Seed the `molten-salt` and `alloy-design` science projects, the
     `molten-salt-papers` knowledge base and the MSTDB-derived skill assets on first
     run from a `vista_data_token`. Set with `VISTA_BACKEND_SEED_SCIENCE_PROJECTS=true`.
-    Off by default: VISTA's out-of-the-box project is AI Safety in Autonomous Labs.
+    Off by default: VISTA's out-of-the-box project is hello-olcf, with the olcf-docs knowledge base.
     A bundled payload is seeded by what it contains and ignores this setting.
     """
 
@@ -416,6 +535,13 @@ class Settings(BaseSettings):
     output, and in `/openapi.json` from the running service -- which is how a
     researcher reporting a problem can say which build they have. `dev` on a
     checkout.
+    """
+
+    commit: A[str | None, Field(validation_alias="VISTA_COMMIT")] = None
+    """
+    The commit the build came from: the manifest's `commit`, exported by the
+    package launcher beside `VISTA_VERSION`, or the checkout's HEAD from
+    `./launch.sh`. `None` when nothing says.
     """
 
     hpc_jobs_dir: A[
@@ -475,6 +601,9 @@ class Settings(BaseSettings):
     campaigns: CampaignSettings = Field(default_factory=CampaignSettings)
     """ Multi-agent campaign settings (the background monitor); see `CampaignSettings`. """
 
+    updates: UpdateSettings = Field(default_factory=UpdateSettings)
+    """ Where to look for newer releases; see `UpdateSettings`. """
+
     forum: ForumSettings = Field(default_factory=ForumSettings)
     """
     Agent-forum (debate) settings; see `ForumSettings`. Disabled by default,
@@ -482,6 +611,9 @@ class Settings(BaseSettings):
     """
 
     slack: SlackSettings = Field(default_factory=SlackSettings)
+
+    secrets: SecretSettings = Field(default_factory=SecretSettings)
+    """ Where secrets kept out of the database live; see `SecretSettings`. """
     """ Slack integration timings; see `SlackSettings`. Slack itself is off until enabled. """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
@@ -569,10 +701,24 @@ for env_file in reversed(_ENV_FILES):
 settings = Settings.model_validate({})
 hpc_settings = HpcClusterSettings.model_validate({})
 
+# VISTA's own cache, which holds the shipped embedding weights, wins over any
+# the machine names: HF_HUB_CACHE and HUGGINGFACE_HUB_CACHE outrank HF_HOME, and
+# sentence-transformers takes SENTENCE_TRANSFORMERS_HOME as its cache folder.
 os.environ["HF_HOME"] = str(settings.data_dir / "huggingface")
+os.environ["HF_HUB_CACHE"] = str(settings.data_dir / "huggingface" / "hub")
+for _name in ("HUGGINGFACE_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME"):
+    os.environ.pop(_name, None)
 
 logging.basicConfig(
     level=settings.log_level,
     format="%(asctime)s - %(levelname)s - %(message)s",
     force=True,
 )
+
+if settings.ignored_openai_base_url:
+    logging.warning(
+        f"Ignoring the configured inference endpoint {settings.ignored_openai_base_url}: "
+        "the AmSC i2-core API has been deactivated, so AmSC MAG is used instead. "
+        "Remove OPENAI_BASE_URL / VISTA_BACKEND_OPENAI_BASE_URL from your .env, "
+        f"or set it to {AMSC_MAG_BASE_URL}."
+    )

@@ -33,11 +33,10 @@ def db(engine, monkeypatch):
     return engine
 
 
-async def _chat(session, alice) -> uuid.UUID:
-    p = await project(session, alice)
+async def _chat(session) -> uuid.UUID:
+    p = await project(session)
     row = ChatSessionTable(
         project_id=p.id,
-        user_id=alice.id,
         message_history=[],
         messages=[],
         origin="slack",
@@ -52,7 +51,6 @@ def _run(chat_id: uuid.UUID, prompt="queue on Frontier?") -> ChatRun:
     return ChatRun(
         chat_session_id=chat_id,
         project_id=uuid.uuid4(),
-        user_id=uuid.uuid4(),
         agent_key=("k",),  # type: ignore[arg-type]
         user_prompt=prompt,
         prior_history=[],
@@ -96,10 +94,10 @@ async def _follow(relay: RunRelay, run: ChatRun, script) -> str:
 
 
 @pytest.mark.anyio
-async def test_progress_then_the_answer_in_the_same_message(db, session, alice):
+async def test_progress_then_the_answer_in_the_same_message(db, session):
     slack = FakeTransport()
     clock = Clock()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     relay = RunRelay(slack, PLACE, clock=clock)
 
     async def script():
@@ -119,10 +117,10 @@ async def test_progress_then_the_answer_in_the_same_message(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_edits_are_throttled(db, session, alice):
+async def test_edits_are_throttled(db, session):
     slack = FakeTransport()
     clock = Clock()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     relay = RunRelay(slack, PLACE, clock=clock)
 
     async def script():
@@ -142,9 +140,9 @@ async def test_edits_are_throttled(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_long_answer_keeps_the_rest_for_show_more(db, engine, session, alice):
+async def test_a_long_answer_keeps_the_rest_for_show_more(db, engine, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     long = "The short version is yes. " + " ".join(["More detail here."] * 600)
 
     await _follow(RunRelay(slack, PLACE), run, lambda: _answer(run, long))
@@ -159,9 +157,9 @@ async def test_a_long_answer_keeps_the_rest_for_show_more(db, engine, session, a
 
 
 @pytest.mark.anyio
-async def test_refused_blocks_fall_back_to_plain_text(db, session, alice):
+async def test_refused_blocks_fall_back_to_plain_text(db, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     relay = RunRelay(slack, PLACE)
 
     async def script():
@@ -175,9 +173,9 @@ async def test_refused_blocks_fall_back_to_plain_text(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failed_edit_posts_the_answer_instead(db, session, alice):
+async def test_a_failed_edit_posts_the_answer_instead(db, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     relay = RunRelay(slack, PLACE)
 
     async def script():
@@ -191,9 +189,9 @@ async def test_a_failed_edit_posts_the_answer_instead(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_a_failed_run_says_so(db, session, alice):
+async def test_a_failed_run_says_so(db, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
 
     await _follow(RunRelay(slack, PLACE), run, lambda: _finish(run, "failed"))
 
@@ -201,9 +199,9 @@ async def test_a_failed_run_says_so(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_egress_warnings_are_shown_under_the_answer(db, session, alice):
+async def test_egress_warnings_are_shown_under_the_answer(db, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     warning = {"kind": "citation", "message": "One citation could not be verified."}
 
     await _follow(
@@ -217,9 +215,9 @@ async def test_egress_warnings_are_shown_under_the_answer(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_prompts_go_to_the_handler(db, session, alice):
+async def test_prompts_go_to_the_handler(db, session):
     slack = FakeTransport()
-    run = _run(await _chat(session, alice))
+    run = _run(await _chat(session))
     seen = []
 
     async def on_prompt(event):
@@ -240,11 +238,9 @@ async def test_prompts_go_to_the_handler(db, session, alice):
 
 
 @pytest.mark.anyio
-async def test_the_turn_is_added_to_the_desktop_transcript_once(
-    db, engine, session, alice
-):
+async def test_the_turn_is_added_to_the_desktop_transcript_once(db, engine, session):
     slack = FakeTransport()
-    chat_id = await _chat(session, alice)
+    chat_id = await _chat(session)
     run = _run(chat_id)
 
     for _ in range(2):  # Following the same run twice must not duplicate it.

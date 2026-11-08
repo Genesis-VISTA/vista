@@ -11,6 +11,7 @@ A checkout runs three services and a window:
 | Backend (FastAPI + PydanticAI: the agent loop, projects, skills) | `backend` | 8001 | `uv run vista-backend` |
 | UI (Next.js, a thin proxy to the backend) | `ui` | 3000 | `npm run dev` |
 | Window (Electron) | `electron` | — | `./launch.sh` starts it |
+| Collaboration server (optional, development only) | `collaboration_server` | 8002 | `uv run vista-collaboration-server` |
 
 The sandbox tools (`dev_mcp_server`: `run_bash`, `create_file`, `view`) are not a service: the
 backend launches one per agent over STDIO.
@@ -72,8 +73,7 @@ run of `./launch.sh`, change `.env` rather than exporting it.
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. Get an AmSC key from <https://api.i2-core.american-science-cloud.org>. | AmSC i2, `openai:claude-sonnet` |
-| `VISTA_MCP_OMD_API_KEY` | Key for the OpenMetaData catalog. Also uses the AmSC inference API key | None |
+| `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `VISTA_BACKEND_MODEL` | The installation's default inference endpoint and model. A provider and key chosen in the UI, under Settings › Models & providers, always win. `OPENAI_API_KEY` is an AmSC MAG project access token, from <https://my.amsc.energy.gov/>. | AmSC MAG, `openai:claude-sonnet` |
 | `VISTA_DATA_TOKEN` | A code.ornl.gov token for `v28/vista-data`, the private corpora | None |
 | `VISTA_BACKEND_FORUM__ENABLED` | The Hypothesis Lab; see [hypothesis-forum-hosting.md](hypothesis-forum-hosting.md) | `false` in a checkout |
 | `VISTA_BACKEND_PALISADE__*` | The security sidecar; see [palisade.md](palisade.md) | off |
@@ -119,6 +119,21 @@ rather than falling back. Start the services alone and use a browser at <http://
 `./launch.sh terminal` starts the three services in separate terminal windows instead, and
 `./launch.sh tmux` in a tmux session. Neither opens the VISTA window or owns the services'
 lifetime, so stop each service yourself.
+
+### With a collaboration server
+
+```bash
+./launch.sh logs --collab
+```
+
+also starts a local collaboration server, logging to `logs/collab.log`, and points the backend
+at it with `VISTA_BACKEND_COLLABORATION_SERVER_URL`; an address set under Settings →
+Collaboration takes its place. `--collab` works in every mode. The server keeps its data in
+`data/collaboration-server/` (`VISTA_COLLAB_DATA_DIR`), listens on `127.0.0.1:8002`
+(`VISTA_COLLAB_HOST`, `VISTA_COLLAB_PORT`), and runs in `dev-headers` mode: it believes the
+caller's identity headers as sent, so it refuses to listen on anything but loopback. Packages
+never start one. How the server works, and how a deployment signs researchers in, is in
+[The collaboration server](collaboration-server.md).
 
 ### By hand
 
@@ -177,3 +192,21 @@ own copy. Use `build_local_package.sh` only for a complete, relocatable release 
 `lint --fast`. Live, HPC and Playwright checks run on a schedule or by hand; see
 [validation-lane.md](validation-lane.md). The testing roadmap's requirements are in
 [`openspec/specs/`](../openspec/specs/).
+
+## The docs site
+
+The pages of `docs/` listed in `docs/site.toml` are published at
+<https://genesis-vista.github.io/docs/>, built from VISTA's latest release. A docs change
+shows up there with the next release. `./scripts/ci-local.sh docs` checks the links, the
+manifest and a strict build of the published pages.
+
+To preview the site locally, from the repo root:
+
+```bash
+git clone --depth 1 https://github.com/Genesis-VISTA/genesis-vista.github.io ../vista-site
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I scripts/docs_site/sync_docs.py . ../vista-site --ref local
+uv run --no-project --python 3.14 --with mkdocs-material==9.8.0 python -I -m mkdocs serve -f ../vista-site/mkdocs.generated.yml
+```
+
+The Material version matches `MKDOCS_MATERIAL_VERSION` in `.gitlab-ci.yml`. Links between
+published pages must be relative links that `docs:links` accepts.

@@ -10,6 +10,7 @@ this test, not the paper deadline.
 import importlib.util
 import json
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -149,33 +150,21 @@ def test_render_latex_rows(logs):
 def deployment_db(tmp_path):
     """A file-based SQLite DB created from the real SQLModel schema, so the
     raw SQL in deployment_db_stats() breaks here if the schema drifts."""
-    import uuid as uuid_module
 
     from sqlalchemy import create_engine
     from sqlmodel import SQLModel, Session
 
-    from vista_backend.db.schemas import (
-        ProjectMemberTable,
-        ProjectTable,
-        SkillTable,
-        UserTable,
-    )
+    from vista_backend.db.schemas import ProjectTable, SkillTable
 
     db_path = tmp_path / "vista.db"
     engine = create_engine(f"sqlite:///{db_path}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        alice = UserTable(
-            id=uuid_module.uuid4(), email="alice@example.com", is_admin=True
-        )
-        bob = UserTable(id=uuid_module.uuid4(), email="bob@example.com")
         project = ProjectTable(name="salt", skills=["salt-analysis", "salt-prediction"])
-        session.add_all([alice, bob, project])
+        session.add(project)
         session.flush()
         session.add_all(
             [
-                ProjectMemberTable(project_id=project.id, user_id=alice.id),
-                ProjectMemberTable(project_id=project.id, user_id=bob.id),
                 SkillTable(
                     name="salt-analysis", description="d", path="skills/salt-analysis"
                 ),
@@ -183,7 +172,7 @@ def deployment_db(tmp_path):
                     name="alloy-design",
                     description="d",
                     path="skills/alloy-design",
-                    is_public=True,
+                    remote_id=uuid.uuid4(),
                 ),
             ]
         )
@@ -195,11 +184,9 @@ def deployment_db(tmp_path):
 def test_deployment_db_stats_pins_schema(deployment_db):
     stats = report.deployment_db_stats(deployment_db)
     assert stats == {
-        "users": 2,
         "projects": 1,
-        "project_memberships": 2,
         "skills": 2,
-        "skills_published": 1,
+        "skills_shared": 1,
         "knowledge_bases": 0,
         "skill_installs": 2,
     }
@@ -245,9 +232,9 @@ def test_render_deployment(deployment_db, tmp_path):
         report.deployment_db_stats(deployment_db),
         report.deployment_event_stats(report.load_events([metrics_path])),
     )
-    assert "| users | 2 |" in md
+    assert "| projects | 1 |" in md
     assert "| jobs_per_facility | unknown: 1 |" in md
-    assert "Deployment: 2 users, 1 projects, 2 skills (1 published, 2 installs)" in md
+    assert "Deployment: 1 projects, 2 skills (1 shared, 2 installs)" in md
 
 
 def test_render_markdown_smoke(logs):
