@@ -63,7 +63,7 @@ credentials and stay out of PR CI.
 - [x] 9.3a `iri.pre_launch` refused at submit (`IriAttributes`) and by the validator; validator also refuses `gpus_per_node` not divisible by `processes_per_node`
 - [x] 9.3b `forge-pretrain` on Lux: `SLURM_GPU_BIND=none` (IRI binds each of 8 tasks/node to one GPU seen as device 0; probed live, job 398650); stale `pre_launch`/scp/SSH comments in `forge-tune`, `salt-neutronics-tbr`, `forge-pretrain`
 - [x] 9.3c No `module purge` on Lux (`ClusterProfile.purge_modules`): its jobs start with Lux's default modules, which `lux_env.sh` needs (forge-pretrain job 398819 failed on `mpich/5.0.1`)
-- [ ] 9.4 `openspec validate iri-v2 --strict` and the full `./scripts/ci-local.sh` pass
+- [x] 9.4 `openspec validate iri-v2 --strict` and the full `./scripts/ci-local.sh` pass
 
 ## 10. Live validation (manual; excluded from PR CI)
 
