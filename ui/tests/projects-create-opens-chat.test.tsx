@@ -12,10 +12,14 @@ import { type ProjectPublic, readActiveProjectName, writeActiveProjectName } fro
  * exactly as clicking an existing project's card does.
  */
 
-const { push, replace } = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
+const { push, replace, query } = vi.hoisted(() => ({
+  push: vi.fn(),
+  replace: vi.fn(),
+  query: { current: "" },
+}));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace, back: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(query.current),
   usePathname: () => "/projects",
 }));
 
@@ -44,6 +48,7 @@ function row(name: string): ProjectPublic {
 beforeEach(() => {
   push.mockReset();
   replace.mockReset();
+  query.current = "";
   writeActiveProjectName(null);
   window.sessionStorage.clear();
   rows = [];
@@ -67,6 +72,30 @@ beforeEach(() => {
     if (url.startsWith("/api/settings")) return json({ install_id: "i1", email: "researcher@ornl.gov" });
     // Skills, knowledge bases, and the per-card stats.
     return json([]);
+  });
+});
+
+describe("the nav rail's New project link (?new=1)", () => {
+  it("opens the create dialog on each click, though the page is already open", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<ProjectsPage />);
+    await screen.findByRole("button", { name: /new project/i });
+    expect(screen.queryByRole("dialog", { name: "Create project" })).not.toBeInTheDocument();
+
+    // The link changes only the query; the page stays mounted.
+    query.current = "new=1";
+    rerender(<ProjectsPage />);
+    const dialog = await screen.findByRole("dialog", { name: "Create project" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog", { name: "Create project" })).not.toBeInTheDocument();
+
+    // The page strips the query (`router.replace`), and the next click opens it again.
+    query.current = "";
+    rerender(<ProjectsPage />);
+    expect(screen.queryByRole("dialog", { name: "Create project" })).not.toBeInTheDocument();
+    query.current = "new=1";
+    rerender(<ProjectsPage />);
+    expect(await screen.findByRole("dialog", { name: "Create project" })).toBeInTheDocument();
   });
 });
 

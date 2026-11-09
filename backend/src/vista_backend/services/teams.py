@@ -24,7 +24,7 @@ The teams themselves, and who is in them, are the collaboration server's
 
 import functools
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, ParamSpec, Protocol, TypeVar
 
@@ -100,7 +100,7 @@ class NotInTeam(Exception):
 
 # The researcher's teams, asked once per publish (`remembers_teams`): a project
 # publish publishes each skill and knowledge base it uses, and each checks.
-_membership: ContextVar[dict[str, frozenset[uuid.UUID]] | None] = ContextVar(
+_membership: ContextVar[dict[str, Mapping[uuid.UUID, str]] | None] = ContextVar(
     "team_membership", default=None
 )
 
@@ -128,12 +128,18 @@ def remembers_teams(fn: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
     return wrapper
 
 
-async def my_teams(client: "CollaborationClient") -> frozenset[uuid.UUID]:
-    """The teams the researcher is in, asked once per publish (`remembers_teams`)."""
+async def my_teams(client: "CollaborationClient") -> Mapping[uuid.UUID, str]:
+    """
+    The teams the researcher is in, by id, each with what to call it; asked
+    once per publish (`remembers_teams`).
+    """
     known = _membership.get()
     if known is not None and "teams" in known:
         return known["teams"]
-    teams = frozenset(t.id for t in (await client.me()).teams)
+    teams = {
+        t.id: "the public team" if t.public else f"the team {t.name}"
+        for t in (await client.me()).teams
+    }
     if known is not None:
         known["teams"] = teams
     return teams
@@ -141,8 +147,8 @@ async def my_teams(client: "CollaborationClient") -> frozenset[uuid.UUID]:
 
 async def require_in_team(
     client: "CollaborationClient", team_id: uuid.UUID, detail: str
-) -> frozenset[uuid.UUID]:
-    """The researcher's teams; refuses (`NotInTeam`, with `detail`) when `team_id` is not one."""
+) -> Mapping[uuid.UUID, str]:
+    """The researcher's teams (`my_teams`); refuses (`NotInTeam`, with `detail`) when `team_id` is not one."""
     mine = await my_teams(client)
     if team_id not in mine:
         raise NotInTeam(detail)

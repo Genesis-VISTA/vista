@@ -85,6 +85,13 @@ function ProjectsPageContent() {
   const [modal, setModal] = useState<ModalState>(
     shouldOpenNew ? { mode: "create" } : { mode: "closed" }
   );
+  // Clicked again while this page is open, the link changes only the query:
+  // the page stays mounted, so open the modal on each new `?new=1` as well.
+  const [sawNew, setSawNew] = useState(shouldOpenNew);
+  if (shouldOpenNew !== sawNew) {
+    setSawNew(shouldOpenNew);
+    if (shouldOpenNew) setModal({ mode: "create" });
+  }
   const collab = useCollaboration();
   const teams = useTeams();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;

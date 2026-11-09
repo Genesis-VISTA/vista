@@ -657,6 +657,11 @@ main {
   gap: 8px;
 }
 
+.teams-create .button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 .member-picker {
   position: relative;
 }
@@ -1296,6 +1301,19 @@ main {
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
+/* A select's open list takes its colors from the select (Chromium, Electron
+   on Linux): transparent, its light text in dark mode can land on a light
+   list. Painted like the surface it sits on, it looks the same closed. */
+select.input {
+  background-color: var(--panel);
+}
+
+select.input option,
+.hub-sort option {
+  background-color: var(--panel);
+  color: var(--ink);
+}
+
 textarea.input {
   padding: 8px 10px;
   border: 1px solid var(--line-strong);
@@ -1313,6 +1331,12 @@ textarea.input {
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Disabled looks it, so a dialog's action reads as unavailable until it is. */
+.button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .button-sm {

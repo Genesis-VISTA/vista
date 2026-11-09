@@ -26,7 +26,7 @@ be published only into that team.
 
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -183,7 +183,7 @@ KNOWLEDGE_BASE = _Kind(
 
 async def _my_teams(
     local: LocalSettingsPublic, team_id: uuid.UUID
-) -> frozenset[uuid.UUID]:
+) -> Mapping[uuid.UUID, str]:
     """
     The teams the researcher is in; refuses `team_id` when it is not one of
     them (`teams.NotInTeam`), before anything is sent.
@@ -195,7 +195,7 @@ async def _my_teams(
 
 
 def _team_here(
-    row: Teamed, url: str | None, mine: frozenset[uuid.UUID]
+    row: Teamed, url: str | None, mine: Mapping[uuid.UUID, str]
 ) -> uuid.UUID | None:
     """
     `row`'s team, for publishing: None, as if private, when it is a team the
@@ -206,7 +206,7 @@ def _team_here(
 
 
 def _require_private(
-    label: str, row: Teamed, url: str | None, mine: frozenset[uuid.UUID]
+    label: str, row: Teamed, url: str | None, mine: Mapping[uuid.UUID, str]
 ) -> None:
     """
     Refuse (400) to publish `row` into a team when it is in one already: an
@@ -426,8 +426,8 @@ async def publish_project_to_team(
                 raise HTTPException(
                     status_code=400,
                     detail=f"{name} uses the {kind.label} {key}, which is in "
-                    "another team: a team's project uses only its own team's "
-                    f"skills and knowledge bases. Publish {name} to that team, "
+                    f"{mine[team]}: a team's project uses only its own team's "
+                    f"skills and knowledge bases. Publish {name} to {mine[team]}, "
                     f"or remove {key} from it first.",
                 )
             if isinstance(row, KnowledgeBaseTable):

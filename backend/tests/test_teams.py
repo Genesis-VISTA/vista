@@ -404,7 +404,7 @@ async def test_a_project_using_another_teams_is_published_only_there(
         )
         result = await _publish_to(client, "projects", "lab", theirs["id"])
     assert refused.status_code == 400, refused.text
-    assert "Publish lab to that team" in refused.json()["detail"]
+    assert "Publish lab to the team theirs," in refused.json()["detail"]
     assert [(c["name"], c["how"]) for c in result["published"]] == [
         ("lab", "published")
     ]
