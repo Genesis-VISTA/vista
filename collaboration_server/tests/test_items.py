@@ -366,6 +366,8 @@ async def test_only_the_servers_own_tables_are_created(app, settings):
             for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     assert names == {
+        "forum",
+        "forum_push",
         "item",
         "item_version",
         "team",

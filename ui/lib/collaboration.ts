@@ -310,6 +310,8 @@ export type PublishedResource = {
 export type TeamPublishResult = {
   team_id: string;
   published: PublishedResource[];
+  /** A project's: why its hosted forum was not linked to it; the publish stands. */
+  forum_error?: string | null;
 };
 
 /** A refused team request, with the backend's sentence. */

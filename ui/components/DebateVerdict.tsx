@@ -1,16 +1,23 @@
 "use client";
 
-import { DebateRun, Verdict } from "@/lib/debates";
+import { ThreadVerdict, Verdict } from "@/lib/debates";
 
 /**
- * The Referee's ruling.
+ * The thread's current verdict: its latest Referee's ruling, whoever's.
  *
  * Rendered separately from the thread because it is the thing a reader came
  * for — but it stays *next to* the argument rather than replacing it, so the
  * objections it weighed are one scroll away.
  */
-export default function DebateVerdict({ run }: { run: DebateRun }) {
-  if (run.status === "closed" && !run.verdict) {
+export default function DebateVerdict({
+  current,
+  endedEarly,
+}: {
+  current: ThreadVerdict | null;
+  /** The thread was closed; with no verdict, say so rather than show nothing. */
+  endedEarly: boolean;
+}) {
+  if (endedEarly && !current) {
     return (
       <section className="debate-verdict debate-verdict--none">
         <h3>No verdict</h3>
@@ -24,12 +31,25 @@ export default function DebateVerdict({ run }: { run: DebateRun }) {
     );
   }
 
-  const verdict: Verdict | null = run.verdict;
-  if (!verdict || verdict.ranked.length === 0) return null;
+  if (!current) return null;
+  // Another install's Referee wrote it: its words are that install's claim, so
+  // say whose it is rather than present it as this lab's own ruling.
+  const heading = current.ours ? "Verdict" : "Verdict · from another install";
+  const verdict: Verdict | null = current.verdict;
+  if (!verdict || verdict.ranked.length === 0) {
+    // A DONE post with no structured verdict (an older install, or a peer):
+    // the Referee's written ruling is still the verdict.
+    return (
+      <section className="debate-verdict">
+        <h3>{heading}</h3>
+        <p className="debate-verdict__rationale">{current.body}</p>
+      </section>
+    );
+  }
 
   return (
     <section className="debate-verdict">
-      <h3>Verdict</h3>
+      <h3>{heading}</h3>
       <ol className="debate-verdict__list">
         {verdict.ranked.map((entry, index) => (
           <li key={index} className="debate-verdict__item">

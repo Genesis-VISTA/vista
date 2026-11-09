@@ -22,6 +22,7 @@ dev = [
 
 [project.scripts]
 vista-collaboration-server = "vista_collaboration_server.api.app:main"
+vista-collab-forum-hook = "vista_collaboration_server.services.forum_hook:run"
 
 [build-system]
 requires = ["hatchling"]

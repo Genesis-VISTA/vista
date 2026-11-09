@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Annotated as A, Any
 
 from pydantic import StringConstraints, field_validator
-from sqlalchemy import JSON, Column, Index, text
+from sqlalchemy import JSON, Column, Index, UniqueConstraint, text
 from sqlalchemy.orm import registry
 from sqlmodel import Field, SQLModel
 
@@ -152,6 +152,70 @@ class ItemVersionTable(CollabTable, table=True):
     created_by_email: str | None = None
     created_by_install: uuid.UUID | None = None
     created_at: str = Field(default_factory=now_iso)
+
+
+class ForumTable(CollabTable, table=True):
+    """
+    A hosted forum: a bare git repository under `data_dir/forums/<id>.git`
+    (`services/forums.py`). Owned by whoever made it, and theirs alone until it
+    is linked to a `project` item, once; from then on it belongs to that item's
+    team. The link never changes.
+    """
+
+    __tablename__: str = "forum"
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    owner_sub: str = Field(index=True)
+    item_id: uuid.UUID | None = Field(default=None, foreign_key="item.id", unique=True)
+    created_at: str = Field(default_factory=now_iso)
+
+
+class ForumPushTable(CollabTable, table=True):
+    """
+    One post (or a thread's root) the server accepted, and who pushed it:
+    written by the `post-receive` hook (`services/forum_hook.py`). `seq` orders
+    the records for `GET /forums/{id}/pushes?after=`. A thread's root is
+    recorded as kind `THREAD`, with the thread's id as `post_id`: it is how a
+    later `CLOSED` finds the opener.
+    """
+
+    __tablename__: str = "forum_push"
+    __table_args__ = (UniqueConstraint("forum_id", "thread_id", "post_id"),)
+    seq: int | None = Field(default=None, primary_key=True)
+    forum_id: uuid.UUID = Field(foreign_key="forum.id", index=True, ondelete="CASCADE")
+    thread_id: str
+    post_id: str
+    kind: str
+    commit: str
+    pusher_sub: str
+    pusher_name: str | None = None
+    imported: bool = False
+    """ Copied onto the forum by an import push: the pusher did not write it. """
+    received_at: str = Field(default_factory=now_iso)
+
+
+class ForumPublic(SQLModel):
+    id: uuid.UUID
+    git_url: str
+    """ Where a git client fetches and pushes it: `<server>/git/<id>.git`. """
+    item_id: uuid.UUID | None
+    created_at: str
+
+
+class ForumLink(SQLModel):
+    item_id: uuid.UUID
+    """ A `project` item the caller can see. """
+
+
+class ForumPushPublic(SQLModel):
+    seq: int
+    thread_id: str
+    post_id: str
+    kind: str
+    commit: str
+    pusher_sub: str
+    pusher_name: str | None
+    imported: bool
+    received_at: str
 
 
 class ItemCreate(SQLModel):

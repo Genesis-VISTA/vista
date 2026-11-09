@@ -79,6 +79,8 @@ class TeamPublishResult(BaseModel):
     team_id: uuid.UUID
     published: list[PublishedResource]
     """ What was published, the project last. """
+    forum_error: str | None = None
+    """ A project's: why its hosted forum was not linked to it; the publish stands. """
 
 
 @dataclass(frozen=True)
@@ -438,8 +440,10 @@ async def publish_project_to_team(
     session.add(project)
     invalidate_agents(session, project_id=project.id)
     await session.commit()
-    await publish_project(session, local, name, as_new=True)
+    done = await publish_project(session, local, name, as_new=True)
     published.append(
         PublishedResource(kind="project", name=name, local_name=name, how="published")
     )
-    return TeamPublishResult(team_id=team_id, published=published)
+    return TeamPublishResult(
+        team_id=team_id, published=published, forum_error=done.forum_error
+    )

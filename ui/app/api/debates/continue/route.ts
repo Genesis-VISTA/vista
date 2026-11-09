@@ -14,10 +14,10 @@ export const dynamic = "force-dynamic";
 export async function POST(request: Request) {
   const params = new URL(request.url).searchParams;
   const projectName = params.get("project_name");
-  const runId = params.get("run_id");
-  if (!projectName || !runId) {
+  const threadId = params.get("thread_id");
+  if (!projectName || !threadId) {
     return NextResponse.json(
-      { error: "Missing project_name or run_id." },
+      { error: "Missing project_name or thread_id." },
       { status: 400 }
     );
   }
@@ -29,9 +29,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Expected a JSON body." }, { status: 400 });
   }
 
-  const path = `/projects/${encodeURIComponent(projectName)}/debates/${encodeURIComponent(
-    runId
-  )}/continue`;
+  const path = `/projects/${encodeURIComponent(projectName)}/threads/${encodeURIComponent(
+    threadId
+  )}/runs`;
 
   let upstream: Response;
   try {

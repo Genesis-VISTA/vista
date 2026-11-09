@@ -17,8 +17,10 @@ import stat
 import subprocess
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from vista_backend.config import ForumSettings, settings
@@ -31,8 +33,11 @@ from vista_backend.services.forum_git import (
     ForumClient,
     ForumCommandError,
     InvalidKind,
+    MemoryOutbox,
     Participant,
+    Post,
     PostKind,
+    RunSpec,
     ThreadClosed,
     ThreadMissing,
     VouchLane,
@@ -1029,6 +1034,37 @@ async def test_an_unreachable_forge_is_not_blamed_on_a_token(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_a_fetch_that_reaches_the_remote_clears_unreachable(a, remote):
+    """
+    The forum went away while nothing was waiting to publish, then came back:
+    the next fetch reaches it, so the lab stops saying it cannot be reached,
+    with no post needed to clear it.
+    """
+    await a.set_remote("http://127.0.0.1:9/forum.git")
+    with pytest.raises(ForumCommandError):
+        await a.sync()
+    error = await a.publish_error()
+    assert error is not None and error["reason"] == "unreachable"
+
+    await a.set_remote(str(remote))
+    await a.sync()
+
+    assert await a.publish_error() is None
+
+
+@pytest.mark.anyio
+async def test_a_fetch_does_not_clear_a_refused_credential(a, remote):
+    """A read-only credential fetches fine, so only a push clears a refusal."""
+    _refusing(remote)
+    await _publish_one(a)
+    assert (await a.publish_error() or {}).get("reason") == "refused"
+
+    await a._fetch()
+
+    assert (await a.publish_error() or {}).get("reason") == "refused"
+
+
+@pytest.mark.anyio
 async def test_a_successful_push_clears_the_record(a, remote):
     hook = remote / "hooks" / "pre-receive"
     _refusing(remote)
@@ -1040,3 +1076,453 @@ async def test_a_successful_push_clears_the_record(a, remote):
 
     assert await a.publish_error() is None
     assert not (a.repo_root / forum_git.LAST_PUBLISH_FILE).exists()
+
+
+# --------------------------------------------------------------------------- #
+# Shared threads: runs, verdicts and listing (forum-shared-threads 1.1–1.5)
+# --------------------------------------------------------------------------- #
+
+ROSTER = {
+    "proposer": PROPOSER.identity,
+    "reviewer": REVIEWER.identity,
+    "referee": "vista-referee-1a2b3c4d",
+}
+REFEREE = Participant(identity=ROSTER["referee"], role="referee")
+T0 = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
+EXPIRY = 2700.0
+
+
+def _p(kind: str, sender: str, minutes: float, **over) -> Post:
+    return Post(
+        id=over.pop("id", str(uuid.uuid7())),
+        thread="t",
+        kind=kind,
+        body="",
+        sender=sender,
+        role="",
+        ts=(T0 + timedelta(minutes=minutes)).isoformat(),
+        **over,
+    )
+
+
+def _run(
+    minutes: float = 0, rounds: int = 3, expiry_seconds: float | None = None
+) -> Post:
+    return _p(
+        "RUN",
+        "human",
+        minutes,
+        origin="a" * 32,
+        run=RunSpec(rounds=rounds, roster=ROSTER, expiry_seconds=expiry_seconds),
+    )
+
+
+@pytest.mark.parametrize(
+    "posts, at_minutes, live",
+    [
+        pytest.param([], 0, False, id="no-run"),
+        pytest.param([_run()], 10, True, id="just-started"),
+        pytest.param(
+            [_run(), _p("PROPOSAL", PROPOSER.identity, 1)],
+            1 + 30 + 14,
+            True,
+            id="waiting-on-a-30-min-simulation",
+        ),
+        pytest.param(
+            [_run(), _p("PROPOSAL", PROPOSER.identity, 1)],
+            1 + 46,
+            False,
+            id="abandoned",
+        ),
+        pytest.param(
+            [_run(), _p("DONE", ROSTER["referee"], 5)], 6, False, id="verdict-ends-it"
+        ),
+        pytest.param(
+            [_run(), _p("BLOCKED", ROSTER["referee"], 5)],
+            6,
+            False,
+            id="referee-blocked-ends-it",
+        ),
+        pytest.param(
+            [_run(), _p("BLOCKED", PROPOSER.identity, 5)],
+            6,
+            True,
+            id="a-failed-turn-does-not",
+        ),
+        pytest.param(
+            [_run(), _p("DONE", "vista-referee-99999999", 5)],
+            6,
+            True,
+            id="another-rosters-verdict-does-not",
+        ),
+        pytest.param(
+            [_run(), _p("ASK", "human", 44)],
+            46,
+            False,
+            id="human-posts-do-not-keep-it-alive",
+        ),
+        pytest.param([_run(), _p("CLOSED", "human", 1)], 2, False, id="closed"),
+        pytest.param(
+            [_run(), _p("DONE", ROSTER["referee"], 5), _run(10)],
+            11,
+            True,
+            id="a-later-run-is-live",
+        ),
+    ],
+)
+def test_live_run(posts, at_minutes, live):
+    found = forum_git.live_run(
+        posts, now=T0 + timedelta(minutes=at_minutes), expiry=EXPIRY
+    )
+    assert (found is not None) == live
+
+
+def test_a_run_may_state_a_longer_expiry_than_the_readers():
+    long_run = _run(expiry_seconds=4 * 3600)
+    at = T0 + timedelta(hours=2)
+    assert forum_git.live_run([long_run], now=at, expiry=EXPIRY) is not None
+    assert forum_git.live_run([_run()], now=at, expiry=EXPIRY) is None
+    # ...but not past its own, and a shorter one never shortens the reader's.
+    assert (
+        forum_git.live_run([long_run], now=T0 + timedelta(hours=5), expiry=EXPIRY)
+        is None
+    )
+    short = _run(expiry_seconds=60)
+    assert (
+        forum_git.live_run([short], now=T0 + timedelta(minutes=10), expiry=EXPIRY)
+        is not None
+    )
+
+
+def test_a_stated_expiry_is_capped_at_three_hours():
+    assert forum_git.MAX_STATED_RUN_EXPIRY == 3 * 3600
+    ten_hours = _run(expiry_seconds=10 * 3600)
+    assert (
+        forum_git.live_run(
+            [ten_hours], now=T0 + timedelta(hours=2, minutes=59), expiry=EXPIRY
+        )
+        is not None
+    )
+    assert (
+        forum_git.live_run(
+            [ten_hours], now=T0 + timedelta(hours=3, minutes=1), expiry=EXPIRY
+        )
+        is None
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "stated",
+    [10**400, "soon", True, -5, 0, None, [1], float("inf"), float("nan")],
+    ids=repr,
+)
+async def test_an_unusable_stated_expiry_never_blocks_a_thread(a, remote, stated):
+    thread = await a.create_thread("t")
+    peer_post(
+        remote,
+        thread,
+        kind="RUN",
+        run={"rounds": 2, "roster": ROSTER, "expiry_seconds": stated},
+    )
+    read = await a.read_thread(thread)
+    [marker] = read.posts
+    assert marker.run is not None and marker.run.expiry_seconds is None
+    at = datetime.fromisoformat(marker.ts) + timedelta(hours=2)
+    assert forum_git.live_run(read.posts, now=at, expiry=EXPIRY) is None
+
+
+@pytest.mark.anyio
+async def test_a_run_records_the_starters_expiry(a, b):
+    thread = await a.create_thread("t")
+    await a.start_run(thread, rounds=1, roster=ROSTER, expiry_seconds=7200.0)
+    [marker] = (await b.read_thread(thread)).posts
+    assert marker.run is not None and marker.run.expiry_seconds == 7200.0
+
+
+def test_live_run_reports_progress():
+    marker = _run(rounds=3)
+    posts = [
+        marker,
+        _p("PROPOSAL", PROPOSER.identity, 2),
+        _p("ASK", "human", 3),
+        _p("RISK", REVIEWER.identity, 4),
+    ]
+    found = forum_git.live_run(posts, now=T0 + timedelta(minutes=8), expiry=EXPIRY)
+    assert found is not None
+    assert found.post_id == marker.id and found.origin == "a" * 32
+    assert (found.rounds, found.posts) == (3, 2)
+    assert found.last_post_at == posts[3].ts
+
+
+def test_a_run_whose_time_cannot_be_read_is_not_live():
+    marker = _run().model_copy(update={"ts": "yesterday-ish"})
+    assert forum_git.live_run([marker], now=T0, expiry=EXPIRY) is None
+
+
+def test_the_run_expiry_is_the_job_wait_plus_a_margin():
+    assert ForumSettings(max_job_wait_seconds=1800.0).run_expiry_seconds == 2700.0
+
+
+@pytest.mark.anyio
+async def test_a_run_is_announced_and_read_back(a, b):
+    thread = await a.create_thread("t")
+    await a.start_run(thread, rounds=3, roster=ROSTER)
+
+    [marker] = (await b.read_thread(thread)).posts
+    assert marker.kind == PostKind.RUN and marker.sender == "human"
+    assert marker.run == RunSpec(rounds=3, roster=ROSTER)
+    assert not marker.agent_authored
+
+
+@pytest.mark.anyio
+async def test_a_run_needs_rounds_and_a_roster(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(ValueError):
+        await a.start_run(thread, rounds=0, roster=ROSTER)
+    with pytest.raises(ValueError):
+        await a.start_run(thread, rounds=3, roster={})
+
+
+@pytest.mark.anyio
+async def test_run_is_not_postable_as_a_role(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(InvalidKind):
+        await a.post_as(PROPOSER, thread, "", kind=PostKind.RUN)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "run",
+    [None, "3 rounds", {"rounds": 0, "roster": ROSTER}, {"rounds": 3, "roster": {}}],
+)
+async def test_a_malformed_run_is_skipped(a, remote, run, caplog):
+    thread = await a.create_thread("t")
+    peer_post(remote, thread, kind="RUN", identity="human", role="human", run=run)
+    assert (await a.read_thread(thread)).posts == []
+    assert "RUN without a usable run object" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_a_verdict_travels_with_its_done_post(a, b):
+    thread = await a.create_thread("t")
+    verdict = {"claim": "Forced convection", "confidence": 0.7}
+    await a.post_as(REFEREE, thread, "## Verdict", kind=PostKind.DONE, verdict=verdict)
+
+    [done] = (await b.read_thread(thread)).posts
+    assert done.verdict == verdict and done.body == "## Verdict"
+
+
+@pytest.mark.anyio
+async def test_a_done_without_a_verdict_reads_as_before(a, remote):
+    thread = await a.create_thread("t")
+    peer_post(remote, thread, kind="DONE", body="verdict in prose")
+    [done] = (await a.read_thread(thread)).posts
+    assert done.verdict is None and done.body == "verdict in prose"
+
+
+@pytest.mark.anyio
+async def test_only_done_carries_a_verdict(a):
+    thread = await a.create_thread("t")
+    with pytest.raises(InvalidKind):
+        await a.post_as(
+            PROPOSER, thread, "x", kind=PostKind.PROPOSAL, verdict={"claim": "x"}
+        )
+
+
+@pytest.mark.anyio
+async def test_thread_tips_list_another_installs_new_thread(a, b):
+    fetched, before = await b.thread_tips()
+    assert fetched and before == {}
+
+    thread = await a.create_thread("Alice's question", body="Frame.")
+    _, tips = await b.thread_tips()
+    assert list(tips) == [thread]
+
+    await a.post_as(PROPOSER, thread, "a proposal", kind=PostKind.PROPOSAL)
+    _, moved = await b.thread_tips()
+    assert moved[thread] != tips[thread]
+
+
+@pytest.mark.anyio
+async def test_thread_tips_without_the_remote_read_what_is_here(tmp_path):
+    offline = await _host(tmp_path / "offline", "http://127.0.0.1:9/forum.git")
+    thread = await offline.create_thread("t")
+    fetched, tips = await offline.thread_tips()
+    assert not fetched and list(tips) == [thread]
+
+
+# --------------------------------------------------------------------------- #
+# A forum hosted on the collaboration server
+# --------------------------------------------------------------------------- #
+
+FORUM_ID = "11111111-2222-4333-8444-555555555555"
+HOSTED = f"https://obsidian.test/vista/api/git/{FORUM_ID}.git"
+
+
+def _hosted_config(tmp_path, url: str = HOSTED, **fields) -> ForumSettings:
+    from pydantic import SecretStr
+
+    return ForumSettings(
+        enabled=True,
+        repo_root=tmp_path / "forum",
+        remote_url=url,
+        remote_token_source="collaboration",
+        remote_headers={
+            "X-Vista-Install-Id": SecretStr("aaaa"),
+            "Authorization": SecretStr("Bearer tok"),
+        },
+        **fields,
+    )
+
+
+def test_hosted_headers_are_scoped_to_the_forum_url(tmp_path):
+    from vista_backend.services.forum_git import _token_config
+
+    env = _token_config({}, _hosted_config(tmp_path))
+    assert env == {
+        "GIT_CONFIG_COUNT": "2",
+        "GIT_CONFIG_KEY_0": f"http.{HOSTED}.extraHeader",
+        "GIT_CONFIG_VALUE_0": "X-Vista-Install-Id: aaaa",
+        "GIT_CONFIG_KEY_1": f"http.{HOSTED}.extraHeader",
+        "GIT_CONFIG_VALUE_1": "Authorization: Bearer tok",
+    }
+
+
+def test_a_hosted_forum_never_gets_a_forge_token(tmp_path):
+    from pydantic import SecretStr
+
+    from vista_backend.services.forum_git import _token_config
+
+    config = _hosted_config(tmp_path, remote_token=SecretStr("ghp_forge"))
+    assert "ghp_forge" not in " ".join(_token_config({}, config).values())
+    assert "Basic" not in " ".join(_token_config({}, config).values())
+
+
+@pytest.mark.parametrize(
+    ("url", "sent"),
+    [
+        (HOSTED, True),
+        (f"http://127.0.0.1:8002/git/{FORUM_ID}.git", True),
+        (f"http://localhost:8002/git/{FORUM_ID}.git", True),
+        (f"http://obsidian.test/git/{FORUM_ID}.git", False),
+        (f"http://10.0.0.5:8002/git/{FORUM_ID}.git", False),
+    ],
+)
+def test_the_sign_in_goes_over_https_or_to_this_machine_only(tmp_path, url, sent):
+    from vista_backend.services.forum_git import _token_config
+
+    env = _token_config({}, _hosted_config(tmp_path, url))
+    assert bool(env) is sent
+
+
+def test_rule_refusals_are_read_from_the_remote_lines():
+    from vista_backend.services.forum_git import rule_refusal
+
+    assert (
+        rule_refusal(
+            "remote: Refused refs/heads/x: a thread is append-only; "
+            "force-pushes and rewritten history are not accepted.\n"
+            "To https://s/git/x.git\n ! [remote rejected] x -> x (pre-receive hook declined)"
+        )
+        == "Refused refs/heads/x: a thread is append-only; "
+        "force-pushes and rewritten history are not accepted."
+    )
+    assert rule_refusal(
+        "remote: The server could not check this push; nothing was changed."
+    )
+    # Another server's hook, or git's own words, are not the lab's rules.
+    assert rule_refusal("remote: error: GH006: Protected branch update failed") is None
+    assert rule_refusal("fatal: unable to access: returned error: 401") is None
+
+
+class _Pushes:
+    """A stand-in for the server's `GET /forums/{id}/pushes`, counting its calls."""
+
+    def __init__(self, rows: list[dict]):
+        self.rows = rows
+        self.asked: list[int] = []
+        self.sent_headers: list[httpx.Headers] = []
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/vista/api/forums/{FORUM_ID}/pushes"
+        after = int(request.url.params["after"])
+        self.asked.append(after)
+        self.sent_headers.append(request.headers)
+        return httpx.Response(200, json=[r for r in self.rows if r["seq"] > after])
+
+
+def _push(seq: int, post_id: str, name: str | None, *, kind="FINDING", imported=False):
+    return {
+        "seq": seq,
+        "thread_id": "t",
+        "post_id": post_id,
+        "kind": kind,
+        "commit": "c" * 40,
+        "pusher_sub": f"sub-{name}",
+        "pusher_name": name,
+        "imported": imported,
+        "received_at": "2026-11-05T12:00:00+00:00",
+    }
+
+
+@pytest.mark.anyio
+async def test_verified_names_come_from_the_servers_records(tmp_path, monkeypatch):
+    from vista_backend.services import collaboration
+
+    server = _Pushes(
+        [
+            _push(1, "t", "Alice", kind="THREAD"),  # the root: not a post
+            _push(2, "p1", "Alice"),
+            _push(3, "p2", "Bob"),
+            _push(4, "p3", "Alice", imported=True),  # a copied history: no name
+        ]
+    )
+    monkeypatch.setattr(collaboration, "transport", httpx.MockTransport(server))
+    client = ForumClient(_hosted_config(tmp_path), outbox=MemoryOutbox())
+
+    names = await client.pusher_names(["p1", "p2", "p3", "t"])
+    assert names == {"p1": "Alice", "p2": "Bob"}
+    assert server.sent_headers[0]["authorization"] == "Bearer tok"
+    assert server.sent_headers[0]["x-vista-install-id"] == "aaaa"
+
+    # Known posts are not asked about again; a new one asks only for what is after.
+    assert await client.pusher_names(["p1", "p2", "p3"]) == names
+    assert server.asked == [0]
+    server.rows.append(_push(5, "p4", "Bob"))
+    assert (await client.pusher_names(["p4"]))["p4"] == "Bob"
+    assert server.asked == [0, 4]
+
+
+@pytest.mark.anyio
+async def test_a_server_that_cannot_be_asked_leaves_the_names_there_are(
+    tmp_path, monkeypatch
+):
+    from vista_backend.services import collaboration
+
+    monkeypatch.setattr(
+        collaboration,
+        "transport",
+        httpx.MockTransport(lambda request: httpx.Response(503)),
+    )
+    client = ForumClient(_hosted_config(tmp_path), outbox=MemoryOutbox())
+    assert await client.pusher_names(["p1"]) == {}
+
+
+@pytest.mark.anyio
+async def test_a_forge_forum_asks_nobody(tmp_path, monkeypatch):
+    from vista_backend.services import collaboration
+
+    def never(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a forge has no push records")
+
+    monkeypatch.setattr(collaboration, "transport", httpx.MockTransport(never))
+    client = ForumClient(
+        ForumSettings(
+            enabled=True,
+            repo_root=tmp_path / "forum",
+            remote_url="https://github.com/lab/forum.git",
+        ),
+        outbox=MemoryOutbox(),
+    )
+    assert await client.pusher_names(["p1"]) == {}

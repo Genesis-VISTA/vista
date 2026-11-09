@@ -8,16 +8,18 @@ from importlib.metadata import PackageNotFoundError, version
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from .. import API_VERSION
 from ..config import CollabSettings
 from ..db.db import init_db, make_engine
 from ..db.db import SessionDep
 from ..db.schemas import MePublic, ServerVersion
-from ..services import teams
+from ..services import forums as forum_service, teams
 from ..services.errors import Conflict, Invalid, NotFound
 from ..services.identity import TokenVerifier, UserDep
 from ..services.items import VersionConflict
+from .forums import router as forums_router
 from .items import router as items_router
 from .sign_in import router as sign_in_router
 from .teams import router as teams_router
@@ -53,6 +55,13 @@ def create_app(
         engine = make_engine(settings.database_url, settings.sqlite_journal_mode)
         await init_db(engine)
         app.state.engine = engine
+        app.state.git_ok = await run_in_threadpool(forum_service.git_usable)
+        if not app.state.git_ok:
+            log.warning(
+                "No git %d.%d or later was found: hosted forums are off "
+                "(their routes answer 503); everything else works.",
+                *forum_service.MIN_GIT,
+            )
         try:
             yield
         finally:
@@ -66,6 +75,7 @@ def create_app(
     app.state.settings = settings
     app.state.verifier = verifier or TokenVerifier(settings)
     app.state.users_seen = {}
+    app.state.git_ok = False
 
     for error, status in ((NotFound, 404), (Conflict, 409), (Invalid, 400)):
 
@@ -106,6 +116,7 @@ def create_app(
         )
 
     app.include_router(items_router)
+    app.include_router(forums_router)
     app.include_router(teams_router)
     app.include_router(sign_in_router)
     return app

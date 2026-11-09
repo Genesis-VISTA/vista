@@ -663,3 +663,37 @@ async def test_a_team_on_another_server_is_sent_as_private(collab_server, sessio
         back = (await client.get("/skills")).json()
     assert [s["team_id"] for s in elsewhere if s["name"] == "teamed"] == [None]
     assert [s["team_id"] for s in back if s["name"] == "teamed"] == [team["id"]]
+
+
+async def test_a_hosted_forum_joins_the_team_its_project_is_published_into(
+    loopback_server, git_ok, session, monkeypatch
+):
+    """
+    A new project's hosted forum is its creator's alone; publishing the project
+    into a team links it to the item, so that team, and only it, can read it.
+    """
+    from vista_backend.config import ForumSettings
+
+    monkeypatch.setattr(settings, "forum", ForumSettings(enabled=True, timeout=60.0))
+    await _use_server(session, loopback_server.url)
+    outsider = uuid.uuid4()
+    with loopback_server.api(BEA, "Bea") as bea:
+        assert bea.get("/teams").status_code == 200  # Bea signs in, to be added
+    with api_client(session) as (client, _):
+        created = await _project(client, "salt-lab")
+        assert created.status_code == 201, created.text
+        url = created.json()["forum_repo_url"]
+        assert url and url.startswith(loopback_server.url)
+        forum = url.rsplit("/", 1)[-1].removesuffix(".git")
+        await session.commit()
+        team = await _team(client)
+        added = await client.post(
+            f"/collaboration/teams/{team['id']}/members", json={"sub": str(BEA)}
+        )
+        assert added.status_code == 201, added.text
+        assert not loopback_server.forum_exists(BEA, forum)
+
+        result = await _publish_to(client, "projects", "salt-lab", team["id"])
+    assert result["forum_error"] is None
+    assert loopback_server.forum_exists(BEA, forum)
+    assert not loopback_server.forum_exists(outsider, forum)

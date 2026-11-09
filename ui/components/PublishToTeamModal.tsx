@@ -120,6 +120,11 @@ export function PublishToTeamModal({
                   </li>
                 ))}
               </ul>
+              {result.forum_error && (
+                <p className="error" role="alert">
+                  {result.forum_error}
+                </p>
+              )}
             </>
           ) : !view.shown ? (
             <p className="teams-modal-note">{collab.reason ?? "The collaboration server is unavailable."}</p>

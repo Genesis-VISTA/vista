@@ -1432,6 +1432,14 @@ class DebateRunBase(SQLModel):
     retrying the read.
     """
 
+    forum_thread_id: uuid.UUID | None = None
+    """
+    The `forum_thread` this run argued in. A run is this install's agents
+    arguing in a thread; a thread may have runs from several installs. Null on
+    rows from before shared threads, until their project's first sync links
+    them.
+    """
+
 
 class DebateRunPublic(DebateRunBase):
     id: uuid.UUID
@@ -1591,6 +1599,105 @@ class DebatePostTable(DebatePostBase, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     run_id: uuid.UUID = Field(foreign_key="debate_run.id", ondelete="CASCADE")
+
+
+# ---------------------------------------------------------------------------
+# Shared threads (openspec/changes/archive/2026-11-05-forum-shared-threads)
+#
+# Every thread on a project's forum, whichever install opened it, copied from
+# git. `debate_run` stays "a run this install executed", and `debate_post` the
+# posts those runs saw, with this install's notes on its own posts. Everything
+# here can be dropped and rebuilt by syncing the forum.
+# ---------------------------------------------------------------------------
+
+
+class ForumThreadBase(SQLModel):
+    thread_id: str
+    """ The thread's uuid7, as in its ref and `thread.json`. """
+    title: str
+    framing: str | None = None
+    """ The body of the thread's TASK post, if it has one. """
+    created_by: str = ""
+    """ The opener's host id, from `thread.json`. A claim, like every host id. """
+    opened_at: str = ""
+    """ `thread.json`'s `created_at`. """
+    status: str = "open"
+    """ open, done, blocked or closed, as `forum_git.thread_status` reads it. """
+    verdict: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ The structured verdict of the thread's latest DONE post, as it was written. """
+    thread_missing: bool = False
+    tip: str | None = None
+    """ The thread ref's commit when this row was last projected. """
+    synced_at: str | None = None
+
+
+class ForumThreadTable(ForumThreadBase, table=True):
+    __tablename__: str = "forum_thread"
+    __table_args__ = (UniqueConstraint("project_id", "thread_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    created_at: str = Field(default="")
+    updated_at: str = Field(default="")
+
+
+class ForumPostBase(SQLModel):
+    post_id: str
+    kind: str
+    body: str
+    """ The only agent-authored field, as on `debate_post`. """
+    sender: str
+    forum_role: str
+    origin: str | None = None
+    reply_to: str | None = None
+    ts: str
+    vouch_lane: str | None = None
+    published: bool | None = None
+    on_remote: bool | None = None
+    votes: int = 0
+    peer_votes: int = 0
+    run: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ On a RUN post: its rounds and roster. """
+    verdict: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ On a DONE post: the structured verdict, as written. """
+
+
+class ForumPostTable(ForumPostBase, table=True):
+    __tablename__: str = "forum_post"
+    __table_args__ = (UniqueConstraint("forum_thread_id", "post_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    forum_thread_id: uuid.UUID = Field(
+        foreign_key="forum_thread.id", ondelete="CASCADE"
+    )
+    seq: int = 0
+    """
+    Where the post came in the thread when it was first copied: the order the
+    remote accepted it. Posts are read in this order, never by `ts`.
+    """
+    authored_by: str | None = None
+    """
+    For a post this install's researcher wrote by hand: their name from
+    Settings, as on `debate_post`. Here because a researcher can post in a
+    thread their install has never run agents in, so there may be no run row to
+    hold it. The one field here git does not hold: a rebuild loses it.
+    """
+    pusher_name: str | None = None
+    """
+    On a hosted forum: the name of the account the collaboration server recorded
+    as pushing the post, read from its push records when the thread is synced.
+    None on a forge, for a post copied onto the forum when a project moved
+    there, and until the server's record is read. A cache of the server's.
+    """
 
 
 DebateRoleName = Literal["proposer", "reviewer", "referee"]

@@ -1,8 +1,10 @@
+import logging
 import uuid
 from typing import Annotated as A
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..config import CollabSettings
 from ..db.db import SessionDep
@@ -15,8 +17,10 @@ from ..db.schemas import (
     VersionCreate,
     VersionPublic,
 )
-from ..services import blob_access, blobs, items
+from ..services import blob_access, blobs, forums, items
 from ..services.identity import UserDep, get_user
+
+log = logging.getLogger("vista.collaboration")
 
 # Every route needs a signed-in user (`services/identity.py`), reads included,
 # and sees only the items in their teams (`services/teams.py`); anything else
@@ -90,16 +94,30 @@ async def get_item(
 
 @router.post("/items/{item_id}/copy", status_code=201)
 async def copy_item(
-    item_id: uuid.UUID, data: ItemCopy, session: SessionDep, user: UserDep
+    item_id: uuid.UUID,
+    data: ItemCopy,
+    request: Request,
+    session: SessionDep,
+    user: UserDep,
 ) -> ItemPublic:
     """
     Copy the item's newest version into `team_id`, a team the caller is in, as
     a new item (its `copied_from` names the original). The original is left as
-    it is. `404` for an item or team the caller is not in.
+    it is. `404` for an item or team the caller is not in. An item with a
+    forum gets a copy with a new, empty one.
     """
-    return ItemPublic.model_validate(
-        await items.copy_item(session, item_id, data, user)
-    )
+    copy = await items.copy_item(session, item_id, data, user)
+    result = ItemPublic.model_validate(copy)
+    forum = await forums.forum_of_item(session, copy.id)
+    if forum is not None and request.app.state.git_ok:
+        try:
+            await run_in_threadpool(
+                forums.create_repo, request.app.state.settings.forums_dir, forum.id
+            )
+        except Exception:
+            # Made at its first fetch or push instead (api/forums.py).
+            log.exception("Could not create the repository of forum %s", forum.id)
+    return result
 
 
 @router.get("/items/{item_id}/versions")

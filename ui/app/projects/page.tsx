@@ -9,6 +9,7 @@ import { relativeTime, useProjectStats } from "@/lib/project-stats";
 import { DEFAULT_DESTINATION, takePendingDestination } from "@/lib/pending-destination";
 import { forumCredential, type SettingsTokens } from "@/lib/forum-credential";
 import { fetchSettings } from "@/lib/settings";
+import { hostedForumServer } from "@/lib/debates";
 import { publishAudience, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
 import { TeamBadge } from "@/components/TeamBadge";
 import {
@@ -28,9 +29,12 @@ import { PublishConflictModal } from "@/components/PublishConflictModal";
 import { ProjectImportModal } from "@/components/ProjectImportModal";
 import { HELLO_OLCF_PROJECT_NAME } from "@/lib/default-project";
 import {
+  type ForumChoice,
   type Project,
   type ProjectFields,
   activateProject,
+  forumRequest,
+  hostForum,
   projectNameError,
   createProject,
   deleteProject,
@@ -44,6 +48,9 @@ import {
 
 /** Project draft used by the create/edit modal (no `id` until persisted). */
 type ProjectDraft = ProjectFields;
+
+/** What the dialog asks of a create beyond the fields: whether a hosted forum is wanted. */
+type SaveOptions = { hostedForumWanted: boolean };
 
 type ModalState =
   | { mode: "closed" }
@@ -140,7 +147,7 @@ function ProjectsPageContent() {
     router.push(takePendingDestination() ?? DEFAULT_DESTINATION);
   }
 
-  async function saveProject(draft: ProjectDraft, editing?: Project) {
+  async function saveProject(draft: ProjectDraft, options: SaveOptions, editing?: Project) {
     if (editing) {
       await updateProject(editing.name, toCreate(draft));
       // The active-project pointer stores the name; if we just renamed the
@@ -150,8 +157,15 @@ function ProjectsPageContent() {
         notifyActiveProjectChanged();
       }
     } else {
-      const project = await createProject(toCreate(draft));
-      open(project);
+      const project = await createProject(toCreate(draft), options);
+      if (project.forumNotice) {
+        // The project is made, without the hosted forum it was to get. Stay,
+        // so the reason can be read, rather than carry it into chat unseen.
+        activateProject(project);
+        setNotice({ text: `Created ${project.name}. ${project.forumNotice}` });
+      } else {
+        open(project);
+      }
     }
     setModal({ mode: "closed" });
   }
@@ -348,8 +362,8 @@ function ProjectsPageContent() {
           kbCatalog={kbCatalog}
           existingNames={new Set(projects.map((p) => p.name))}
           onCancel={() => setModal({ mode: "closed" })}
-          onSave={(draft) =>
-            saveProject(draft, modal.mode === "edit" ? modal.project : undefined)
+          onSave={(draft, options) =>
+            saveProject(draft, options, modal.mode === "edit" ? modal.project : undefined)
           }
         />
       )}
@@ -589,7 +603,12 @@ function ForeignNote() {
 }
 
 /** Which credential the forum publishes with, said under its URL. */
+/** A new hosted forum is its creator's alone until the project is published. */
+const PRIVATE_FORUM_NOTE =
+  "Only you can read it until you publish the project; then everyone in its team can.";
+
 const CREDENTIAL_NOTES = {
+  collaboration: "Publishes with your collaboration sign-in.",
   "settings-github": "Publishes with your GitHub token from Settings → Repositories.",
   "settings-gitlab": "Publishes with your gitlab.com token from Settings → Repositories.",
   "system-git":
@@ -611,7 +630,7 @@ function ProjectModal({
   kbCatalog: KnowledgeBaseSummary[];
   existingNames: Set<string>;
   onCancel: () => void;
-  onSave: (draft: ProjectFields) => Promise<void>;
+  onSave: (draft: ProjectFields, options: SaveOptions) => Promise<void>;
 }) {
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -619,6 +638,19 @@ function ProjectModal({
   const [skills, setSkills] = useState<Set<string>>(new Set(initial?.skills ?? []));
   const [kbs, setKbs] = useState<Set<string>>(new Set(initial?.knowledgeBases ?? []));
   const [forumRepoUrl, setForumRepoUrl] = useState(initial?.forumRepoUrl ?? "");
+  // The forum as the project has it saved, which moving it onto the server changes.
+  const [savedForumUrl, setSavedForumUrl] = useState(initial?.forumRepoUrl ?? "");
+  const [forumChoice, setForumChoice] = useState<ForumChoice>("hosted");
+  const [hosting, setHosting] = useState<{ state: "idle" | "moving" } | { state: "failed"; message: string }>({
+    state: "idle",
+  });
+  const collab = useCollaboration();
+  // The server the project's forum would be on, and whether this install may use it.
+  const collabServer = collab.status?.url ?? null;
+  const canHost = collab.available;
+  const hosted = hostedForumServer(savedForumUrl, collabServer) !== null;
+  // Published, the project's team can read and post; before that only its creator.
+  const teamCanPost = initial ? isProjectOnServer(initial, collabServer) : false;
   // Which Settings tokens exist, to say which credential the forum publishes with.
   const [settingsTokens, setSettingsTokens] = useState<SettingsTokens | null>(null);
   useEffect(() => {
@@ -632,7 +664,13 @@ function ProjectModal({
   }, []);
   // Unknown until Settings has loaded: saying "system git" meanwhile would be
   // wrong for anyone with a token saved.
-  const credential = settingsTokens ? forumCredential(forumRepoUrl, settingsTokens) : null;
+  const chooser = mode === "create" && canHost;
+  const credential =
+    chooser && forumChoice === "hosted"
+      ? "collaboration"
+      : settingsTokens
+        ? forumCredential(forumRepoUrl, settingsTokens, collabServer)
+        : null;
   // The project's team, which decides what it may use: its own when editing;
   // a new project is private until it is first published.
   const projectTeam = mode === "edit" ? (initial?.teamId ?? null) : null;
@@ -667,6 +705,20 @@ function ProjectModal({
     });
   }
 
+  async function moveToServer() {
+    if (!initial) return;
+    setHosting({ state: "moving" });
+    try {
+      const moved = await hostForum(initial.name);
+      setSavedForumUrl(moved.forumRepoUrl);
+      setForumRepoUrl(moved.forumRepoUrl);
+      setHosting({ state: "idle" });
+    } catch (e) {
+      // The project stays on the forum it had; the server's sentence says why.
+      setHosting({ state: "failed", message: e instanceof Error ? e.message : "The forum was not moved." });
+    }
+  }
+
   async function commit() {
     const trimmedName = name.trim();
     const trimmedDesc = description.trim();
@@ -685,6 +737,16 @@ function ProjectModal({
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
 
+    // Signed in, the dialog's choice decides; otherwise a blank URL is no forum, as ever.
+    const forum = forumRequest(
+      chooser ? forumChoice : forumRepoUrl.trim() ? "url" : "none",
+      forumRepoUrl,
+    );
+    if (chooser && forumChoice === "url" && !forum.forumRepoUrl) {
+      setError("Enter the repository's URL, or choose another forum.");
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
@@ -694,14 +756,14 @@ function ProjectModal({
         systemPrompt: systemPrompt.trim(),
         skills: Array.from(skills),
         knowledgeBases: Array.from(kbs),
-        forumRepoUrl: forumRepoUrl.trim(),
+        forumRepoUrl: forum.forumRepoUrl,
         // New projects inherit every available MCP tool. Keep an existing
         // project's saved patterns intact when editing it.
         tools: mode === "create" ? [] : splitTags(toolsRaw),
         // PUT is a full overwrite on the backend — echo the existing usage
         // limits so they aren't reset on edit.
         usageLimits: initial?.usageLimits ?? {},
-      });
+      }, { hostedForumWanted: forum.hostedForumWanted });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save project.");
       setSaving(false);
@@ -826,25 +888,100 @@ function ProjectModal({
             <TeamRuleNote hidden={kbCatalog.length - offeredKbs.length} noun={["knowledge base", "knowledge bases"]} projectTeam={projectTeam} />
           </div>
 
-          <label className="project-modal-label">
-            Hypothesis Lab{" "}
-            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
-              (git repository the debates publish to; leave blank to turn it off)
-            </span>
-            <input
-              className="input"
-              value={forumRepoUrl}
-              onChange={(e) => setForumRepoUrl(e.target.value)}
-              placeholder="https://github.com/your-org/your-forum.git"
-            />
-            <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
-              Everyone with push access to this repository can post to the
-              project&rsquo;s debates, so it is the guest list for the room. The
-              repository must already exist; saving checks it can be reached and
-              pulls in any threads it already holds.
-              {credential && <> {CREDENTIAL_NOTES[credential]}</>}
-            </span>
-          </label>
+          {hosted ? (
+            <div className="project-modal-label" data-testid="forum-hosted">
+              Hypothesis Lab
+              <span style={{ fontWeight: 400 }}>Hosted on the collaboration server.</span>
+              <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+                {teamCanPost
+                  ? "Everyone in the project’s team can post to its debates."
+                  : PRIVATE_FORUM_NOTE}{" "}
+                {CREDENTIAL_NOTES.collaboration}
+              </span>
+            </div>
+          ) : (
+            <>
+              {chooser && (
+                <fieldset className="project-modal-label" style={{ border: 0, padding: 0, margin: 0 }}>
+                  <legend style={{ padding: 0 }}>Hypothesis Lab forum</legend>
+                  {(
+                    [
+                      ["hosted", "Hosted on the collaboration server"],
+                      ["url", "A repository URL"],
+                      ["none", "No forum"],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <label key={value} style={{ fontWeight: 400, display: "flex", gap: 6 }}>
+                      <input
+                        type="radio"
+                        name="forum-choice"
+                        checked={forumChoice === value}
+                        onChange={() => setForumChoice(value)}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
+              {chooser && forumChoice === "hosted" && (
+                <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {PRIVATE_FORUM_NOTE}{" "}
+                  {CREDENTIAL_NOTES.collaboration}
+                </span>
+              )}
+              {(!chooser || forumChoice === "url") && (
+                <label className="project-modal-label">
+                  {chooser ? (
+                    "Repository URL"
+                  ) : (
+                    <>
+                      Hypothesis Lab{" "}
+                      <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+                        (git repository the debates publish to; leave blank to turn it off)
+                      </span>
+                    </>
+                  )}
+                  <input
+                    className="input"
+                    value={forumRepoUrl}
+                    onChange={(e) => setForumRepoUrl(e.target.value)}
+                    placeholder="https://github.com/your-org/your-forum.git"
+                  />
+                  <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+                    Everyone with push access to this repository can post to the
+                    project&rsquo;s debates, so it is the guest list for the room. The
+                    repository must already exist; saving checks it can be reached and
+                    pulls in any threads it already holds.
+                    {credential && <> {CREDENTIAL_NOTES[credential]}</>}
+                  </span>
+                </label>
+              )}
+            </>
+          )}
+
+          {mode === "edit" && canHost && !hosted && (
+            <div className="project-modal-label">
+              <div>
+                <button
+                  type="button"
+                  className="button ghost"
+                  onClick={() => void moveToServer()}
+                  disabled={hosting.state === "moving" || forumRepoUrl.trim() !== savedForumUrl}
+                >
+                  {hosting.state === "moving" ? "Moving the forum…" : "Host on the collaboration server"}
+                </button>
+              </div>
+              <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+                Threads are copied to the server; the old repository is left unchanged.
+                {forumRepoUrl.trim() !== savedForumUrl && " Save the repository change first."}
+              </span>
+              {hosting.state === "failed" && (
+                <span className="error" role="alert" style={{ fontSize: 12, fontWeight: 400 }}>
+                  {hosting.message}
+                </span>
+              )}
+            </div>
+          )}
 
           {mode === "edit" && (
             <label className="project-modal-label">
@@ -871,7 +1008,7 @@ function ProjectModal({
             <button type="button" className="button ghost" onClick={onCancel} disabled={saving}>
               Cancel
             </button>
-            <button type="button" className="button" onClick={() => void commit()} disabled={saving}>
+            <button type="button" className="button" onClick={() => void commit()} disabled={saving || hosting.state === "moving"}>
               {saving ? "Saving…" : mode === "create" ? "Create" : "Save"}
             </button>
           </div>

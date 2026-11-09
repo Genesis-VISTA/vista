@@ -525,6 +525,21 @@ describe("publishing a private one into a team", () => {
     expect(onChanged).toHaveBeenCalledOnce();
   });
 
+  it("says when a published project's forum could not be linked", async () => {
+    routes["POST /api/projects/salt-work/publish-to-team"] = () =>
+      json({
+        team_id: ALPHA,
+        published: [{ kind: "project", name: "salt-work", local_name: "salt-work", how: "published" }],
+        forum_error: "The project is published, but its forum was not linked to it: boom",
+      });
+    const user = userEvent.setup();
+    render(<PublishToTeamModal kind="project" name="salt-work" onClose={() => {}} onChanged={() => {}} />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Team" }), "Alpha");
+    await user.click(screen.getByRole("button", { name: "Publish" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Published to Alpha");
+    expect(screen.getByRole("alert")).toHaveTextContent("its forum was not linked to it: boom");
+  });
+
   it("does not explain a project's skills for a skill", async () => {
     render(<PublishToTeamModal kind="skill" name="salt" onClose={() => {}} onChanged={() => {}} />);
     await screen.findByRole("combobox", { name: "Team" });
