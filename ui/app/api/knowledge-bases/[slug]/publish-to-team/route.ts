@@ -9,7 +9,8 @@ export const runtime = "nodejs";
  * `{ team_id }`: publish a private knowledge base, PDFs and index, for the
  * first time, into a team on the collaboration server, which can take as long
  * as a publish. A success is the backend's `TeamPublishResult`; errors pass
- * through with their status and `detail`.
+ * through with their status and `detail` (400 with code `not_in_team` for a
+ * team the researcher is not in, 400 for a knowledge base in a team already).
  */
 export async function POST(
   request: Request,

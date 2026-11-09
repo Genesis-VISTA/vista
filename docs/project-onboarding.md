@@ -216,9 +216,11 @@ Without one that answers, Publish and Import say why and do nothing.
 published*, *Version 2*, *Differs here from version 2*, *Version 3
 available*), and **Publish** sends it. A new project is private; the first
 time, **Publish…** asks which team to publish it to, and brings its skills and
-knowledge bases into that team with it (one another project here also uses, or
-a skill bundled with VISTA, stays private, and the team's copy is imported
-beside it for this project). After that it stays in its team, and **Publish**
+knowledge bases into that team with it (your other private projects can go on
+using them; a skill bundled with VISTA stays as it is, and the team's copy is
+imported beside it for this project). A private project can use another team's
+skills and knowledge bases, but can then be published only into that team.
+After that it stays in its team, and **Publish**
 sends new versions there. The skills it loads go first: each one that is not on
 the server, or has changed since its version, is published, and the project's
 version names them by item and version. The knowledge bases it

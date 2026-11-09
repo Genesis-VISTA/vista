@@ -150,7 +150,7 @@ checks it in its compare-and-set. On the backend every project, skill and knowle
 `team_id`, None being private (this computer only: everything made here outside a team's
 project, and everything VISTA seeds or bundles; `services/teams.py` there). There is no team
 selector: a new one is private, or its project's team when made for one; an import joins its
-item's; a project uses only its own team's. A private one joins a team when it is first
+item's; a team's project uses only its own team's, a private one any team's. A private one joins a team when it is first
 published, into a team the researcher picks (`POST /…/publish-to-team`,
 `services/team_publish.py`, recursively for a project), and stays in it: Publish sends its new
 versions there. One in a team the researcher has left counts as private for that. A row

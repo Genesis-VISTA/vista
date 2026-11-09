@@ -10,15 +10,18 @@ team is refused: an item stays in the team it was first published to. One
 in a team the researcher has left counts as private here, since it can no
 longer be published there.
 
-The row becoming the team's would break a project here that uses it and stays
-private, since a project uses only its own team's skills and knowledge bases;
-so one used by another project is left as it was, and the team's item is
+A private project here may use it in the team as well, so the row joins the
+team even while private projects use it. A project of another team would
+lose it, since a team's project uses only its own team's skills and knowledge
+bases (only one in a team the researcher has left can be using a private
+one); so one such a project uses is left as it was, and the team's item is
 imported beside it under a free name instead. So is a skill bundled with
 VISTA, which stays private.
 
 A project is published with everything it uses: each of its skills and
 knowledge bases first, then the project itself, published into the team as a
-new item naming them.
+new item naming them. A private project may use another team's; it can then
+be published only into that team.
 """
 
 import logging
@@ -50,7 +53,6 @@ from .teams import (
     require_in_team,
     set_team,
     team_of,
-    usable_in,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,6 +74,11 @@ class PublishedResource(BaseModel):
     """
     `published`: the row joined the team; `imported`: the row stayed private,
     and the team's item was imported beside it under `local_name`.
+    """
+    kept_for: list[str] = []
+    """
+    `imported` only: the projects here, of another team, that the row stayed as
+    it was for; empty for a skill that comes with VISTA, which always stays.
     """
 
 
@@ -244,13 +251,27 @@ def _stays(row: SkillTable | KnowledgeBaseTable) -> bool:
     return isinstance(row, SkillTable) and row.bundled
 
 
-async def _users(
-    session: AsyncSession, kind: _Kind, key: str, *, besides: set[uuid.UUID]
+async def _other_teams_users(
+    session: AsyncSession,
+    kind: _Kind,
+    key: str,
+    url: str | None,
+    team_id: uuid.UUID,
+    *,
+    besides: set[uuid.UUID],
 ) -> list[str]:
-    """The projects here that use `key`, other than those in `besides`."""
+    """
+    The projects here, other than those in `besides`, that use `key` and are in
+    a team other than `team_id`: those `key` joining `team_id` would break.
+    A private project may use it there.
+    """
     projects = (await session.exec(select(ProjectTable))).all()
     return sorted(
-        p.name for p in projects if p.id not in besides and key in kind.uses(p)
+        p.name
+        for p in projects
+        if p.id not in besides
+        and key in kind.uses(p)
+        and team_of(p, url) not in (None, team_id)
     )
 
 
@@ -261,12 +282,12 @@ async def _place(
     key: str,
     team_id: uuid.UUID,
     *,
-    keep: bool,
+    kept_for: list[str] | None,
 ) -> PublishedResource:
     """
     Publish private skill or knowledge base `key` into `team_id`, as a new
-    item. With `keep`, the row here stays private and the team's item is
-    imported beside it; otherwise the row joins the team.
+    item. With `kept_for` (`_kept_for`), the row here stays as it was and the
+    team's item is imported beside it; with None, the row joins the team.
     """
     url = required_url(local)
     row = await kind.get(session, key)
@@ -287,7 +308,7 @@ async def _place(
     except BaseException:
         await restore()
         raise
-    if not keep:
+    if kept_for is None:
         return PublishedResource(
             kind=kind.kind, name=key, local_name=key, how="published"
         )
@@ -296,7 +317,30 @@ async def _place(
     assert item_id is not None
     await restore()
     name = await kind.import_as(session, local, item_id, await kind.free(session, key))
-    return PublishedResource(kind=kind.kind, name=key, local_name=name, how="imported")
+    return PublishedResource(
+        kind=kind.kind, name=key, local_name=name, how="imported", kept_for=kept_for
+    )
+
+
+async def _kept_for(
+    session: AsyncSession,
+    kind: _Kind,
+    key: str,
+    url: str | None,
+    team_id: uuid.UUID,
+    *,
+    besides: set[uuid.UUID],
+) -> list[str] | None:
+    """
+    Whether `key` must stay as it is, the team's item imported beside it: the
+    projects of another team it stays for, [] for a bundled skill, or None
+    when it can join `team_id`.
+    """
+    row = await kind.get(session, key)
+    if _stays(row):
+        return []
+    users = await _other_teams_users(session, kind, key, url, team_id, besides=besides)
+    return users or None
 
 
 async def _publish_one(
@@ -310,8 +354,8 @@ async def _publish_one(
     url = required_url(local)
     mine = await _my_teams(local, team_id)
     _require_private(f"The {kind.label} {key}", row, url, mine)
-    keep = _stays(row) or bool(await _users(session, kind, key, besides=set()))
-    published = await _place(session, local, kind, key, team_id, keep=keep)
+    kept_for = await _kept_for(session, kind, key, url, team_id, besides=set())
+    published = await _place(session, local, kind, key, team_id, kept_for=kept_for)
     return TeamPublishResult(team_id=team_id, published=[published])
 
 
@@ -319,7 +363,7 @@ async def _publish_one(
 async def publish_skill_to_team(
     session: AsyncSession, local: LocalSettingsPublic, name: str, team_id: uuid.UUID
 ) -> TeamPublishResult:
-    """Publish private skill `name` into `team_id`; imported beside it when a project here uses it."""
+    """Publish private skill `name` into `team_id`; imported beside it when it is bundled, or a project of another team here uses it."""
     return await _publish_one(session, local, SKILL, name, team_id)
 
 
@@ -327,7 +371,7 @@ async def publish_skill_to_team(
 async def publish_knowledge_base_to_team(
     session: AsyncSession, local: LocalSettingsPublic, slug: str, team_id: uuid.UUID
 ) -> TeamPublishResult:
-    """Publish private knowledge base `slug` into `team_id`; imported beside it when a project here uses it."""
+    """Publish private knowledge base `slug` into `team_id`; imported beside it when a project of another team here uses it."""
     return await _publish_one(session, local, KNOWLEDGE_BASE, slug, team_id)
 
 
@@ -337,12 +381,12 @@ async def publish_project_to_team(
 ) -> TeamPublishResult:
     """
     Publish private project `name` and everything it uses into `team_id`, the
-    project last. Everything it uses must be here and private, or in a team
-    the researcher has left (or in `team_id` already, from a publish that
-    stopped part way), checked before
-    anything is sent. A skill or knowledge base another project here also uses
-    stays private for it: the team's item is imported beside it, and this
-    project switched to that.
+    project last. Everything it uses must be here, and private, in a team the
+    researcher has left, or in `team_id` already, checked before anything is
+    sent; one in another of their teams is refused. A skill or knowledge base
+    a project of another team here also uses (one they have left), or a
+    bundled skill, stays as it is for it: the team's item is imported beside
+    it, and this project switched to that.
 
     If publishing what it uses fails, what joined `team_id` here is made
     private again, and what was imported beside an original is removed (their
@@ -377,12 +421,14 @@ async def publish_project_to_team(
                 )
             team = _team_here(row, url, mine)
             if team == team_id:
-                continue  # moved there by a publish that stopped part way
-            if not usable_in(team, None):
+                continue  # in it already, or moved there by a publish that stopped part way
+            if team is not None:
                 raise HTTPException(
                     status_code=400,
                     detail=f"{name} uses the {kind.label} {key}, which is in "
-                    "a team. Remove it from the project before publishing it.",
+                    "another team: a team's project uses only its own team's "
+                    f"skills and knowledge bases. Publish {name} to that team, "
+                    f"or remove {key} from it first.",
                 )
             if isinstance(row, KnowledgeBaseTable):
                 require_idle(row, f"publish {name}")
@@ -395,12 +441,11 @@ async def publish_project_to_team(
     imported: list[tuple[_Kind, str]] = []
     try:
         for kind, key in plan:
-            row = await kind.get(session, key)
-            keep = _stays(row) or bool(
-                await _users(session, kind, key, besides={project_id})
+            kept_for = await _kept_for(
+                session, kind, key, url, team_id, besides={project_id}
             )
-            was = _link(row)
-            result = await _place(session, local, kind, key, team_id, keep=keep)
+            was = _link(await kind.get(session, key))
+            result = await _place(session, local, kind, key, team_id, kept_for=kept_for)
             published.append(result)
             if result.how == "imported":
                 imported.append((kind, result.local_name))

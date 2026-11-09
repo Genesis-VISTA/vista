@@ -177,12 +177,11 @@ function ProjectsPageContent() {
       const result = await publishProject(project.name, opts);
       if (result.ok) {
         const skills = publishedFirst(result);
-        setNotice({
-          text:
-            result.status === "unchanged"
-              ? `Nothing new to publish: ${project.name} is version ${result.project.remoteVersion} on the server.`
-              : `Published ${project.name} as version ${result.project.remoteVersion}${skills}.`,
-        });
+        const text =
+          result.status === "unchanged"
+            ? `Nothing new to publish: ${project.name} is version ${result.project.remoteVersion} on the server.`
+            : `Published ${project.name} as version ${result.project.remoteVersion}${skills}.`;
+        setNotice({ text: result.forumError ? `${text} ${result.forumError}` : text });
         await refresh();
         refreshHeads();
         return;
@@ -569,8 +568,9 @@ function ChipRow({ label, items }: { label: string; items: string[] }) {
 }
 
 /**
- * Why some skills or knowledge bases are not offered: they are in another
- * team, and a project uses only its own team's. Nothing when none are hidden.
+ * Why some skills or knowledge bases are not offered to a team's project:
+ * they are private or in another team, and it uses only its own team's.
+ * Nothing when none are hidden, as for a private project, which may use any.
  */
 function TeamRuleNote({
   hidden,
@@ -586,9 +586,7 @@ function TeamRuleNote({
   const what = `${hidden} ${hidden === 1 ? noun[0] : noun[1]} ${hidden === 1 ? "is" : "are"}`;
   return (
     <div style={{ fontSize: 11, color: "var(--muted)" }}>
-      {projectTeam
-        ? `${what} not listed, being private or in another team: a project uses only its own team's.`
-        : `${what} not listed, being in a team: a private project uses only private ones. Publish it to a team to use that team's.`}
+      {`${what} not listed, being private or in another team: a team's project uses only its own team's.`}
     </div>
   );
 }
@@ -597,7 +595,7 @@ function TeamRuleNote({
 function ForeignNote() {
   return (
     <div className="error" style={{ fontSize: 11 }}>
-      In another team: this project cannot use it. Uncheck it to save.
+      Not in this project&rsquo;s team: it cannot use it. Uncheck it to save.
     </div>
   );
 }

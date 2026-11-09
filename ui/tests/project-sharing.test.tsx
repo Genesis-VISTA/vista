@@ -222,7 +222,7 @@ describe("importSummary", () => {
 
 describe("publishedFirst", () => {
   it("names the skills and knowledge bases published before the project", () => {
-    const base = { ok: true as const, status: "published" as const, project: project() };
+    const base = { ok: true as const, status: "published" as const, project: project(), forumError: null };
     expect(publishedFirst({ ...base, skillsPublished: [], knowledgeBasesPublished: [] })).toBe("");
     expect(
       publishedFirst({ ...base, skillsPublished: ["a", "b"], knowledgeBasesPublished: ["salt-papers"] }),

@@ -214,16 +214,16 @@ export function effectiveTeam(
 
 /**
  * Whether a project of `projectTeamId` can use a skill or knowledge base of
- * `resourceTeamId`: only one of exactly its own team, a private project only
- * private ones, the rule the backend enforces (`services/teams.usable_in`).
- * Unlike publishing, a team the researcher is not in is not treated as
- * private here: the backend would refuse it.
+ * `resourceTeamId`, the rule the backend enforces (`services/teams.usable_in`):
+ * a team's project, only one of exactly its own team; a private project, seen
+ * by no one else, any. Unlike publishing, a team the researcher is not in is
+ * not treated as private here: the backend would refuse it.
  */
 export function usableInProject(
   resourceTeamId: string | null | undefined,
   projectTeamId: string | null | undefined,
 ): boolean {
-  return (resourceTeamId ?? null) === (projectTeamId ?? null);
+  return projectTeamId == null || (resourceTeamId ?? null) === projectTeamId;
 }
 
 export type TeamsView = {
@@ -298,12 +298,14 @@ export type PublishedResource = {
   name: string;
   /**
    * The team's item's name here: `name`, the resource having joined the team,
-   * or a new one, the team's item imported beside an original that another
-   * project here still uses, or that VISTA bundles, which stays private.
+   * or a new one, the team's item imported beside an original that stays as
+   * it was: one VISTA bundles, or one a project of another team here uses.
    */
   local_name: string;
-  /** The resource joined the team, or stayed private with the team's item imported beside it. */
+  /** The resource joined the team, or stayed as it was with the team's item imported beside it. */
   how: "published" | "imported";
+  /** `imported` only: the projects of another team it stayed for; empty for one VISTA bundles. */
+  kept_for?: string[];
 };
 
 /** Backend `TeamPublishResult`: what was published, a project last. */
@@ -381,9 +383,9 @@ const PUBLISH_BASE: Record<PublishKind, string> = {
 /**
  * Publish a private project, skill or knowledge base (by name; a knowledge
  * base by slug) for the first time, into a team the researcher is in. A
- * project brings its skills and knowledge bases. Refused (404) for a team they
- * are not in, and (400) for one in a team already, or a project using
- * something missing or in a team.
+ * project brings its skills and knowledge bases. Refused (400, code
+ * `not_in_team`) for a team they are not in, and (400) for one in a team
+ * already, or a project using something missing or in another team.
  */
 export function publishToTeam(kind: PublishKind, name: string, teamId: string): Promise<TeamPublishResult> {
   return teamRequest<TeamPublishResult>(`${PUBLISH_BASE[kind]}/${encodeURIComponent(name)}/publish-to-team`, {

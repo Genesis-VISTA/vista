@@ -231,8 +231,8 @@ who have signed in to the server (**Settings → Collaboration → Manage
 teams…**). Here, a skill is either **Private** (on this computer only, as every
 new skill, and everything VISTA bundles or seeds, starts out) or in one team.
 Every page lists all your skills together, each with its team. A skill made for
-a project joins the project's team, and a project loads only skills of its own
-team (a private project, only private ones).
+a project joins the project's team. A team's project loads only skills of its
+own team; a private project, which only you see, loads any.
 
 **Publishing.** On `/skills`, a skill's card says where it stands — *Not
 published*, *Version 3*, *Changed here since version 3*, *Version 4 available* —
@@ -242,9 +242,9 @@ publish it to (the public team or one of yours): that is when it leaves this
 computer, and it stays in that team. After that, **Publish changes** sends its
 team's next version, with no choice to make. Everyone in its team (for the
 public team, everyone) can see and import it; there is no unpublish, but you can
-publish newer versions. A skill that a project here uses, or that VISTA
-bundles, stays private when published: the team's copy is imported beside it
-under a new name.
+publish newer versions. Your private projects go on using a skill once it is in
+a team. A skill VISTA bundles stays as it is when published: the team's copy is
+imported beside it under a new name.
 
 The server numbers versions 1, 2, 3… and accepts a publish only on top of its
 newest one. If someone published since your copy's version, the publish is

@@ -213,7 +213,7 @@ export default function SkillsPage() {
     // team picked for it; one in a team publishes its new versions there.
     const team = teams.teamOf(skill.teamId);
     const canPublish = team ? !onServer || skill.modified : teams.shown;
-    // A project loads only skills of exactly its own team.
+    // A team's project loads only skills of exactly its own team; a private one, any.
     const usable = usableInProject(skill.teamId, activeProject?.teamId);
     return (
       <div
@@ -313,7 +313,7 @@ export default function SkillsPage() {
                 title={
                   usable
                     ? undefined
-                    : "This skill is in another team: a project uses only its own team's skills."
+                    : `Not in ${activeProject?.name ?? "the project"}'s team: a team's project uses only its own team's skills.`
                 }
                 data-tour={skill.slug === tourLoadSlug ? "skills:load" : undefined}
                 onClick={(e) => {

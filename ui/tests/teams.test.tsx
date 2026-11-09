@@ -122,14 +122,15 @@ describe("a resource's team", () => {
 });
 
 describe("what a project can use", () => {
-  it("is exactly its own team's, as the backend enforces", () => {
-    expect(usableInProject(null, null)).toBe(true);
+  it("is a team's project's own team's, and anything for a private one, as the backend enforces", () => {
     expect(usableInProject(ALPHA, ALPHA)).toBe(true);
     expect(usableInProject(null, ALPHA)).toBe(false);
     expect(usableInProject(PUBLIC_TEAM_ID, ALPHA)).toBe(false);
-    expect(usableInProject(ALPHA, null)).toBe(false);
     // Unlike publishing, a team the researcher left is still another team.
-    expect(usableInProject(GONE, null)).toBe(false);
+    expect(usableInProject(GONE, ALPHA)).toBe(false);
+    for (const team of [null, ALPHA, PUBLIC_TEAM_ID, GONE]) {
+      expect(usableInProject(team, null)).toBe(true);
+    }
   });
 });
 
@@ -374,18 +375,17 @@ describe("the projects page", () => {
     expect(within(dialog).getByText(/3 skills are not listed, being private or in another team/)).toBeInTheDocument();
   });
 
-  it("offers a new project, which is private, only private ones", async () => {
+  it("offers a new project, which is private, every team's", async () => {
     await refreshProjects();
     const user = userEvent.setup();
     render(<ProjectsPage />);
     await user.click(await screen.findByRole("button", { name: /new project/i }));
     const dialog = await screen.findByRole("dialog", { name: "Create project" });
     await within(dialog).findByText("private-skill");
-    expect(within(dialog).queryByText("public-skill")).not.toBeInTheDocument();
-    expect(within(dialog).queryByText("beta-skill")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("KB private-kb")).toBeInTheDocument();
-    expect(within(dialog).queryByText("KB public-kb")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/^3 skills are not listed, being in a team: a private project uses only private ones/)).toBeInTheDocument();
+    for (const offered of ["public-skill", "alpha-skill", "beta-skill", "KB private-kb", "KB public-kb", "KB beta-kb"]) {
+      expect(within(dialog).getByText(offered)).toBeInTheDocument();
+    }
+    expect(within(dialog).queryByText(/not listed/)).not.toBeInTheDocument();
   });
 
   it("lists every project, whatever its team", async () => {
@@ -497,7 +497,7 @@ describe("publishing a private one into a team", () => {
         team_id: ALPHA,
         published: [
           { kind: "skill", name: "salt-density", local_name: "salt-density", how: "published" },
-          { kind: "knowledge-base", name: "salt-papers", local_name: "salt-papers-2", how: "imported" },
+          { kind: "knowledge-base", name: "salt-papers", local_name: "salt-papers-2", how: "imported", kept_for: ["old-lab"] },
           { kind: "project", name: "salt-work", local_name: "salt-work", how: "published" },
         ],
       });
@@ -515,6 +515,7 @@ describe("publishing a private one into a team", () => {
     expect(items).toHaveLength(3);
     expect(items[1]).toHaveTextContent("knowledge base salt-papers");
     expect(items[1]).toHaveTextContent("here as salt-papers-2");
+    expect(items[1]).toHaveTextContent("for old-lab, in a team you have left, which uses it");
     expect(items[0]).not.toHaveTextContent("here as");
     expect(screen.getByRole("status")).toHaveTextContent("Published to Alpha");
     expect(calls).toContainEqual({

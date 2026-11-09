@@ -22,7 +22,10 @@ const NOUNS: Record<PublishKind, string> = {
 /** What a result line says about one published resource. */
 function outcome(c: PublishedResource): string {
   if (c.how === "published") return "published";
-  return `published, and here as ${c.local_name}: ${c.name} stays private, for another project here that uses it or because it comes with VISTA`;
+  const why = c.kept_for?.length
+    ? `for ${c.kept_for.join(", ")}, in a team you have left, which ${c.kept_for.length === 1 ? "uses" : "use"} it`
+    : "because it comes with VISTA";
+  return `published, and here as ${c.local_name}: ${c.name} stays as it was, ${why}`;
 }
 
 /**
@@ -32,10 +35,11 @@ function outcome(c: PublishedResource): string {
  * That is the moment it leaves this computer, and it stays in that team from
  * then on: Publish sends its new versions there, with no choice to make.
  *
- * A project brings everything it uses, since a project uses only its own
- * team's skills and knowledge bases; the result lists each, the project last.
- * One that another project here also uses (or that VISTA bundles) stays
- * private for it, and the team's is imported beside it under a new name.
+ * A project brings everything it uses, since a team's project uses only its
+ * own team's skills and knowledge bases; the result lists each, the project
+ * last. One VISTA bundles stays as it is, and the team's is imported beside it
+ * under a new name. A private project using another team's can be published
+ * only into that team.
  */
 export function PublishToTeamModal({
   kind,
@@ -138,12 +142,12 @@ export function PublishToTeamModal({
               </p>
               {kind === "project" && (
                 <p className="teams-modal-note">
-                  A project uses only its own team&rsquo;s skills and knowledge
-                  bases, so its skills and knowledge bases are published into the
+                  A team&rsquo;s project uses only its own team&rsquo;s skills and
+                  knowledge bases, so its private ones are published into the
                   same team with it, first: a knowledge base with its PDFs and
-                  index, which can take a while. One that another project here
-                  also uses stays private for it, and the team&rsquo;s is
-                  imported beside it under a new name for this project.
+                  index, which can take a while. Your other private projects can
+                  go on using them. If it uses another team&rsquo;s, it can be
+                  published only into that team.
                 </p>
               )}
               {kind === "knowledge-base" && (

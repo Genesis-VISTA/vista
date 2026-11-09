@@ -10,11 +10,13 @@ means something only on its own server, so a row records both (`team_id`,
 effect (`team_of`): on another, it is private, and it is in its team again
 when its server is. Nothing is erased by changing servers.
 
-A project uses only skills and knowledge bases of its own team, so that
-whoever can see the project can see everything it uses: checked whenever it
-gains one, not only when it is published. A private one joins a team when it
-is first published, into the team the researcher chooses (`team_publish`);
-from then on it stays in that team.
+A team's project uses only skills and knowledge bases of its own team, so
+that whoever can see the project can see everything it uses: checked whenever
+it gains one, not only when it is published. A private project, seen by no one
+else, may use any team's as well as private ones; it can then be published
+only into that team. A private one joins a team when it is first published,
+into the team the researcher chooses (`team_publish`); from then on it stays
+in that team.
 
 The teams themselves, and who is in them, are the collaboration server's
 (`collaboration.CollaborationClient`).
@@ -65,8 +67,12 @@ async def current_url(session: AsyncSession) -> str | None:
 
 
 def usable_in(resource_team: uuid.UUID | None, project_team: uuid.UUID | None) -> bool:
-    """Whether a skill or knowledge base of `resource_team` can be used by a project of `project_team`."""
-    return resource_team == project_team
+    """
+    Whether a skill or knowledge base of `resource_team` can be used by a
+    project of `project_team`: a team's project, only its own team's; a
+    private project (None), any.
+    """
+    return project_team is None or resource_team == project_team
 
 
 def require_team(team_id: uuid.UUID | None, label: str) -> uuid.UUID:
@@ -180,16 +186,15 @@ def _refusal(project: str, kind: str, names: list[str]) -> HTTPException:
     return HTTPException(
         status_code=400,
         detail=f"{project} cannot use the {kind}{'s' if many else ''} "
-        f"{', '.join(names)}: {'they are' if many else 'it is'} in another team. "
-        "A project uses only its own team's skills and knowledge bases (a "
-        "private project, only private ones).",
+        f"{', '.join(names)}: {'they are' if many else 'it is'} not in its team. "
+        "A team's project uses only its own team's skills and knowledge bases.",
     )
 
 
 def require_skill_usable(
     project: ProjectTable, skill: SkillTable, url: str | None
 ) -> None:
-    """Refuse loading `skill` into `project` when it is another team's."""
+    """Refuse loading `skill` into a team's `project` when it is not that team's."""
     if not usable_in(team_of(skill, url), team_of(project, url)):
         raise _refusal(project.name, "skill", [skill.name])
 

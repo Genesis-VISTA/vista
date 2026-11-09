@@ -85,7 +85,7 @@ export default function SkillHubPage() {
     setBusyId(skill.id);
     setNotice(null);
     // Loaded into the active project only when the project can use it: a
-    // project uses only skills of exactly its own team.
+    // team's project uses only skills of exactly its own team.
     const loadInto =
       activeProject && usableInProject(skill.team_id, activeProject.teamId) ? activeProject : null;
     try {
@@ -97,7 +97,7 @@ export default function SkillHubPage() {
         const where = loadInto
           ? ` and loaded it into ${loadInto.name}`
           : activeProject
-            ? ` (not loaded into ${activeProject.name}, which is in another team)`
+            ? ` (not loaded into ${activeProject.name}, which uses only its own team's skills)`
             : "";
         setNotice(
           result.status === "unchanged"
@@ -269,7 +269,7 @@ export default function SkillHubPage() {
                                   !activeProject
                                     ? "Open a project to load skills into it"
                                     : !usable && !isLoaded
-                                      ? `In another team than ${activeProject.name}, which uses only its own team's skills`
+                                      ? `Not in ${activeProject.name}'s team: a team's project uses only its own team's skills`
                                       : undefined
                                 }
                                 onClick={(e) => {
