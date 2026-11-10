@@ -8,19 +8,20 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
   - skipped when off;
   - turning it off mid-step moves to `first-question:send`;
   - unknown counts as enabled.
-- [ ] 1.2 Add the eight coachmarks and the `CopyContext` variants to `ui/lib/onboarding-copy.ts`, verbatim from `storyboard.html` Part 1, and change the `welcome:intro` and `first-question:finish` copy (D5). Verify that the existing every-sub-step-has-copy test passes, and add cases for the default-server sentence and the signed-in variant.
+- [ ] 1.2 Add the eight coachmarks and the `CopyContext` variants to `ui/lib/onboarding-copy.ts`, verbatim from `storyboard.html` Part 1, and change the `welcome:intro` and `first-question:finish` copy (D5). Verify that the existing every-sub-step-has-copy test passes, and add cases for the default-server sentence and the signed-in variant (with Manage teams…).
 
 ## 2. Examples
 
 - [ ] 2.1 Add `EXAMPLE_TEAMS`, `EXAMPLE_HUB_SKILLS`, `EXAMPLE_LOCAL_SKILLS` and `useTourExamples()` to `ui/lib/onboarding-examples.ts` (D3). Verify with unit tests on their shapes and the hook's step condition.
-- [ ] 2.2 Render the examples through `TeamSwitcher`/`TeamBadge`, `app/skill-hub/page.tsx` and `app/skills/page.tsx`, with no-op handlers for example items. Verify with component tests in each page's test file, using a quiet status:
-  - the examples show during the step and are gone after it;
-  - clicking Import, Copy to team… or Publish on an example, or choosing an example team, calls `fetch` zero times.
+- [ ] 2.2 Render the examples through `TeamFilter`/`TeamBadge`, `app/skill-hub/page.tsx` and `app/skills/page.tsx`, with no-op handlers for example items. Verify with component tests in each page's test file, using a quiet status:
+  - the examples, the filter's example teams and the badges show during the step and are gone after it;
+  - clicking Import, Publish… or Publish changes on an example, or choosing an example team in the filter, calls `fetch` zero times;
+  - Publish… on an example does not render `PublishToTeamModal`.
 
 ## 3. Driver
 
 - [ ] 3.1 In `ui/components/TourProvider.tsx`:
-  - add the `stepKey` effects (team menu, `/skills`, `openSettings("collaboration")`, close on leaving);
+  - add the `stepKey` effects (`/skills`, `openSettings("collaboration")`, close on leaving);
   - add `local` to `CENTRED` and `sign-in`/`off` to `USABLE_WHILE_EXPLAINED`;
   - add the `data-tour` anchors (D2, D4).
 
