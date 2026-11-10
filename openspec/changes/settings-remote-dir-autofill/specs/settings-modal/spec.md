@@ -3,7 +3,7 @@
 ### Requirement: Remote directory filled in from the cluster's project
 
 When the modal knows the project of Odo, Frontier or Lux, from the cluster status's credential
-check (an S3M token's `project` claim for Odo and Frontier, the Lux account for Lux), it SHALL
+check (the cluster's S3M token's `project` claim), it SHALL
 fill that cluster's remote directory with the project's folder:
 
 | Cluster | Folder |
@@ -17,18 +17,17 @@ fill that cluster's remote directory with the project's folder:
 It SHALL fill the field only when the field is empty, or when it holds that cluster's folder
 for a different project. It SHALL never change any other value. It SHALL NOT fill a field
 whose edit has not been saved yet. It SHALL do this whenever the modal has the project, both
-after a token or account is saved and when the modal opens with one already saved. The fill
+after a token is saved and when the modal opens with one already saved. The fill
 SHALL be saved, marked and announced like a typed change.
 
 While the field holds the folder it filled for the current project, a note under it SHALL say
 where the value came from:
 - "Filled from your S3M token's project (gen150 folder inferred from gen150-vista)." when the
   folder differs from the project;
-- "Filled from your S3M token's project, chm243." when it does not;
-- "Filled from your Lux account, stf218." for Lux.
+- "Filled from your S3M token's project, chm243." when it does not.
 
 Before a project is known, each of the three clusters' hints SHALL begin "Filled from your S3M
-token once you add one." ("…your Lux account…" for Lux). The placeholder SHALL stay as it is.
+token once you add one." The placeholder SHALL stay as it is.
 Removing a token SHALL leave the directory as it is.
 
 #### Scenario: A token from a subproject
@@ -64,12 +63,12 @@ Removing a token SHALL leave the directory as it is.
 - **THEN** the note is no longer shown, and the new path is never replaced while the token's
   project stays the same
 
-#### Scenario: Lux from its account
+#### Scenario: Lux from its token
 
 - **GIVEN** Lux's remote directory is empty
-- **WHEN** a researcher saves the Lux account `stf218`
+- **WHEN** a researcher saves a Lux S3M token whose project is `stf218`
 - **THEN** the directory becomes `/lustre/orion/stf218/proj-shared/vista` and the note reads
-  "Filled from your Lux account, stf218."
+  "Filled from your S3M token's project, stf218."
 
 #### Scenario: A token saved before this change
 

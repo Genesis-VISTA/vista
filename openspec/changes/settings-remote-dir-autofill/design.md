@@ -2,12 +2,12 @@
 
 See proposal.md for why. The pieces already exist:
 
-- Saving `odo_s3m_token` or `frontier_s3m_token` makes `saveField` call
-  `recheckHpcStatus(cluster)` (`CREDENTIAL_CLUSTER`). Saving `lux_account` (in `SETTING_FIELDS`)
-  calls `refreshHpcStatus()`.
+- Saving `odo_s3m_token`, `frontier_s3m_token` or `lux_s3m_token` makes `saveField` call
+  `recheckHpcStatus(cluster)` (`CREDENTIAL_CLUSTER`).
 - The backend's credential check (`services/hpc_status.py::_credential`) returns
-  `checks.credential.project`: the token's introspected `project` for Odo and Frontier, and
-  `local.lux_account` for Lux. The modal reads cluster state through `useClusterState(cluster)`,
+  `checks.credential.project`: the token's introspected `project`, for all three clusters. Lux's
+  token is S3M's, introspected at Frontier's address (main's IRI update, 1b7d65dc, replaced the
+  Lux account with it). The modal reads cluster state through `useClusterState(cluster)`,
   the same store the rail's cards use.
 - Remote directories are debounced text fields bound with `bind(field, "debounce")`, which keeps a
   draft and goes through `useSettingsAutosave`.
@@ -77,10 +77,7 @@ The wording is from the approved storyboard (Part 4):
 - **Notes:**
   - "Filled from your S3M token's project (gen150 folder inferred from gen150-vista)."
   - "Filled from your S3M token's project, chm243."
-  - "Filled from your Lux account, stf218."
-- **Hint prefixes:**
-  - "Filled from your S3M token once you add one." (Odo, Frontier)
-  - "Filled from your Lux account once you add one." (Lux)
+- **Hint prefix:** "Filled from your S3M token once you add one." (Odo, Frontier and Lux)
 
   Each is followed by the existing `GroupWritableHint`.
 

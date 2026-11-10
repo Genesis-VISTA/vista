@@ -3,8 +3,8 @@
 Every Odo, Frontier and Lux researcher has to type a remote directory before a job can run, and
 the only help is a placeholder (`/gpfs/wolf2/olcf/<project>/proj-shared/vista`) that disappears
 as soon as they start typing. VISTA already knows the project: the cluster card's credential
-check introspects the S3M token and reports its `project` claim (and, for Lux, the account the
-researcher typed). It can fill the directory in rather than make the researcher work it out.
+check introspects the cluster's S3M token (Odo's, Frontier's or Lux's) and reports its `project`
+claim. It can fill the directory in rather than make the researcher work it out.
 
 ## What Changes
 
@@ -45,9 +45,6 @@ Related: `hpc-availability` (the credential check that reports the project) and 
   cluster card's settings check.
 - No warning when a directory the researcher typed isn't under the token's project.
 - Perlmutter: its directory depends on the NERSC username, not the project.
-- Lux S3M tokens: a separate MR moves Lux closer to Odo and Frontier. Until then Lux's project
-  is its typed account, and this change reads it from the same status field, so nothing here
-  needs to change when that MR lands.
 - No backend, MCP or database change.
 - No VISTAGuard work.
 
