@@ -1,6 +1,6 @@
 ## 1. The fill rule
 
-- [ ] 1.1 Add `ui/lib/remote-dir.ts` with `projectFolder`, `suggestedRemoteDir`, `isFilledRemoteDir`, `remoteDirFill` and `filledNote` (design.md D2). Verify with table-driven cases in a new `ui/tests/remote-dir.test.ts`:
+- [x] 1.1 Add `ui/lib/remote-dir.ts` with `projectFolder`, `suggestedRemoteDir`, `isFilledRemoteDir`, `remoteDirFill` and `filledNote` (design.md D2). Verify with table-driven cases in a new `ui/tests/remote-dir.test.ts`:
   - `gen150-vista` → `gen150`
   - `CHM243` → `chm243`
   - empty → null
