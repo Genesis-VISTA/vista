@@ -551,9 +551,9 @@ _SETTINGS_NULLABLE_FIELDS = (
     "odo_remote_dir",
     "frontier_remote_dir",
     "lux_remote_dir",
-    "lux_account",
     "odo_s3m_token",
     "frontier_s3m_token",
+    "lux_s3m_token",
     "nersc_iri_token",
     "globus_token",
     "odo_globus_token",
@@ -615,9 +615,9 @@ class LocalSettingsUpdate(SQLModel):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
-    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
+    lux_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -719,9 +719,9 @@ class LocalSettingsPublic(SQLModel):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
-    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
+    lux_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -892,8 +892,9 @@ class LocalSettingsTable(SQLModel, table=True):
     """
     lux_account: str | None = None
     """
-    The OLCF project Lux jobs are charged to (`#SBATCH -A`). Required for Lux,
-    which has no token to take a project from. Not a secret.
+    Unused. The OLCF project Lux jobs were charged to while Lux was reached over
+    SSH; Lux jobs are now charged to the Lux S3M token's project. Kept so that
+    databases holding it keep their column (`db/schema_check.py`).
     """
     odo_s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
@@ -910,6 +911,15 @@ class LocalSettingsTable(SQLModel, table=True):
     S3M bearer token for Frontier (moderate enclave), from any OLCF project
     with S3M access; that project is what Frontier jobs are charged to.
     Encrypted at rest.
+    """
+    lux_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Lux (moderate enclave, beside Frontier), from any OLCF
+    project with S3M access to Lux; that project is what Lux jobs are charged
+    to. Lux's files go through Frontier's Globus connection, so it has no Globus
+    tokens of its own. Encrypted at rest.
     """
     nersc_iri_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)

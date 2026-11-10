@@ -42,14 +42,16 @@ other one, and do not ask again:
 - Odo or Perlmutter → say this job does not run there, and offer Lux or Frontier.
 - No cluster named → ask: *"Submit on Lux or Frontier?"*
 
-Always pass `cluster` explicitly: Lux has no token and is never picked by
-default, and a user with several OLCF tokens has no single default either.
+Always pass `cluster` explicitly: the job runs on both, and a user with tokens
+for both has no single default.
 
 What each cluster needs from the user:
 
-- **Lux:** an OLCF account on Lux, and a **Lux account** (the project to charge)
-  and **Lux remote directory** in their VISTA settings. Logging in is
-  interactive (see step 3).
+- **Lux:** a **Lux S3M token** in their VISTA settings (a Frontier token does
+  not work there); the job is charged to its project. Globus connected for
+  Frontier or Lux (one connection serves both, since Lux mounts Frontier's
+  filesystem). A **Lux remote directory**, with the same rules as Frontier's
+  below.
 - **Frontier:** the same setup as fine-tuning on Frontier:
   - An S3M token in their VISTA settings. The job is charged to that token's
     project.
@@ -125,20 +127,12 @@ submit_hpc_job(job="forge-pretrain", cluster="frontier",
                script_args="MODEL=forge-m TRAIN_ITERS=100")
 ```
 
-**On Lux**, before the first Lux call in a chat, tell the user about the login:
-
-- One login prompt appears for `lux.olcf.ornl.gov`. It asks for their OLCF
-  username and **PIN + RSA passcode**.
-- After that, the login is reused for every Lux call in the chat (status,
-  outputs, cancel) for about an hour after the last call.
-
-The forge checkout is updated to the latest commit on every submission:
-- **On Lux**, this happens on the login node before `sbatch`. If it fails (proxy,
-  git, missing data), the tool returns the error text. Show it to the user
-  rather than retrying blindly.
-- **On Frontier**, there is no login step. The update runs at the start of the
-  job, so a checkout problem shows up as a failed job, with the reason in its
-  log (lines starting `[prepare_forge]`).
+There is no login step on either cluster. The forge checkout is updated to the
+latest commit at the start of every job (by `setup_lux.sh` on Lux, by the job
+script on Frontier), so a checkout problem (proxy, git, missing data) shows up
+as a failed job, with the reason in its log (lines starting `[prepare_forge]`,
+and on Lux `VISTA: setup_lux.sh failed`). Show it to the user rather than
+retrying blindly.
 
 Report the tool's returned summary verbatim: job_id, cluster, nodes, duration.
 
@@ -147,11 +141,7 @@ Report the tool's returned summary verbatim: job_id, cluster, nodes, duration.
 `get_hpc_job_status(job_id=..., cluster=...)` returns:
 - `STATE`: `NEW`, `QUEUED`, `PENDING`, `ACTIVE`, `COMPLETED`, `FAILED`, or
   `CANCELED`.
-- On Lux only:
-  - `SLURM_STATE`: the raw Slurm state, e.g. `TIMEOUT` or `NODE_FAIL`, which
-    says *why* a job is `FAILED`.
-  - `REASON`: why a pending job is waiting.
-- On Frontier, `EXIT_CODE` and `MESSAGE` when the job has finished.
+- `EXIT_CODE` and `MESSAGE` when the job has finished.
 - The tail of the log, and the output files.
 
 The status call also saves the **whole** log so far to
@@ -220,12 +210,12 @@ The output directory holds:
 Fetch small files with `get_hpc_job_outputs(job_id, files=[...], cluster=<cluster>)`,
 e.g. `config/<model>.yml`. Leave checkpoints on the cluster.
 
-On failure, use the state fields (`SLURM_STATE` on Lux; `EXIT_CODE` and `MESSAGE`
-on Frontier) and the log tail:
-- `TIMEOUT`: walltime too short for the iterations. Suggest a longer `duration`
-  or fewer `TRAIN_ITERS`.
+On failure, read the log tail (`EXIT_CODE` and `MESSAGE` rarely say more than
+that it failed):
+- `DUE TO TIME LIMIT`: walltime too short for the iterations. Suggest a longer
+  `duration` or fewer `TRAIN_ITERS`.
 - An out-of-memory error: suggest more nodes, or a smaller model.
-- `NODE_FAIL`: resubmit.
+- `DUE TO NODE FAILURE`: resubmit.
 - Anything else: show the last error lines from the log.
 
 To resume, resubmit with `LOAD_DIR=<previous output dir>/checkpoints`. This only
@@ -234,8 +224,7 @@ continues from the saved iteration.
 
 ## Cancel
 
-`cancel_hpc_job(job_id, cluster=<cluster>)` after the user confirms. On Lux it
-reuses the cached login.
+`cancel_hpc_job(job_id, cluster=<cluster>)` after the user confirms.
 
 ## Guardrails
 
@@ -248,4 +237,4 @@ reuses the cached login.
 - Do not enable checkpoints unless asked. When asked for forge-l, say how large
   they are.
 - Do not retry a failed submission more than once without asking the user. A
-  login or setup failure usually needs them (passcode, access, proxy).
+  setup failure usually needs them (a token, access, the proxy).

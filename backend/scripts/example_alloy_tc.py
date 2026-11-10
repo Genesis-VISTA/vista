@@ -58,6 +58,7 @@ DONE_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_
 CLUSTER_TOKEN_FIELD = {
     "odo": "odo_s3m_token",
     "frontier": "frontier_s3m_token",
+    "lux": "lux_s3m_token",
     "perlmutter": "nersc_iri_token",
 }
 

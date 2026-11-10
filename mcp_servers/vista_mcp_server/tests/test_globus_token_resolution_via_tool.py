@@ -2,7 +2,7 @@
 
 `test_globus_token_resolution.py` proves `UserConfig.require_globus_token`'s
 precedence directly, against the helper alone. This drives the same
-precedence through `_submit_odo_job` -- the function a tool call actually
+precedence through `_submit_job` -- the function a tool call actually
 runs -- so a call site that got the token some other way, or an argument that
 silently went missing on the way to `create_globus_client`, would show up
 here even though the helper's own tests would stay green.
@@ -19,7 +19,7 @@ import vista_mcp_server.submit_job_mcp as submit_job_mcp
 from vista_mcp_server.config import settings
 from vista_mcp_server.lib.types import GlobusTokens
 from vista_mcp_server.lib.user_config import UserConfig
-from vista_mcp_server.submit_job_mcp import _submit_odo_job
+from vista_mcp_server.submit_job_mcp import _submit_job
 from fakes import FakeGlobusClient, FakeIriClient
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 @pytest.fixture(autouse=True)
 def _odo_environment(monkeypatch):
-    """Everything `_submit_odo_job` needs that is not the Globus credential
+    """Everything `_submit_job` needs that is not the Globus credential
     itself, so each test below varies only the thing it is testing."""
     monkeypatch.setattr(settings, "local_hpc_jobs_dir", HPC_JOBS_DIR)
     monkeypatch.setattr(settings, "odo_globus_collection_id", "odo-collection")
@@ -38,11 +38,12 @@ def _odo_environment(monkeypatch):
     async def _introspect(token, *, introspect_url):
         return "abc123"
 
-    async def _odo_iri(*, iri_token: str):
-        return FakeIriClient(job_id="odo-token-test")
-
     monkeypatch.setattr(submit_job_mcp, "get_s3m_token_project", _introspect)
-    monkeypatch.setattr(submit_job_mcp, "create_odo_iri_client", _odo_iri)
+    monkeypatch.setattr(
+        submit_job_mcp,
+        "client_for",
+        lambda cluster, token: FakeIriClient(job_id="odo-token-test"),
+    )
 
 
 def _capture_globus(monkeypatch) -> list[GlobusTokens]:
@@ -63,8 +64,8 @@ def _capture_globus(monkeypatch) -> list[GlobusTokens]:
 
 async def _submit(cfg: UserConfig) -> None:
     cfg = cfg.model_copy(update={"odo_remote_dir": "/fake/odo/vista"})
-    await _submit_odo_job(
-        cfg, "example", node_count=None, duration_int=None, script_args=None
+    await _submit_job(
+        "odo", cfg, "example", node_count=None, duration_int=None, script_args=None
     )
 
 

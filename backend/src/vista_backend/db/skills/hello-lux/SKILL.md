@@ -14,7 +14,9 @@ metadata:
 
 This skill ships one job, `hello-lux/hello`, for Lux only. It follows the
 `hpc-skill-author` job template, so it is also a worked example of a skill's job. It
-needs what every Lux job needs: the Lux account and remote directory (set in Settings) and the researcher's RSA passcode at sign-in. Nothing else. It takes no `script_args`.
+needs what every Lux job needs: a Lux S3M token, Globus connected for Frontier (Lux
+mounts Frontier's filesystem and uses its connection), and the Lux remote directory, all
+set in Settings. Nothing else: there is no login prompt. It takes no `script_args`.
 
 The job writes into its output folder: `hello.txt` (the report: host and node list, loaded
 modules, what `rocm-smi` sees, start and end time, and the contents and `sha256sum` of the
@@ -45,12 +47,19 @@ connection is made.** Retrying a refusal only repeats it.
 
 - **Lux remote directory not set.** `submit_hpc_job` refuses with "No Lux remote
   directory is set". No job was submitted. Tell the researcher it is set in **Settings**, and wait.
-- **Lux account not set.** `submit_hpc_job` refuses with "No Lux account is set". No job
-  was submitted. Tell the researcher the Lux account must be set in **Settings**, and wait.
-- **RSA passcode.** Lux has no token: VISTA signs in over SSH and asks the researcher for
-  their PIN and RSA passcode, once per chat session. If that prompt is declined, times out
-  or the passcode is wrong, no job was submitted. Tell the researcher a passcode is needed
-  to connect to Lux, and wait.
+- **Globus not connected.** `submit_hpc_job` refuses with "Globus file transfer is not
+  connected for Lux (Lux uses Frontier's connection)". No job was submitted. Tell the
+  researcher Globus must be connected for Frontier or Lux in **Settings** (one connection
+  serves both), and wait.
+- **No S3M token for Lux.** `submit_hpc_job` refuses with "No S3M token configured for
+  'lux'". No job was submitted. Tell the researcher a Lux S3M token must be added in
+  **Settings** (a Frontier token does not work on Lux), and wait.
+- **Expired Globus session.** Frontier's collection, which Lux uses, requires a fresh
+  Globus login every 3 days, and a queue wait can outlast it. The job can finish while the
+  session has expired, so fetching fails with a message that the session expired. The job
+  did not fail, and its output folder is not empty. Tell the researcher to reconnect Globus
+  in **Settings**, then fetch `hello.txt` again once they say it is done. Never report this
+  as missing or empty output.
 
 If a job fails or the report is missing for another reason, show the status and log as
 they are and say what you see; do not guess at a cause.

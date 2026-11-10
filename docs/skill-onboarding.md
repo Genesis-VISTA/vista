@@ -189,7 +189,7 @@ scripts and their `#SBATCH` lines, entry points and their flags. The agent propo
 runs and which flags become `script_args`, and translates an existing batch script's resources
 into `cluster_defaults.json`. A repository is not copied into the skill: its job, from the
 `wrap-repo` template, clones the repository on the cluster at the pinned commit
-(`$VISTA_JOB_DIR/src/<commit>`, once, from `setup_lux.sh` on the Lux login node). An uploaded
+(`$VISTA_JOB_DIR/src/<commit>`, once, from `setup_lux.sh` inside the first run's job). An uploaded
 folder's needed files are shipped in the job folder. Only github.com and gitlab.com are fetched (for another host, upload an archive). A private
 repository's needed files are shipped in the skill unless you confirm the cluster can clone it
 with your own credentials there. A skill that already ships `hpc_jobs/` in VISTA's format needs no wrapping:
@@ -366,15 +366,14 @@ hand-written one too. `test_skill_author_validator.py` in the MCP server's tests
 with the server.
 
 **Trust.** A skill job runs the skill's scripts on a cluster as the researcher: under their
-S3M, NERSC or Globus credentials, or their own SSH login on Lux. VISTA's own `hpc_jobs/` is
+S3M, NERSC or Globus credentials. VISTA's own `hpc_jobs/` is
 reviewed with the code; a skill imported from GitHub is not. So:
 
 - The `/skills` page marks every skill that ships jobs with a **Runs HPC jobs** badge naming
   them. The list comes from the skill's folder on disk, not from anything SKILL.md declares, so
   a skill cannot hide it. Read an imported skill's `hpc_jobs/` before loading it.
 - A skill's jobs are available only in projects that load the skill, and only through the agent
-  calling `submit_hpc_job`. The researcher must have connected that cluster, and Lux also asks
-  for a login once per session.
+  calling `submit_hpc_job`. The researcher must have connected that cluster.
 - Not done yet: a per-project "allow this skill to run cluster jobs" approval, which would leave
   the skill's `hpc_jobs/` out of the project's skills volume until a researcher allows it.
 

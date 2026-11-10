@@ -1,8 +1,10 @@
 #!/bin/bash
-# Runs on the Lux LOGIN node before every sbatch (Lux compute nodes cannot
-# clone). Checks out REPO_URL at REPO_COMMIT, both from cluster_defaults.json,
-# into $VISTA_JOB_DIR/src/<commit>: the first submission clones, later ones
-# find it there. A new commit gets its own folder, so a run never sees a
+# Runs inside every Lux job, before job.lux.slurm, with the OLCF proxy exported
+# (compute nodes reach the internet only through it); a non-zero exit ends the
+# job. Checks out REPO_URL at REPO_COMMIT, both from cluster_defaults.json, into
+# $VISTA_JOB_DIR/src/<commit>: the first run clones, later ones find it there.
+# The lock in $VISTA_JOB_DIR/src keeps two runs starting together from cloning
+# at once, and a new commit gets its own folder, so a run never sees a
 # half-updated tree.
 set -euo pipefail
 : "${VISTA_JOB_DIR:?VISTA_JOB_DIR not set}"

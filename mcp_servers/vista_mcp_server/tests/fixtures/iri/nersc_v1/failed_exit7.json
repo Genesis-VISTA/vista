@@ -1,0 +1,9 @@
+{
+  "id": "1001",
+  "status": {
+    "state": "failed",
+    "time": 1794023998.653816,
+    "message": null,
+    "exit_code": 7
+  }
+}

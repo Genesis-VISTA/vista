@@ -3,7 +3,7 @@
 The project's skills volume holds exactly the skills it loads, and the backend
 sends its path on every call. So the lookup is per call, against that folder,
 and a skill the project has not loaded provides nothing. Everything here runs
-against a temporary skills folder and the fake SSH connection.
+against a temporary skills folder and fake IRI and Globus clients.
 """
 
 from __future__ import annotations
@@ -18,12 +18,17 @@ from fastmcp.exceptions import ToolError
 import vista_mcp_server.submit_job_mcp as m
 from vista_mcp_server.config import settings
 from vista_mcp_server.lib.user_config import UserConfig
-from fakes import FakeGlobusClient, FakeIriClient, FakeSshConn
+from fakes import FakeGlobusClient, FakeIriClient
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
 BASE = "/lustre/orion/abc123/proj-shared/vista"
-CFG = UserConfig(lux_remote_dir=BASE, lux_account="abc123")
+CFG = UserConfig(
+    lux_s3m_token="lux-token",
+    lux_remote_dir=BASE,
+    frontier_globus_token="gt",
+    frontier_globus_https_token="gh",
+)
 
 
 def _write_skill_job(
@@ -204,17 +209,18 @@ def test_source_subdirs_are_parents_first():
 
 
 @pytest.fixture
-def lux(tmp_path, monkeypatch):
-    monkeypatch.setattr(settings, "lux_proxy", None)
+def lux(monkeypatch):
     monkeypatch.setattr(settings, "hpc_dry_run", False)
-    conn = FakeSshConn(tmp_path / "remote")
-    conn.on("sbatch --parsable", (0, "4242\n", ""))
+    iri, globus = FakeIriClient(job_id="4242"), FakeGlobusClient(cluster="lux")
+    globus.seed_remote_dir(BASE)
 
-    async def fake_lux_conn(ctx, tool, **call_args):
-        return conn
+    async def introspect(token, *, introspect_url):
+        return "abc123"
 
-    monkeypatch.setattr(m, "_lux_conn", fake_lux_conn)
-    return conn
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
+    monkeypatch.setattr(m, "create_globus_client", lambda **kw: globus)
+    monkeypatch.setattr(m, "get_s3m_token_project", introspect)
+    return SimpleNamespace(iri=iri, globus=globus)
 
 
 async def test_submit_hpc_job_runs_a_skill_job_on_lux(skills, lux):
@@ -227,26 +233,19 @@ async def test_submit_hpc_job_runs_a_skill_job_on_lux(skills, lux):
     version = m._sources_version(m.resolve_job("primus-on-lux/primus-smoke", skills))
     src = f"{BASE}.researcher.jobs/primus-on-lux/primus-smoke/src-{version}"
     assert "job_id: 4242" in summary
-    assert sorted(lux.puts) == sorted(
+    assert sorted(path for _, path in lux.globus.uploads) == sorted(
         f"{src}/{rel}"
         for rel in ("summarize.sh", "configs/model.yaml", "configs/README.md")
     )
+    assert lux.globus.files[f"{src}/configs/model.yaml"] == b"layers: 2\n"
+    [(spec, _)] = lux.iri.submitted
+    assert spec["environment"]["RUN_DIR_Lux"] == src
     assert (
-        lux.local(f"{src}/configs/model.yaml").read_text(encoding="utf-8")
-        == "layers: 2\n"
+        spec["environment"]["VISTA_JOB_DIR"] == f"{BASE}.out/primus-on-lux/primus-smoke"
     )
-    [(_, script)] = lux.ran("sbatch --parsable")
-    assert f"export RUN_DIR_Lux={src}" in script
-    assert f"export VISTA_JOB_DIR={BASE}.out/primus-on-lux/primus-smoke" in script
-    assert "set -- TRAIN_ITERS=5" in script
-    assert lux.ran("echo setup"), "setup_lux.sh runs on the login node"
-
-    # A second submission finds every file, nested ones too, and sends nothing.
-    lux.puts.clear()
-    await m.submit_hpc_job(
-        _ctx(skills), job="primus-on-lux/primus-smoke", cluster="lux"
-    )
-    assert lux.puts == []
+    body = spec["arguments"][2]
+    assert "set -- TRAIN_ITERS=5" in body
+    assert "bash -lc 'echo setup\n'" in body, "setup_lux.sh runs in the allocation"
 
 
 async def test_submit_hpc_job_refuses_a_skill_job_from_another_project(
@@ -258,7 +257,7 @@ async def test_submit_hpc_job_refuses_a_skill_job_from_another_project(
             job="primus-on-lux/primus-smoke",
             cluster="lux",
         )
-    assert lux.commands == []
+    assert lux.iri.submitted == [] and lux.globus.uploads == []
 
 
 # --- nested uploads on the other transports ---------------------------------
@@ -297,7 +296,7 @@ async def test_globus_skips_a_complete_nested_tree(skills):
 async def test_perlmutter_uploads_nested_files(skills):
     d = skills / "primus-on-lux" / "hpc_jobs" / "primus-smoke"
     iri = FakeIriClient(job_id="1")
-    await m._sync_perlmutter_sources(iri, d, "/r/jobs/x/src")
+    await m._sync_job_sources_iri(iri, d, "/r/jobs/x/src")
     assert iri.mkdirs == ["/r/jobs/x/src", "/r/jobs/x/src/configs"]
     assert {remote for _, remote in iri.uploads} == {
         "/r/jobs/x/src/summarize.sh",
@@ -325,12 +324,9 @@ async def test_an_edited_skill_job_gets_new_sources(skills, lux):
     assert second != first
     await m.submit_hpc_job(_ctx(skills), job=job, cluster="lux", script_args="")
     src = f"{BASE}.researcher.jobs/{job}/src-{second}"
-    assert (
-        lux.local(f"{src}/configs/model.yaml").read_text(encoding="utf-8")
-        == "layers: 3\n"
-    )
-    [_, (_, script)] = lux.ran("sbatch --parsable")
-    assert f"export RUN_DIR_Lux={src}" in script
+    assert lux.globus.files[f"{src}/configs/model.yaml"] == b"layers: 3\n"
+    [_, (spec, _)] = lux.iri.submitted
+    assert spec["environment"]["RUN_DIR_Lux"] == src
 
 
 def test_built_in_jobs_keep_their_src_folder():

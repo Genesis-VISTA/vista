@@ -1,7 +1,7 @@
 #!/bin/bash -l
-# Perlmutter pre_launch setup for forge-tune. Runs on the compute node in the native
-# environment (before shifter starts), as injected into the IRI JobSpec by vista's
-# submit_job_mcp dispatcher.
+# Perlmutter setup for forge-tune. VISTA runs it inside the job, on the compute node
+# in the native environment (before shifter starts), before job.perlmutter.slurm;
+# a non-zero exit ends the job.
 #
 # Responsibilities:
 #   1. Ensure $RUN_DIR_Perlmutter contains the forge-tune source files.
@@ -9,8 +9,8 @@
 #      a Dropbox folder share link the first time, then cached).
 #
 # Env vars provided by vista's IRI dispatcher (submit_job_mcp.py), derived from
-# VISTA_MCP_NERSC_REMOTE_DIR / cluster_defaults.json:
-#   RUN_DIR_Perlmutter       <remote_dir>/jobs/<job>/src  (user pre-populates with scp)
+# the NERSC remote directory (VISTA settings) / cluster_defaults.json:
+#   RUN_DIR_Perlmutter       <remote_dir>/jobs/<job>/src  (vista uploads here through IRI)
 #   FORGE_MODEL_Perlmutter   <remote_dir>/out/<job>/model  (this script downloads here)
 #   FORGE_MODEL_URL          model archive URL (from cluster_defaults.json)
 # Either path can be overridden by adding it to iri.environment in cluster_defaults.json.
@@ -32,7 +32,7 @@ required=(forge-tune.py hybrid_split.py setup_dist_vars.sh Molten_Salt_Thermophy
 for f in "${required[@]}"; do
     if [ ! -f "${RUN_DIR_Perlmutter}/${f}" ]; then
         echo "[setup_perlmutter] ERROR: missing ${RUN_DIR_Perlmutter}/${f}" >&2
-        echo "[setup_perlmutter] vista should have uploaded these; check VISTA_MCP_NERSC_REMOTE_DIR + IRI token validity, or scp manually as a fallback" >&2
+        echo "[setup_perlmutter] vista should have uploaded these; check the user's NERSC remote directory and IRI token, or copy them by hand as a fallback" >&2
         exit 1
     fi
 done

@@ -1,0 +1,17 @@
+{
+  "id": "00000000-0000-4000-8000-000000000001",
+  "status": "completed",
+  "result": {
+    "output": null
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "mkdir",
+    "args": {
+      "request_model": {
+        "path": "/global/homes/r/researcher/vista-probe/sub/deeper",
+        "parent": true
+      }
+    }
+  }
+}

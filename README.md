@@ -72,8 +72,7 @@ GitLab.
 
 ## Run from source
 
-You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), Docker or Podman, and read access to
-the private `amscrot-py` on the amsc2 GitLab, which HPC job submission needs. Details are in
+You need Node.js 20.9+, [uv](https://docs.astral.sh/uv/), and Docker or Podman. Details are in
 [developing VISTA](docs/development.md#prerequisites).
 
 ```bash

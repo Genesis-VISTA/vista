@@ -160,7 +160,7 @@ test.describe("run status dots", () => {
     await goToSkills(page);
     await expect(railDot(page)).toHaveCount(0);
 
-    // A run in the second conversation starts waiting on a Lux login.
+    // A run in the second conversation starts waiting on a login form.
     await stub.setRoute("GET /api/chat/runs/status", [entry(SECOND_ID, "needs_you")]);
     await stub.setRoute(
       "GET /api/chat/session",
@@ -187,14 +187,14 @@ test.describe("run status dots", () => {
     await expect(page.locator(".chat-session-banner")).toHaveText("Second thread");
 
     await stub.waitForStream("attach");
-    await startRun(stub, "Submit the Lux job", "attach", RUN_ID);
+    await startRun(stub, "Run the agenthpc trial", "attach", RUN_ID);
     await stub.send(
       "mcp_form_elicitation",
       {
         event_kind: "mcp_form_elicitation",
         mode: "form",
         elicitation_id: "ssh-login-1",
-        message: "SSH login for Lux",
+        message: "SSH login for the agenthpc server",
         requested_schema: {
           type: "object",
           properties: { username: { type: "string", title: "Username" } },
@@ -203,7 +203,7 @@ test.describe("run status dots", () => {
       },
       "attach",
     );
-    await expect(page.locator(".elicitation-modal")).toContainText("SSH login for Lux");
+    await expect(page.locator(".elicitation-modal")).toContainText("SSH login for the agenthpc server");
     await stub.end("attach");
   });
 

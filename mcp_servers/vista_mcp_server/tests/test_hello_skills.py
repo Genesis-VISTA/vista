@@ -1,6 +1,6 @@
 """The bundled hello skills (`hello-odo`, `hello-frontier`, `hello-lux`) through the
 submit tool: dry-run acceptance, what is uploaded, and the refusals the skills tell the
-agent to relay. IRI, Globus and SSH are faked; nothing reaches a cluster.
+agent to relay. IRI and Globus are faked; nothing reaches a cluster.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import vista_mcp_server.submit_job_mcp as m
 from vista_mcp_server import dry_run
 from vista_mcp_server.config import settings
 from vista_mcp_server.lib.user_config import UserConfig
-from fakes import FakeGlobusClient, FakeIriClient, FakeSshConn
+from fakes import FakeGlobusClient, FakeIriClient
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
@@ -46,13 +46,10 @@ def _clean_dry_registry():
 
 
 def _patch_frontier(monkeypatch, *, iri, globus):
-    async def _client(*, iri_token: str):
-        return iri
-
     async def _introspect(token, *, introspect_url):
         return "abc123"
 
-    monkeypatch.setattr(m, "create_olcf_iri_client", _client)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(m, "get_s3m_token_project", _introspect)
     monkeypatch.setattr(
@@ -104,7 +101,7 @@ async def test_hello_frontier_uploads_its_input_and_sees_run_dir(monkeypatch):
 
     [(spec, name)] = iri.submitted
     assert name == "vista-hello-frontier/hello"
-    env = spec["attributes"]["environment"]
+    env = spec["environment"]
     assert env["RUN_DIR_Frontier"] == remote.removesuffix("/input.txt")
     job_cmd = spec["arguments"][2]
     script = SKILLS / "hello-frontier" / "hpc_jobs" / "hello" / "job.frontier.slurm"
@@ -120,13 +117,10 @@ async def test_hello_odo_sees_run_dir(monkeypatch):
     globus = FakeGlobusClient()
     globus.seed_remote_dir(odo)
 
-    async def _client(*, iri_token: str):
-        return iri
-
     async def _introspect(token, *, introspect_url):
         return "abc123"
 
-    monkeypatch.setattr(m, "create_odo_iri_client", _client)
+    monkeypatch.setattr(m, "client_for", lambda cluster, token: iri)
     monkeypatch.setattr(m, "create_globus_client", lambda **kwargs: globus)
     monkeypatch.setattr(m, "get_s3m_token_project", _introspect)
     cfg = UserConfig(
@@ -141,9 +135,7 @@ async def test_hello_odo_sees_run_dir(monkeypatch):
     [(_, remote)] = globus.uploads
     assert remote.endswith("/input.txt")
     [(spec, _)] = iri.submitted
-    assert spec["attributes"]["environment"]["RUN_DIR_Odo"] == remote.removesuffix(
-        "/input.txt"
-    )
+    assert spec["environment"]["RUN_DIR_Odo"] == remote.removesuffix("/input.txt")
 
 
 async def test_frontier_without_globus_is_refused_and_nothing_is_submitted(
@@ -165,29 +157,38 @@ async def test_frontier_without_globus_is_refused_and_nothing_is_submitted(
     assert globus.uploads == []
 
 
-async def test_hello_lux_without_a_lux_account_is_refused(tmp_path, monkeypatch):
+async def test_hello_lux_needs_its_token_and_frontiers_globus_and_no_login(
+    monkeypatch,
+):
+    """
+    hello-lux on IRI: a Lux S3M token, Frontier's Globus connection, and no
+    account setting or login prompt (there is no SSH any more).
+    """
     monkeypatch.setattr(settings, "hpc_dry_run", False)
-    conn = FakeSshConn(tmp_path / "remote")
-    conn.on("sbatch --parsable", (0, "4242\n", ""))
-    asked: list[str] = []
+    iri = FakeIriClient(job_id="4242")
+    globus = FakeGlobusClient(cluster="lux")
+    globus.seed_remote_dir(LUX_BASE)
+    _patch_frontier(monkeypatch, iri=iri, globus=globus)
 
-    async def fake_lux_conn(ctx, tool, **call_args):
-        asked.append(tool)
-        return conn
+    no_token = UserConfig(lux_remote_dir=LUX_BASE)
+    with pytest.raises(ToolError, match="No S3M token configured for 'lux'"):
+        await m.submit_hpc_job(_ctx(no_token), job="hello-lux/hello", cluster="lux")
+    assert iri.submitted == [] and globus.uploads == []
 
-    monkeypatch.setattr(m, "_lux_conn", fake_lux_conn)
-
-    cfg = UserConfig(lux_remote_dir=LUX_BASE)  # no lux_account
-    with pytest.raises(ToolError, match="No Lux account is set"):
-        await m.submit_hpc_job(_ctx(cfg), job="hello-lux/hello", cluster="lux")
-    assert asked == [] and conn.commands == [] and conn.puts == []
-
-    # With the account set, the same call submits.
-    cfg = UserConfig(lux_remote_dir=LUX_BASE, lux_account="abc123")
+    cfg = UserConfig(
+        lux_s3m_token="lux-token",
+        lux_remote_dir=LUX_BASE,
+        frontier_globus_token="t",
+        frontier_globus_https_token="h",
+    )
     summary = await m.submit_hpc_job(_ctx(cfg), job="hello-lux/hello", cluster="lux")
     assert "job_id: 4242" in summary
-    [uploaded] = conn.puts
+    [(_, uploaded)] = globus.uploads
     assert uploaded.endswith("/input.txt")
+    [(spec, _)] = iri.submitted
+    assert spec["attributes"]["queue_name"] == "batch"
+    assert spec["attributes"]["account"] == "abc123"
+    assert spec["resources"]["gpu_cores_per_process"] == 1
 
 
 def test_the_built_in_catalog_no_longer_lists_lux_hello():

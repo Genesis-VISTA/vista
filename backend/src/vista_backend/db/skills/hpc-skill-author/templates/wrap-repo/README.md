@@ -7,8 +7,8 @@ TODO: one paragraph on what the job runs. It wraps __REPO_URL__ at commit
 Supported clusters: Lux (TODO).
 
 Default nodes: 1
-Default time: 0:30:00 (the first submission also clones the repository on the
-Lux login node; later ones reuse the clone)
+Default time: 0:30:00 (the first run also clones the repository, inside its
+own allocation; later runs reuse the clone)
 
 ## Script args
 

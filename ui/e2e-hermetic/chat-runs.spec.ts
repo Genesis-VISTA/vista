@@ -380,14 +380,14 @@ test.describe("chat runs", () => {
         event_kind: "mcp_form_elicitation",
         mode: "form",
         elicitation_id: "ssh-login-1",
-        message: "SSH login for Lux",
+        message: "SSH login for the agenthpc server",
         requested_schema: SSH_SCHEMA,
       },
       "attach",
     );
   }
 
-  test("the Lux SSH login is shown again after navigating back, and answering it submits", async ({
+  test("a login form is shown again after navigating back, and answering it submits", async ({
     page,
   }) => {
     stub = await installStub(page, ROUTES);
@@ -395,7 +395,7 @@ test.describe("chat runs", () => {
 
     const modal = page.locator(".elicitation-modal");
     await expect(modal).toBeVisible();
-    await expect(modal).toContainText("SSH login for Lux");
+    await expect(modal).toContainText("SSH login for the agenthpc server");
 
     await modal.getByLabel(/Username/).fill("ada");
     await modal.getByLabel(/Password/).fill("not-a-real-password");

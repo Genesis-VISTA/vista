@@ -1,0 +1,26 @@
+{
+  "id": "00000000-0000-4000-8000-000000000006",
+  "status": "completed",
+  "result": {
+    "output": {
+      "mode": 644,
+      "ino": 1,
+      "dev": 50,
+      "nlink": 1,
+      "uid": 10000,
+      "gid": 10000,
+      "size": 1024,
+      "atime": 1794023956,
+      "ctime": 1794023956,
+      "mtime": 1794023956
+    }
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "stat",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/sub/blob.bin",
+      "dereference": false
+    }
+  }
+}

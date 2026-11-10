@@ -21,11 +21,6 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
-# Private AmSC IRI SDK (git). Required for live HPC submit; hermetic CI/tests
-# use FakeIriClient / dry-run and install without this extra.
-hpc = [
-    "amscrot-py @ git+https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git",
-]
 
 [project.scripts]
 vista-mcp-server = "vista_mcp_server.server:main"
@@ -33,9 +28,6 @@ vista-mcp-server = "vista_mcp_server.server:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 artifacts = [
@@ -45,14 +37,6 @@ artifacts = [
 
 [tool.uv]
 python-preference = "only-managed"
-# amscrot-py (the hpc extra) requires every one of its providers' libraries, but
-# VISTA uses only its IRI job client. Manually exclude these heavy-weight deps
-# that unnecessarily complicate the build with paths too long for Windows and
-# requiring C++ toolchains to build the wheel.
-override-dependencies = [
-    "ansible; sys_platform == 'never'",
-    "fabrictestbed-extensions; sys_platform == 'never'",
-]
 
 [tool.ruff.lint]
 # PLW1514 (open/read_text/write_text without encoding=) is a preview rule. Preview

@@ -12,9 +12,9 @@ named failure, never to Couldn't verify. That last state is for a facility
 answering in a way the checks do not understand, which is what this test
 exists to catch when an IRI deployment changes under us.
 
-Lux is left out of that: its facility check is a probe of its login node's SSH port,
-which is Couldn't verify by design from a network that does not reach ORNL.
-Its own test probes the login node directly.
+Lux is held to the same rule: it is an IRI v2 resource like Frontier. Its own
+test reads the public feed directly, so a renamed resource id shows up even
+with no Lux token saved.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ import httpx
 import pytest
 
 from vista_backend.config import HpcClusterSettings
-from vista_backend.services import hpc_status
 
 pytestmark = pytest.mark.live
 
@@ -56,8 +55,6 @@ def test_every_cluster_gets_a_decisive_answer():
     assert result["clusters"], "no clusters visible; unhide one in settings"
     for cluster in result["clusters"]:
         name, checks = cluster["cluster"], cluster["checks"]
-        if name == "lux":
-            continue  # see the module docstring; test_lux_hub_answers covers it
         assert cluster["state"] in STATES, name
         facility = checks["facility"]
         assert facility["ok"] or facility["reason"] == "degraded", (
@@ -85,11 +82,13 @@ def test_response_carries_nothing_token_like():
     assert "refresh_token" not in body
 
 
-@pytest.mark.anyio
-async def test_lux_login_node_answers():
-    """Needs a route to Lux's SSH port; no credential involved."""
-    host = HpcClusterSettings().lux_ssh_hosts[0]
-    greeting = await hpc_status.probe_ssh_greeting(
-        host, timeout=hpc_status.HTTP_TIMEOUT
-    )
-    assert greeting.startswith("SSH-2.0-"), greeting
+def test_each_olcf_cluster_is_listed_under_its_configured_id():
+    """The public v2 feed, no credential: the ids jobs are submitted to are listed."""
+    s = HpcClusterSettings()
+    for cluster in ("odo", "frontier", "lux"):
+        base = getattr(s, f"{cluster}_iri_url").rstrip("/")
+        version = getattr(s, f"{cluster}_iri_api_version")
+        rows = httpx.get(f"{base}/api/{version}/status/resources", timeout=30).json()
+        assert getattr(s, f"{cluster}_iri_resource_id") in {
+            r.get("id") for r in rows
+        }, cluster

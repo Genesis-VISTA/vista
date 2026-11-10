@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build a conda environment once, for every run of this job, and leave it at
-# $ENV_PREFIX. Call it from setup_lux.sh (Lux login node) or from the job
-# script (Frontier, Odo) with:
+# $ENV_PREFIX. Call it from a setup_<cluster>.sh, which runs inside the job
+# before the job script, with:
 #   ENV_PARENT  folder that holds the env, e.g. "$VISTA_JOB_DIR/envs" (Lustre)
 #   ENV_NAME    the env's name, e.g. "melt-py311"; change it to force a rebuild
 #   ENV_SPEC    an environment.yml, e.g. "$RUN_DIR_Lux/environment.yml"

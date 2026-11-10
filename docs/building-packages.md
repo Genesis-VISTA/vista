@@ -20,11 +20,6 @@ All verified by `--check`:
 
 - `uv`, `npm`, `git`
 - Docker or Podman, unless you pass `--sandbox-image` (below)
-- Git access to the amsc2 GitLab (`gitlab.com/amsc2/...`) for the private
-  `amscrot-py` that HPC job submission needs; see
-  [HPC dependencies](development.md#hpc-dependencies) for the `url.insteadOf` rewrite. Nothing is
-  read out of your credential store and nothing is written to `.env`. The
-  preflight only asks git whether the fetch would succeed.
 - Network access to `pypi.org`, `registry.npmjs.org`, `huggingface.co`, and
   `nodejs.org`; add `code.ornl.gov` only when fetching the corpus with a
   token. Probed per host, because a network that allows PyPI and blocks

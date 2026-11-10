@@ -252,7 +252,7 @@ tool that reads `get_vista_meta(ctx).user` must be added there too: otherwise ev
 as "not connected", and no test catches it, because the MCP tests hand tools their config
 directly.
 
-Odo and Frontier file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
+Odo, Frontier and Lux file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
 the transfer tools (`transfer_mcp.py`, which list, download and upload outside a job), split across
 two of its surfaces
 ([`lib/globus.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/globus.py)). **File
@@ -279,11 +279,13 @@ exactly that reason; branch on them rather than on a message.
 
 The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
-falling back to one pair they connected for both. There is no deployment-wide Globus login: every
+falling back to one pair they connected for both. Lux has no collection of its own: it mounts
+Frontier's filesystem, so it uses Frontier's collection and pair (`require_globus_token("lux")`),
+and the settings modal shows one connection in both sections. There is no deployment-wide Globus login: every
 file operation acts as the researcher's own identity, so the facility decides what they may read
 and write. Each source counts only when it has both halves: one alone lists a directory it
 cannot read.
-Absent Globus is never fatal; it costs only Odo and Frontier's file operations, nothing else.
+Absent Globus is never fatal; it costs only the OLCF clusters' file operations, nothing else.
 
 ## Hypothesis Lab forum
 

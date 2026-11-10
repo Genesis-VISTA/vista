@@ -82,9 +82,9 @@ const TEXT_FIELDS = [
   "odo_remote_dir",
   "frontier_remote_dir",
   "lux_remote_dir",
-  "lux_account",
   "odo_s3m_token",
   "frontier_s3m_token",
+  "lux_s3m_token",
   "nersc_iri_token",
 ] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
@@ -142,8 +142,8 @@ const AGENT_FIELDS: Array<keyof LocalSettingsUpdate> = [
 const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
   odo_s3m_token: "odo",
   frontier_s3m_token: "frontier",
+  lux_s3m_token: "lux",
   nersc_iri_token: "perlmutter",
-  // Lux has none: a researcher signs in from a chat.
 };
 
 /**
@@ -157,7 +157,6 @@ const SETTING_FIELDS = new Set([
   "frontier_remote_dir",
   "nersc_account",
   "nersc_remote_dir",
-  "lux_account",
   "lux_remote_dir",
 ]);
 
@@ -224,7 +223,7 @@ const FIELD_LABELS: Record<string, string> = {
   odo_s3m_token: "Odo S3M token",
   frontier_remote_dir: "Frontier remote directory",
   frontier_s3m_token: "Frontier S3M token",
-  lux_account: "Lux account",
+  lux_s3m_token: "Lux S3M token",
   lux_remote_dir: "Lux remote directory",
   github_token: "GitHub token",
   gitlab_token: "gitlab.com token",
@@ -287,6 +286,14 @@ export function UserSettingsModal({
   const lastToggled = useRef<HpcCluster | null>(null);
   /** Secret fields a paste just went into, so the change that follows saves at once. */
   const pasted = useRef(new Set<string>());
+  /**
+   * Globus connections made while the modal is open, by whose connection was
+   * stored (Frontier's for Lux), with the identity Globus reported. Shared by
+   * every section showing that connection, so connecting it from Frontier's or
+   * Lux's shows it connected in both. The loaded settings are not re-fetched,
+   * which would rebuild the draft under fields still being edited.
+   */
+  const [globusMade, setGlobusMade] = useState<Partial<Record<GlobusCluster, string>>>({});
 
   async function saveField(field: string, value: unknown) {
     await updateSettings({ [field]: value } as LocalSettingsUpdate);
@@ -588,7 +595,19 @@ export function UserSettingsModal({
         switchError={lastToggled.current === section ? autosave.errors[HIDDEN_FIELD] : undefined}
         onBack={() => choose("compute")}
       >
-        <ClusterFields cluster={section} user={user} bind={bind} />
+        <ClusterFields
+          cluster={section}
+          bind={bind}
+          globus={(owner) => ({
+            connected: globusConnected(user, owner) || owner in globusMade,
+            identity: globusMade[owner] ?? null,
+            onConnected: (identity: string) => {
+              setGlobusMade((made) => ({ ...made, [owner]: identity }));
+              if (owner === "frontier") recheckFrontierAndLux();
+              else void recheckHpcStatus(owner);
+            },
+          })}
+        />
       </ClusterSection>
     );
   }
@@ -1819,14 +1838,21 @@ function CollaborationSection({
   );
 }
 
+/** One Globus connection's state, as every section showing it reads it. */
+type GlobusState = {
+  connected: boolean;
+  identity: string | null;
+  onConnected: (identity: string) => void;
+};
+
 function ClusterFields({
   cluster,
-  user,
   bind,
+  globus,
 }: {
   cluster: HpcCluster;
-  user: LocalSettings;
   bind: Bind;
+  globus: (owner: GlobusCluster) => GlobusState;
 }) {
   switch (cluster) {
     case "odo":
@@ -1845,12 +1871,7 @@ function ClusterFields({
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Odo" />}
           />
-          <GlobusConnect
-            cluster="odo"
-            label="Odo"
-            initiallyConnected={globusConnected(user, "odo")}
-            onConnected={() => void recheckHpcStatus("odo")}
-          />
+          <GlobusConnect cluster="odo" label="Odo" {...globus("odo")} />
         </>
       );
     case "frontier":
@@ -1869,12 +1890,11 @@ function ClusterFields({
             placeholder="/lustre/orion/<project>/proj-shared/vista"
             hint={<GroupWritableHint cluster="Frontier" />}
           />
-          <GlobusConnect
-            cluster="frontier"
-            label="Frontier"
-            initiallyConnected={globusConnected(user, "frontier")}
-            onConnected={() => void recheckHpcStatus("frontier")}
-          />
+          <p className="user-settings-hint">
+            Frontier and Lux share the Orion filesystem, so one Globus connection serves
+            both: connecting here connects Lux too.
+          </p>
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
     case "perlmutter":
@@ -1912,20 +1932,25 @@ function ClusterFields({
     case "lux":
       return (
         <>
-          <SavedField
-            label="Lux account"
-            field="lux_account"
-            binding={bind("lux_account", "debounce")}
-            placeholder="e.g. abc123"
-            hint="Required for Lux. The OLCF project Lux jobs are charged to."
+          <S3mTokenField
+            label="Lux S3M token"
+            field="lux_s3m_token"
+            binding={bind("lux_s3m_token", "on-blur")}
+            hint="From any OLCF project with S3M access to Lux, and separate from Frontier's token. Lux jobs are charged to that project."
           />
           <SavedField
             label="Lux remote directory"
             field="lux_remote_dir"
             binding={bind("lux_remote_dir", "debounce")}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
+            hint={<GroupWritableHint cluster="Lux" />}
           />
+          <p className="user-settings-hint">
+            Lux and Frontier share the Orion filesystem, so one Globus connection serves
+            both. Connecting here connects Frontier too, and if Frontier is already
+            connected there is nothing to do.
+          </p>
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
   }
@@ -1983,6 +2008,12 @@ function SavedField({
  * which creates `<dir>.out`, so the folder holding them must be writable by the
  * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
  */
+/** Frontier's Globus connection is Lux's too, so connecting it rechecks both cards. */
+function recheckFrontierAndLux() {
+  void recheckHpcStatus("frontier");
+  void recheckHpcStatus("lux");
+}
+
 function GroupWritableHint({
   cluster,
   runsAs = "your project's IRI automation user",
@@ -2152,24 +2183,20 @@ function globusConnected(
  * single-use, and the backend stores the result itself, so there is nothing
  * for a field save to carry, and it takes effect at once.
  *
- * `initiallyConnected` seeds the display from the loaded settings and is not read
- * again. Re-fetching after a connection would rebuild the modal's draft under
- * fields still being edited.
+ * Whether it is connected, and as whom, is the modal's (`GlobusState`): the
+ * same connection is shown in more than one section (Frontier's, in Lux's), and
+ * connecting it in one must show it connected in the other.
  */
 function GlobusConnect({
   cluster,
   label,
-  initiallyConnected,
+  connected,
+  identity,
   onConnected,
 }: {
   cluster: GlobusCluster;
   label: string;
-  initiallyConnected: boolean;
-  /** After a connection completes, e.g. to recheck the cluster's card. */
-  onConnected?: () => void;
-}) {
-  const [connected, setConnected] = useState(initiallyConnected);
-  const [identity, setIdentity] = useState<string | null>(null);
+} & GlobusState) {
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<"starting" | "finishing" | null>(null);
@@ -2228,10 +2255,8 @@ function GlobusConnect({
     setError(null);
     try {
       const result = await completeGlobusLogin(cluster, code);
-      setConnected(true);
-      setIdentity(result.identity);
       forget();
-      onConnected?.();
+      onConnected(result.identity);
     } catch (e) {
       // The address stays on screen. A rejected code is usually a mistyped or
       // half-copied one, and making the researcher start the login again to

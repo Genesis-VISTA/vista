@@ -151,7 +151,6 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
           VERIFY_WITHOUT_SANDBOX: ${{ matrix.verify == 'without-sandbox' && '1' || '' }}
-          AMSC_GIT_TOKEN: ${{ secrets.AMSC_GIT_TOKEN }}
         run: |
           BUILD_INPUTS_DIR="$PWD/build-inputs" \
           SANDBOX_IMAGE="$PWD/sandbox/sandbox-image-$ARCH.tar" \

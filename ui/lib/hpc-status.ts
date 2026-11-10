@@ -113,7 +113,7 @@ export type HpcClusterStatus = {
     globus: HpcCheck | null;
     /**
      * The researcher's own settings a submission needs: the remote directory,
-     * and the account on Perlmutter and Lux. Missing or unusable ones make the
+     * and the NERSC account on Perlmutter. Missing or unusable ones make the
      * cluster Not connected.
      */
     settings: HpcCheck;

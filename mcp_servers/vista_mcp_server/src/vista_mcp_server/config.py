@@ -1,6 +1,6 @@
 import os, sys, logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pathlib import Path
 from typing import Annotated as A, Literal
 from .lib.types import ResolvedPath, CommaSeparatedList
@@ -81,17 +81,16 @@ class AppSettings(BaseSettings):
 
     local_hpc_jobs_dir: ResolvedPath = Path("../../hpc_jobs")
 
+    # Each cluster's IRI service: `<cluster>_iri_url`, `_iri_api_version` and
+    # `_iri_resource_id`, read by `lib/iri.py:iri_target`. Resources are named by
+    # these ids only, never found by listing: the moderate enclave lists Lux before
+    # Frontier, and picking from the listing once sent Frontier jobs to Lux.
+
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ Base URL for the OLCF AmSC IRI API on the open enclave """
-    odo_machine: str = "odo"
-    """ OLCF compute resource group name (used to match the IRI discovery result). """
-    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
-    """
-    Pinned IRI compute resource UUID for Odo. Bypasses `discover()` since the
-    open-enclave service lists Odo / Defiant / Wombat / Quokka without a stable
-    name/group match for `odo_machine`. Look up via amscrot's `discover()` if
-    OLCF rotates resource ids.
-    """
+    odo_iri_api_version: Literal["v1", "v2"] = "v2"
+    odo_iri_resource_id: str = "odo"
+    """ Odo's compute resource in S3M's IRI v2 (a UUID on v1). """
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """
     S3M token introspection endpoint. Tells VISTA which OLCF project an Odo
@@ -106,30 +105,37 @@ class AppSettings(BaseSettings):
     """ Base URL for the OLCF AmSC IRI API on the moderate enclave """
     frontier_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     """ Same as `odo_introspect_url`, for Frontier tokens. """
-    frontier_machine: str = "frontier"
-    """ OLCF compute resource group name (used to match the IRI discovery result). """
+    frontier_iri_api_version: Literal["v1", "v2"] = "v2"
+    frontier_iri_resource_id: str = "frontier"
+    """ Frontier's compute resource in S3M's IRI v2 (a UUID on v1). """
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
     """
     UUID of the OLCF DTN Globus Collection that exposes Frontier's filesystem (moderate enclave).
     """
 
-    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
-    """
-    SSH hop chain to a Lux login node, ending at the login node. Lux has no IRI
-    service, so its jobs are submitted with `sbatch` over SSH. Lux is reached
-    directly; a jump host can still be listed first. Each hop asks the researcher
-    for their own PIN + RSA passcode, once per chat session (see `lib/ssh.py`).
-    """
-    lux_proxy: str | None = "http://proxy.ccs.ornl.gov:3128"
-    """
-    HTTP(S) proxy exported to Lux setup scripts and jobs, which have no direct
-    outbound network (e.g. to clone a repo). None to export nothing.
-    """
+    lux_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    """ Lux's IRI service: S3M's moderate enclave, as Frontier's. """
+    lux_iri_api_version: Literal["v1", "v2"] = "v2"
+    """ v2 only: S3M's v1 lists Lux but answers 404 to a submission. """
+    lux_iri_resource_id: str = "lux"
+    """ Lux's files go through Frontier's Globus collection, which it mounts. """
 
-    nersc_iri_url: str = "https://api.iri.nersc.gov"
-    """ Base URL for the NERSC IRI API. """
-    nersc_machine: str = "perlmutter"
-    """ NERSC compute resource group name (used to match the IRI discovery result). """
+    perlmutter_iri_url: A[
+        str, Field(validation_alias=AliasChoices("VISTA_MCP_PERLMUTTER_IRI_URL", "VISTA_MCP_NERSC_IRI_URL"))
+    ] = "https://api.iri.nersc.gov"
+    """
+    Base URL for the NERSC IRI API. `VISTA_MCP_NERSC_IRI_URL`, its name before
+    every cluster had `<cluster>_iri_*` settings, still sets it.
+    """
+    perlmutter_iri_api_version: Literal["v1", "v2"] = "v1"
+    """
+    v1: NERSC's v2 refuses the NERSC IRI tokens researchers hold (it wants an
+    AmSC token). Moving to v2 is this setting and a token v2 accepts.
+    """
+    perlmutter_iri_resource_id: str = "94351904-6dba-4c16-b5cd-fbd280d8615b"
+    """ Perlmutter's `compute` resource (NERSC also lists `login` and `jobs`). """
+    perlmutter_iri_storage_id: str = "65b28619-c3b6-4942-8da1-044a3b3a2a9e"
+    """ NERSC's `homes` storage resource, where Perlmutter's job folders are. """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """

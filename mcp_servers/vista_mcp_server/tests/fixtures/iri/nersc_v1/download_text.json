@@ -1,0 +1,14 @@
+{
+  "id": "00000000-0000-4000-8000-000000000007",
+  "status": "completed",
+  "result": {
+    "output": "hello from VISTA\nline 2\nline 3\n"
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "download",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/hello.txt"
+    }
+  }
+}

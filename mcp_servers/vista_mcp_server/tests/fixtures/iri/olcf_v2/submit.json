@@ -1,0 +1,41 @@
+{
+  "id": "2001",
+  "status": {
+    "state": "queued",
+    "time": 1794022056.779245,
+    "message": "Job submitted via S3M compute API",
+    "meta_data": {
+      "scheduler": "slurm",
+      "resource": "lux",
+      "s3m_response": {
+        "errors": [],
+        "warnings": [],
+        "job_id": 2001,
+        "step_id": "batch",
+        "job_submit_user_msg": ""
+      },
+      "translation": {
+        "job": {
+          "name": "vista-probe",
+          "current_working_directory": "/lustre/orion/abc123/proj-shared",
+          "standard_output": "/lustre/orion/abc123/proj-shared/vista-probe-%j.out",
+          "standard_error": "/lustre/orion/abc123/proj-shared/vista-probe-%j.err",
+          "environment": [
+            "IRI_FRONTEND_VERSION=2.0.0",
+            "RUN_DIR_Lux=/lustre/orion/abc123/proj-shared",
+            "VISTA_PROBE=vista-probe"
+          ],
+          "minimum_nodes": 1,
+          "tasks": 1,
+          "tres_per_task": "gres/gpu:1",
+          "account": "abc123",
+          "partition": "batch",
+          "time_limit": {
+            "set": true,
+            "number": 5
+          }
+        }
+      }
+    }
+  }
+}

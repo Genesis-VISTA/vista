@@ -6,8 +6,8 @@ https://github.com/at-aaims/forge, cloned and updated to the latest commit on
 every submission.
 
 Supported clusters:
-- Lux (OLCF, Slurm over SSH, project stf218; the user is asked to log in through
-  the hub once per session).
+- Lux (OLCF, IRI with a Lux S3M token and Frontier's Globus connection, project
+  stf218).
 - Frontier (OLCF, IRI + Globus, project chm243, the same setup as forge-tune).
 
 Defaults: forge-l on Lux and forge-s on Frontier (smaller GPU memory), 16 nodes x

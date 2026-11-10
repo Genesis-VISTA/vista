@@ -1,0 +1,18 @@
+{
+  "id": "00000000-0000-4000-8000-000000000010",
+  "status": "failed",
+  "result": {
+    "error": "Exception: Error: 404: find: ‘/global/u1/r/researcher/vista-probe/no-such-dir’: No such file or directory"
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "ls",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/no-such-dir",
+      "show_hidden": false,
+      "numeric_uid": false,
+      "recursive": false,
+      "dereference": false
+    }
+  }
+}

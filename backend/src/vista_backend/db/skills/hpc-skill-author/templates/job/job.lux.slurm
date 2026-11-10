@@ -1,6 +1,7 @@
 #!/bin/bash -l
-# __SKILL__/__JOB__ on Lux. VISTA writes the #SBATCH header from
-# cluster_defaults.json and exports:
+# __SKILL__/__JOB__ on Lux. VISTA submits it through IRI with the resources in
+# cluster_defaults.json (#SBATCH lines are ignored), runs setup_lux.sh first if
+# there is one, and exports:
 #   VISTA_OUT      this run's output folder (already created); write outputs here
 #   RUN_DIR_Lux    this job folder's uploaded files; read only
 #   VISTA_JOB_DIR  state shared by every run of this job (set up by setup_lux.sh)

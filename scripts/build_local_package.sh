@@ -293,13 +293,6 @@ fi
 [[ "$ARCHIVE_FORMAT" != zip || "$TARGET_OS" == windows ]] \
   || die "--archive-format zip is only for Windows packages; use gz or zstd"
 
-# The private dependency HPC submission needs, read from the file that declares
-# it so the preflight cannot check a stale URL.
-AMSC_GIT_URL="$(
-  sed -nE 's/.*"amscrot-py @ git\+(https:\/\/[^"]+)".*/\1/p' \
-    "$REPO_ROOT/mcp_servers/vista_mcp_server/pyproject.toml" | head -1
-)"
-
 # ─── a shipped image's architecture ─────────────────────────────────────────
 
 # `uname -m` and an OCI image config disagree on names for the same processor,
@@ -424,25 +417,6 @@ in the --payload tree: $PAYLOAD_DIR")
   elif [[ -z "${VISTA_DATA_TOKEN:-}" ]]; then
     failures+=("no corpus source — set VISTA_DATA_TOKEN (a code.ornl.gov token \
 for v28/vista-data) or pass --payload with an already-unpacked copy")
-  fi
-
-  # amsc2 access, for the private amscrot-py that HPC submission needs. Asked
-  # of git, using whatever credentials this host already has: an SSH key via
-  # the url.insteadOf rewrite in docs/development.md, or a stored HTTPS credential.
-  # Nothing is read out of the credential store and nothing is written to .env
-  # -- the answer needed here is only whether the fetch will work.
-  # GCM_INTERACTIVE covers Git Credential Manager, the Windows default, which
-  # would otherwise answer a missing credential with a login window.
-  if [[ -z "$AMSC_GIT_URL" ]]; then
-    failures+=("could not read the amscrot-py URL from \
-mcp_servers/vista_mcp_server/pyproject.toml — has the dependency moved?")
-  elif ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/usr/bin/true GCM_INTERACTIVE=never \
-         git ls-remote "$AMSC_GIT_URL" HEAD >/dev/null 2>&1; then
-    failures+=("no access to the amsc2 repository that provides amscrot-py:
-    $AMSC_GIT_URL
-  The package bundles this dependency so researchers never need amsc2
-  credentials, which means this build host does. Configure git access to
-  gitlab.com/amsc2 (see docs/development.md).")
   fi
 
   # An inference credential, for the citation metadata the vector store
@@ -572,7 +546,6 @@ package has no launcher without it")
     echo "container runtime : ${runtime}"
   fi
   echo "corpus source     : ${PAYLOAD_DIR:-VISTA_DATA_TOKEN (code.ornl.gov)}"
-  echo "amscrot-py        : reachable"
   if [[ "$SCIENCE_PROJECTS" == true ]]; then
     echo "science projects  : included (molten-salt corpus, MSTDB, forge-tune CSV)"
   else
@@ -667,7 +640,7 @@ NODE_BIN="$STAGING/node/bin/node"
 # <source path>|<sync flags>.
 PROJECTS=(
   "backend|"
-  "mcp_servers/vista_mcp_server|--extra hpc"
+  "mcp_servers/vista_mcp_server|"
   "mcp_servers/dev_mcp_server|"
 )
 
