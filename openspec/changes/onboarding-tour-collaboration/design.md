@@ -16,10 +16,18 @@ See proposal.md for why. The tour is a pure step model plus a driver:
   `CopyContext` for variants. A vitest checks that every sub-step has copy.
   `ui/lib/onboarding-examples.ts` holds the files step's examples, which `app/files/page.tsx`
   merges into its list only while `tour.position?.step === "files"`.
+- **Collaboration on main** (after the collaboration simplification, 272afd46). There is no team
+  selector. Every page lists all of a researcher's items together:
+  - `TeamBadge` shows an item's team, and renders nothing unless `useTeams().shown` or for a
+    private item.
+  - `TeamFilter` (with `useTeamFilter`) narrows the Skill Hub to one team. It is page state and
+    renders nothing unless shown with at least two teams.
+  - On `/skills`, a private skill's **Publish…** opens `PublishToTeamModal` to pick its team; a
+    team's skill has **Publish changes**.
+  - Signed in, Settings › Collaboration lists the teams with **Manage teams…** (`TeamsModal`).
 - **Collaboration gates** (after `collaboration-default-on`). `useCollaboration()` gives
-  `enabled`, `shown`, `available`, `default_server`, `signed_in` and `url`. The TeamSwitcher and
-  TeamBadge render nothing unless `useTeams().shown`. The Skill Hub has off, quiet and listed
-  states.
+  `enabled`, `shown`, `available`, `default_server`, `signed_in` and `url`, and `useTeams().shown`
+  requires `status.shown`. The Skill Hub has off, quiet and listed states.
 
 ## Goals / Non-Goals
 
@@ -33,6 +41,8 @@ See proposal.md for why. The tour is a pure step model plus a driver:
 **Non-Goals:**
 - No new tour mechanism. Everything reuses the existing driver, anchors, events, navigation and
   example patterns.
+- The team picker (`PublishToTeamModal`) is not shown. Coachmark 6's copy says the team is picked
+  on the first publish (storyboard v6 decision).
 
 ## Decisions
 
@@ -57,41 +67,45 @@ See proposal.md for why. The tour is a pure step model plus a driver:
 
 | Position | Effect |
 |---|---|
-| `collaboration:teams` | opens the team menu, through a tour flag the switcher reads, and closes it on leaving |
 | `collaboration:share` | `router.push("/skills")` |
 | `collaboration:sign-in` | `openSettings("collaboration")` |
 | leaving the step (any way) | `closeSettings()` |
 
-`first-question:send` already navigates to chat.
+`collaboration:teams` needs nothing opened: the team filter is a plain control on the Skill Hub,
+already on screen. `first-question:send` already navigates to chat.
 
 ### D3: Examples through the real components
 
 `onboarding-examples.ts` gains the following, each with `example: true`:
-- `EXAMPLE_TEAMS`: Private, Public and Example team;
+- `EXAMPLE_TEAMS`: Public and Example team, shaped as `CollaborationTeam`. (Private is not a
+  team; it is an item with no team.)
 - `EXAMPLE_HUB_SKILLS`: `plot-results` (Public) and `batch-job-submit` (Example team), shaped as
   the Skill Hub's remote skills;
-- `EXAMPLE_LOCAL_SKILLS`: `csv-cleanup` (Private) and `run-summary` (Example team, changed
-  here), shaped as the Skills page's rows.
+- `EXAMPLE_LOCAL_SKILLS`: `csv-cleanup` (private, not published) and `run-summary` (Example team,
+  changed here since version 2), shaped as the Skills page's rows.
 
 Each component checks one hook, `useTourExamples()`, which is true while
 `tour.position?.step === "collaboration"`:
-- **TeamSwitcher** renders the example list in place of `useTeams()`, bypassing `shown`.
-  Choosing an item is a no-op, so no `collaboration_team_id` is written.
-- **TeamBadge** renders for any item carrying an example team.
-- **Skill Hub page** renders the example cards in place of its off, quiet or listed content.
+- **TeamFilter** lists `EXAMPLE_TEAMS` in place of `useTeams().teams`, bypassing `shown` and the
+  two-team minimum. Choosing one narrows the example cards; it is page state already, so nothing
+  is written.
+- **TeamBadge** names the example team for any item carrying one, bypassing `shown`.
+- **Skill Hub page** renders the example cards, and the filter, in place of its off, quiet or
+  listed content.
 - **Skills page** merges the example rows into its list, as the files step does. A real skill
-  with the same name wins.
+  with the same name wins. The private example shows **Publish…**, the team one **Publish
+  changes**, whatever `teams.shown` is.
 
 **Safety:**
-- Every handler a collaboration control calls (import, copy to team, publish, switch team)
-  returns early for an `example` item before any fetch. A test asserts that `fetch` is never
-  called.
+- Every handler a collaboration control calls (Import, Publish…, which would open
+  `PublishToTeamModal`, and Publish changes) returns early for an `example` item before any
+  fetch or modal. A test asserts that `fetch` is never called.
 - Examples are never written to a store; they exist only in render.
 
 **Why bypass the gates rather than fake a status:** a fake status would flow into every
-`useCollaboration()` reader, including Publish on real items and Settings, and could make a real
-control look enabled. Scoping the examples to the components the step shows keeps real controls
-on real state.
+`useCollaboration()` and `useTeams()` reader, including Publish on real items, the real
+`PublishToTeamModal` and Settings' Teams line, and could make a real control look enabled.
+Scoping the examples to the components the step shows keeps real controls on real state.
 
 ### D4: Anchors
 
@@ -100,10 +114,10 @@ New `data-tour` keys:
 | Key | Element |
 |---|---|
 | `collaboration:visit` | the Skill Hub rail entry |
-| `collaboration:teams` | the switcher with its menu |
+| `collaboration:teams` | the Skill Hub's team filter |
 | `collaboration:hub-item` | the first example hub card |
 | `collaboration:share` | the example private skill card |
-| `collaboration:sign-in` | a wrapper around Settings' status line and Token field |
+| `collaboration:sign-in` | a wrapper around Settings' status line, Token field and, signed in, the Teams line |
 | `collaboration:off` | the switch |
 
 The sign-in wrapper always renders while on, so a server with no Token field (dev-headers) still
@@ -111,22 +125,25 @@ has an anchor.
 
 ### D5: Copy
 
-All coachmark text is verbatim from `storyboard.html` Part 1. `CopyContext` gains:
-- `collabSignedIn` and `collabUrl`, for the signed-in variant of `sign-in`;
-- `collabDefaultServer`, which adds the VISTA team sentence.
+All coachmark text is verbatim from `storyboard.html` Part 1 (v6). `CopyContext` gains:
+- `collabSignedIn` and `collabUrl`, for the signed-in variant of `sign-in`, which ends "Make a
+  team, or add people to one, with Manage teams…";
+- `collabDefaultServer`, which adds the VISTA team sentence when not signed in.
 
 `welcome:intro` says nine minutes, and `first-question:finish` gains "and learned how sharing
 works".
 
 ## Risks / Trade-offs
 
-- **[A signed-in researcher sees example teams in place of their own for one coachmark]** This
-  could confuse. → The items are marked Example, and the real list returns on leaving the step.
-  It was chosen for one path and no risk of a real publish (grilling, 2026-11-06).
+- **[A signed-in researcher sees example teams in the Skill Hub's filter for the step]** This
+  could confuse. → The filter and cards are marked Example, and the real list returns on leaving
+  the step. It was chosen for one path and no risk of a real publish (grilling, 2026-11-06).
 - **[Gate bypasses drift]** A later component change could drop the bypass. → Tests render each
   component in the step with a quiet status and assert the examples show.
-- **[The team menu opened by the tour stays open]** → It is closed in the same `stepKey` effect
-  on any position change, including exit.
+- **[Collaboration UI keeps moving]** Main's simplification already replaced the team menu this
+  step was first drawn around. → The anchors are `data-tour` keys on the real components, and
+  `TourProvider.test.tsx` checks that each position anchors to its element (task 3.1), so a
+  removed component fails a test rather than falling back to a centred popover unnoticed.
 
 ## Migration Plan
 

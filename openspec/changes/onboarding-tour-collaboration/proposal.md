@@ -15,17 +15,20 @@ from them: the tour has to show it with examples.
   1. *visit*: open Skill Hub. The only action-type coachmark; the rest pass with Next.
   2. *overview*: what the Skill Hub is.
   3. *local*: "Nothing is shared on its own".
-  4. *teams*: Private, a team, or Public, on the team menu.
+  4. *teams*: Private, a team, or Public, on the Skill Hub's team filter and badges.
   5. *hub-item*: a shared skill and Import.
-  6. *share*: on Skills, Copy to team… for something private, and Publish for a team item.
+  6. *share*: on Skills, Publish… for something private (its team is picked the first time,
+     and it stays there), and Publish changes for a team item.
   7. *sign-in*: in Settings › Collaboration, with "No access yet? Reach out to the VISTA team."
-     on the default server.
+     on the default server, or, signed in, where Manage teams… is.
   8. *off*: "Working alone?", pointing at the switch.
 - **Tour-only examples in the real components.**
-  - The team switcher lists Private, Public and "Example team".
+  - The Skill Hub's team filter lists Public and "Example team", and the cards show team
+    badges, for everyone.
   - The Skill Hub shows two example skills, and the Skills page two more.
   - All are marked "Example", for every researcher, signed in or not, and only while the step
-    runs. Their Import, Copy and Publish do nothing, and no example ever reaches the backend.
+    runs. Their Import, Publish… and Publish changes do nothing, and no example ever reaches
+    the backend.
 - **The step is skipped while collaboration is off**, and turning it off at coachmark 8 ends the
   step.
 - **The welcome** says the tour takes about nine minutes. **The finish** adds "and learned how
@@ -33,7 +36,7 @@ from them: the tour has to show it with examples.
 - Installs that already finished the tour are not shown it again; Replay tutorial includes it.
 
 The wording and screens are the approved storyboard's (Part 1), committed beside this proposal
-as `storyboard.html` (version 5, also at
+as `storyboard.html` (version 6, redrawn after main's collaboration simplification, also at
 <https://claude.ai/artifact/RR2FxaXaoPvULbMxY6DNDG>).
 
 ## Capabilities
@@ -66,7 +69,7 @@ wording, and is skipped by its `enabled`. This branch is stacked on that one.
   - `ui/lib/onboarding-copy.ts`
   - `ui/lib/onboarding-examples.ts` (example teams and skills)
   - `ui/components/TourProvider.tsx` (navigation, Settings, anchors)
-  - `TeamSwitcher.tsx` (example list and badge)
+  - `TeamFilter.tsx` and `TeamBadge.tsx` (example teams)
   - `app/skill-hub/page.tsx`
   - `app/skills/page.tsx`
   - `UserSettingsModal.tsx` (anchors)

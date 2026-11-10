@@ -62,15 +62,19 @@ wording:
 2. It SHALL describe the Skill Hub.
 3. In the middle of the window, it SHALL say that projects, skills and knowledge bases stay on
    this computer, reach the server only when published, and arrive only when imported.
-4. It SHALL point at the team menu, opened, and say what Private, a team and Public mean.
+4. It SHALL point at the Skill Hub's team filter and say that everything made starts Private,
+   on this computer only, that once published it is in one team and stays there, what a team
+   and Public mean, and that each item shows its team.
 5. It SHALL point at an example shared skill and its Import.
 6. It SHALL bring the researcher to the Skills page and point at an example private skill's
-   Copy to team…, saying how something private and something already in a team are shared.
+   **Publish…**, saying that something private gets its team on its first publish and stays in
+   it, and that **Publish changes** then sends each new version there.
 7. It SHALL open Settings › Collaboration and point at where to sign in. On VISTA's default
    server it SHALL add "No access yet? Reach out to the VISTA team." An installation already
-   signed in SHALL instead be told which server it is signed in to.
+   signed in SHALL instead be told which server it is signed in to, and that teams are made and
+   joined with **Manage teams…**.
 8. It SHALL point at the Collaboration switch and say that turning it off stops VISTA contacting
-   the server and hides the Skill Hub, team menu and sharing buttons.
+   the server and hides the Skill Hub, team badges and sharing buttons.
 
 Coachmarks 2 to 8 SHALL move on with **Next**. The sign-in field and the switch SHALL stay usable
 while they are explained. The step SHALL NOT require signing in or changing the switch. Leaving
@@ -102,35 +106,40 @@ The finish coachmark SHALL say the researcher "learned how sharing works".
 
 - **GIVEN** an installation signed in to the default server
 - **WHEN** the step reaches Settings › Collaboration
-- **THEN** the coachmark says it is signed in to that server and leaves out the VISTA team
-  sentence
+- **THEN** the coachmark says it is signed in to that server, names Manage teams…, and leaves
+  out the VISTA team sentence
 
 ### Requirement: Collaboration step examples
 
 While the collaboration step is shown, and only then, VISTA SHALL show tour-only examples in the
 real components, each marked "Example", whatever the researcher's collaboration state:
-- in the team menu: Private, Public and "Example team", in place of the real list;
-- in the Skill Hub: `plot-results` (Public) and `batch-job-submit` (Example team), in place of
-  the page's own content;
-- in the Skills page, added to the real list: `csv-cleanup` (Private, with Copy to team…) and
-  `run-summary` (Example team, with Publish changes).
+- in the Skill Hub's team filter: Public and "Example team", in place of the real list, even
+  where the filter is normally hidden;
+- in the Skill Hub: `plot-results` (Public) and `batch-job-submit` (Example team), each with its
+  team badge, in place of the page's own content;
+- in the Skills page, added to the real list: `csv-cleanup` (private, with **Publish…**) and
+  `run-summary` (Example team, with **Publish changes**).
 
-Choosing an example team, or using an example's Import, Copy to team… or Publish, SHALL do
-nothing. No example SHALL be sent to the backend, saved, or visible to the agent. Every example
+Choosing an example team in the filter SHALL only narrow the example cards. Using an example's
+Import, Publish… or Publish changes SHALL do nothing, and Publish… SHALL NOT open the team
+picker. No example SHALL be sent to the backend, saved, or visible to the agent. Every example
 SHALL be gone once the step ends, by completing, skipping or exiting.
 
 #### Scenario: Examples while signed out
 
-- **GIVEN** an installation that is not signed in, whose team menu is normally hidden
-- **WHEN** the step points at the team menu
-- **THEN** the menu shows Private, Public and Example team, each example marked "Example"
+- **GIVEN** an installation that is not signed in, whose team filter and badges are normally
+  hidden
+- **WHEN** the step points at the team filter
+- **THEN** the filter lists All teams, Public and Example team, marked "Example", and the example
+  cards show their team badges
 
 #### Scenario: Examples never reach the server
 
-- **WHEN** a researcher clicks an example's Import, Copy to team… or Publish during the step
-- **THEN** no request is sent to the backend and nothing changes
+- **WHEN** a researcher clicks an example's Import, Publish… or Publish changes during the step
+- **THEN** no request is sent to the backend, no team picker opens, and nothing changes
 
 #### Scenario: Examples are gone afterwards
 
 - **WHEN** the collaboration step ends
-- **THEN** the team menu, Skill Hub and Skills page show only the installation's real state
+- **THEN** the team filter, team badges, Skill Hub and Skills page show only the installation's
+  real state
