@@ -1556,3 +1556,182 @@ describe("UserSettingsModal About", () => {
     expect(within(about).getByRole("alert")).toHaveTextContent("Restarting into an update needs VISTA's window.");
   });
 });
+
+describe("UserSettingsModal: remote directory from the S3M token's project", () => {
+  const ODO_GEN150 = "/gpfs/wolf2/olcf/gen150/proj-shared/vista";
+  const announced = () => document.querySelector(".visually-hidden[role=status]")?.textContent ?? "";
+
+  /** The status view, with these clusters' tokens reporting these projects. */
+  function withProjects(projects: Partial<Record<HpcCluster, string>>): HpcStatusView {
+    const view = statusView();
+    return {
+      ...view,
+      clusters: view.clusters!.map((c) => {
+        const project = projects[c.cluster];
+        if (!project) return c;
+        const checks = { ...c.status.checks, credential: { ...c.status.checks.credential, project } };
+        return { ...c, status: { ...c.status, checks } };
+      }),
+    };
+  }
+
+  /** The recheck a saved token triggers reports these projects. */
+  function recheckReports(projects: Partial<Record<HpcCluster, string>>) {
+    recheckMock.mockImplementationOnce(async () => {
+      useHpcStatusMock.mockReturnValue(withProjects(projects));
+    });
+  }
+
+  const dirSaves = (field: string) =>
+    updateSettingsMock.mock.calls.filter(([update]) => field in (update as object));
+
+  it("saving an Odo token from a subproject fills, saves and announces its folder once", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    recheckReports({ odo: "gen150-vista" });
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await userEvent.click(await screen.findByLabelText(/Odo S3M token/));
+    await userEvent.paste("odo-tok");
+
+    const dir = screen.getByLabelText(/Odo remote directory/);
+    await waitFor(() => expect(dir).toHaveValue(ODO_GEN150));
+    await waitFor(() => expect(announced()).toBe("Odo remote directory saved."));
+    expect(dirSaves("odo_remote_dir")).toEqual([[{ odo_remote_dir: ODO_GEN150 }]]);
+    expect(
+      screen.getByText("Filled from your S3M token's project (gen150 folder inferred from gen150-vista)."),
+    ).toBeInTheDocument();
+  });
+
+  it("saving a Lux token fills Lux's directory on Orion", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    recheckReports({ lux: "stf218" });
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+
+    await userEvent.click(await screen.findByLabelText(/Lux S3M token/));
+    await userEvent.paste("lux-tok");
+
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ lux_remote_dir: "/lustre/orion/stf218/proj-shared/vista" }),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, stf218.")).toBeInTheDocument();
+  });
+
+  it("opening with a token saved before and an empty directory fills it", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ frontier: "chm243" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
+
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({
+        frontier_remote_dir: "/lustre/orion/chm243/proj-shared/vista",
+      }),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, chm243.")).toBeInTheDocument();
+  });
+
+  it("replaces VISTA's folder for another project", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "stf218" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue(
+        "/gpfs/wolf2/olcf/stf218/proj-shared/vista",
+      ),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, stf218.")).toBeInTheDocument();
+  });
+
+  it("never writes a directory the researcher typed, and shows no note", async () => {
+    const typed = "/gpfs/wolf2/olcf/gen150/proj-shared/sam/v2";
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "stf218" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: typed }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(typed);
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Filled from your S3M token's project/)).toBeNull();
+  });
+
+  it("does not overwrite an edit still being typed", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.type(dir, "/x");
+    await userEvent.clear(dir); // empty again, but not yet saved
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalledWith({ odo_remote_dir: ODO_GEN150 });
+  });
+
+  it("does not fill a hidden cluster", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["odo"] }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the note once the filled directory is edited, and keeps the edit", async () => {
+    const note = "Filled from your S3M token's project (gen150 folder inferred from gen150-vista).";
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    expect(screen.getByText(note)).toBeInTheDocument();
+    await userEvent.type(dir, "/sam");
+    expect(screen.queryByText(note)).toBeNull();
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: `${ODO_GEN150}/sam` }),
+    );
+
+    // The same project reported again leaves the edit alone.
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(`${ODO_GEN150}/sam`);
+  });
+
+  it("removing the token leaves the filled directory as it is", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150, odo_s3m_token: "odo-tok" }));
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    useHpcStatusMock.mockReturnValue(statusView());
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(ODO_GEN150);
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["Odo", "Frontier", "Lux"] as const)(
+    "%s's hint says it fills from the token until a project is known",
+    async (title) => {
+      const cluster = title.toLowerCase() as HpcCluster;
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      const { unmount } = render(<UserSettingsModal onClose={() => {}} initialSection={cluster} />);
+      const section = await region(title);
+      expect(section).toHaveTextContent(
+        `Filled from your S3M token once you add one. Required for ${title}.`,
+      );
+      unmount();
+
+      useHpcStatusMock.mockReturnValue(withProjects({ [cluster]: "stf218" }));
+      render(<UserSettingsModal onClose={() => {}} initialSection={cluster} />);
+      const known = await region(title);
+      expect(known).not.toHaveTextContent("Filled from your S3M token once you add one.");
+    },
+  );
+});
