@@ -12,15 +12,18 @@ See proposal.md for why. Current state:
   generic `CollaborationError` branch, so the UI's `collaborationLabel` says "Unreachable".
 - **UI.**
   - `ui/lib/collaboration.ts`: `useCollaboration()` gives `available`/`reason`. `useTeams().shown`
-    is `available && teams.length > 0`, and it gates the TeamSwitcher, TeamBadge and Copy to
-    team…
+    is `available && teams.length > 0`. It gates `TeamBadge`, `TeamFilter`, a private item's
+    **Publish…** (which opens `PublishToTeamModal` to pick its team) and Settings' Teams line
+    with **Manage teams…**. There is no team selector: main's collaboration simplification
+    (272afd46) removed the TeamSwitcher and Copy to team.
   - The Import buttons on the Projects, Skills and Knowledge Bases pages are always drawn and
     disabled with `collab.reason`.
-  - Publish shows for team items. The sharing lines (`lib/project-sharing.ts`,
+  - **Publish changes** shows for team items. The sharing lines (`lib/project-sharing.ts`,
     `lib/skill-sharing.ts`, `lib/kb-sharing.ts`) always show.
   - The Skill Hub entry is always in `NavRail`.
 - **Status traffic.** The UI's status store fetches on first subscriber and when a new one
-  arrives after 30 s. `TeamSwitcher` in `NavRail` subscribes on every app open.
+  arrives after 30 s. The Projects page, which the app opens on, subscribes, as do the Skills,
+  Knowledge Bases, Skill Hub and Hypothesis Lab pages and Settings.
 - **Dev server.** The `--collab` dev-headers server signs an install in with no token.
 - **Live gateway.** Obsidian's gateway answers `/version` and `/me` with
   `401 {"error":"access_denied","message":"Authorization Required"}` and a `Location` header
@@ -85,7 +88,8 @@ leak traffic from any client.
   as well as today's `available && teams.length > 0`.
 - These are hidden whenever `!collab.shown`:
   - the Import buttons and the sharing lines on the Projects, Skills and Knowledge Bases pages,
-    and Publish;
+    and Publish… / Publish changes;
+  - through `useTeams().shown`: team badges, the team filter, and Settings' Teams line;
   - `NavRail`'s Skill Hub entry, but only when `!collab.enabled`.
 - While no status has arrived, `shown` is false. Nothing flashes in and then out for a quiet
   install.
@@ -112,8 +116,9 @@ leak traffic from any client.
 ## Risks / Trade-offs
 
 - **[Every install now contacts Obsidian on app open]**: two GETs with the install-id header. →
-  Visible and stoppable with the switch; the reworded hint no longer claims nothing leaves the
-  computer.
+  Visible and stoppable with the switch, whose off hint says VISTA then doesn't contact a
+  server. Settings' main hint keeps main's wording ("Nothing leaves this computer until you
+  publish it…"), which is about items, as the approved storyboard (v6, frame A) has it.
 - **[A dev stack without `--collab` checks Obsidian]** → The status is non-blocking with 5 s
   timeouts. It is documented in AGENTS.md with the `.env` opt-out.
 - **[Turning off hides items that are in a team]** Their badges and Publish buttons disappear

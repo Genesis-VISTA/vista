@@ -15,7 +15,7 @@ off.
   and a blank `VISTA_BACKEND_COLLABORATION_SERVER_URL` still means none.
 - **A Collaboration switch** in Settings, on by default. An install that never touched it is on.
   - **When off,** VISTA sends nothing to any collaboration server. It hides the Skill Hub entry,
-    the team menu, team badges, Publish, Import, Copy to team… and the sharing lines. Settings
+    team badges, the team filter, Publish… and Publish changes, Import and the sharing lines. Settings
     shows only the switch and its hint.
 - **Quiet until signed in.** With the switch on, nothing about collaboration shows outside
   Settings and the Skill Hub until a token is saved, or the server says this install is signed
@@ -70,7 +70,7 @@ change. The team rules are in the `collaboration-server` access-control work.
   - the collaboration routes, which refuse while off
 - **UI:**
   - `ui/lib/collaboration.ts`
-  - `NavRail`, `TeamSwitcher`
+  - `NavRail`, `TeamBadge`, `TeamFilter`
   - the Projects, Skills and Knowledge Bases pages
   - `skill-hub/page.tsx`
   - `UserSettingsModal.tsx`

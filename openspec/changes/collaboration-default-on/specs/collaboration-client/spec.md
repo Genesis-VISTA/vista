@@ -126,8 +126,9 @@ server.
 
 The interface SHALL offer one shared hook that every collaboration control reads.
 - **Hidden:** while the status is not `shown`, which includes while collaboration is off, it
-  SHALL report every collaboration control hidden: Publish, Import, Copy to team…, the team
-  menu, team badges and the sharing lines on project, skill and knowledge base cards.
+  SHALL report every collaboration control hidden: Publish… and Publish changes, Import, team
+  badges, the team filter, Settings' Teams line, and the sharing lines on project, skill and
+  knowledge base cards.
 - **Disabled:** once shown, it SHALL report them available only when the server is reachable
   and has signed this installation in. Otherwise it SHALL give the reason to show, including
   while the status is being checked or could not be fetched.
@@ -167,9 +168,9 @@ Saving the address SHALL re-check.
 Settings › Collaboration SHALL begin with a switch labelled "Collaboration", saved as the
 installation's `collaboration_enabled`. An installation that has never set it SHALL be on.
 - **When off,** the section SHALL show only the switch, the hint "Publish projects, skills and
-  knowledge bases to a collaboration server, and import what others have published. Your
-  projects, skills and knowledge bases stay on this computer until you publish them.", and
-  "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team menu and sharing
+  knowledge bases to a team on a collaboration server, and import what others have published.
+  Nothing leaves this computer until you publish it, choosing its team the first time.", and
+  "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing
   buttons are hidden."
 - **When on,** it SHALL also show the address field, the status in words with Check again, and
   the Token field when a sign-in is wanted.

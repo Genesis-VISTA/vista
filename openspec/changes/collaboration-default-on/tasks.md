@@ -16,7 +16,7 @@
 ## 2. UI: hook, gating, Skill Hub
 
 - [ ] 2.1 Add `enabled`/`shown` to `CollaborationStatus` and `useCollaboration()`, and require `status.shown` in `useTeams().shown` (`ui/lib/collaboration.ts`). Update `ui/e2e-hermetic/fixtures.ts`'s status. Verify in the existing `ui/tests` collaboration hook tests: hidden while checking, hidden when quiet, shown and disabled with a reason after a token expires.
-- [ ] 2.2 Hide the Import buttons, Publish, Copy to team… and sharing lines while `!shown` on `app/projects/page.tsx`, `app/skills/page.tsx` and `app/knowledge-bases/explorer.tsx`. Hide the Skill Hub entry in `NavRail` while `!enabled`. Verify with page tests that a quiet status renders none of them and a shown one renders today's controls (spec scenarios "A fresh install", "Shown and then expired").
+- [ ] 2.2 Hide the Import buttons, Publish… / Publish changes and sharing lines while `!shown` on `app/projects/page.tsx`, `app/skills/page.tsx` and `app/knowledge-bases/explorer.tsx`. Hide the Skill Hub entry in `NavRail` while `!enabled`. Verify with page tests that a quiet status renders none of them and a shown one renders today's controls (spec scenarios "A fresh install", "Shown and then expired").
 - [ ] 2.3 Give `app/skill-hub/page.tsx` its off and quiet states, with Open Settings → `openSettings("collaboration")` and the default-server sentence (storyboard frame E). Verify with a Skill Hub page test for off, quiet on the default server, quiet on another server, and listed.
 
 ## 3. UI: Settings › Collaboration
