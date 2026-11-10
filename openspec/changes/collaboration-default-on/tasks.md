@@ -1,14 +1,14 @@
 ## 1. Backend: default, switch, status
 
-- [ ] 1.1 Default `Settings.collaboration_server_url` to `https://obsidian.ccs.ornl.gov/vista/api` with a `DEFAULT_COLLABORATION_SERVER_URL` constant, and patch it to `None` session-wide in `backend/tests/conftest.py` (design.md D1). Verify in `backend/tests/test_collaboration.py`: a fresh `Settings()` has the default, a blank env value still gives `None`, and the existing Settings tests pass.
-- [ ] 1.2 Add nullable `collaboration_enabled` to `LocalSettings` in `db/schemas.py`, exposed as a bool with `None` reading as on and writable through the settings update (D2). Verify that `db/schema_check.py` accepts it against a copy of a pre-change `vista.db` (existing schema-check tests), and that a settings API test round-trips off/on.
-- [ ] 1.3 In `services/collaboration.py`:
+- [x] 1.1 Default `Settings.collaboration_server_url` to `https://obsidian.ccs.ornl.gov/vista/api` with a `DEFAULT_COLLABORATION_SERVER_URL` constant, and patch it to `None` session-wide in `backend/tests/conftest.py` (design.md D1). Verify in `backend/tests/test_collaboration.py`: a fresh `Settings()` has the default, a blank env value still gives `None`, and the existing Settings tests pass.
+- [x] 1.2 Add nullable `collaboration_enabled` to `LocalSettings` in `db/schemas.py`, exposed as a bool with `None` reading as on and writable through the settings update (D2). Verify that `db/schema_check.py` accepts it against a copy of a pre-change `vista.db` (existing schema-check tests), and that a settings API test round-trips off/on.
+- [x] 1.3 In `services/collaboration.py`:
   - make `status()` return early when off;
   - add `enabled`, `shown`, `refused` and `default_server` to `CollaborationStatus`;
   - make `client_for`/`required_url` raise the off reason (D3).
 
   Verify in `backend/tests/test_collaboration.py` with an `httpx.MockTransport` that fails on any request: off makes no request, and a publish or import route while off is refused with the off reason. Also verify `shown` for no token + 401 (false), token + 401 (true), and dev-headers + no token (true).
-- [ ] 1.4 Rewrite the 401 and 403 reasons (D5), with the default-server ending. Verify in `backend/tests/test_collaboration.py`, using the live gateway's 401 body and a 403:
+- [x] 1.4 Rewrite the 401 and 403 reasons (D5), with the default-server ending. Verify in `backend/tests/test_collaboration.py`, using the live gateway's 401 body and a 403:
   - the reason strings match the spec exactly;
   - "Unauthorized" never appears;
   - `refused` is set on a 403.

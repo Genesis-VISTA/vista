@@ -237,6 +237,14 @@ AMSC_MAG_BASE_URL = "https://mag.genesis.americansciencecloud.org/v1"
 RETIRED_I2_HOST = "api.i2-core.american-science-cloud.org"
 """ The AmSC i2-core API, deactivated on 2026-10-31. A configured URL on it is ignored. """
 
+DEFAULT_COLLABORATION_SERVER_URL = "https://obsidian.ccs.ornl.gov/vista/api"
+"""
+VISTA's default collaboration server, on the Holly testbed behind Obsidian's
+gateway (`collaboration_server/deploy/holly/`). Normalised already, as
+`utils.types.HttpUrl` would store it, so it compares equal to the address in
+effect (`services/collaboration.status`'s `default_server`).
+"""
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -337,14 +345,17 @@ class Settings(BaseSettings):
         """The configured i2-core URL that was replaced by the default, if any."""
         return self._ignored_openai_base_url
 
-    collaboration_server_url: OptionalHttpUrl = None
+    collaboration_server_url: OptionalHttpUrl = DEFAULT_COLLABORATION_SERVER_URL
     """
     The collaboration server to use when the researcher has set none in
-    Settings, which takes precedence. For development: `./launch.sh --collab`
-    sets it to the local server it starts. With neither, publishing and
-    importing are off, with the reason shown. Validated like the Settings
-    field, so a malformed address stops the backend at startup, naming it;
-    a blank one (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset.
+    Settings, which takes precedence: VISTA's default server unless the
+    installation names another. For development: `./launch.sh --collab` sets
+    it to the local server it starts. Validated like the Settings field, so a
+    malformed address stops the backend at startup, naming it; a blank one
+    (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset, and with
+    none in Settings either, publishing and importing are off, with the reason
+    shown. A dev stack opts out of contacting the default server that way, or
+    with the Collaboration switch in Settings.
     """
 
     mcp_url: str = Field(
