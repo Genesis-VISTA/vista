@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { refreshProjects, useActiveProject } from "@/lib/projects";
 import { setSkillLoaded } from "@/lib/loaded-skills";
 import { usableInProject, useCollaboration } from "@/lib/collaboration";
+import { openSettings } from "@/lib/settings-modal";
 import {
   importAction,
   importRemoteSkill,
@@ -161,18 +162,42 @@ export default function SkillHubPage() {
     return list;
   }, [skills, search, activeTag, sort, inTeam]);
 
+  // Off, or on but quiet (never signed in here): the page says so, with the
+  // way to Settings, instead of a disabled list with the raw reason.
+  const off = collab.status !== null && !collab.enabled;
+  const quiet = collab.status !== null && collab.enabled && collab.status.configured && !collab.shown;
+  const openCollaborationSettings = (
+    <button type="button" className="button" onClick={() => openSettings("collaboration")}>
+      Open Settings
+    </button>
+  );
+
   return (
     <div className="app-page">
       <AppTopBar title="Skill Hub" />
       <div className="app-page-body hub-page">
       <p className="page-lede">
         Skills published to the collaboration server
-        {collab.status?.url ? ` at ${collab.status.url}` : ""}. Importing one is
-        your decision to trust it: review what it does, and the HPC jobs it
-        ships, before loading it.
+        {collab.status?.url ? ` at ${collab.status.url}` : ""}.
+        {!off && !quiet &&
+          " Importing one is your decision to trust it: review what it does, and the HPC jobs it ships, before loading it."}
       </p>
 
-      {!collab.available ? (
+      {off ? (
+        <div className="hub-unavailable" role="status">
+          <p>{collab.status?.reason ?? "Collaboration is off. Turn it on under Settings → Collaboration."}</p>
+          {openCollaborationSettings}
+        </div>
+      ) : quiet ? (
+        <div className="hub-unavailable" role="status">
+          <p>
+            <strong>Sign in to see what others share.</strong> Your own work stays on this computer until you
+            publish it.
+          </p>
+          {collab.default_server && <p>No access yet? Reach out to the VISTA team.</p>}
+          {openCollaborationSettings}
+        </div>
+      ) : !collab.available ? (
         <div className="hub-unavailable" role="status">
           {collab.reason}
         </div>

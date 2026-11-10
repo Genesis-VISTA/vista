@@ -356,7 +356,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
     );
   }
 
-  const importButton = (
+  // Hidden, like every collaboration control, while collaboration is quiet or off.
+  const importButton = collab.shown && (
     <button
       type="button"
       className="button ghost button-sm"
@@ -1066,9 +1067,7 @@ function KbDetailView({
                 </span>
                 <span>Created: {formatDate(kb.created_at)}</span>
                 <span>Last built: {formatDate(kb.last_built_at)}</span>
-                <span>
-                  {kbSharingLabel(kb, serverUrl, head)}
-                </span>
+                {collab.shown && <span>{kbSharingLabel(kb, serverUrl, head)}</span>}
               </div>
               {kb.shared_with_mcp && (
                 <div
@@ -1111,7 +1110,7 @@ function KbDetailView({
                 </button>
                 {/* A private one is first published into a team picked for it;
                     one in a team publishes its new versions there. */}
-                {(inTeam || teams.shown) && (
+                {collab.shown && (inTeam || teams.shown) && (
                 <button
                   type="button"
                   className="button ghost button-sm"

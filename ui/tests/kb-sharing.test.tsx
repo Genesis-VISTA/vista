@@ -45,8 +45,12 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    enabled: true,
     signed_in: true,
     sign_in_required: false,
+    refused: false,
+    shown: true,
+    default_server: false,
     sign_in_url: null,
     user: null,
     teams: [],
@@ -202,6 +206,25 @@ function sent(key: string): Record<string, unknown>[] {
 }
 
 describe("the knowledge bases page", () => {
+  it("shows no collaboration control while quiet (a fresh install)", async () => {
+    routes["GET /api/collaboration/status"] = () => json(status({
+  reachable: false,
+  signed_in: false,
+  sign_in_required: true,
+  shown: false,
+  default_server: true,
+  reason: "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+    }));
+    rows = [kb({ origin_server: SERVER, remote_id: ITEM, remote_version: 1, modified: true })];
+    render(<KnowledgeBasesPage />);
+    expect(await screen.findByRole("button", { name: "Delete KB" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/collaboration/status", expect.anything()));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: "Import" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Publish/ })).toBeNull();
+    expect(screen.queryByText(/Not published|Published as version|changed here/)).toBeNull();
+  });
+
   it("keeps Publish and Import off without a server, with the reason", async () => {
     routes["GET /api/collaboration/status"] = () =>
       json(status({ configured: false, reachable: false, url: null, reason: "No collaboration server is set." }));

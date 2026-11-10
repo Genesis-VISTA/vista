@@ -105,6 +105,7 @@ function collaborationView(
     status === null
       ? null
       : {
+          enabled: true,
           configured: false,
           reachable: false,
           reason: NOT_SET,
@@ -113,6 +114,9 @@ function collaborationView(
           server_version: null,
           signed_in: Boolean(status.reachable),
           sign_in_required: false,
+          refused: false,
+          shown: Boolean(status.reachable),
+          default_server: false,
           // As the backend does: none for a server that signed in without a token.
           sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
           user: null,
@@ -123,6 +127,9 @@ function collaborationView(
   return {
     status: full,
     checking: false,
+    enabled: full?.enabled ?? true,
+    shown: full?.shown ?? false,
+    default_server: full?.default_server ?? false,
     available,
     reason: available ? null : (full?.reason ?? "Checking the collaboration server…"),
     error,

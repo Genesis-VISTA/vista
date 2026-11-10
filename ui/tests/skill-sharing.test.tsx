@@ -32,6 +32,8 @@ vi.mock("@/lib/projects", () => ({
   refreshProjects: vi.fn(async () => []),
 }));
 vi.mock("@/lib/loaded-skills", () => ({ setSkillLoaded: vi.fn() }));
+const { openSettingsMock } = vi.hoisted(() => ({ openSettingsMock: vi.fn() }));
+vi.mock("@/lib/settings-modal", () => ({ openSettings: openSettingsMock }));
 vi.mock("@/components/AppTopBar", () => ({
   AppTopBar: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
@@ -49,8 +51,12 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    enabled: true,
     signed_in: true,
     sign_in_required: false,
+    refused: false,
+    shown: true,
+    default_server: false,
     sign_in_url: null,
     user: null,
     teams: [],
@@ -218,6 +224,54 @@ describe("publishSkill", () => {
 });
 
 describe("the Skill Hub", () => {
+  const SIGN_IN =
+    "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.";
+  const quiet = (overrides: Partial<CollaborationStatus> = {}) =>
+    status({
+      url: "https://obsidian.ccs.ornl.gov/vista/api",
+      source: "config",
+      reachable: false,
+      signed_in: false,
+      sign_in_required: true,
+      shown: false,
+      default_server: true,
+      reason: SIGN_IN,
+      ...overrides,
+    });
+  const listed = () => fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/collaboration/skills"));
+
+  it("says collaboration is off, with Open Settings", async () => {
+    const reason = "Collaboration is off. Turn it on under Settings → Collaboration.";
+    routes["GET /api/collaboration/status"] = () =>
+      json(status({ enabled: false, reachable: false, signed_in: false, shown: false, reason }));
+    render(<SkillHubPage />);
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("collaboration");
+    expect(listed()).toBe(false);
+  });
+
+  it("asks a quiet install on the default server to sign in", async () => {
+    routes["GET /api/collaboration/status"] = () => json(quiet());
+    render(<SkillHubPage />);
+    expect(await screen.findByText("Sign in to see what others share.")).toBeInTheDocument();
+    expect(screen.getByText(/Your own work stays on this computer until you publish it\./)).toBeInTheDocument();
+    expect(screen.getByText("No access yet? Reach out to the VISTA team.")).toBeInTheDocument();
+    expect(screen.getByText(/at https:\/\/obsidian\.ccs\.ornl\.gov\/vista\/api\./)).toBeInTheDocument();
+    expect(screen.queryByText(SIGN_IN)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("collaboration");
+    expect(listed()).toBe(false);
+  });
+
+  it("leaves out the VISTA team on another server", async () => {
+    routes["GET /api/collaboration/status"] = () =>
+      json(quiet({ url: "https://collab.example.org", default_server: false }));
+    render(<SkillHubPage />);
+    expect(await screen.findByText("Sign in to see what others share.")).toBeInTheDocument();
+    expect(screen.queryByText("No access yet? Reach out to the VISTA team.")).toBeNull();
+  });
+
   it("lists nothing without a server, and says why", async () => {
     const reason = "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.";
     routes["GET /api/collaboration/status"] = () =>
@@ -283,6 +337,28 @@ describe("the Skill Hub", () => {
 });
 
 describe("the Skills page", () => {
+  it("shows no collaboration control while quiet (a fresh install)", async () => {
+    routes["GET /api/collaboration/status"] = () => json(status({
+  reachable: false,
+  signed_in: false,
+  sign_in_required: true,
+  shown: false,
+  default_server: true,
+  reason: "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+    }));
+    const mine = local({ originServer: SERVER, remoteId: remote().id, remoteVersion: 1, modified: true });
+    routes["GET /api/skills"] = () => json([mine]);
+    routes["GET /api/collaboration/skills?manifests=false"] = () =>
+      json([remote({ id: remote().id, head_version: 2, manifest: null })]);
+    render(<SkillsPage />);
+    expect(await screen.findByRole("button", { name: "Load" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/collaboration/status", expect.anything()));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: /^Publish/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Update to version/ })).toBeNull();
+    expect(document.querySelector(".skill-sharing")).toBeNull();
+  });
+
   it("offers the three choices when the server's head has moved on", async () => {
     const mine = local({ originServer: SERVER, remoteId: remote().id, remoteVersion: 1, modified: true });
     project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: ["salt-density"] };

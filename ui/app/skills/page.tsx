@@ -208,11 +208,13 @@ export default function SkillsPage() {
     const busy = busySlug === skill.slug;
     const onServer = isOnServer(skill, serverUrl);
     const head = skill.remoteId ? heads[skill.remoteId] : undefined;
-    const behind = onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
+    // Every collaboration control is hidden while collaboration is quiet or off.
+    const behind =
+      collab.shown && onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
     // A private one (or one of a team left since) is first published into a
     // team picked for it; one in a team publishes its new versions there.
     const team = teams.teamOf(skill.teamId);
-    const canPublish = team ? !onServer || skill.modified : teams.shown;
+    const canPublish = collab.shown && (team ? !onServer || skill.modified : teams.shown);
     // A team's project loads only skills of exactly its own team; a private one, any.
     const usable = usableInProject(skill.teamId, activeProject?.teamId);
     return (
@@ -238,10 +240,10 @@ export default function SkillsPage() {
         </div>
         <div className="skill-desc">{skill.description || "No description"}</div>
         <div className="skill-meta">
-          <span className="skill-sharing">{sharingLabel(skill, serverUrl, head)}</span>
+          {collab.shown && <span className="skill-sharing">{sharingLabel(skill, serverUrl, head)}</span>}
           {skill.repoUrl && (
             <>
-              <span className="skill-meta-sep">·</span>
+              {collab.shown && <span className="skill-meta-sep">·</span>}
               <a
                 href={skill.repoUrl}
                 target="_blank"

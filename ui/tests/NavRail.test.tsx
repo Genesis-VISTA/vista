@@ -18,6 +18,9 @@ vi.mock("@/lib/settings", () => ({
 vi.mock("@/components/HpcStatusSection", () => ({ HpcStatusSection: () => null }));
 vi.mock("@/components/UserSettingsModal", () => ({ UserSettingsModal: () => null }));
 
+const { useCollaborationMock } = vi.hoisted(() => ({ useCollaborationMock: vi.fn() }));
+vi.mock("@/lib/collaboration", () => ({ useCollaboration: useCollaborationMock }));
+
 const { useVersionMock } = vi.hoisted(() => ({ useVersionMock: vi.fn() }));
 vi.mock("@/lib/version", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/version")>()),
@@ -53,6 +56,7 @@ beforeEach(() => {
   window.localStorage.setItem(KEY, "true");
   setTouring(false);
   useVersionMock.mockReturnValue(versionInfo());
+  useCollaborationMock.mockReturnValue({ enabled: true, shown: false });
 });
 
 afterEach(() => {
@@ -99,5 +103,21 @@ describe("NavRail's update marker", () => {
     useVersionMock.mockReturnValue(versionInfo({ checks: "off", latest: "0.2.5" }));
     render(<NavRail />);
     expect(screen.queryByTestId("settings-update-marker")).toBeNull();
+  });
+});
+
+describe("NavRail and collaboration", () => {
+  it("keeps the Skill Hub while collaboration is on, even quiet", () => {
+    window.localStorage.setItem(KEY, "false");
+    render(<NavRail />);
+    expect(screen.getByRole("link", { name: /Skill Hub/ })).toBeInTheDocument();
+  });
+
+  it("drops the Skill Hub while collaboration is off", () => {
+    window.localStorage.setItem(KEY, "false");
+    useCollaborationMock.mockReturnValue({ enabled: false, shown: false });
+    render(<NavRail />);
+    expect(screen.queryByRole("link", { name: /Skill Hub/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /Projects/ })).toBeInTheDocument();
   });
 });

@@ -42,8 +42,12 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    enabled: true,
     signed_in: true,
     sign_in_required: false,
+    refused: false,
+    shown: true,
+    default_server: false,
     sign_in_url: null,
     user: null,
     teams: [],
@@ -243,6 +247,41 @@ describe("publishProject", () => {
 });
 
 describe("the projects page", () => {
+  it("shows no collaboration control while quiet (a fresh install)", async () => {
+    routes["GET /api/collaboration/status"] = () => json(status({
+  reachable: false,
+  signed_in: false,
+  sign_in_required: true,
+  shown: false,
+  default_server: true,
+  reason: "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+    }));
+    await renderWith([
+      row("quiet-salt", { origin_server: SERVER, remote_id: ITEM, remote_version: 1, modified: true }),
+    ]);
+    expect(await screen.findByText("quiet-salt")).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/collaboration/status", expect.anything()));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: "Import from the collaboration server" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Publish/ })).toBeNull();
+    expect(screen.queryByText(/Published|Not published|version/)).toBeNull();
+  });
+
+  it("stays shown, disabled with the reason, once a saved token has expired", async () => {
+    const reason =
+      "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.";
+    routes["GET /api/collaboration/status"] = () =>
+      json(status({ signed_in: false, sign_in_required: true, shown: true, reason }));
+    await renderWith([
+      row("kept-salt", { origin_server: SERVER, remote_id: ITEM, remote_version: 1, modified: true }),
+    ]);
+    const publish = await screen.findByRole("button", { name: "Publish changes" });
+    await waitFor(() => expect(publish).toHaveAttribute("title", reason));
+    expect(publish).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Import from the collaboration server" })).toBeDisabled();
+    expect(document.querySelector(".project-card-sharing")).not.toBeNull();
+  });
+
   it("keeps Publish and Import off without a server, with the reason", async () => {
     const reason = "The collaboration server at http://127.0.0.1:8002 is not answering.";
     routes["GET /api/collaboration/status"] = () => json(status({ reachable: false, reason }));
