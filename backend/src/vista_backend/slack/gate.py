@@ -1,13 +1,15 @@
 """
-Side effects in a Slack turn wait for the requester's Confirm.
+A job submission in a Slack turn waits for the requester's Confirm.
 
 `SlackGateCapability` sits on every `ProjectAgent`, and does nothing unless the
 run in progress came from Slack. Then a tool that is not declared read-only
-(MCP's `readOnlyHint`, or the same annotation on a native tool) is first
-checked against the lock and limits — a refusal is returned to the model as
-the tool's result, with no confirmation offered — and then deferred with
-`ApprovalRequired`. The agent's existing approval path emits
+(MCP's `readOnlyHint`, or the same annotation on a native tool) is checked
+against the lock and limits: a refusal is returned to the model as the tool's
+result, with no confirmation offered. A job submission (`CONFIRMED`) is then
+deferred with `ApprovalRequired`; the agent's existing approval path emits
 `mcp_tool_approval`, which the Slack relay shows as a Confirm/Cancel card.
+Every other tool runs once it passes the check, so shell commands and file
+writes don't stop a Slack turn at each step.
 """
 
 import logging
@@ -24,6 +26,9 @@ log = logging.getLogger(__name__)
 
 READ_ONLY = {"annotations": {"readOnlyHint": True}}
 """ `metadata=` for a native tool that only reads, so Slack runs it unconfirmed. """
+
+CONFIRMED: frozenset[str] = frozenset({"submit_hpc_job"})
+""" Tools a Slack turn asks to confirm, by name without the MCP server's prefix. """
 
 Refusal = Callable[[str, dict[str, Any]], Awaitable[str | None]]
 """ (tool name, args) → why the call may not go ahead, or None. """
@@ -84,6 +89,8 @@ class SlackGateCapability(AbstractCapability):
                 detail={"args": args, "reason": why},
             )
             return f"Not done: {why}"
+        if tool_def.name.split("__")[-1] not in CONFIRMED:
+            return await handler(args)
         raise ApprovalRequired()
 
 
@@ -94,7 +101,6 @@ This conversation is happening in Slack, probably on a phone.
 - Never ask for passwords, MFA codes, tokens or any other credential, and never \
 accept one if offered. Logins to clusters happen only in the VISTA desktop app; if \
 an action needs one, say it must be done from the desktop.
-- Anything that changes something (submitting or cancelling a job, writing files, \
-running commands) is shown to the researcher for confirmation before it runs. If \
-they decline, don't try again unless they ask.
+- Submitting an HPC job is shown to the researcher for confirmation before it \
+runs. If they decline, don't submit again unless they ask.
 """

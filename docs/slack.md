@@ -81,10 +81,9 @@ hosted Slack bot would route by (see [the relay design note](slack-relay.md)).
 
 ### Confirmations
 
-Reading runs straight away: answering questions, job status, outputs, logs, queue status. Any
-action that changes something (submitting or cancelling a job, writing files, anything a tool
-does not declare read-only) is posted as a card with **Confirm** and **Cancel** first. For a job
-submission the card shows what would actually be submitted (cluster, job, nodes, walltime,
+A job submission is posted as a card with **Confirm** and **Cancel** first; everything else
+runs straight away, reads and other actions alike (cancelling a job, writing files, shell
+commands), once the lock and the limits allow it. The card shows what would actually be submitted (cluster, job, nodes, walltime,
 account), worked out by VISTA rather than described by the model.
 
 - Only the person who asked can confirm; anyone else's tap is refused.

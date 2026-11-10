@@ -1,4 +1,4 @@
-"""In a Slack turn, side effects wait for Confirm; reads and other channels don't."""
+"""In a Slack turn, a job submission waits for Confirm; other tools and channels don't."""
 
 import uuid
 
@@ -42,6 +42,12 @@ def _agent():
         """Cancel a job."""
         ran.append("cancel_job")
         return "cancelled"
+
+    @toolset.tool_plain(name="vista__submit_hpc_job")
+    async def submit() -> str:
+        """Submit a job."""
+        ran.append("submit")
+        return "job_id: 4471"
 
     @toolset.tool_plain(metadata=READ_ONLY)
     async def ask() -> str:
@@ -91,21 +97,31 @@ async def test_a_read_only_tool_runs_unconfirmed_in_slack():
     assert ran == ["job_status"] and not _approvals(events)
 
 
-async def test_a_side_effect_waits_for_confirm_in_slack():
-    agent, toolset, ran = _agent()
-
-    events = await _turn(agent, toolset, "cancel_job", channel="slack", answer="accept")
-
-    (approval,) = _approvals(events)
-    assert approval.tool_name == "cancel_job"
-    assert ran == ["cancel_job"]
-
-
-async def test_a_declined_side_effect_does_not_run():
+async def test_a_submission_waits_for_confirm_in_slack():
     agent, toolset, ran = _agent()
 
     events = await _turn(
-        agent, toolset, "cancel_job", channel="slack", answer="decline"
+        agent, toolset, "vista__submit_hpc_job", channel="slack", answer="accept"
+    )
+
+    (approval,) = _approvals(events)
+    assert approval.tool_name == "vista__submit_hpc_job"
+    assert ran == ["submit"]
+
+
+async def test_other_side_effects_run_unconfirmed_in_slack():
+    agent, toolset, ran = _agent()
+
+    events = await _turn(agent, toolset, "cancel_job", channel="slack")
+
+    assert ran == ["cancel_job"] and not _approvals(events)
+
+
+async def test_a_declined_submission_does_not_run():
+    agent, toolset, ran = _agent()
+
+    events = await _turn(
+        agent, toolset, "vista__submit_hpc_job", channel="slack", answer="decline"
     )
 
     assert ran == []
@@ -120,7 +136,7 @@ async def test_the_app_channel_is_unchanged():
     assert ran == ["cancel_job"] and not _approvals(events)
 
 
-async def test_a_refusal_is_returned_without_asking(monkeypatch):
+async def test_a_refusal_stops_any_side_effect_without_asking(monkeypatch):
     agent, toolset, ran = _agent()
 
     async def refuse(tool, args):
