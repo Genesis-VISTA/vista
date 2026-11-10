@@ -96,20 +96,36 @@ async def link_after_publish(
     """
     Link the project's hosted forum to its item, so the item's team is the
     forum's. Run after a publish, which stands whatever this answers; returns why
-    it could not, or None. A forum already linked (an earlier publish, or the
-    publisher's, for an imported project), or not this account's to link, is not
-    a failure.
+    it could not, or None. A forum already linked to this item (an earlier
+    publish, or the publisher's, for an imported project) is not a failure. One
+    linked to another item, or gone, is: a project published as a new item
+    (into another team, after leaving its own) keeps a forum that only the
+    first item's team can read, and the researcher, out of it, sees as gone.
     """
     forum_id = hosted_forum_id(forum_url_of(project), local)
     if forum_id is None:
         return None
     try:
         async with client_for(local) as client:
-            await client.link_forum(forum_id, item_id)
-    except CollaborationRefused as e:
-        if e.status_code in (403, 404, 409):
-            return None
-        return f"The project is published, but its forum was not linked to it: {e}"
+            try:
+                await client.link_forum(forum_id, item_id)
+            except CollaborationRefused as e:
+                if e.status_code not in (403, 404, 409):
+                    raise
+                # Linked already, or not ours to link: to this item, or another?
+                try:
+                    linked = await client.item_forum(item_id)
+                except CollaborationRefused as missing:
+                    if missing.status_code != 404:
+                        raise
+                    linked = None
+                if linked is not None and linked.id == forum_id:
+                    return None
+                return (
+                    "The project is published, but its Hypothesis Lab forum "
+                    "stays with the item it was first published as (or is "
+                    "gone), so this item's team cannot read or post to it."
+                )
     except CollaborationError as e:
         return f"The project is published, but its forum was not linked to it: {e}"
     return None

@@ -44,8 +44,8 @@ from ..db.schemas import (
 )
 from ..services import knowledge_base as kb_service
 from ..services import knowledge_base_collaboration as kb_collaboration
-from ..services import team_copy
-from .skills import TeamCopyRequest
+from ..services import team_publish
+from .skills import TeamPublishRequest
 from ..utils import indexer
 from ..utils.misc import write_file_unique
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -852,15 +852,19 @@ async def publish_knowledge_base(
     )
 
 
-@router.post("/{slug}/copy")
-async def copy_knowledge_base(
-    slug: str, body: TeamCopyRequest, session: SessionDep, local: LocalSettingsDep
-) -> team_copy.TeamCopyResult:
+@router.post("/{slug}/publish-to-team")
+async def publish_knowledge_base_to_team(
+    slug: str, body: TeamPublishRequest, session: SessionDep, local: LocalSettingsDep
+) -> team_publish.TeamPublishResult:
     """
-    Copy the knowledge base to a team on the collaboration server (`team_copy`).
-    Used by a project here, the copy is imported beside it under a free slug.
+    Publish a private knowledge base into a team on the collaboration server,
+    its first publish (`team_publish`). 400 for one in a team already. Used by
+    a project here, it stays private and the team's knowledge base is imported
+    beside it under a free slug.
     """
-    return await team_copy.copy_knowledge_base(session, local, slug, body.team_id)
+    return await team_publish.publish_knowledge_base_to_team(
+        session, local, slug, body.team_id
+    )
 
 
 # ---------------------------------------------------------------------------

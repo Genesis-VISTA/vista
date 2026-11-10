@@ -218,15 +218,17 @@ def in_public_team(monkeypatch):
     """
     For tests of publishing and importing, where the team is beside the point:
     every project, skill and knowledge base inserted with no team is put in the
-    public team on the server set in Settings then, as if the researcher had
-    selected it. Without it they are private, and not published.
+    public team on the server set in Settings then, as if it had been published
+    there first. Without it they are private, and published only into a team
+    picked for them (`team_publish`).
     """
     from sqlalchemy import event, text
 
     from vista_backend.config import settings
     from vista_backend.db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
-    from vista_backend.services import local_settings
+    from vista_backend.services import project as project_service
     from vista_backend.services.collaboration import PUBLIC_TEAM_ID
+    from vista_backend.services.teams import current_url
 
     def public(mapper, connection, target) -> None:
         if target.team_id is not None:
@@ -240,10 +242,14 @@ def in_public_team(monkeypatch):
         target.team_id = PUBLIC_TEAM_ID
         target.team_server = url
 
-    async def selected(session, row=None):
-        return PUBLIC_TEAM_ID
+    async def public_for_new(session, project=None):
+        # A new project's references are checked against its team before it
+        # is inserted, so it is public from the start.
+        return PUBLIC_TEAM_ID, await current_url(
+            session
+        ) or settings.collaboration_server_url
 
-    monkeypatch.setattr(local_settings, "selected_team", selected)
+    monkeypatch.setattr(project_service, "team_for_new", public_for_new)
     tables = (ProjectTable, SkillTable, KnowledgeBaseTable)
     for table in tables:
         event.listen(table, "before_insert", public)

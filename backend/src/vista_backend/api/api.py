@@ -32,6 +32,7 @@ from ..services.collaboration import (
 )
 from ..services.local_settings import LocalSettingsDep
 from ..services.project_agent import project_agent_pool
+from ..services.teams import NotInTeam
 from ..services.update_check import update_checker
 from ..services.update_download import clean_cache, update_downloader
 from .agent import router as agent_router
@@ -207,6 +208,14 @@ async def _collaboration_error(
     else:
         status, code = 502, "collaboration_error"
     return JSONResponse(status_code=status, content={"detail": str(exc), "code": code})
+
+
+@app.exception_handler(NotInTeam)
+async def _not_in_team(request: Request, exc: NotInTeam) -> JSONResponse:
+    """A publish to a team the researcher is not, or no longer, in: 400 with `code`."""
+    return JSONResponse(
+        status_code=400, content={"detail": exc.detail, "code": "not_in_team"}
+    )
 
 
 @app.exception_handler(SharingConflict)

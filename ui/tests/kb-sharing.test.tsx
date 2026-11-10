@@ -50,7 +50,6 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     sign_in_url: null,
     user: null,
     teams: [],
-    team_id: null,
     ...overrides,
   };
 }
@@ -74,7 +73,7 @@ function kb(overrides: Partial<KnowledgeBase> = {}): KnowledgeBase {
     remote_id: null,
     remote_version: null,
     modified: true,
-    // In the public team: a private one is copied to a team, not published.
+    // In the public team: a private one is first published into a team picked for it.
     team_id: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };

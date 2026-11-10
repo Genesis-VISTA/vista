@@ -80,7 +80,14 @@ from .skill_collaboration import (
     reread,
 )
 from .skills import get_skill, get_skill_optional
-from .teams import check_references, require_team, set_team, team_of
+from .teams import (
+    check_references,
+    remembers_teams,
+    require_still_in,
+    require_team,
+    set_team,
+    team_of,
+)
 
 
 PROJECT_KIND = "project"
@@ -484,13 +491,14 @@ def _stale(
 
 def _gone(name: str, url: str) -> ProjectConflict:
     return ProjectConflict(
-        f"{name} is no longer on the collaboration server at {url}, or is in a "
-        "team you are no longer in; publish it "
+        # A team left since is refused before this (`require_still_in`).
+        f"{name} is no longer on the collaboration server at {url}: publish it "
         "as a new project.",
         "remote_missing",
     )
 
 
+@remembers_teams
 async def publish_project(
     session: AsyncSession,
     local: LocalSettingsPublic,
@@ -526,6 +534,7 @@ async def publish_project(
     )
 
     async with client_for(local) as client:
+        await require_still_in(client, team_id, name)
         parent: int | None = None
         # The version this one is built on, if this VISTA reads it.
         base: ProjectManifest | None = None

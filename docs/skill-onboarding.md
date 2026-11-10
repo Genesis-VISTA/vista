@@ -227,21 +227,24 @@ development, `./launch.sh logs --collab` starts a local server.)
 
 **Teams.** Everything on the server belongs to a team, and only its members see
 it. Everyone is in the **public** team; anyone can create a team and add people
-who have signed in to the server. Here, a skill is either **Private** (on this
-computer only, as everything VISTA bundles or seeds starts out) or in a team.
-The team switcher shows one at a time: Private, or a team. A new skill joins the
-selected one (or, made for a project, the project's), and a project loads only
-skills of its own team. **Copy to team** puts a private skill in a team, or a
-team's skill in another, leaving the original where it is; one a project here
-still uses is copied beside it under a new name.
+who have signed in to the server (**Settings → Collaboration → Manage
+teams…**). Here, a skill is either **Private** (on this computer only, as every
+new skill, and everything VISTA bundles or seeds, starts out) or in one team.
+Every page lists all your skills together, each with its team. A skill made for
+a project joins the project's team. A team's project loads only skills of its
+own team; a private project, which only you see, loads any.
 
 **Publishing.** On `/skills`, a skill's card says where it stands — *Not
 published*, *Version 3*, *Changed here since version 3*, *Version 4 available* —
-and **Publish** (or **Publish changes**) sends its folder, as an archive, with a
-manifest read from its SKILL.md, as its team's next version; a private skill is
-copied to a team instead. Everyone in its team (for the public team, everyone)
-can see and import it; there is no unpublish, but you can publish newer
-versions. A skill bundled with VISTA is copied to a team like any other.
+and **Publish** sends its folder, as an archive, with a manifest read from its
+SKILL.md. The first time, for a private skill, **Publish…** asks which team to
+publish it to (the public team or one of yours): that is when it leaves this
+computer, and it stays in that team. After that, **Publish changes** sends its
+team's next version, with no choice to make. Everyone in its team (for the
+public team, everyone) can see and import it; there is no unpublish, but you can
+publish newer versions. Your private projects go on using a skill once it is in
+a team. A skill VISTA bundles stays as it is when published: the team's copy is
+imported beside it under a new name.
 
 The server numbers versions 1, 2, 3… and accepts a publish only on top of its
 newest one. If someone published since your copy's version, the publish is
@@ -265,7 +268,8 @@ unloaded. A new import is named after the skill on the server; a copy that was
 changed here but is at the newest version offers **Revert to version N**.
 
 The routes are `POST /skills/{name}/publish` (`{on_top_of?, as_new?}`),
-`GET /collaboration/skills` and `POST /collaboration/skills/{id}/import`
+`POST /skills/{name}/publish-to-team` (`{team_id}`, a private skill's first
+publish), `GET /collaboration/skills` and `POST /collaboration/skills/{id}/import`
 (`{version?, rename_to?, replace_modified?, project?}`); a refusal that needs
 your choice is a 409 with a `code` (`version_conflict`, `remote_missing`,
 `modified`, `name_taken`).

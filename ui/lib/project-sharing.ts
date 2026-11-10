@@ -70,6 +70,8 @@ export type ProjectPublished = {
   skillsPublished: string[];
   /** The same for its knowledge bases, by slug. */
   knowledgeBasesPublished: string[];
+  /** Why its hosted forum was not linked to it; the publish stands. */
+  forumError: string | null;
 };
 
 /** What an import did about one skill the project loads (backend `SkillOutcome`). */
@@ -129,6 +131,7 @@ export async function publishProject(
     project: ProjectPublic;
     skills_published: string[];
     knowledge_bases_published?: string[];
+    forum_error?: string | null;
   };
   return {
     ok: true,
@@ -136,6 +139,7 @@ export async function publishProject(
     project: fromPublic(body.project),
     skillsPublished: body.skills_published ?? [],
     knowledgeBasesPublished: body.knowledge_bases_published ?? [],
+    forumError: body.forum_error ?? null,
   };
 }
 

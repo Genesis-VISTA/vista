@@ -87,7 +87,7 @@ Everyone is in the **public** team (id `00000000-0000-4000-8000-000000000000` on
 which has no member rows and starts empty; it holds anything published for everyone, and anyone
 signed in can publish a new version of an item in it. The server holds no seeds: VISTA's seeded
 projects and knowledge bases, and its bundled skills, are private on each installation until
-copied to a team.
+published to a team.
 
 - Anyone signed in can create a team and is its first member. Names are unique in any case.
 - Any member can add anyone who has signed in to the server (`GET /users` finds them by name
@@ -106,9 +106,10 @@ others, may follow.
 
 `POST /items/{id}/copy` (`{team_id, name?}`) makes a new item in another of the caller's teams
 whose version 1 is the original's newest version, with the same manifest and blob, so nothing
-is uploaded again; `copied_from` names the original, which stays as it is. A VISTA backend runs
-it, recursively for a project, when a researcher copies something to a team. Items are copied
-between teams, never moved.
+is uploaded again; `copied_from` names the original, which stays as it is. Items are copied
+between teams, never moved. VISTA does not use it: in VISTA an item stays in the team it was
+first published to, and a private project, skill or knowledge base is published into a team as
+a new item.
 
 The server chooses every item's id; a client cannot.
 

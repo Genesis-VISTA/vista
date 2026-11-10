@@ -16,7 +16,6 @@ import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
 import { updateAvailable, useVersion } from "@/lib/version";
 import { UserSettingsModal } from "./UserSettingsModal";
-import { TeamSwitcher } from "./TeamSwitcher";
 import { useTour } from "./TourProvider";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -363,10 +362,6 @@ export function NavRail() {
           </svg>
         </button>
       </div>
-
-      {/* Above New project because a new project joins the team chosen here.
-          It draws nothing without a collaboration server that signed in. */}
-      <TeamSwitcher collapsed={collapsed} tipProps={tipProps} />
 
       <Link
         href="/projects?new=1"

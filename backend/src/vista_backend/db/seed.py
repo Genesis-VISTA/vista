@@ -332,7 +332,7 @@ MOLTEN_SALT_KB_ID = uuid.UUID("8b1d4f15-d2e9-4f2a-a5c1-7c4f2e9e8d3b")
 def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTable:
     """
     A seeded knowledge base's row: private, like everything seeded, until it
-    is copied to a team. Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
+    is published to a team. Seeded into `kb_dir`'s `pdfs/` and `rag_db/`, so a `CURRENT` there (from
     an import, kept by a deletion that could not remove its store, or by a
     database deleted without its data) must not name another store instead,
     as the MCP server prefers the one it names.
