@@ -290,7 +290,7 @@ test.describe("HPC availability cards", () => {
   });
 
   test("Lux is Ready like Frontier, and its settings are its token, folder and the Orion Globus connection", async ({ page }) => {
-    const stub = await installStub(page);
+    const stub = await installStub(page, { "PUT /api/settings": SETTINGS });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: "Lux: Ready" }).click();
@@ -311,7 +311,10 @@ test.describe("HPC availability cards", () => {
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
     await expect(lux.getByLabel("Lux S3M token")).toBeVisible();
-    await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
+    // Its empty folder is filled from the token's project, and saved.
+    await expect(lux.getByLabel("Lux remote directory")).toHaveValue("/lustre/orion/lmn456/proj-shared/vista");
+    await expect(lux).toContainText("Filled from your S3M token's project, lmn456.");
+    await expect(settings.getByRole("status")).toHaveText("Lux remote directory saved.");
     await expect(lux.getByLabel("Lux account")).toHaveCount(0);
     await expect(lux).toContainText("share the Orion filesystem");
     expect(await stub.unstubbed()).toEqual([]);
@@ -404,7 +407,10 @@ test.describe("HPC availability cards", () => {
   });
 
   test("pasting a token saves it and rechecks only that cluster", async ({ page }) => {
-    const stub = await installStub(page, { "PUT /api/settings": SETTINGS });
+    // A typed folder, so the only save is the token's: an empty one would be
+    // filled from the token's project, a save of its own.
+    const typed = { ...SETTINGS, odo_remote_dir: "/gpfs/wolf2/olcf/xyz789/proj-shared/sam" };
+    const stub = await installStub(page, { "GET /api/settings": typed, "PUT /api/settings": typed });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: /^Odo:/ }).click();
