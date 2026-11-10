@@ -28,5 +28,6 @@
 ## 3. Checks
 
 - [x] 3.1 Run `./scripts/ci-local.sh ui lint` and `./scripts/ci-local.sh ui test`, and confirm both pass. (These run `next build` into `ui/.next`, so stop any `./launch.sh` stack in this checkout first.)
-- [ ] 3.2 Manual, not in PR CI, needs a real S3M token: in a dev stack, paste an Odo token from a dashed subproject and check that the directory and its note match the storyboard (Part 4, frame H). Then check that a Frontier job submits with the filled directory. Record the result here.
+- [x] 3.2 Manual, not in PR CI, needs a real S3M token: in a dev stack, paste an Odo token from a dashed subproject and check that the directory and its note match the storyboard (Part 4, frame H). Then check that a Frontier job submits with the filled directory. Record the result here.
+  - Result (2026-11-10, dev stack on this branch): an Odo token from `gen150-vista` filled `/gpfs/wolf2/olcf/gen150/proj-shared/vista` with the note "Filled from your S3M token's project (gen150 folder inferred from gen150-vista).", as in frame H, and refilled after the directory was cleared and the section reopened. An Odo job submitted and ran with the filled directory. The Frontier job was skipped: Frontier was down that day.
 - [x] 3.3 Run `openspec validate settings-remote-dir-autofill` and confirm it passes.
