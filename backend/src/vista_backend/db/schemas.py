@@ -115,10 +115,10 @@ class TeamSharing(SQLModel):
     team_id: uuid.UUID | None = None
     """
     The collaboration team it is in, on the server in effect, and publishes
-    to: the team selected when it was made (`collaboration_team_id`), its
-    project's when made for one, its item's when imported, or the one it was
-    copied to (`team_copy`). None is private: on this computer only, as
-    everything made with Private selected, or seeded or bundled by VISTA, is.
+    to: its project's when made for one, its item's when imported, or the one
+    it was first published to (`team_publish`). None is private: on this
+    computer only, as everything else made here, or seeded or bundled by
+    VISTA, is.
     Only resources of the same team are used together (`services/teams.py`).
     """
     team_server: str | None = None
@@ -363,7 +363,7 @@ class KnowledgeBaseCreate(SQLModel):
     project: str | None = None
     """
     The project it is made for, whose team it joins (so the project can use
-    it); without one, it joins the team selected here.
+    it); without one, it is private.
     """
 
 
@@ -594,8 +594,6 @@ class LocalSettingsUpdate(SQLModel):
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
     collaboration_server_url: OptionalHttpUrl = None
     """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
-    collaboration_team_id: uuid.UUID | None = None
-    """ The collaboration team selected here; None for Private. """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -700,7 +698,6 @@ class LocalSettingsPublic(SQLModel):
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
     collaboration_server_url: str | None = None
-    collaboration_team_id: uuid.UUID | None = None
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -804,10 +801,10 @@ class LocalSettingsTable(SQLModel, table=True):
     """
     collaboration_team_id: uuid.UUID | None = None
     """
-    The collaboration team selected here, which every page shows the
-    resources of and every new project, skill and knowledge base joins; None
-    for Private, on this computer only. A team on that server, so cleared
-    when the server's address changes.
+    Unused: the collaboration team once selected here, before the team
+    selector went. Kept so the schema stays additive (AGENTS.md); nothing reads
+    or writes it, and it is in neither `LocalSettingsUpdate` nor
+    `LocalSettingsPublic`.
     """
     email: str | None = None
     """ Where campaign notifications go; nothing is sent without it. """

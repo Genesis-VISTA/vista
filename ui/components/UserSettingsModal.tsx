@@ -34,11 +34,14 @@ import {
 import { useTheme, type ThemeChoice } from "@/lib/theme";
 import {
   refreshCollaborationStatus,
+  teamLabel,
   useCollaboration,
+  useTeams,
   type CollaborationView,
 } from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
 import { CopyableLine } from "./CopyableLine";
+import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
 
@@ -383,7 +386,8 @@ export function UserSettingsModal({
   closeRef.current = close;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeRef.current();
+      // Not one a dialog opened over Settings (Teams) handled for itself.
+      if (e.key === "Escape" && !e.defaultPrevented) closeRef.current();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1706,6 +1710,7 @@ function collaborationLabel(view: CollaborationView): string {
  * Where to publish to and import from: the server's address, and whether it
  * answers. The status line is the same answer every Publish and Import control
  * reads (`useCollaboration`), so the reason a control is off is visible here.
+ * Once signed in, the researcher's teams are made and managed here too.
  */
 function CollaborationSection({
   bind,
@@ -1723,12 +1728,15 @@ function CollaborationSection({
   const binding = bind("collaboration_server_url", "on-blur");
   const fromConfig = status?.source === "config" && !binding.inputProps.value;
   const dot = checking ? "checking" : available ? "ready" : "not_connected";
+  const teams = useTeams();
+  const [managingTeams, setManagingTeams] = useState(false);
   return (
     <section className="settings-section" aria-label="Collaboration">
       <SectionHeader title="Collaboration">
         <span className="user-settings-hint">
-          Publish projects, skills and knowledge bases to a collaboration server, and import what
-          others have published. Nothing leaves this computer until you publish it.
+          Publish projects, skills and knowledge bases to a team on a collaboration server, and
+          import what others have published. Nothing leaves this computer until you publish it,
+          choosing its team the first time.
         </span>
       </SectionHeader>
       <div className="settings-section-body">
@@ -1789,7 +1797,24 @@ function CollaborationSection({
             }
           />
         )}
+        {teams.shown && (
+          <div className="settings-collab-status">
+            <span>
+              Teams:{" "}
+              {teams.teams.map((t) => teamLabel(t)).join(", ")}. Publishing something for the
+              first time puts it in one of them, where it stays.
+            </span>
+            <button
+              type="button"
+              className="button ghost button-xs"
+              onClick={() => setManagingTeams(true)}
+            >
+              Manage teams…
+            </button>
+          </div>
+        )}
       </div>
+      {managingTeams && <TeamsModal onClose={() => setManagingTeams(false)} />}
     </section>
   );
 }

@@ -47,7 +47,6 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     sign_in_url: null,
     user: null,
     teams: [],
-    team_id: null,
     ...overrides,
   };
 }
@@ -67,7 +66,7 @@ function row(name: string, overrides: Partial<ProjectPublic> = {}): ProjectPubli
     remote_id: null,
     remote_version: null,
     modified: true,
-    // In the public team: a private one is copied to a team, not published.
+    // In the public team: a private one is first published into a team picked for it.
     team_id: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };
@@ -223,7 +222,7 @@ describe("importSummary", () => {
 
 describe("publishedFirst", () => {
   it("names the skills and knowledge bases published before the project", () => {
-    const base = { ok: true as const, status: "published" as const, project: project() };
+    const base = { ok: true as const, status: "published" as const, project: project(), forumError: null };
     expect(publishedFirst({ ...base, skillsPublished: [], knowledgeBasesPublished: [] })).toBe("");
     expect(
       publishedFirst({ ...base, skillsPublished: ["a", "b"], knowledgeBasesPublished: ["salt-papers"] }),

@@ -54,7 +54,6 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     sign_in_url: null,
     user: null,
     teams: [],
-    team_id: null,
     ...overrides,
   };
 }
@@ -94,7 +93,7 @@ function local(overrides: Partial<SkillSummary> = {}): SkillSummary {
     remoteId: null,
     remoteVersion: null,
     modified: true,
-    // In the public team: a private one is copied to a team, not published.
+    // In the public team: a private one is first published into a team picked for it.
     teamId: "00000000-0000-4000-8000-000000000000",
     ...overrides,
   };
@@ -144,7 +143,7 @@ describe("sharingLabel", () => {
     expect(sharingLabel(published, SERVER)).toBe("Version 2");
     expect(sharingLabel({ ...published, modified: true }, SERVER)).toBe("Changed here since version 2");
     expect(sharingLabel(published, SERVER, 3)).toBe("Version 3 available (this is version 2)");
-    // Bundled, and copied to a team: its team's copy, at a version like any other.
+    // Bundled, and published to a team: its team's copy, at a version like any other.
     expect(sharingLabel({ ...published, bundled: true }, SERVER)).toBe("Version 2");
     expect(sharingLabel(published, "http://other:8002")).toBe(
       "Published on another collaboration server",
@@ -198,6 +197,23 @@ describe("publishSkill", () => {
     expect(result).toMatchObject({ ok: false, code: "collaboration_sign_in_required" });
     // Every Publish and Import control follows, not only this one.
     await waitFor(() => expect(view.current).toMatchObject({ available: false, reason }));
+  });
+
+  it("asks for the teams again when the skill's team was left", async () => {
+    let asked = 0;
+    routes["GET /api/collaboration/status"] = () => {
+      asked += 1;
+      return json(status());
+    };
+    const { result: view } = renderHook(() => useCollaboration());
+    await waitFor(() => expect(view.current.available).toBe(true));
+    const before = asked;
+    routes["POST /api/skills/salt-density/publish"] = () =>
+      json({ detail: "salt-density is in a team you are no longer in.", code: "not_in_team" }, 400);
+    const result = await publishSkill("salt-density");
+    expect(result).toMatchObject({ ok: false, code: "not_in_team" });
+    // So its card offers Publish… into one of their teams.
+    await waitFor(() => expect(asked).toBeGreaterThan(before));
   });
 });
 

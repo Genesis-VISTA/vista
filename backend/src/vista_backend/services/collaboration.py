@@ -13,9 +13,9 @@ Everything on the server belongs to a team, and a researcher sees only their
 teams' items: the public team, which everyone is in, and any they create or
 are added to. Here, a project, skill or knowledge base is either private (on
 this computer only, `team_id` None) or in a team on the server in effect.
-The team selected here (`collaboration_team_id`, None for Private) is where a
-new one goes; each publishes to its own team, and reaches another by being
-copied (`team_copy`).
+A new one is private, unless it is made for a team's project; a private one
+joins the team it is first published to (`team_publish`), and publishes its
+new versions there.
 
 Requests carry the researcher's token, pasted into Settings from the server's
 `/sign-in` page, as `Authorization: Bearer` (only over https, or to this
@@ -150,11 +150,6 @@ class CollaborationStatus(BaseModel):
     """ Who the server takes this installation to be, when signed in. """
     teams: list["RemoteTeam"] = []
     """ The teams the researcher is in, the public team first, when signed in. """
-    team_id: uuid.UUID | None = None
-    """
-    The team selected here (`collaboration_team_id`), when it is one of
-    `teams`; None for Private, or a team they are no longer in.
-    """
 
 
 class ServerInfo(BaseModel):
@@ -441,18 +436,6 @@ class CollaborationClient:
             "blob_ref": blob_ref,
         }
         return await self._call(RemoteItem, "POST", "/items", json=body)
-
-    async def copy_item(
-        self, item_id: uuid.UUID, team_id: uuid.UUID, *, name: str | None = None
-    ) -> RemoteItem:
-        """
-        A new item in `team_id` whose version 1 is `item_id`'s newest, sharing
-        its blob: nothing is uploaded. The original is left as it is.
-        """
-        body: dict[str, Any] = {"team_id": str(team_id)}
-        if name is not None:
-            body["name"] = name
-        return await self._call(RemoteItem, "POST", f"/items/{item_id}/copy", json=body)
 
     async def create_forum(self) -> RemoteForum:
         """A new, empty forum owned by this account."""
@@ -761,8 +744,6 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
     status.signed_in = True
     status.user = RemoteUser(sub=me.sub, email=me.email, name=me.name)
     status.teams = me.teams
-    if any(t.id == local.collaboration_team_id for t in me.teams):
-        status.team_id = local.collaboration_team_id
     if not local.collaboration_token:
         # A dev-headers server, which takes no token and has no page.
         status.sign_in_url = None

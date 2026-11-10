@@ -17,7 +17,6 @@ vi.mock("@/lib/settings", () => ({
 }));
 vi.mock("@/components/HpcStatusSection", () => ({ HpcStatusSection: () => null }));
 vi.mock("@/components/UserSettingsModal", () => ({ UserSettingsModal: () => null }));
-vi.mock("@/components/TeamSwitcher", () => ({ TeamSwitcher: () => null }));
 
 const { useVersionMock } = vi.hoisted(() => ({ useVersionMock: vi.fn() }));
 vi.mock("@/lib/version", async (importOriginal) => ({

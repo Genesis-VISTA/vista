@@ -7,10 +7,10 @@ import { AppTopBar } from "@/components/AppTopBar";
 import { useTourEvent } from "@/components/TourProvider";
 import { KnowledgeBaseImportModal } from "@/components/KnowledgeBaseImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
-import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishToTeamModal } from "@/components/PublishToTeamModal";
 import { PublishConflictModal } from "@/components/PublishConflictModal";
 import { publishAudience, useCollaboration, useTeams } from "@/lib/collaboration";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { TeamBadge } from "@/components/TeamBadge";
 import {
   formatSize,
   importRemoteKnowledgeBase,
@@ -144,7 +144,6 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
   const [topError, setTopError] = useState("");
   const [showImport, setShowImport] = useState(false);
   const collab = useCollaboration();
-  const teams = useTeams();
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
   const reportTour = useTourEvent();
@@ -231,12 +230,12 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
    * project's canonical KB list from the backend DB.
    */
   const projectScopedList = useMemo(() => {
-    // The global view lists only the selected team's (Private's when none); the
-    // project's view lists what it searches, whichever team is selected.
-    if (!scopedToProject) return list.filter((kb) => teams.show(kb.team_id));
+    // The global view lists every one here, each with its team; the
+    // project's view lists what it searches.
+    if (!scopedToProject) return list;
     const allowed = new Set<string>(activeProject?.knowledgeBases ?? []);
     return list.filter((kb) => allowed.has(kb.slug));
-  }, [list, scopedToProject, activeProject, teams]);
+  }, [list, scopedToProject, activeProject]);
 
   const filteredList = useMemo(() => {
     const term = filter.trim().toLowerCase();
@@ -332,10 +331,11 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
   }
 
   /**
-   * Copied to a team: it joined the team, or a copy was imported beside it
-   * under a new slug, so the list (and any project using it) is asked again.
+   * First published into a team: it joined the team, or the team's was
+   * imported beside it under a new slug, so the list (and any project using
+   * it) is asked again.
    */
-  function handleCopied() {
+  function handlePublishedToTeam() {
     void loadList();
     refreshHeads();
     void refreshProjects();
@@ -491,7 +491,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
                     kb={selected}
                     head={selected.remote_id ? heads[selected.remote_id] : undefined}
                     onShared={handleShared}
-                    onCopied={handleCopied}
+                    onPublishedToTeam={handlePublishedToTeam}
                     onUpdated={handleUpdated}
                     onDeleted={() => void handleDeleted(selected.slug)}
                     onError={flashError}
@@ -624,7 +624,7 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
               kb={selected}
               head={selected.remote_id ? heads[selected.remote_id] : undefined}
               onShared={handleShared}
-              onCopied={handleCopied}
+              onPublishedToTeam={handlePublishedToTeam}
               onUpdated={handleUpdated}
               onDeleted={() => void handleDeleted(selected.slug)}
               onError={flashError}
@@ -703,7 +703,7 @@ function KbDetailView({
   kb,
   head,
   onShared,
-  onCopied,
+  onPublishedToTeam,
   onUpdated,
   onDeleted,
   onError,
@@ -714,8 +714,8 @@ function KbDetailView({
   head?: number;
   /** It was published or imported: the list and the server's heads follow. */
   onShared: (kb: KnowledgeBase) => void;
-  /** It was copied to a team. */
-  onCopied: () => void;
+  /** A private one was published, or tried to be, into a team for the first time. */
+  onPublishedToTeam: () => void;
   onUpdated: (kb: KnowledgeBase) => void;
   onDeleted: () => void;
   onError: (msg: string) => void;
@@ -839,8 +839,10 @@ function KbDetailView({
   const onServer = isKnowledgeBaseOnServer(kb, serverUrl);
   const [publishing, setPublishing] = useState(false);
   const [confirmPublish, setConfirmPublish] = useState(false);
-  const [copying, setCopying] = useState(false);
-  const canCopy = teams.shown && copyTargets(teams.teams, kb.team_id).length > 0;
+  /** Choosing the team a private one is first published to. */
+  const [publishingToTeam, setPublishingToTeam] = useState(false);
+  // A private one (or one of a team left since) goes to a team picked for it.
+  const inTeam = teams.teamOf(kb.team_id) !== null;
   const [conflict, setConflict] = useState<SharingRefusal | null>(null);
   const publishOff = !collab.available
     ? collab.reason
@@ -1107,44 +1109,34 @@ function KbDetailView({
                 >
                   Delete KB
                 </button>
-                {canCopy && (
-                  <button
-                    type="button"
-                    className="button ghost button-sm"
-                    disabled={publishing || indexingInProgress}
-                    title={
-                      indexingInProgress
-                        ? "Copy once indexing has finished."
-                        : "Copy its PDFs and index to a team"
-                    }
-                    onClick={() => setCopying(true)}
-                  >
-                    Copy to team…
-                  </button>
-                )}
-                {/* A private one is shared by copying it to a team; one in a
-                    team publishes new versions to it. */}
-                {kb.team_id && (
+                {/* A private one is first published into a team picked for it;
+                    one in a team publishes its new versions there. */}
+                {(inTeam || teams.shown) && (
                 <button
                   type="button"
                   className="button ghost button-sm"
                   disabled={publishing || publishOff !== null}
                   title={
                     publishOff ??
-                    "Publish its PDFs and index to its team"
+                    (inTeam
+                      ? "Publish its PDFs and index to its team"
+                      : "Choose a team to publish its PDFs and index to")
                   }
                   onClick={() => {
-                    if (onServer) void publish();
+                    if (!inTeam) setPublishingToTeam(true);
+                    else if (onServer) void publish();
                     else setConfirmPublish(true);
                   }}
                 >
                   {publishing
                     ? "Publishing…"
-                    : !onServer
-                      ? "Publish"
-                      : kb.modified
-                        ? "Publish changes"
-                        : "Republish"}
+                    : !inTeam
+                      ? "Publish…"
+                      : !onServer
+                        ? "Publish"
+                        : kb.modified
+                          ? "Publish changes"
+                          : "Republish"}
                 </button>
                 )}
               </div>
@@ -1152,14 +1144,13 @@ function KbDetailView({
           )}
         </div>
 
-        {copying && (
-          <CopyToTeamModal
+        {publishingToTeam && (
+          <PublishToTeamModal
             kind="knowledge-base"
             name={kb.slug}
             label={kb.name}
-            teamId={kb.team_id}
-            onClose={() => setCopying(false)}
-            onCopied={onCopied}
+            onClose={() => setPublishingToTeam(false)}
+            onChanged={onPublishedToTeam}
           />
         )}
         <PublishConfirmModal

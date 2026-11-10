@@ -37,7 +37,6 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     sign_in_url: null,
     user: null,
     teams: [],
-    team_id: null,
     ...overrides,
   };
 }

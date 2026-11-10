@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { activateProject, useActiveProject, useProjects, type Project } from "@/lib/projects";
-import { useTeams } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamBadge";
 
 /**
  * The project crumb in the shared header, as a switcher.
@@ -13,15 +13,13 @@ import { useTeams } from "@/lib/collaboration";
  * made a project feel like a mode you enter and leave. Switching here does not
  * navigate: you changed which project, not what you were doing.
  *
- * It lists only the selected collaboration team's projects (Private's: those
- * on this computer only), as the projects page does; the active project is named whichever team it is in.
+ * It lists every project here, each with its collaboration team, as the
+ * projects page does.
  */
 export function ProjectSwitcher() {
   const router = useRouter();
   const activeProject = useActiveProject();
-  const { projects: allProjects, loading } = useProjects();
-  const teams = useTeams();
-  const projects = allProjects.filter((p) => teams.show(p.teamId));
+  const { projects, loading } = useProjects();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
@@ -75,11 +73,7 @@ export function ProjectSwitcher() {
         <div className="project-switcher-menu" role="listbox" aria-label="Projects">
           {projects.length === 0 && (
             <div className="project-switcher-empty">
-              {loading
-                ? "Loading projects…"
-                : allProjects.length > 0
-                  ? "No projects in this team yet."
-                  : "No projects yet."}
+              {loading ? "Loading projects…" : "No projects yet."}
             </div>
           )}
           {projects.map((project) => {
@@ -95,7 +89,10 @@ export function ProjectSwitcher() {
                 onClick={() => choose(project)}
               >
                 <span className="project-switcher-dot" aria-hidden="true" />
-                <span className="project-switcher-option-name">{project.name}</span>
+                <span className="project-switcher-option-name">
+                  {project.name}
+                  <TeamBadge teamId={project.teamId} />
+                </span>
               </button>
             );
           })}

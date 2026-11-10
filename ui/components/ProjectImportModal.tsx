@@ -1,8 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { emptyTeamNote, useCollaboration, useTeams } from "@/lib/collaboration";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { useCollaboration } from "@/lib/collaboration";
+import { TeamBadge } from "@/components/TeamBadge";
+import { TeamFilter, useTeamFilter } from "@/components/TeamFilter";
 import { projectNameError } from "@/lib/projects";
 import {
   importRemoteProject,
@@ -32,7 +33,7 @@ export function ProjectImportModal({
   onImported: (result: ProjectImported) => void;
 }) {
   const collab = useCollaboration();
-  const teams = useTeams();
+  const teamFilter = useTeamFilter();
   const [projects, setProjects] = useState<RemoteProject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -99,8 +100,8 @@ export function ProjectImportModal({
     else void runImport(project);
   }
 
-  // Only the selected team's: Private has nothing on the server.
-  const shownProjects = projects.filter((project) => teams.show(project.team_id));
+  // Every team's, each with its team, unless narrowed to one.
+  const shownProjects = projects.filter((project) => teamFilter.matches(project.team_id));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -134,10 +135,11 @@ export function ProjectImportModal({
                   {error}
                 </div>
               )}
+              <TeamFilter value={teamFilter.value} onChange={teamFilter.setValue} className="input" />
               {loading && shownProjects.length === 0 && <div className="hub-count">Loading…</div>}
               {!loading && shownProjects.length === 0 && !error && (
                 <div className="hub-empty">
-                  {projects.length > 0 ? emptyTeamNote(teams, "projects") : "No projects have been published yet. Publish one from its card on this page."}
+                  {projects.length > 0 ? "None of them is in that team." : "No projects have been published yet. Publish one from its card on this page."}
                 </div>
               )}
               {shownProjects.map((project) => {

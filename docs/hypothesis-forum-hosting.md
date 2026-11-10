@@ -48,14 +48,15 @@ the reason on the page.
   be reached or refuses, the project is still created, with no forum, and the
   page says why.
 - **Private first.** The forum is yours alone until you publish the project.
-  Publishing it links the forum to the project's item, and from then on the
-  forum belongs to that item's team: every member can read and post to it. A new
-  version of the project keeps the same forum.
+  Its first publish, into the team you choose, links the forum to the project's
+  item, and from then on the forum belongs to that team: every member can read
+  and post to it. A new version of the project keeps the same forum.
 - **Joining.** A teammate who imports the project uses the same forum, and its
   Hypothesis Lab lists the same threads. Nothing else is set up.
-- **A copy to another team starts empty.** Copying a project to another team
-  gives the copy a new forum with no threads. The new team cannot read the
-  original's.
+- **A copy to another team starts empty.** VISTA keeps a project in the team
+  it was first published to, but the server can copy an item into another team
+  (`POST /items/{id}/copy`): the copy gets a new forum with no threads, and the
+  new team cannot read the original's.
 - **Deleting a project.** Deleting a project whose forum was never published
   deletes the forum from the server. Deleting your copy of a published project
   leaves the forum there for the team.
