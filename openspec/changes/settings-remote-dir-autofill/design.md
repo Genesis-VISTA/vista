@@ -68,7 +68,10 @@ is harmless.
 
 The fill is skipped while the field has an unsaved edit (an autosave entry pending for it), or
 while the field has focus. A project arriving mid-typing therefore never overwrites the typing.
-The next status change or modal open tries again.
+The next status change, the modal opening, or the field losing focus tries again. The last
+covers a project that arrives while the researcher is in the empty field without typing (a
+Tab from the token field, then on through it): the fill lands as they leave it, never under
+the cursor.
 
 ### D4: Copy
 

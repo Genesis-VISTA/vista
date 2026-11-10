@@ -1670,6 +1670,40 @@ describe("UserSettingsModal: remote directory from the S3M token's project", () 
     expect(updateSettingsMock).not.toHaveBeenCalledWith({ odo_remote_dir: ODO_GEN150 });
   });
 
+  it("waits while the cursor is in the empty field, and fills as it leaves", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.click(dir);
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    await waitFor(() => expect(dir).toHaveValue(ODO_GEN150));
+    expect(dirSaves("odo_remote_dir")).toEqual([[{ odo_remote_dir: ODO_GEN150 }]]);
+  });
+
+  it("leaving a field with a typed path keeps it", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.clear(dir);
+    await userEvent.type(dir, "/gpfs/wolf2/olcf/gen150/proj-shared/sam");
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: "/gpfs/wolf2/olcf/gen150/proj-shared/sam" }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("/gpfs/wolf2/olcf/gen150/proj-shared/sam");
+    expect(dirSaves("odo_remote_dir")).toHaveLength(1);
+  });
+
   it("does not fill a hidden cluster", async () => {
     useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
     fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["odo"] }));

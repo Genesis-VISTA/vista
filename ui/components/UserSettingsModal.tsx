@@ -343,13 +343,16 @@ export function UserSettingsModal({
   /**
    * Fill a cluster's remote directory from its S3M token's project, saved like
    * a typed change. Never while the field holds an unsaved edit or has focus:
-   * a project arriving mid-typing must not overwrite the typing.
+   * a project arriving mid-typing must not overwrite the typing. A field left
+   * without typing is tried again as it loses focus (`blurred`), when focus is
+   * already on its way out.
    */
   const fillRemoteDir: FillRemoteDir = useCallback(
-    (cluster, field, project) => {
+    (cluster, field, project, blurred = false) => {
       const d = draftRef.current;
       if (!d || !project || d.hidden.has(cluster)) return;
-      if (autosavePending(field) || document.activeElement?.id === fieldId(field)) return;
+      if (autosavePending(field)) return;
+      if (!blurred && document.activeElement?.id === fieldId(field)) return;
       const next = remoteDirFill(cluster, project, d.text[field]);
       if (next === null) return;
       setDraft((prev) => (prev ? { ...prev, text: { ...prev.text, [field]: next } } : prev));
@@ -1986,7 +1989,13 @@ function ClusterFields({
 /** The remote directory fields VISTA fills from a cluster's S3M token. */
 type RemoteDirTextField = "odo_remote_dir" | "frontier_remote_dir" | "lux_remote_dir";
 
-type FillRemoteDir = (cluster: HpcCluster, field: RemoteDirTextField, project: string | null) => void;
+type FillRemoteDir = (
+  cluster: HpcCluster,
+  field: RemoteDirTextField,
+  project: string | null,
+  /** Called as the field loses focus, so its focus no longer counts. */
+  blurred?: boolean,
+) => void;
 
 /** The project a cluster's S3M token belongs to, as its credential check reports it. */
 function useClusterProject(cluster: HpcCluster): string | null {
@@ -1998,8 +2007,9 @@ function useClusterProject(cluster: HpcCluster): string | null {
 /**
  * An OLCF cluster's remote directory. Once the cluster's S3M token reports its
  * project, an empty field (or VISTA's folder for a different project) is filled
- * with that project's `proj-shared/vista` folder, when the section opens or the
- * project changes; a note says so while the field still holds it. See
+ * with that project's `proj-shared/vista` folder, when the section opens, the
+ * project changes or the field loses focus; a note says so while the field
+ * still holds it. See
  * `lib/remote-dir.ts` for the rule.
  */
 function RemoteDirField({
@@ -2019,7 +2029,19 @@ function RemoteDirField({
 }) {
   const project = useClusterProject(cluster);
   useEffect(() => fill(cluster, field, project), [cluster, field, project, fill]);
-  const binding = bind(field, "debounce");
+  const bound = bind(field, "debounce");
+  // Leaving the field sends what was typed first, so a fill then sees no
+  // unsaved edit, and fills only a field still empty or VISTA's.
+  const binding: FieldBinding = {
+    ...bound,
+    inputProps: {
+      ...bound.inputProps,
+      onBlur: (e) => {
+        bound.inputProps.onBlur?.(e);
+        fill(cluster, field, project, true);
+      },
+    },
+  };
   const note = filledNote(cluster, project, String(binding.inputProps.value ?? ""));
   return (
     <SavedField
