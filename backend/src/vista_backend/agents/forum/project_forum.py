@@ -104,6 +104,26 @@ def hosted_forum_id(url: str | None, local: Any) -> uuid.UUID | None:
         return None
 
 
+def collaboration_off(local: Any) -> bool:
+    """
+    The Collaboration switch is off. `local` is the settings row (where never
+    chosen is `None`, which is on) or the public model.
+    """
+    return getattr(local, "collaboration_enabled", None) is False
+
+
+def hosted_while_off(project: ProjectTable, local: Any) -> bool:
+    """
+    The project's forum is hosted on the collaboration server and collaboration
+    is off, so the forum is out of reach: its project has no lab until it is on.
+    """
+    return (
+        local is not None
+        and collaboration_off(local)
+        and hosted_forum_id(forum_url_of(project), local) is not None
+    )
+
+
 def sign_in_headers(local: Any) -> dict[str, SecretStr]:
     """
     What the collaboration client sends to identify this install: the bearer
@@ -134,12 +154,15 @@ def forum_config_for(
     The token is `repo_token`'s choice for the forum's URL: the Settings token
     for the host, if any. A URL under the configured collaboration server's
     address is a hosted forum instead: it gets that server's sign-in
-    (`remote_headers`) and never a forge token. Without `local` there is no
-    credential at all, which only `lab_enabled` relies on — it asks whether a
-    lab exists, and never talks to the remote.
+    (`remote_headers`) and never a forge token, and while collaboration is off
+    it has no lab at all (`hosted_while_off`), so nothing reaches the server.
+    Without `local` there is no credential at all, and no way to tell a hosted
+    forum: only `lab_enabled` without settings relies on that.
     """
     url = forum_url_of(project)
     if url is None or not settings.forum.enabled or not git_status().ok:
+        return None
+    if hosted_while_off(project, local):
         return None
     if local is not None and hosted_forum_id(url, local) is not None:
         credential: dict[str, Any] = {
@@ -168,18 +191,25 @@ def build_client_for(project: ProjectTable, local: LocalSettingsTable) -> ForumC
     config = forum_config_for(project, local)
     if config is None:
         git = git_status()
-        why = (
-            git.reason
-            if forum_url_of(project) and settings.forum.enabled and not git.ok
-            else "set a forum repository on the project to turn it on"
-        )
+        if forum_url_of(project) and settings.forum.enabled and not git.ok:
+            why = git.reason
+        elif hosted_while_off(project, local):
+            why = (
+                "its forum is on the collaboration server, and collaboration is "
+                "off. Turn it on under Settings → Collaboration"
+            )
+        else:
+            why = "set a forum repository on the project to turn it on"
         raise ForumDisabled(f"project {project.name!r} has no Hypothesis Lab: {why}")
     return client_factory(config)
 
 
-def lab_enabled(project: ProjectTable) -> bool:
-    """Whether this project has a Hypothesis Lab at all."""
-    return forum_config_for(project) is not None
+def lab_enabled(project: ProjectTable, local: Any = None) -> bool:
+    """
+    Whether this project has a Hypothesis Lab at all. Pass the settings to
+    count a hosted forum while collaboration is off as none.
+    """
+    return forum_config_for(project, local) is not None
 
 
 async def ensure_forum(project: ProjectTable, local: LocalSettingsTable) -> None:
@@ -195,6 +225,9 @@ async def ensure_forum(project: ProjectTable, local: LocalSettingsTable) -> None
     beside it.
     """
     if forum_url_of(project) is None or not settings.forum.enabled:
+        return
+    if hosted_while_off(project, local):
+        # Out of reach until collaboration is on again; nothing to set up.
         return
     git = git_status()
     if not git.ok:

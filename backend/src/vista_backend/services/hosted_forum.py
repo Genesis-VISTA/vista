@@ -64,12 +64,13 @@ async def give_new_project_a_forum(
     Make a hosted forum the forum of a project that has none, when a
     collaboration server is set and answers. Returns why it could not, in words
     for the researcher, or None when it did or there was nothing to do (no
-    server, or no labs here). The project is left with no forum on any failure.
+    server, collaboration off, or no labs here). The project is left with no
+    forum on any failure.
     """
     if not lab_possible():
         return None
     local = await local_settings.get_public(session)
-    if server_url(local)[0] is None:
+    if not local.collaboration_enabled or server_url(local)[0] is None:
         return None
     try:
         async with client_for(local) as client:

@@ -182,6 +182,11 @@ installation's `collaboration_enabled`. An installation that has never set it SH
   Hub page, if opened directly, SHALL say collaboration is off with a way to open Settings. Every
   collaboration route that would contact the server SHALL refuse with the off reason, without
   contacting it.
+- **Hosted forums while off:** a project whose Hypothesis Lab forum is hosted on the
+  collaboration server SHALL have no lab, and nothing SHALL fetch from or push to that forum.
+  Its lab page SHALL say "This project's forum is on the collaboration server, and collaboration
+  is off." with a way to open Settings. A new project SHALL get no hosted forum. A forum on any
+  other git host SHALL be unaffected.
 
 #### Scenario: Turning it off
 
@@ -194,6 +199,13 @@ installation's `collaboration_enabled`. An installation that has never set it SH
 - **GIVEN** an installation from before this change, with an address and token saved
 - **WHEN** it starts on this version
 - **THEN** collaboration is on and everything it showed before is still shown
+
+#### Scenario: A hosted forum while off
+
+- **GIVEN** a project whose forum is hosted on the collaboration server, and collaboration off
+- **WHEN** the researcher opens its Hypothesis Lab
+- **THEN** no git request reaches the server, and the page says collaboration is off with a
+  way to open Settings
 
 #### Scenario: A publish while off
 

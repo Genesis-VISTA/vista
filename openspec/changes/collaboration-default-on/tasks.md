@@ -13,6 +13,8 @@
   - "Unauthorized" never appears;
   - `refused` is set on a 403.
 
+- [x] 1.5 No hosted forum while off (D6): `forum_config_for` and `ensure_forum` treat a forum hosted on the collaboration server as no lab while off, `lab_enabled` takes the settings, `give_new_project_a_forum` makes none, `ForumStatus` gains `collaboration_off`, and `app/hypothesis-lab/page.tsx` says collaboration is off with Open Settings. Verify in `backend/tests/test_project_forum.py`: off gives no config and a `ForumDisabled` saying so, a forge forum is unaffected, a new project gets no forum, and the forum status reports `collaboration_off`.
+
 ## 2. UI: hook, gating, Skill Hub
 
 - [ ] 2.1 Add `enabled`/`shown` to `CollaborationStatus` and `useCollaboration()`, and require `status.shown` in `useTeams().shown` (`ui/lib/collaboration.ts`). Update `ui/e2e-hermetic/fixtures.ts`'s status. Verify in the existing `ui/tests` collaboration hook tests: hidden while checking, hidden when quiet, shown and disabled with a reason after a token expires.

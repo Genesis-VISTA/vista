@@ -17,6 +17,9 @@ off.
   - **When off,** VISTA sends nothing to any collaboration server. It hides the Skill Hub entry,
     team badges, the team filter, Publish… and Publish changes, Import and the sharing lines. Settings
     shows only the switch and its hint.
+  - **Hosted forums too.** A Hypothesis Lab forum hosted on the collaboration server is
+    unreachable while off: its project has no lab, and the lab page says collaboration is off. A
+    new project gets no hosted forum.
 - **Quiet until signed in.** With the switch on, nothing about collaboration shows outside
   Settings and the Skill Hub until a token is saved, or the server says this install is signed
   in.
@@ -68,11 +71,14 @@ change. The team rules are in the `collaboration-server` access-control work.
   - `db/schemas.py` (nullable `collaboration_enabled`, additive)
   - `services/collaboration.py` (off and quiet in the status; messages)
   - the collaboration routes, which refuse while off
+  - `agents/forum/project_forum.py`, `services/hosted_forum.py` and `api/debate.py` (no hosted
+    forum while off)
 - **UI:**
   - `ui/lib/collaboration.ts`
   - `NavRail`, `TeamBadge`, `TeamFilter`
   - the Projects, Skills and Knowledge Bases pages
   - `skill-hub/page.tsx`
+  - `hypothesis-lab/page.tsx` (the off message)
   - `UserSettingsModal.tsx`
   - `e2e-hermetic/fixtures.ts`
 - **Docs:** `AGENTS.md`'s collaboration paragraph, `docs/collaboration-server.md`, and the

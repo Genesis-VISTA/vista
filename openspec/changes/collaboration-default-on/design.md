@@ -113,6 +113,24 @@ leak traffic from any client.
   VISTA team." are verbatim from the storyboard (Parts 2–3).
 - **Labels.** `collaborationLabel` adds "Off" and "No access".
 
+### D6: No hosted forum while off
+
+A forum hosted on the collaboration server (`project_forum.hosted_forum_id`) is git traffic to
+that server, outside the collaboration client. While off it is treated as no lab at all
+(Sam, 2026-11-10):
+
+- `forum_config_for(project, local)` returns `None` for a hosted forum while off, so
+  `build_client_for` refuses (`ForumDisabled`, saying collaboration is off) and nothing runs git
+  against it. `lab_enabled` takes the settings so it can tell.
+- `ensure_forum` does nothing for it while off, so saving or importing such a project does not
+  fail.
+- `give_new_project_a_forum` makes none while off, silently, as with no server.
+- `GET /projects/{name}/forum/status` adds `collaboration_off`, and the lab page says "This
+  project's forum is on the collaboration server, and collaboration is off." with Open
+  Settings, instead of "has no lab yet".
+
+A forge-hosted forum (GitHub, GitLab) is unaffected.
+
 ## Risks / Trade-offs
 
 - **[Every install now contacts Obsidian on app open]**: two GETs with the install-id header. →

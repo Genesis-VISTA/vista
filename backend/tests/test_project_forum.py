@@ -584,6 +584,92 @@ def test_no_server_configured_means_no_hosted_forum(forum_home, monkeypatch):
     assert config is not None and config.remote_headers is None
 
 
+# Collaboration off: a hosted forum is out of reach, a forge's is not.
+
+
+def test_off_a_hosted_forum_has_no_lab(forum_home, monkeypatch):
+    built: list = []
+    monkeypatch.setattr(project_forum, "client_factory", built.append)
+    local = _local(collaboration_enabled=False)
+    project = _project(HOSTED_URL)
+    assert forum_config_for(project, local) is None
+    assert not project_forum.lab_enabled(project, local)
+    with pytest.raises(ForumDisabled, match="collaboration is off"):
+        build_client_for(project, local)
+    assert built == [], "no client, so no git against the server"
+
+
+async def test_off_saving_a_hosted_forum_sets_nothing_up(forum_home, monkeypatch):
+    built: list = []
+    monkeypatch.setattr(project_forum, "client_factory", built.append)
+    await project_forum.ensure_forum(
+        _project(HOSTED_URL), _local(collaboration_enabled=False)
+    )
+    assert built == []
+
+
+def test_off_a_forge_forum_is_unaffected(forum_home):
+    local = _local(collaboration_enabled=False)
+    config = forum_config_for(_project("https://github.com/lab/forum.git"), local)
+    assert config is not None
+    assert config.remote_token_source == "settings-github"
+
+
+def test_never_chosen_is_on_for_a_hosted_forum(forum_home):
+    """The row's `None` is on: the forum is reachable as before."""
+    assert forum_config_for(_project(HOSTED_URL), _local()) is not None
+
+
+async def test_off_a_new_project_gets_no_hosted_forum(forum_home, session, monkeypatch):
+    import httpx
+
+    from vista_backend.db.schemas import LocalSettingsUpdate
+    from vista_backend.services import collaboration, hosted_forum, local_settings
+
+    def refuse(request):
+        raise AssertionError(f"{request.url} reached the server")
+
+    monkeypatch.setattr(collaboration, "transport", httpx.MockTransport(refuse))
+    await local_settings.update(
+        session,
+        LocalSettingsUpdate(
+            collaboration_server_url=SERVER, collaboration_enabled=False
+        ),
+    )
+    project = _project(None)
+    session.add(project)
+    await session.flush()
+    assert await hosted_forum.give_new_project_a_forum(session, project) is None
+    assert project.forum_repo_url is None
+
+
+async def test_off_the_forum_status_says_why(forum_home, session, app_client):
+    from vista_backend.db.schemas import LocalSettingsUpdate
+    from vista_backend.services import local_settings
+
+    await local_settings.update(
+        session,
+        LocalSettingsUpdate(
+            collaboration_server_url=SERVER, collaboration_enabled=False
+        ),
+    )
+    session.add(_project(HOSTED_URL))
+    await session.flush()
+    body = (await app_client.get("/projects/salt/forum/status")).json()
+    assert body["enabled"] is False and body["collaboration_off"] is True
+
+    await local_settings.update(
+        session, LocalSettingsUpdate(collaboration_enabled=True)
+    )
+    session.add(_project("https://github.com/lab/forum.git", name="forged"))
+    await session.flush()
+    await local_settings.update(
+        session, LocalSettingsUpdate(collaboration_enabled=False)
+    )
+    forged = (await app_client.get("/projects/forged/forum/status")).json()
+    assert forged["collaboration_off"] is False
+
+
 def test_git_sends_the_sign_in_to_the_hosted_forum_alone(
     forum_home, tmp_path, machine_wide_header
 ):
