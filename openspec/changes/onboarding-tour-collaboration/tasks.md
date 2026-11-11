@@ -27,6 +27,8 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 
   Verify in `ui/tests/TourProvider.test.tsx` that each position anchors to its element, Settings opens at `sign-in` and closes on leaving or exiting, and turning the switch off at `off` lands on `first-question:send`.
 
+  Also walk the step in `ui/e2e-hermetic/onboarding.spec.ts` (CI's `ui:browser` job fails until every sub-step has a `card()` check there): signed out on the default server, all eight coachmarks on their anchors, Settings opening at `sign-in`, and turning the switch off at `off` landing on `first-question:send`.
+
 ## 4. Checks
 
 - [ ] 4.1 Run `./scripts/ci-local.sh ui lint` and `./scripts/ci-local.sh ui test`, and confirm both pass. (These run `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
