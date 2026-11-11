@@ -373,6 +373,15 @@ describe("UserSettingsModal collaboration", () => {
       ...overrides,
     });
 
+  it("says when the default server is in use", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Using default server - replace above to override");
+    expect(section).not.toHaveTextContent("This installation's configuration uses");
+  });
+
   it("turns collaboration off, leaving only the switch and its hints", async () => {
     useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
     fetchSettingsMock.mockResolvedValue(settingsRow());

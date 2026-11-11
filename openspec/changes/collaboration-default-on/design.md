@@ -117,6 +117,10 @@ leak traffic from any client.
 - **UI copy.** The hints, switch label, Skill Hub prompt and "No access yet? Reach out to the
   VISTA team." are verbatim from the storyboard (Parts 2–3).
 - **Labels.** `collaborationLabel` adds "Off" and "No access".
+- **Address hint.** On the default server from the configuration, the hint under the address
+  reads "Using default server - replace above to override" (Sam, 2026-11-11), in place of the
+  storyboard's "This installation's configuration uses <url>. An address here takes its place.",
+  which stays for any other configured server.
 
 ### D6: No hosted forum while off
 
