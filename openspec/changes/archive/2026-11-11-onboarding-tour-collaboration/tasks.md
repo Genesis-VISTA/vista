@@ -31,7 +31,12 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 
 ## 4. Checks
 
-- [ ] 4.1 Run `./scripts/ci-local.sh ui lint` and `./scripts/ci-local.sh ui test`, and confirm both pass. (These run `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
-- [ ] 4.2 Manual, not in PR CI: on a fresh-data dev stack, walk all eight coachmarks in a real browser, signed out on the default server and then signed in with `--collab`. Compare each with `storyboard.html` Part 1, and confirm that the step is skipped when collaboration is off. Record the result here.
-- [ ] 4.3 Run `openspec validate onboarding-tour-collaboration` and confirm it passes.
-- [ ] 4.4 Archive `onboarding-tour-collaboration` (`/opsx:archive`), after `collaboration-default-on`, which this branch already archives. Confirm `openspec validate --all` passes afterwards.
+- [x] 4.1 Run `./scripts/ci-local.sh ui lint` and `./scripts/ci-local.sh ui test`, and confirm both pass. (These run `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
+- [x] 4.2 Manual, not in PR CI: on a fresh-data dev stack, walk all eight coachmarks in a real browser, signed out on the default server and then signed in with `--collab`. Compare each with `storyboard.html` Part 1, and confirm that the step is skipped when collaboration is off. Record the result here.
+
+  Result (2026-11-11, Sam, in the VISTA window, scratch copy of his data with 13 skills):
+  - Signed out on the default server: the first walk found the example private skill pushed off-screen at `share`, because it was drawn before `/api/skills` answered. Fixed by adding the examples first, once the list has answered. The e2e walk now uses a long list and checks the card is in view. Retried: good.
+  - Signed in with `--collab` (127.0.0.1:8002, public team only): all eight good, including the signed-in sign-in wording with Manage teams… and no VISTA team sentence.
+  - Skipped when off: covered by the hermetic e2e HPC walk (collaboration off goes from HPC to `first-question:send`).
+- [x] 4.3 Run `openspec validate onboarding-tour-collaboration` and confirm it passes.
+- [x] 4.4 Archive `onboarding-tour-collaboration` (`/opsx:archive`), after `collaboration-default-on`, which this branch already archives. Confirm `openspec validate --all` passes afterwards.
