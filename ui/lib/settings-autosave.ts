@@ -59,6 +59,8 @@ export type SettingsAutosave = {
   commit: (field: string) => void;
   /** Send every pending value now and wait for every save in flight. */
   flush: () => Promise<void>;
+  /** Whether the field holds an edit not sent yet (waiting on its pause or its blur). */
+  pending: (field: string) => boolean;
   /** Each field's mark; a field with none is absent. */
   marks: Record<string, FieldMark>;
   /** Why each failed field's last save failed. */
@@ -207,9 +209,14 @@ export function useSettingsAutosave({
     await Promise.all(all);
   }, [run]);
 
+  const pending = useCallback(
+    (field: string) => fields.current.get(field)?.pending !== undefined,
+    [],
+  );
+
   return useMemo(
-    () => ({ seed, edit, commit, flush, marks, errors }),
-    [seed, edit, commit, flush, marks, errors],
+    () => ({ seed, edit, commit, flush, pending, marks, errors }),
+    [seed, edit, commit, flush, pending, marks, errors],
   );
 }
 
