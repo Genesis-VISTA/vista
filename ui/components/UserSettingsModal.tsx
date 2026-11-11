@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -44,6 +45,7 @@ import { CopyableLine } from "./CopyableLine";
 import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
+import { filledNote, remoteDirFill } from "@/lib/remote-dir";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
 export type SettingsSection =
@@ -341,6 +343,28 @@ export function UserSettingsModal({
   }
 
   const autosave = useSettingsAutosave({ save: saveField, onSettled: announce });
+  const { edit: autosaveEdit, pending: autosavePending } = autosave;
+
+  /**
+   * Fill a cluster's remote directory from its S3M token's project, saved like
+   * a typed change. Never while the field holds an unsaved edit or has focus:
+   * a project arriving mid-typing must not overwrite the typing. A field left
+   * without typing is tried again as it loses focus (`blurred`), when focus is
+   * already on its way out.
+   */
+  const fillRemoteDir: FillRemoteDir = useCallback(
+    (cluster, field, project, blurred = false) => {
+      const d = draftRef.current;
+      if (!d || !project || d.hidden.has(cluster)) return;
+      if (autosavePending(field)) return;
+      if (!blurred && document.activeElement?.id === fieldId(field)) return;
+      const next = remoteDirFill(cluster, project, d.text[field]);
+      if (next === null) return;
+      setDraft((prev) => (prev ? { ...prev, text: { ...prev.text, [field]: next } } : prev));
+      autosaveEdit(field, next, "now");
+    },
+    [autosaveEdit, autosavePending],
+  );
 
   async function load() {
     setLoading(true);
@@ -613,6 +637,7 @@ export function UserSettingsModal({
         <ClusterFields
           cluster={section}
           bind={bind}
+          fill={fillRemoteDir}
           globus={(owner) => ({
             connected: globusConnected(user, owner) || owner in globusMade,
             identity: globusMade[owner] ?? null,
@@ -1893,10 +1918,12 @@ type GlobusState = {
 function ClusterFields({
   cluster,
   bind,
+  fill,
   globus,
 }: {
   cluster: HpcCluster;
   bind: Bind;
+  fill: FillRemoteDir;
   globus: (owner: GlobusCluster) => GlobusState;
 }) {
   switch (cluster) {
@@ -1909,12 +1936,13 @@ function ClusterFields({
             binding={bind("odo_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="odo"
             label="Odo remote directory"
             field="odo_remote_dir"
-            binding={bind("odo_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Odo" />}
           />
           <GlobusConnect cluster="odo" label="Odo" {...globus("odo")} />
         </>
@@ -1928,12 +1956,13 @@ function ClusterFields({
             binding={bind("frontier_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="frontier"
             label="Frontier remote directory"
             field="frontier_remote_dir"
-            binding={bind("frontier_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Frontier" />}
           />
           <p className="user-settings-hint">
             Frontier and Lux share the Orion filesystem, so one Globus connection serves
@@ -1983,12 +2012,13 @@ function ClusterFields({
             binding={bind("lux_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access to Lux, and separate from Frontier's token. Lux jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="lux"
             label="Lux remote directory"
             field="lux_remote_dir"
-            binding={bind("lux_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Lux" />}
           />
           <p className="user-settings-hint">
             Lux and Frontier share the Orion filesystem, so one Globus connection serves
@@ -2001,12 +2031,84 @@ function ClusterFields({
   }
 }
 
+/** The remote directory fields VISTA fills from a cluster's S3M token. */
+type RemoteDirTextField = "odo_remote_dir" | "frontier_remote_dir" | "lux_remote_dir";
+
+type FillRemoteDir = (
+  cluster: HpcCluster,
+  field: RemoteDirTextField,
+  project: string | null,
+  /** Called as the field loses focus, so its focus no longer counts. */
+  blurred?: boolean,
+) => void;
+
+/** The project a cluster's S3M token belongs to, as its credential check reports it. */
+function useClusterProject(cluster: HpcCluster): string | null {
+  const view = useHpcStatus();
+  const entry = view.clusters?.find((c) => c.cluster === cluster);
+  return entry?.status.checks.credential.project ?? null;
+}
+
+/**
+ * An OLCF cluster's remote directory. Once the cluster's S3M token reports its
+ * project, an empty field (or VISTA's folder for a different project) is filled
+ * with that project's `proj-shared/vista` folder, when the section opens, the
+ * project changes or the field loses focus; a note says so while the field
+ * still holds it. See
+ * `lib/remote-dir.ts` for the rule.
+ */
+function RemoteDirField({
+  cluster,
+  label,
+  field,
+  bind,
+  fill,
+  placeholder,
+}: {
+  cluster: HpcCluster;
+  label: string;
+  field: RemoteDirTextField;
+  bind: Bind;
+  fill: FillRemoteDir;
+  placeholder: string;
+}) {
+  const project = useClusterProject(cluster);
+  useEffect(() => fill(cluster, field, project), [cluster, field, project, fill]);
+  const bound = bind(field, "debounce");
+  // Leaving the field sends what was typed first, so a fill then sees no
+  // unsaved edit, and fills only a field still empty or VISTA's.
+  const binding: FieldBinding = {
+    ...bound,
+    inputProps: {
+      ...bound.inputProps,
+      onBlur: (e) => {
+        bound.inputProps.onBlur?.(e);
+        fill(cluster, field, project, true);
+      },
+    },
+  };
+  const note = filledNote(cluster, project, String(binding.inputProps.value ?? ""));
+  return (
+    <SavedField
+      label={label}
+      field={field}
+      binding={binding}
+      placeholder={placeholder}
+      note={note}
+      hint={
+        <>
+          {project ? null : "Filled from your S3M token once you add one. "}
+          <GroupWritableHint cluster={HPC_CLUSTER_TITLES[cluster]} />
+        </>
+      }
+    />
+  );
+}
+
 /**
  * One saved text field: its label, input, why its last save failed (keeping
- * what was entered), and its hint. A secret is a password input with nothing
- * remembered by the browser. A remote directory has no default: where a
- * project keeps its files is specific to the project and the filesystem, so
- * VISTA does not guess.
+ * what was entered), a note on where its value came from, and its hint. A
+ * secret is a password input with nothing remembered by the browser.
  */
 function SavedField({
   label,
@@ -2015,6 +2117,7 @@ function SavedField({
   secret = false,
   type,
   placeholder,
+  note,
   hint,
 }: {
   label: string;
@@ -2024,6 +2127,8 @@ function SavedField({
   /** The input's type, for a field that is not plain text; `secret` wins over it. */
   type?: "email";
   placeholder: string;
+  /** Where the value came from, while it is still the one VISTA put there. */
+  note?: string | null;
   hint: ReactNode;
 }) {
   return (
@@ -2041,6 +2146,7 @@ function SavedField({
         <SaveMark mark={binding.mark} />
       </span>
       <FieldError field={field} error={binding.error} />
+      {note && <span className="settings-filled-note">{note}</span>}
       <span className="user-settings-hint">{hint}</span>
     </label>
   );
