@@ -14,6 +14,7 @@ import {
 } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAgentSettings } from "@/lib/agent-settings";
+import { useCollaboration } from "@/lib/collaboration";
 import {
   completesOnNext,
   nextTourStep,
@@ -158,6 +159,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const { settings: agent } = useAgentSettings();
   const activeProject = useActiveProjectName();
   const pathname = usePathname();
+  const collaborationEnabled = useCollaboration().enabled;
   const [session, setSession] = useState<Session>(FRESH_SESSION);
 
   const loaded = !settingsLoading && settings !== null && agent !== null;
@@ -195,11 +197,12 @@ export function TourProvider({ children }: { children: ReactNode }) {
         providerDefault,
       },
       activeProject,
+      collaboration: { enabled: collaborationEnabled },
       events: session.events,
       skipped: session.skipped,
       acknowledged: session.acknowledged,
     });
-  }, [loaded, agent, enabled, session, stored, providerDefault, activeProject, pathname]);
+  }, [loaded, agent, enabled, session, stored, providerDefault, activeProject, collaborationEnabled, pathname]);
   const running = position !== null;
   const step = position?.step ?? null;
   const subStep = position?.subStep ?? null;

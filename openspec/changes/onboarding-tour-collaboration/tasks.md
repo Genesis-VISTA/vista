@@ -2,13 +2,13 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 
 ## 1. Step model and copy
 
-- [ ] 1.1 Add the `collaboration` step to `ui/lib/onboarding.ts` (design.md D1): its sub-steps, `collaboration:visit` in `ACTION_SUB_STEPS`, `STEP_PAGES`, `TourInput.collaboration.enabled`, and the skip while off. Verify in `ui/tests/onboarding.test.ts`:
+- [x] 1.1 Add the `collaboration` step to `ui/lib/onboarding.ts` (design.md D1): its sub-steps, `collaboration:visit` in `ACTION_SUB_STEPS`, `STEP_PAGES`, `TourInput.collaboration.enabled`, and the skip while off. Verify in `ui/tests/onboarding.test.ts`:
   - order hpc → collaboration → first-question;
   - visit done on `/skill-hub`;
   - skipped when off;
   - turning it off mid-step moves to `first-question:send`;
   - unknown counts as enabled.
-- [ ] 1.2 Add the eight coachmarks and the `CopyContext` variants to `ui/lib/onboarding-copy.ts`, verbatim from `storyboard.html` Part 1, and change the `welcome:intro` and `first-question:finish` copy (D5). Verify that the existing every-sub-step-has-copy test passes, and add cases for the default-server sentence and the signed-in variant (with Manage teams…).
+- [x] 1.2 Add the eight coachmarks and the `CopyContext` variants to `ui/lib/onboarding-copy.ts`, verbatim from `storyboard.html` Part 1, and change the `welcome:intro` and `first-question:finish` copy (D5). Verify that the existing every-sub-step-has-copy test passes, and add cases for the default-server sentence and the signed-in variant (with Manage teams…).
 
 ## 2. Examples
 

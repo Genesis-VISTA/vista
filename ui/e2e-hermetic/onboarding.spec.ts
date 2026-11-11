@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { TOUR_SUB_STEPS } from "../lib/onboarding";
 import { installStub, streamOneTurn, type Stub } from "./stub";
-import { SETTINGS, INFERENCE } from "./fixtures";
+import { COLLABORATION_STATUS, SETTINGS, INFERENCE } from "./fixtures";
 
 /**
  * The first-boot tour, walked in a real browser against stubbed responses.
@@ -96,7 +96,7 @@ test("welcome, then the projects screen and opening the project", async ({ page 
   await install(page, null);
   await page.goto("/projects");
   await card(page, "welcome:intro", "center");
-  await expect(page.locator(".driver-popover")).toContainText("eight minutes");
+  await expect(page.locator(".driver-popover")).toContainText("nine minutes");
   await press(page, "Start the tour");
   await card(page, "welcome:sidebar");
   await press(page);
@@ -250,9 +250,9 @@ test("files: the example image and report", async ({ page }) => {
   await card(page, "hpc:resources");
 });
 
-test("hpc: open the Odo card", async ({ page }) => {
+test("hpc: open the Odo card, then skip collaboration while it is off", async ({ page }) => {
   await activeProject(page);
-  await install(page, "hpc");
+  await install(page, "hpc", { "GET /api/collaboration/status": { ...COLLABORATION_STATUS, enabled: false } });
   await page.goto("/projects");
   await card(page, "hpc:resources");
   await press(page);
