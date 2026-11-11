@@ -22,6 +22,8 @@ import { PublishToTeamModal } from "@/components/PublishToTeamModal";
 import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
 import { TeamBadge } from "@/components/TeamBadge";
+import { ExampleTag } from "@/components/ExampleTag";
+import { EXAMPLE_LOCAL_SKILLS, isExample, useTourExamples, type ExampleLocalSkill } from "@/lib/onboarding-examples";
 import { useTour } from "@/components/TourProvider";
 import { TOUR_SKILL } from "@/lib/default-project";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
@@ -36,6 +38,7 @@ export default function SkillsPage() {
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const tour = useTour();
+  const examples = useTourExamples();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [pendingPublish, setPendingPublish] = useState<SkillSummary | null>(null);
@@ -189,22 +192,61 @@ export default function SkillsPage() {
     [skills, loadedSlugs, matches]
   );
   // Every skill here, whatever its team; each card says which.
-  const otherSkills = useMemo(
+  const realOtherSkills = useMemo(
     () => skills.filter((s) => !loadedSlugs.has(s.slug) && matches(s)),
     [skills, loadedSlugs, matches]
   );
+  // During the tour's collaboration step its example skills join them, unless
+  // a real skill has the name. They exist only here.
+  const otherSkills = useMemo<SkillSummary[]>(() => {
+    if (!examples) return realOtherSkills;
+    const extra = EXAMPLE_LOCAL_SKILLS.filter((e) => !skills.some((s) => s.slug === e.slug) && matches(e));
+    return [...realOtherSkills, ...extra];
+  }, [examples, realOtherSkills, skills, matches]);
 
   // The cards the tour points at: the tour's skill (loaded first, else among the
   // others), else the first skill; and the first Load button.
   const tourSkill =
     loadedSkills.find((s) => s.slug === TOUR_SKILL) ??
-    otherSkills.find((s) => s.slug === TOUR_SKILL) ??
+    realOtherSkills.find((s) => s.slug === TOUR_SKILL) ??
     loadedSkills[0] ??
-    otherSkills[0];
+    realOtherSkills[0];
   const tourOpenSlug = tourSkill?.slug;
-  const tourLoadSlug = otherSkills[0]?.slug;
+  const tourLoadSlug = realOtherSkills[0]?.slug;
+
+  /**
+   * One of the tour's examples: its team and sharing line, and the one publish
+   * button its kind has, which does nothing. No Load, Delete or details, so
+   * nothing about it reaches the backend.
+   */
+  function exampleCard(skill: ExampleLocalSkill) {
+    return (
+      <div key={skill.slug} className="skill-item">
+        <div className="skill-name">
+          {skill.name}
+          <TeamBadge teamId={skill.teamId} exampleName={skill.teamName} />
+          <ExampleTag />
+        </div>
+        <div className="skill-desc">{skill.description}</div>
+        <div className="skill-meta">
+          <span className="skill-sharing">{skill.sharing}</span>
+        </div>
+        <div className="skill-actions">
+          <button
+            type="button"
+            className="button button-sm"
+            title="An example for the tour: it does nothing"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {skill.teamName ? "Publish changes" : "Publish…"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   function card(skill: SkillSummary, loaded: boolean) {
+    if (isExample(skill)) return exampleCard(skill as ExampleLocalSkill);
     const busy = busySlug === skill.slug;
     const onServer = isOnServer(skill, serverUrl);
     const head = skill.remoteId ? heads[skill.remoteId] : undefined;

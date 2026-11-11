@@ -587,6 +587,20 @@ main {
 /* ---------- Teams --------------------------------------------------- */
 
 /* A resource's team, beside its name, when it is in one. */
+/* One of the tour's examples (onboarding-examples.ts). */
+.tour-example-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .team-badge {
   display: inline-block;
   margin-left: 6px;

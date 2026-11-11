@@ -1,4 +1,8 @@
 /**
+ * The tour's examples: what a step shows in the real components and nowhere
+ * else. The files step's example files, and the collaboration step's example
+ * teams and skills.
+ *
  * The example files the Files page shows while the tour's files step is up:
  * a markdown report and a chart among the outputs, a CSV among the uploads.
  * They exist only here. Nothing is written to the project or sent to the
@@ -6,8 +10,12 @@
  * `data:` URL for `FilePreview`'s `src`.
  */
 
-import type { TourEvent } from "./onboarding";
+import { useTour } from "@/components/TourProvider";
+import type { CollaborationTeam } from "./collaboration";
+import type { TourEvent, TourPosition } from "./onboarding";
 import type { FileKind, ListedFile } from "./files-tree";
+import type { RemoteSkill } from "./skill-sharing";
+import type { SkillSummary } from "./types";
 
 export type ExampleFile = {
   kind: FileKind;
@@ -85,4 +93,135 @@ export const EXAMPLE_FILES: readonly ExampleFile[] = [
 /** The example at `kind` and `path`, if there is one. */
 export function exampleAt(kind: FileKind, path: string): ExampleFile | undefined {
   return EXAMPLE_FILES.find((e) => e.kind === kind && e.file.name === path);
+}
+
+/* ------------------------------------------------------------------ */
+/* The collaboration step's examples                                   */
+/* ------------------------------------------------------------------ */
+
+/** The examples' teams' ids, never a real team's. */
+export const EXAMPLE_PUBLIC_TEAM_ID = "example:public";
+export const EXAMPLE_TEAM_ID = "example:team";
+export const EXAMPLE_TEAM_NAME = "Example team";
+
+/** Something the collaboration step shows that exists only in render. */
+export type Example = { example: true };
+
+/** Whether `item` is one of the tour's examples rather than a real one. */
+export function isExample(item: object | null | undefined): boolean {
+  return (item as Partial<Example> | null | undefined)?.example === true;
+}
+
+export type ExampleTeam = CollaborationTeam & Example;
+
+/** What the Skill Hub's team filter lists during the step. Private is no team. */
+export const EXAMPLE_TEAMS: readonly ExampleTeam[] = [
+  {
+    id: EXAMPLE_PUBLIC_TEAM_ID,
+    name: "Public",
+    public: true,
+    created_by: "example",
+    created_by_name: null,
+    created_at: MODIFIED,
+    example: true,
+  },
+  {
+    id: EXAMPLE_TEAM_ID,
+    name: EXAMPLE_TEAM_NAME,
+    public: false,
+    created_by: "example",
+    created_by_name: null,
+    created_at: MODIFIED,
+    example: true,
+  },
+];
+
+/**
+ * A Skill Hub card's skill. It carries its team's name, which `TeamBadge`
+ * shows: the real teams it would look the id up in don't hold the examples'.
+ */
+export type ExampleHubSkill = RemoteSkill & Example & { team_name: string };
+
+function hubSkill(id: string, name: string, teamId: string, teamName: string, version: number, description: string) {
+  return {
+    id,
+    team_id: teamId,
+    team_name: teamName,
+    name,
+    head_version: version,
+    created_by_name: null,
+    created_at: MODIFIED,
+    published_by_name: null,
+    published_at: MODIFIED,
+    manifest: { name, description, hpc_jobs: [], files: 1, size: 1024 },
+    local: null,
+    name_taken: false,
+    example: true,
+  } satisfies ExampleHubSkill;
+}
+
+/** The Skill Hub's cards during the step, in place of its own content. */
+export const EXAMPLE_HUB_SKILLS: readonly ExampleHubSkill[] = [
+  hubSkill("example:plot-results", "plot-results", EXAMPLE_PUBLIC_TEAM_ID, "Public", 1, "Plots a results table as labelled figures."),
+  hubSkill(
+    "example:batch-job-submit",
+    "batch-job-submit",
+    EXAMPLE_TEAM_ID,
+    EXAMPLE_TEAM_NAME,
+    3,
+    "Submits a parameter sweep as Slurm jobs on Frontier.",
+  ),
+];
+
+/**
+ * A Skills page card's skill: its team's name (null for a private one), and
+ * the sharing line it shows in place of `sharingLabel`'s.
+ */
+export type ExampleLocalSkill = SkillSummary & Example & { teamName: string | null; sharing: string };
+
+/** Added to the Skills page's own list during the step. */
+export const EXAMPLE_LOCAL_SKILLS: readonly ExampleLocalSkill[] = [
+  {
+    slug: "csv-cleanup",
+    name: "csv-cleanup",
+    description: "Tidies a CSV file's columns and units before analysis.",
+    path: "",
+    hpcJobs: [],
+    bundled: false,
+    remoteId: null,
+    remoteVersion: null,
+    modified: true,
+    teamId: null,
+    teamName: null,
+    sharing: "Not published · on this computer only",
+    example: true,
+  },
+  {
+    slug: "run-summary",
+    name: "run-summary",
+    description: "Summarises a finished run's outputs in a short report.",
+    path: "",
+    hpcJobs: [],
+    bundled: false,
+    remoteId: "example:run-summary",
+    remoteVersion: 2,
+    modified: true,
+    teamId: EXAMPLE_TEAM_ID,
+    teamName: EXAMPLE_TEAM_NAME,
+    sharing: "Changed here since version 2",
+    example: true,
+  },
+];
+
+/** Whether the collaboration step's examples show at `position`. Pure, for testing. */
+export function showsTourExamples(position: TourPosition | null): boolean {
+  return position?.step === "collaboration";
+}
+
+/**
+ * Whether the collaboration step's examples show now: while the step does,
+ * whatever the researcher's collaboration state, and never otherwise.
+ */
+export function useTourExamples(): boolean {
+  return showsTourExamples(useTour().position);
 }

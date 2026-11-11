@@ -12,8 +12,8 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 
 ## 2. Examples
 
-- [ ] 2.1 Add `EXAMPLE_TEAMS`, `EXAMPLE_HUB_SKILLS`, `EXAMPLE_LOCAL_SKILLS` and `useTourExamples()` to `ui/lib/onboarding-examples.ts` (D3). Verify with unit tests on their shapes and the hook's step condition.
-- [ ] 2.2 Render the examples through `TeamFilter`/`TeamBadge`, `app/skill-hub/page.tsx` and `app/skills/page.tsx`, with no-op handlers for example items. Verify with component tests in each page's test file, using a quiet status:
+- [x] 2.1 Add `EXAMPLE_TEAMS`, `EXAMPLE_HUB_SKILLS`, `EXAMPLE_LOCAL_SKILLS` and `useTourExamples()` to `ui/lib/onboarding-examples.ts` (D3). Verify with unit tests on their shapes and the hook's step condition.
+- [x] 2.2 Render the examples through `TeamFilter`/`TeamBadge`, `app/skill-hub/page.tsx` and `app/skills/page.tsx`, with no-op handlers for example items. Verify with component tests in each page's test file, using a quiet status:
   - the examples, the filter's example teams and the badges show during the step and are gone after it;
   - clicking Import, Publish… or Publish changes on an example, or choosing an example team in the filter, calls `fetch` zero times;
   - Publish… on an example does not render `PublishToTeamModal`.
