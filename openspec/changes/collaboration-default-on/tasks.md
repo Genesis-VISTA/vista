@@ -31,8 +31,9 @@
 
 ## 4. Docs and checks
 
-- [ ] 4.1 Update AGENTS.md's collaboration paragraph (the default address, the switch, the quiet rule, the `.env` opt-out for dev stacks), `docs/collaboration-server.md`, and the collaboration sections of `docs/skill-onboarding.md` and `docs/project-onboarding.md`. Verify with `./scripts/ci-local.sh docs`.
-- [ ] 4.2 Run `./scripts/ci-local.sh backend`, `./scripts/ci-local.sh ui` and `./scripts/ci-local.sh collab`, and confirm they pass. (The UI lane runs `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
+- [x] 4.1 Update AGENTS.md's collaboration paragraph (the default address, the switch, the quiet rule, the `.env` opt-out for dev stacks), `docs/collaboration-server.md`, and the collaboration sections of `docs/skill-onboarding.md` and `docs/project-onboarding.md`. Verify with `./scripts/ci-local.sh docs`.
+- [x] 4.2 Run `./scripts/ci-local.sh backend`, `./scripts/ci-local.sh ui` and `./scripts/ci-local.sh collab`, and confirm they pass. (The UI lane runs `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
+  Result (2026-11-11): `ui` and `collab` pass. `backend` passes except `test_inference_credentials.py::TestHttpSurface::test_chat_succeeds_once_the_key_is_on_the_row`, which fails only inside the worktree because the main checkout's `.env` leaks an inference provider into it; the file passes run from outside the checkout.
 - [ ] 4.3 Manual, not in PR CI, contacts Obsidian:
   - in a fresh-data dev stack without `--collab`, check that the Skill Hub shows the sign-in prompt and no Import buttons appear elsewhere;
   - paste a real token and check that everything appears;
@@ -40,4 +41,4 @@
   - with `--collab`, check that everything shows without a token.
 
   Record the result here.
-- [ ] 4.4 Run `openspec validate collaboration-default-on` and confirm it passes.
+- [x] 4.4 Run `openspec validate collaboration-default-on` and confirm it passes.

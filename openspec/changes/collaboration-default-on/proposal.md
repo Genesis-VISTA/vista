@@ -30,8 +30,6 @@ off.
   - The not-signed-in reason drops the raw "Unauthorized".
   - A signed-in install the server refuses (403) is labelled "No access", not "Unreachable".
   - On the default server, the sign-in places say "No access yet? Reach out to the VISTA team."
-- **The Settings hint is reworded** to "Your projects, skills and knowledge bases stay on this
-  computer until you publish them", since status checks now reach the server.
 
 Approved wording and screens: storyboard Parts 2–3,
 <https://claude.ai/artifact/RR2FxaXaoPvULbMxY6DNDG>.
