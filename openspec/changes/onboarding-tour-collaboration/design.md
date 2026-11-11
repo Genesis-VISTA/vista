@@ -26,8 +26,8 @@ See proposal.md for why. The tour is a pure step model plus a driver:
     team's skill has **Publish changes**.
   - Signed in, Settings › Collaboration lists the teams with **Manage teams…** (`TeamsModal`).
 - **Collaboration gates** (after `collaboration-default-on`). `useCollaboration()` gives
-  `enabled`, `shown`, `available`, `default_server`, `signed_in` and `url`, and `useTeams().shown`
-  requires `status.shown`. The Skill Hub has off, quiet and listed states.
+  `enabled`, `shown`, `available`, `default_server`, `signed_in` and `url`. `useTeams().shown`
+  requires `status.shown`, and `useTeams().badges` gates `TeamBadge`. The Skill Hub has off, quiet and listed states.
 
 ## Goals / Non-Goals
 
@@ -89,7 +89,10 @@ Each component checks one hook, `useTourExamples()`, which is true while
 - **TeamFilter** lists `EXAMPLE_TEAMS` in place of `useTeams().teams`, bypassing `shown` and the
   two-team minimum. Choosing one narrows the example cards; it is page state already, so nothing
   is written.
-- **TeamBadge** names the example team for any item carrying one, bypassing `shown`.
+- **TeamBadge** names the example team for any item carrying one, bypassing `useTeams().badges`
+  (change 2's gate, wider than `shown` so badges survive an expired token). It looks names up
+  in the real teams (`teamName`), which don't hold the example teams, so an example item passes
+  its team's name with it rather than an id to look up.
 - **Skill Hub page** renders the example cards, and the filter, in place of its off, quiet or
   listed content.
 - **Skills page** merges the example rows into its list, as the files step does. A real skill
@@ -118,7 +121,7 @@ New `data-tour` keys:
 | `collaboration:hub-item` | the first example hub card |
 | `collaboration:share` | the example private skill card |
 | `collaboration:sign-in` | a wrapper around Settings' status line, Token field and, signed in, the Teams line |
-| `collaboration:off` | the switch |
+| `collaboration:off` | the switch (`UpdateSwitch field="collaboration_enabled"` in `CollaborationSection`) |
 
 The sign-in wrapper always renders while on, so a server with no Token field (dev-headers) still
 has an anchor.
@@ -146,6 +149,9 @@ works".
   removed component fails a test rather than falling back to a centred popover unnoticed.
 
 ## Migration Plan
+
+This change lands in the same MR as `collaboration-default-on` (!196), which archives
+`collaboration-server` and itself; this one is archived there too, after them.
 
 UI only. Tour state stores a step id, and an install mid-tour on `hpc` goes on to `collaboration`
 after upgrading. Finished installs are untouched.

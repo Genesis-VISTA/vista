@@ -32,3 +32,4 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 - [ ] 4.1 Run `./scripts/ci-local.sh ui lint` and `./scripts/ci-local.sh ui test`, and confirm both pass. (These run `next build` into `ui/.next`; stop any `./launch.sh` stack in this checkout first.)
 - [ ] 4.2 Manual, not in PR CI: on a fresh-data dev stack, walk all eight coachmarks in a real browser, signed out on the default server and then signed in with `--collab`. Compare each with `storyboard.html` Part 1, and confirm that the step is skipped when collaboration is off. Record the result here.
 - [ ] 4.3 Run `openspec validate onboarding-tour-collaboration` and confirm it passes.
+- [ ] 4.4 Archive `onboarding-tour-collaboration` (`/opsx:archive`), after `collaboration-default-on`, which this branch already archives. Confirm `openspec validate --all` passes afterwards.
