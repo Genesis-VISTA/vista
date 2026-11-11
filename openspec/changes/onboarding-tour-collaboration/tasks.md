@@ -20,7 +20,7 @@ Implement after `collaboration-default-on` (this branch is stacked on it).
 
 ## 3. Driver
 
-- [ ] 3.1 In `ui/components/TourProvider.tsx`:
+- [x] 3.1 In `ui/components/TourProvider.tsx`:
   - add the `stepKey` effects (`/skills`, `openSettings("collaboration")`, close on leaving);
   - add `local` to `CENTRED` and `sign-in`/`off` to `USABLE_WHILE_EXPLAINED`;
   - add the `data-tour` anchors (D2, D4).

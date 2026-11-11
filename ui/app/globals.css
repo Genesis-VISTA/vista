@@ -3696,6 +3696,13 @@ button.chat-bubble.intermediate.collapsed:hover {
   color: var(--muted-2);
 }
 
+/* The tour's sign-in anchor in Settings › Collaboration: lays out as the section body does. */
+.settings-collab-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
 .settings-section-body {
   flex: 1 1 auto;
   display: flex;

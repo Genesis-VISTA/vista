@@ -121,6 +121,7 @@ const TOUR_ENTRY_ANCHORS: Record<string, string> = {
   "/knowledge-bases": "knowledge-bases:visit",
   "/skills": "skills:visit",
   "/files": "files:visit",
+  "/skill-hub": "collaboration:visit",
 };
 
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [

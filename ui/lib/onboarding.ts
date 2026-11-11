@@ -128,8 +128,11 @@ function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean
     case "knowledge-bases:visit":
     case "skills:visit":
     case "files:visit":
-    case "collaboration:visit":
       return input.pathname === STEP_PAGES[step];
+    case "collaboration:visit":
+      // The step goes on to Skills and Settings, so once the Skill Hub has been
+      // explained, leaving it doesn't send the researcher back.
+      return input.pathname === STEP_PAGES[step] || input.acknowledged.has("collaboration:overview");
     case "knowledge-bases:open-kb":
       return input.events.has("kb-opened");
     case "skills:open-skill":

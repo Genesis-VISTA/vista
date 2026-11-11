@@ -243,7 +243,7 @@ export default function SkillHubPage() {
                   : "No skills match your filters."}
               </div>
             ) : (
-              visible.map((skill) => {
+              visible.map((skill, index) => {
                 const action = importAction(skill);
                 const busy = busyId === skill.id;
                 const local = skill.local;
@@ -253,6 +253,7 @@ export default function SkillHubPage() {
                   <div
                     key={skill.id}
                     className="hub-card"
+                    data-tour={examples && index === 0 ? "collaboration:hub-item" : undefined}
                     onClick={() => select(skill)}
                     role="button"
                     tabIndex={0}

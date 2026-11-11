@@ -65,7 +65,13 @@ export function TeamFilter({
   if (!shown || shown.teams.length < 2) return null;
   return (
     <>
-      <select className={className} aria-label="Team" value={value} onChange={(e) => onChange(e.target.value)}>
+      <select
+        className={className}
+        aria-label="Team"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        data-tour={shown.example ? "collaboration:teams" : undefined}
+      >
         <option value="all">All teams</option>
         {shown.teams.map((t) => (
           <option key={t.id} value={t.id}>

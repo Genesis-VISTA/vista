@@ -1023,6 +1023,7 @@ function UpdateSwitch({
   onChange,
   mark,
   error,
+  tour,
 }: {
   field: string;
   label: string;
@@ -1032,9 +1033,11 @@ function UpdateSwitch({
   onChange: (on: boolean) => void;
   mark?: FieldMark;
   error?: string;
+  /** The tour's `data-tour` anchor on the switch's row. */
+  tour?: string;
 }) {
   return (
-    <div className="settings-profile-switch">
+    <div className="settings-profile-switch" data-tour={tour}>
       <span className="user-settings-switch-text">
         <span className="user-settings-switch-label">{label}</span>
         {hint && <span className="user-settings-hint">{hint}</span>}
@@ -1823,6 +1826,7 @@ function CollaborationSection({
           onChange={onToggle}
           mark={mark}
           error={switchError}
+          tour="collaboration:off"
         />
         {enabled && (
           <>
@@ -1841,6 +1845,9 @@ function CollaborationSection({
                 )
               }
             />
+            {/* Where the tour's sign-in coachmark points: the status, the token and,
+                signed in, the teams. Always drawn while on, for a server with no token. */}
+            <div className="settings-collab-signin" data-tour="collaboration:sign-in">
             <div className="settings-collab-status">
               <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
               <span aria-live="polite">
@@ -1899,6 +1906,7 @@ function CollaborationSection({
                 </button>
               </div>
             )}
+            </div>
           </>
         )}
       </div>

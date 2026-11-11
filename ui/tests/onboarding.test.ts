@@ -226,6 +226,20 @@ describe("nextTourStep", () => {
     }
   });
 
+  it("stays past the visit once the Skill Hub is explained, though the step moves on to Skills", () => {
+    const onSkills = {
+      ...at("collaboration"),
+      pathname: "/skills",
+      acknowledged: acks("collaboration:overview", "collaboration:local", "collaboration:teams", "collaboration:hub-item"),
+    };
+    expect(nextTourStep(input(onSkills))).toEqual({ step: "collaboration", subStep: "share" });
+    // Before it is explained, the visit still waits for the Skill Hub.
+    expect(nextTourStep(input({ ...at("collaboration"), pathname: "/skills" }))).toEqual({
+      step: "collaboration",
+      subStep: "visit",
+    });
+  });
+
   it("skips the collaboration step while collaboration is off", () => {
     const off = { collaboration: { enabled: false } };
     const hpcDone = acks("hpc:resources", "hpc:card", "hpc:check", "hpc:settings");

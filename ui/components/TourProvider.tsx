@@ -41,6 +41,9 @@ const USABLE_WHILE_EXPLAINED: ReadonlySet<string> = new Set([
   "model:saved",
   "files:chart-preview",
   "files:review",
+  // The token field and the Collaboration switch: neither has to be used.
+  "collaboration:sign-in",
+  "collaboration:off",
 ]);
 
 /** What answers Escape before the tour: every app dialog (`.modal-backdrop`) and the model menu. */
@@ -104,7 +107,7 @@ export function useTourEvent(): (event: TourEvent) => void {
 }
 
 /** Coachmarks with nothing to point at; they sit in the middle of the window. */
-const CENTRED: ReadonlySet<string> = new Set(["welcome:intro", "first-question:finish"]);
+const CENTRED: ReadonlySet<string> = new Set(["welcome:intro", "collaboration:local", "first-question:finish"]);
 
 /** What this page load has seen of the tour; a replay starts it over. */
 type Session = {
@@ -159,7 +162,12 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const { settings: agent } = useAgentSettings();
   const activeProject = useActiveProjectName();
   const pathname = usePathname();
-  const collaborationEnabled = useCollaboration().enabled;
+  const collab = useCollaboration();
+  const collaborationEnabled = collab.enabled;
+  // What the sign-in coachmark's wording depends on.
+  const collabSignedIn = collab.status?.signed_in ?? false;
+  const collabUrl = collab.status?.url ?? null;
+  const collabDefaultServer = collab.default_server;
   const [session, setSession] = useState<Session>(FRESH_SESSION);
 
   const loaded = !settingsLoading && settings !== null && agent !== null;
@@ -340,8 +348,23 @@ export function TourProvider({ children }: { children: ReactNode }) {
         // The researcher is in chat by now; the picker is behind the modal.
         closeSettings();
         break;
+      case "collaboration:share":
+        if (nav.current.pathname !== "/skills") nav.current.router.push("/skills");
+        break;
+      case "collaboration:sign-in":
+        openSettings("collaboration");
+        break;
     }
   }, [stepKey]);
+
+  // Leaving the collaboration step, by any way (Next, Skip, Exit, or turning
+  // collaboration off), closes the Settings it opened.
+  const wasCollaboration = useRef(false);
+  useEffect(() => {
+    const now = step === "collaboration";
+    if (wasCollaboration.current && !now) closeSettings();
+    wasCollaboration.current = now;
+  }, [step]);
 
   // The coachmark. One driver instance; VISTA's buttons call the latest actions.
   const actions = useRef({ next, skip, exit });
@@ -358,7 +381,8 @@ export function TourProvider({ children }: { children: ReactNode }) {
   const pulse = session.pulse;
   useEffect(() => {
     if (step === null || subStep === null || anchorKey === null) return;
-    const mark = coachmarkFor(step, subStep, { providerDefault, providerName, hasCredential, failure });
+    const context = { providerDefault, providerName, hasCredential, failure, collabSignedIn, collabUrl, collabDefaultServer };
+    const mark = coachmarkFor(step, subStep, context);
     if (mark === null) return;
     const key = anchorKey;
     const withNext = completesOnNext(step, subStep);
@@ -399,10 +423,7 @@ export function TourProvider({ children }: { children: ReactNode }) {
       // The skills card names the skill it points at, which only the page knows.
       const shown =
         coachmarkFor(step, subStep, {
-          providerDefault,
-          providerName,
-          hasCredential,
-          failure,
+          ...context,
           skillName: element?.getAttribute("data-tour-name") ?? null,
         }) ?? mark;
       driverRef.current.highlight({
@@ -548,7 +569,21 @@ export function TourProvider({ children }: { children: ReactNode }) {
       standAside();
     };
     // `pulse` and `pathname` only redraw: a report or a new page re-targets.
-  }, [step, subStep, anchorKey, failure, providerDefault, providerName, hasCredential, pathname, pulse, destroyDriver]);
+  }, [
+    step,
+    subStep,
+    anchorKey,
+    failure,
+    providerDefault,
+    providerName,
+    hasCredential,
+    collabSignedIn,
+    collabUrl,
+    collabDefaultServer,
+    pathname,
+    pulse,
+    destroyDriver,
+  ]);
 
   // Escape closes the tour, unless a dialog or menu is open: then Escape is
   // for that (each closes itself on it), and the tour stays. driver.js's own

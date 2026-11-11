@@ -221,7 +221,11 @@ export default function SkillsPage() {
    */
   function exampleCard(skill: ExampleLocalSkill) {
     return (
-      <div key={skill.slug} className="skill-item">
+      <div
+        key={skill.slug}
+        className="skill-item"
+        data-tour={skill.teamName === null ? "collaboration:share" : undefined}
+      >
         <div className="skill-name">
           {skill.name}
           <TeamBadge teamId={skill.teamId} exampleName={skill.teamName} />
