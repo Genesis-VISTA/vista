@@ -91,6 +91,11 @@ leak traffic from any client.
     and Publish… / Publish changes;
   - through `useTeams().shown`: team badges, the team filter, and Settings' Teams line;
   - `NavRail`'s Skill Hub entry, but only when `!collab.enabled`.
+- **Team badges after an expiry** stay (Sam, 2026-11-11). The server lists teams only to a
+  signed-in install, so the status store remembers the last signed-in answer's teams for its
+  address (in memory and localStorage), and `useTeams().badges`, which `TeamBadge` reads, is
+  `shown` plus known names. `useTeams().shown` still means teams can be acted with now: Publish…
+  into a team, the team filter and Settings' Teams line stay off until the sign-in works again.
 - While no status has arrived, `shown` is false. Nothing flashes in and then out for a quiet
   install.
 

@@ -6,6 +6,7 @@ import {
   resetCollaborationForTests,
   teamsView,
   useCollaboration,
+  useTeams,
   visibility,
   type CollaborationStatus,
 } from "@/lib/collaboration";
@@ -130,6 +131,37 @@ describe("visibility", () => {
 });
 
 describe("collaboration store", () => {
+  it("keeps team badges, by the last signed-in answer's names, after a token expires", async () => {
+    const beta = {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Beta",
+      public: false,
+      created_by: "me",
+      created_by_name: null,
+      created_at: "2026-11-10",
+    };
+    current = status({ teams: [beta] });
+    const { result } = renderHook(() => useTeams());
+    await waitFor(() => expect(result.current.shown).toBe(true));
+    expect(result.current.badges).toBe(true);
+    expect(window.localStorage.getItem("vista.collaboration.teams.v1")).toContain("Beta");
+
+    current = status({ ...QUIET, url: "http://127.0.0.1:8002", shown: true, teams: [] });
+    await act(() => refreshCollaborationStatus());
+    // Acting with teams is off; naming them is not.
+    expect(result.current.shown).toBe(false);
+    expect(result.current.badges).toBe(true);
+    expect(result.current.teamName(beta.id)).toBe("Beta");
+
+    // Not on another address, nor while quiet.
+    current = status({ ...QUIET, url: "http://other:8002", shown: true, teams: [] });
+    await act(() => refreshCollaborationStatus());
+    expect(result.current.badges).toBe(false);
+    current = status({ ...QUIET, url: "http://127.0.0.1:8002", teams: [] });
+    await act(() => refreshCollaborationStatus());
+    expect(result.current.badges).toBe(false);
+  });
+
   it("is hidden while checking and while quiet", async () => {
     current = status(QUIET);
     const { result } = renderHook(() => useCollaboration());

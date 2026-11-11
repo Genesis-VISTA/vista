@@ -98,12 +98,47 @@ type Snapshot = {
   checking: boolean;
   /** Client clock, ms, of the last answer. */
   checkedAt: number | null;
+  /**
+   * The teams of the last signed-in answer, and the address they are on, so a
+   * shown install keeps naming its items' teams after its token expires (the
+   * server lists teams only to a signed-in install). Kept in localStorage too.
+   */
+  remembered: RememberedTeams | null;
 };
+
+type RememberedTeams = { url: string; teams: CollaborationTeam[] };
+
+const REMEMBERED_KEY = "vista.collaboration.teams.v1";
+
+function loadRemembered(): RememberedTeams | null {
+  try {
+    const raw = window.localStorage.getItem(REMEMBERED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RememberedTeams;
+    return typeof parsed?.url === "string" && Array.isArray(parsed.teams) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRemembered(remembered: RememberedTeams): void {
+  try {
+    window.localStorage.setItem(REMEMBERED_KEY, JSON.stringify(remembered));
+  } catch {
+    // A convenience only: badges after an expiry come back at the next sign-in.
+  }
+}
 
 /** A new subscriber re-asks once the answer is older than this. */
 export const STALE_MS = 30_000;
 
-const initial = (): Snapshot => ({ status: null, error: null, checking: false, checkedAt: null });
+const initial = (): Snapshot => ({
+  status: null,
+  error: null,
+  checking: false,
+  checkedAt: null,
+  remembered: typeof window === "undefined" ? null : loadRemembered(),
+});
 
 let snapshot: Snapshot = initial();
 let request = 0;
@@ -133,7 +168,12 @@ export async function refreshCollaborationStatus(
     const status = (await res.json()) as CollaborationStatus;
     // A slower, older request must not overwrite a newer answer.
     if (id !== request) return;
-    set({ status, error: null, checking: false, checkedAt: Date.now() });
+    const update: Partial<Snapshot> = { status, error: null, checking: false, checkedAt: Date.now() };
+    if (status.signed_in && status.url) {
+      update.remembered = { url: status.url, teams: status.teams };
+      saveRemembered(update.remembered);
+    }
+    set(update);
   } catch (e) {
     if (id !== request) return;
     // One failed request (a backend restarting) does not throw away the last
@@ -157,12 +197,17 @@ function subscribe(cb: () => void): () => void {
 }
 
 const getSnapshot = () => snapshot;
-const SERVER_SNAPSHOT: Snapshot = initial();
+const SERVER_SNAPSHOT: Snapshot = { status: null, error: null, checking: false, checkedAt: null, remembered: null };
 const getServerSnapshot = () => SERVER_SNAPSHOT;
 
-/** For tests: forget everything, as a fresh page load would. */
+/** For tests: forget everything, as a fresh page load would, stored teams included. */
 export function resetCollaborationForTests(): void {
   request++;
+  try {
+    window.localStorage.removeItem(REMEMBERED_KEY);
+  } catch {
+    // nothing stored
+  }
   snapshot = initial();
 }
 
@@ -277,6 +322,13 @@ export type TeamsView = {
    * treated as private.
    */
   shown: boolean;
+  /**
+   * Team badges are drawn: collaboration controls are shown and the teams'
+   * names are known, from this answer or, after a token has expired, the last
+   * signed-in one on the same address. Wider than `shown`, which is about
+   * acting with teams now.
+   */
+  badges: boolean;
   /** The researcher's teams, the public team first. Private is not one of them. */
   teams: CollaborationTeam[];
   user: CollaborationUser | null;
@@ -298,14 +350,26 @@ export function teamLabel(team: CollaborationTeam | null): string {
 }
 
 /** The teams part of a status. Pure, for testing. */
-export function teamsView(s: Pick<Snapshot, "status" | "error">): TeamsView {
+export function teamsView(
+  s: Pick<Snapshot, "status" | "error"> & { remembered?: RememberedTeams | null },
+): TeamsView {
   const status = s.status;
   const teams = status?.teams ?? [];
-  const shown = visibility(s).shown && availability(s).available && teams.length > 0;
+  const collabShown = visibility(s).shown;
+  const shown = collabShown && availability(s).available && teams.length > 0;
   const known = new Set(teams.map((t) => t.id));
-  const names = new Map(teams.map((t) => [t.id, teamLabel(t)]));
+  // The names to badge with: this answer's teams, or after an expiry the last
+  // signed-in answer's on the same address.
+  const named =
+    teams.length > 0
+      ? teams
+      : status?.url && s.remembered?.url === status.url
+        ? s.remembered.teams
+        : [];
+  const names = new Map(named.map((t) => [t.id, teamLabel(t)]));
   return {
     shown,
+    badges: collabShown && named.length > 0,
     teams,
     user: status?.user ?? null,
     teamOf: (teamId) => (shown ? effectiveTeam(teamId, known) : (teamId ?? null)),
