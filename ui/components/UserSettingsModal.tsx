@@ -1832,13 +1832,10 @@ function CollaborationSection({
               binding={binding}
               placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
               hint={
-                fromConfig && status?.default_server ? (
+                // The configuration's address is the default here, already shown in
+                // the field's placeholder and the status line.
+                fromConfig ? (
                   <>Using default server - replace above to override</>
-                ) : fromConfig ? (
-                  <>
-                    This installation&apos;s configuration uses <code>{status?.url}</code>. An address
-                    here takes its place.
-                  </>
                 ) : (
                   <>The server&apos;s address.</>
                 )

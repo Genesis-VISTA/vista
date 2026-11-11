@@ -678,7 +678,7 @@ describe("UserSettingsModal collaboration", () => {
     const field = within(section).getByLabelText(/^Collaboration server/);
     expect(field).toHaveValue("");
     expect(field).toHaveAttribute("placeholder", "http://127.0.0.1:8002");
-    expect(section).toHaveTextContent("This installation's configuration uses http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("Using default server - replace above to override");
   });
 });
 
