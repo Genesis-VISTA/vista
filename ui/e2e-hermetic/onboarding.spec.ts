@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { TOUR_SUB_STEPS } from "../lib/onboarding";
 import { installStub, streamOneTurn, type Stub } from "./stub";
-import { COLLABORATION_STATUS, SETTINGS, INFERENCE } from "./fixtures";
+import { COLLABORATION_STATUS, SETTINGS, SKILLS, INFERENCE } from "./fixtures";
 
 /**
  * The first-boot tour, walked in a real browser against stubbed responses.
@@ -278,8 +278,10 @@ test("hpc: open the Odo card, then skip collaboration while it is off", async ({
 
 test("collaboration: the examples signed out, then the switch turned off", async ({ page }) => {
   await activeProject(page);
-  // The fixture's status: on the default server, not signed in, so quiet.
-  const stub = await install(page, "collaboration");
+  // The fixture's status: on the default server, not signed in, so quiet. And
+  // a long skill list, which would push an example drawn before it off-screen.
+  const many = Array.from({ length: 14 }, (_, i) => ({ ...SKILLS[0], slug: `skill-${i}`, name: `skill-${i}` }));
+  const stub = await install(page, "collaboration", { "GET /api/skills": many });
   await page.goto("/projects");
   await card(page, "collaboration:visit");
   await page.locator('[data-tour="collaboration:visit"]').click();
@@ -298,6 +300,9 @@ test("collaboration: the examples signed out, then the switch turned off", async
   await card(page, "collaboration:share");
   await expect(page).toHaveURL(/\/skills$/);
   await expect(page.locator('[data-tour="collaboration:share"]')).toContainText("csv-cleanup");
+  // Highlighted where it is seen, and still there once the page has settled.
+  await page.waitForTimeout(500);
+  await expect(page.locator('[data-tour="collaboration:share"].driver-active-element')).toBeInViewport();
   await press(page);
   // Then it opens Settings › Collaboration.
   await card(page, "collaboration:sign-in");

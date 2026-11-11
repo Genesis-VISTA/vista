@@ -526,6 +526,24 @@ describe("the tour's collaboration step", () => {
     expect(fetchMock.mock.calls.length).toBe(before);
   });
 
+  it("adds the examples first, and only once the real list has answered", async () => {
+    tour.current = { step: "collaboration", subStep: "share" };
+    let answer: (r: Response) => void = () => {};
+    routes["GET /api/skills"] = () => new Promise<Response>((resolve) => (answer = resolve));
+    render(<SkillsPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/skills"));
+    // Drawn before the list, the tour's card would be pushed away by it.
+    expect(screen.queryByText("csv-cleanup")).toBeNull();
+    expect(document.querySelector('[data-tour="collaboration:share"]')).toBeNull();
+
+    answer(json([local({ slug: "alpha-skill", name: "alpha-skill", teamId: null })]));
+    expect(await screen.findByText("csv-cleanup")).toBeInTheDocument();
+    const names = [...document.querySelectorAll('[data-tour="skills:available"] .skill-name')].map(
+      (n) => n.firstChild?.textContent,
+    );
+    expect(names).toEqual(["csv-cleanup", "run-summary", "alpha-skill"]);
+  });
+
   it("lets a real skill with an example's name win", async () => {
     tour.current = { step: "collaboration", subStep: "share" };
     routes["GET /api/skills"] = () => json([local({ slug: "csv-cleanup", name: "csv-cleanup", teamId: null })]);

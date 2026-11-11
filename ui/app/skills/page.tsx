@@ -35,6 +35,8 @@ export default function SkillsPage() {
   const teams = useTeams();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;
   const [skills, setSkills] = useState<SkillSummary[]>([]);
+  /** The list has answered once (or failed to), so the page has its real length. */
+  const [listed, setListed] = useState(false);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const tour = useTour();
@@ -56,7 +58,8 @@ export default function SkillsPage() {
     fetch("/api/skills")
       .then((res) => res.json())
       .then((data) => setSkills(Array.isArray(data) ? data : []))
-      .catch(() => setSkills([]));
+      .catch(() => setSkills([]))
+      .finally(() => setListed(true));
   }, []);
 
   useEffect(() => {
@@ -197,12 +200,14 @@ export default function SkillsPage() {
     [skills, loadedSlugs, matches]
   );
   // During the tour's collaboration step its example skills join them, unless
-  // a real skill has the name. They exist only here.
+  // a real skill has the name. They exist only here. They come first, and only
+  // once the list has answered: the tour points at one, and a card drawn before
+  // the real skills arrive would be pushed out from under its coachmark.
   const otherSkills = useMemo<SkillSummary[]>(() => {
-    if (!examples) return realOtherSkills;
+    if (!examples || !listed) return realOtherSkills;
     const extra = EXAMPLE_LOCAL_SKILLS.filter((e) => !skills.some((s) => s.slug === e.slug) && matches(e));
-    return [...realOtherSkills, ...extra];
-  }, [examples, realOtherSkills, skills, matches]);
+    return [...extra, ...realOtherSkills];
+  }, [examples, listed, realOtherSkills, skills, matches]);
 
   // The cards the tour points at: the tour's skill (loaded first, else among the
   // others), else the first skill; and the first Load button.
