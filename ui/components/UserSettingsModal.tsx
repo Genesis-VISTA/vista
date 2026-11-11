@@ -107,6 +107,7 @@ type Draft = {
   personalizeResponses: boolean;
   updateChecks: boolean;
   updatePrereleases: boolean;
+  collaborationEnabled: boolean;
   hidden: Set<HpcCluster>;
 };
 
@@ -124,6 +125,7 @@ function draftFrom(user: LocalSettings): Draft {
     personalizeResponses: user.personalize_responses ?? true,
     updateChecks: user.update_checks ?? true,
     updatePrereleases: user.update_prereleases ?? false,
+    collaborationEnabled: user.collaboration_enabled ?? true,
     hidden: new Set((user.hpc_hidden_clusters ?? []).filter((c): c is HpcCluster => HPC_CLUSTERS.includes(c as HpcCluster))),
   };
 }
@@ -207,6 +209,7 @@ const FIELD_LABELS: Record<string, string> = {
   display_name: "Name",
   email: "Email",
   collaboration_server_url: "Collaboration server",
+  collaboration_enabled: "Collaboration",
   research_role: "Research role",
   research_institution: "Institution or laboratory",
   research_interests: "Research interests",
@@ -311,6 +314,8 @@ export function UserSettingsModal({
     // (which it decides) in place.
     if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
     if (field === "collaboration_token") void refreshCollaborationStatus();
+    // Off or on again: the answer about the other state says nothing now.
+    if (field === "collaboration_enabled") void refreshCollaborationStatus({ forget: true });
     // About and the settings marker follow the update switches: turning checks
     // on, or changing which releases count, asks GitHub again.
     if (field === "update_checks") void (value ? checkNow() : refreshVersion());
@@ -354,6 +359,7 @@ export function UserSettingsModal({
       seeded.personalize_responses = next.personalizeResponses;
       seeded.update_checks = next.updateChecks;
       seeded.update_prereleases = next.updatePrereleases;
+      seeded.collaboration_enabled = next.collaborationEnabled;
       seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
       autosave.seed(seeded);
       setUser(loaded);
@@ -504,6 +510,11 @@ export function UserSettingsModal({
     autosave.edit("personalize_responses", personalizeResponses, "now");
   }
 
+  function setCollaborationEnabled(collaborationEnabled: boolean) {
+    setDraft((d) => (d ? { ...d, collaborationEnabled } : d));
+    autosave.edit("collaboration_enabled", collaborationEnabled, "now");
+  }
+
   function setUpdateSwitch(field: "update_checks" | "update_prereleases", on: boolean) {
     const key = field === "update_checks" ? "updateChecks" : "updatePrereleases";
     setDraft((d) => (d ? { ...d, [key]: on } : d));
@@ -565,6 +576,10 @@ export function UserSettingsModal({
         user={user}
         bindToken={bindToken}
         onRemove={() => removeToken("collaboration_token")}
+        enabled={draft.collaborationEnabled}
+        onToggle={setCollaborationEnabled}
+        mark={autosave.marks.collaboration_enabled}
+        error={autosave.errors.collaboration_enabled}
       />
     );
   } else if (section === "about") {
@@ -986,7 +1001,7 @@ function UpdateSwitch({
 }: {
   field: string;
   label: string;
-  hint: string;
+  hint?: string;
   on: boolean;
   disabled?: boolean;
   onChange: (on: boolean) => void;
@@ -997,7 +1012,7 @@ function UpdateSwitch({
     <div className="settings-profile-switch">
       <span className="user-settings-switch-text">
         <span className="user-settings-switch-label">{label}</span>
-        <span className="user-settings-hint">{hint}</span>
+        {hint && <span className="user-settings-hint">{hint}</span>}
         <FieldError field={field} error={error} />
       </span>
       <SaveMark mark={mark} />
@@ -1719,28 +1734,40 @@ function TokenField({
 /** The collaboration server's state in a word or two, for the navigation. */
 function collaborationLabel(view: CollaborationView): string {
   if (!view.status) return view.checking ? "Checking" : "Unknown";
+  if (!view.status.enabled) return "Off";
   if (!view.status.configured) return "Not set";
   if (view.available) return "Connected";
+  if (view.status.refused) return "No access";
   if (view.status.sign_in_required) return "Sign in";
   return view.status.reachable ? "Refused" : "Unreachable";
 }
 
 /**
- * Where to publish to and import from: the server's address, and whether it
- * answers. The status line is the same answer every Publish and Import control
- * reads (`useCollaboration`), so the reason a control is off is visible here.
- * Once signed in, the researcher's teams are made and managed here too.
+ * Collaboration on or off, and while on, where to publish to and import from:
+ * the server's address, and whether it answers. The status line is the same
+ * answer every Publish and Import control reads (`useCollaboration`), so the
+ * reason a control is off is visible here. Once signed in, the researcher's
+ * teams are made and managed here too. Off, only the switch and its hints.
  */
 function CollaborationSection({
   bind,
   user,
   bindToken,
   onRemove,
+  enabled,
+  onToggle,
+  mark,
+  error: switchError,
 }: {
   bind: Bind;
   user: LocalSettings;
   bindToken: (field: TokenField) => FieldBinding;
   onRemove: () => void;
+  /** The switch as saved here; drives the layout at once, before the status follows. */
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  mark?: FieldMark;
+  error?: string;
 }) {
   const view = useCollaboration();
   const { status, checking, available, reason, error, refresh } = view;
@@ -1759,78 +1786,96 @@ function CollaborationSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body">
-        <SavedField
-          label="Collaboration server"
-          field="collaboration_server_url"
-          binding={binding}
-          placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
+        <UpdateSwitch
+          field="collaboration_enabled"
+          label="Collaboration"
           hint={
-            fromConfig ? (
-              <>
-                This installation&apos;s configuration uses <code>{status?.url}</code>. An address
-                here takes its place.
-              </>
-            ) : (
-              <>The server&apos;s address.</>
-            )
+            enabled
+              ? undefined
+              : "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing buttons are hidden."
           }
+          on={enabled}
+          onChange={onToggle}
+          mark={mark}
+          error={switchError}
         />
-        <div className="settings-collab-status">
-          <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
-          <span aria-live="polite">
-            {available && status
-              ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
-              : reason}
-            {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
-          </span>
-          <button
-            type="button"
-            className="button ghost button-xs"
-            onClick={() => void refresh()}
-            disabled={checking}
-          >
-            Check again
-          </button>
-        </div>
-        {/* The backend offers the sign-in page only where a token would be sent and is
-            wanted, whatever the server answered: a gateway's redirect to its login or
-            an error can be the token's absence too. */}
-        {(status?.sign_in_url || user.has_collaboration_token) && (
-          <TokenField
-            label="Token"
-            field="collaboration_token"
-            saved={Boolean(user.has_collaboration_token)}
-            binding={bindToken("collaboration_token")}
-            onRemove={onRemove}
-            hint={
-              status?.sign_in_url ? (
-                <>
-                  <a href={status.sign_in_url} target="_blank" rel="noreferrer">
-                    Open the server&apos;s sign-in page
-                  </a>
-                  , log in, and paste the token it shows. When it expires, get a new one there.
-                </>
-              ) : (
-                <>The token from the server&apos;s sign-in page.</>
-              )
-            }
-          />
-        )}
-        {teams.shown && (
-          <div className="settings-collab-status">
-            <span>
-              Teams:{" "}
-              {teams.teams.map((t) => teamLabel(t)).join(", ")}. Publishing something for the
-              first time puts it in one of them, where it stays.
-            </span>
-            <button
-              type="button"
-              className="button ghost button-xs"
-              onClick={() => setManagingTeams(true)}
-            >
-              Manage teams…
-            </button>
-          </div>
+        {enabled && (
+          <>
+            <SavedField
+              label="Collaboration server"
+              field="collaboration_server_url"
+              binding={binding}
+              placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
+              hint={
+                fromConfig ? (
+                  <>
+                    This installation&apos;s configuration uses <code>{status?.url}</code>. An address
+                    here takes its place.
+                  </>
+                ) : (
+                  <>The server&apos;s address.</>
+                )
+              }
+            />
+            <div className="settings-collab-status">
+              <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
+              <span aria-live="polite">
+                {available && status
+                  ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
+                  : reason}
+                {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
+              </span>
+              <button
+                type="button"
+                className="button ghost button-xs"
+                onClick={() => void refresh()}
+                disabled={checking}
+              >
+                Check again
+              </button>
+            </div>
+            {/* The backend offers the sign-in page only where a token would be sent and is
+                wanted, whatever the server answered: a gateway's redirect to its login or
+                an error can be the token's absence too. */}
+            {(status?.sign_in_url || user.has_collaboration_token) && (
+              <TokenField
+                label="Token"
+                field="collaboration_token"
+                saved={Boolean(user.has_collaboration_token)}
+                binding={bindToken("collaboration_token")}
+                onRemove={onRemove}
+                hint={
+                  status?.sign_in_url ? (
+                    <>
+                      <a href={status.sign_in_url} target="_blank" rel="noreferrer">
+                        Open the server&apos;s sign-in page
+                      </a>
+                      , log in, and paste the token it shows. When it expires, get a new one there.
+                      {status.default_server && " No access yet? Reach out to the VISTA team."}
+                    </>
+                  ) : (
+                    <>The token from the server&apos;s sign-in page.</>
+                  )
+                }
+              />
+            )}
+            {teams.shown && (
+              <div className="settings-collab-status">
+                <span>
+                  Teams:{" "}
+                  {teams.teams.map((t) => teamLabel(t)).join(", ")}. Publishing something for the
+                  first time puts it in one of them, where it stays.
+                </span>
+                <button
+                  type="button"
+                  className="button ghost button-xs"
+                  onClick={() => setManagingTeams(true)}
+                >
+                  Manage teams…
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
       {managingTeams && <TeamsModal onClose={() => setManagingTeams(false)} />}

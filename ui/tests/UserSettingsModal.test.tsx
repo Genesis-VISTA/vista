@@ -358,7 +358,98 @@ describe("UserSettingsModal navigation", () => {
 
 describe("UserSettingsModal collaboration", () => {
   const OBSIDIAN = "https://obsidian.ccs.ornl.gov/vista/api";
-  const GET_ONE = `Get a token from ${OBSIDIAN}/sign-in and paste it under Settings → Collaboration.`;
+  const GET_ONE = `Sign in to ${OBSIDIAN} to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.`;
+  const VISTA_TEAM = "No access yet? Reach out to the VISTA team.";
+  const OFF_HINT =
+    "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing buttons are hidden.";
+  const signIn = (overrides: Partial<CollaborationStatus> = {}) =>
+    collaborationView({
+      configured: true,
+      reachable: false,
+      reason: GET_ONE,
+      url: OBSIDIAN,
+      source: "config",
+      sign_in_required: true,
+      ...overrides,
+    });
+
+  it("turns collaboration off, leaving only the switch and its hints", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    const toggle = within(section).getByRole("switch", { name: "Collaboration" });
+    expect(toggle).toBeChecked();
+    expect(within(section).getByLabelText(/^Collaboration server/)).toBeInTheDocument();
+    expect(section).not.toHaveTextContent(OFF_HINT);
+
+    await userEvent.click(toggle);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_enabled: false });
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith({ forget: true }));
+    expect(toggle).not.toBeChecked();
+    expect(section).toHaveTextContent(OFF_HINT);
+    expect(section).toHaveTextContent("Nothing leaves this computer until you publish it, choosing its team the first time.");
+    expect(within(section).queryByLabelText(/^Collaboration server/)).toBeNull();
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+    expect(within(section).queryByRole("button", { name: "Check again" })).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_enabled: true });
+  });
+
+  it("opens off for an install that turned it off", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ enabled: false, configured: true, url: OBSIDIAN, reason: "Collaboration is off." }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_enabled: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, off");
+    const section = await openOn("Collaboration");
+    expect(within(section).getByRole("switch", { name: "Collaboration" })).not.toBeChecked();
+    expect(within(section).queryByLabelText(/^Collaboration server/)).toBeNull();
+  });
+
+  it.each([
+    ["off", { enabled: false }],
+    ["sign in", {}],
+    ["connected", { reachable: true, signed_in: true, sign_in_required: false, reason: null, shown: true }],
+    [
+      "no access",
+      {
+        reachable: true,
+        signed_in: false,
+        sign_in_required: false,
+        refused: true,
+        shown: true,
+        reason: `${OBSIDIAN} refused this sign-in. Signing in again won't help: reach out to the VISTA team for access.`,
+      },
+    ],
+  ] as const)("labels the section %s", async (label, overrides) => {
+    useCollaborationMock.mockReturnValue(signIn(overrides as Partial<CollaborationStatus>));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName(`Collaboration, ${label}`);
+  });
+
+  it("points a not-signed-in install to the VISTA team only on the default server", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { unmount } = render(<UserSettingsModal onClose={() => {}} />);
+    let section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(GET_ONE);
+    expect(section).toHaveTextContent(VISTA_TEAM);
+    unmount();
+
+    useCollaborationMock.mockReturnValue(
+      signIn({ url: "https://collab.example.org", reason: "Sign in to https://collab.example.org to publish and import." }),
+    );
+    render(<UserSettingsModal onClose={() => {}} />);
+    section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toBeInTheDocument();
+    expect(section).not.toHaveTextContent(VISTA_TEAM);
+  });
 
   it("asks for a token when the server wants one, and saves the pasted one", async () => {
     useCollaborationMock.mockReturnValue(

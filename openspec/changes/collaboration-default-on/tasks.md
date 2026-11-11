@@ -23,7 +23,7 @@
 
 ## 3. UI: Settings › Collaboration
 
-- [ ] 3.1 Add the "Collaboration" switch and the off/on layouts, the reworded hints, the labels "Off" and "No access", and "No access yet? Reach out to the VISTA team." on the default server (storyboard frames A–D). Verify in `ui/tests/UserSettingsModal.test.tsx`:
+- [x] 3.1 Add the "Collaboration" switch and the off/on layouts, the reworded hints, the labels "Off" and "No access", and "No access yet? Reach out to the VISTA team." on the default server (storyboard frames A–D). Verify in `ui/tests/UserSettingsModal.test.tsx`:
   - the switch saves `collaboration_enabled`;
   - off shows only the switch and hints;
   - each label maps from its status;
