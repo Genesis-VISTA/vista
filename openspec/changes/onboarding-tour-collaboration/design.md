@@ -51,7 +51,10 @@ See proposal.md for why. The tour is a pure step model plus a driver:
 - **Steps.** Add `"collaboration"` to `TOUR_STEPS` between `hpc` and `first-question`, with
   sub-steps `visit, overview, local, teams, hub-item, share, sign-in, off`.
 - **Visit.** `collaboration:visit` joins `ACTION_SUB_STEPS`. `STEP_PAGES.collaboration` is
-  `/skill-hub`, so it is done by pathname like the other visits.
+  `/skill-hub`, so it is done by pathname like the other visits, and also once `overview` is
+  passed: unlike the other steps, this one moves on to Skills and Settings, and leaving the
+  Skill Hub must not send the researcher back to the visit. A reload mid-step starts the step
+  over at the visit, as the other steps do.
 - **Input.** `TourInput` gains `collaboration: { enabled: boolean }`, wired in `TourProvider` from
   `useCollaboration()`.
 - **Skip.** `nextTourStep` treats the step as skipped while `!enabled`, the same way it treats a
