@@ -477,3 +477,57 @@ async def test_a_watch_stops_even_while_a_reading_is_held(registry, records, cha
         stopped = await registry.stop(record.id)
 
     assert stopped is not None and stopped.state == "stopped"
+
+
+async def test_a_job_that_ended_while_the_watch_was_paused_is_reported(
+    registry, records, chat
+):
+    """Found trying it: the reading that resumed the watch also ended it, and crashed."""
+    record = await _watch(records, chat)
+
+    await _run(
+        registry,
+        record,
+        Script(state("RUNNING"), LOST, state("COMPLETED", exit_code=0)),
+    )
+
+    saved = await _record(records, record)
+    assert (saved.state, saved.paused_reason) == ("ended", None)
+    assert [e.payload["event"] for e in await _events(records, chat[0])] == [
+        "started",
+        "ended",
+    ]
+
+
+async def test_active_is_running(registry, records, chat):
+    """S3M reports a running job as ACTIVE (PSI/J), not RUNNING."""
+    record = await _watch(records, chat)
+
+    await _run(
+        registry, record, Script(state("QUEUED"), state("ACTIVE"), state("COMPLETED"))
+    )
+
+    events = await _events(records, chat[0])
+    assert [e.payload["event"] for e in events] == ["started", "ended"]
+
+
+async def test_a_watch_that_crashes_does_not_stay_paused(registry, records, chat):
+    record = await _watch(records, chat)
+
+    clock = _clock_for(record)
+    original = clock.sleep
+    calls = {"n": 0}
+
+    async def sleep_then_explode(seconds, *wake):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")  # anything the loop did not expect
+        await original(seconds, *wake)
+
+    clock.sleep = sleep_then_explode  # type: ignore[method-assign]
+    await _run(registry, record, Script(LOST, LOST, LOST), clock)
+
+    saved = await _record(records, record)
+    assert saved.state == "stopped" and saved.paused_reason is None
+    async with AsyncSession(records) as db:
+        assert await inbox.waiting_on_researcher(db, [chat[0]]) == set()

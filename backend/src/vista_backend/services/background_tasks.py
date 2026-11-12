@@ -74,7 +74,8 @@ SLOW_POLL_S = 300.0
 """ The longest interval between readings, and the wait on a 429 that names none. """
 PAUSED_RETRY_S = 300.0
 
-_RUNNING = {"RUNNING"}
+_RUNNING = {"RUNNING", "ACTIVE"}
+""" `ACTIVE` is PSI/J's, and S3M's, name for a running job; `RUNNING` is Slurm's. """
 _SUCCESS = {"COMPLETED", "COMPLETE"}
 _FAILURE = {
     "FAILED",
@@ -639,6 +640,12 @@ class BackgroundTaskRegistry:
             raise
         except Exception:
             log.exception("Watching job %s failed", record.label)
+            # Not left paused or watching with nothing behind it, which would
+            # keep the conversation's "needs you" on for good.
+            with contextlib.suppress(Exception):
+                await _save_watch(
+                    record.id, state="stopped", paused_reason=None, ended_at=now_iso()
+                )
         finally:
             self._watches.pop(record.id, None)
             watch.done.set()
@@ -711,16 +718,9 @@ class BackgroundTaskRegistry:
                     await _put_event(record, *_job_event(record, "started", reading))
                     changes = {}
                 if ended:
-                    record = (
-                        await _save_watch(
-                            record.id,
-                            **changes,
-                            state="ended",
-                            ended_at=now_iso(),
-                            next_poll_at=None,
-                        )
-                        or record
-                    )
+                    # `changes` may hold a resume from a pause: the end overrides it.
+                    changes.update(state="ended", ended_at=now_iso(), next_poll_at=None)
+                    record = await _save_watch(record.id, **changes) or record
                     await _put_event(record, *_job_event(record, "ended", reading))
                     return
                 if changes:
