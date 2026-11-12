@@ -442,6 +442,104 @@ test.describe("chat runs", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Background tasks (openspec change background-tasks, tasks 7.2 and 7.3)
+  // -------------------------------------------------------------------------
+
+  const RUNNING_COMMAND = {
+    id: "00000000-0000-4000-8000-0000000000c1",
+    label: "bg-1",
+    kind: "command",
+    state: "running",
+    command: "python fit.py",
+    log_path: "/mnt/data/tasks/c1.log",
+    created_at: "2026-11-12T10:00:00Z",
+    runtime_s: 62,
+  };
+  const PAUSED_WATCH = {
+    id: "00000000-0000-4000-8000-0000000000c2",
+    label: "watch-2",
+    kind: "job_watch",
+    state: "paused",
+    job_id: "4242",
+    cluster: "odo",
+    paused_reason: "Reconnect Odo in Settings",
+    created_at: "2026-11-12T10:00:00Z",
+    runtime_s: 30,
+  };
+
+  test("the Background tab appears with the conversation's first task, with its count", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/chat/tasks": by("chat_session_id", {
+        [SESSION_ID]: [RUNNING_COMMAND, PAUSED_WATCH],
+        default: [],
+      }),
+    });
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+
+    const tab = page.getByRole("tab", { name: /Background/ });
+    await expect(tab).toBeVisible();
+    await expect(tab.getByLabel("2 running")).toHaveText("2");
+    await tab.click();
+
+    const panel = page.getByRole("tabpanel", { name: /Background/ });
+    await expect(panel.getByText("python fit.py")).toBeVisible();
+    await expect(panel.getByText("Job 4242 on Odo")).toBeVisible();
+    await expect(panel.getByRole("status")).toHaveText("Paused: Reconnect Odo in Settings");
+
+    await panel.getByRole("button", { name: "Stop" }).first().click();
+    await expect
+      .poll(async () => (await stub!.requests()).filter((r) => r.startsWith("POST /api/chat/tasks/stop")))
+      .toEqual([
+        `POST /api/chat/tasks/stop?project_name=molten-salt&chat_session_id=${SESSION_ID}&task_id=${RUNNING_COMMAND.id}`,
+      ]);
+  });
+
+  test("a conversation without tasks shows no Background tab", async ({ page }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+
+    await expect(page.getByRole("tab", { name: "Activity" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Background/ })).toHaveCount(0);
+  });
+
+  test("deleting a conversation with a running task names it and ends it on confirming", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/chat/tasks": by("chat_session_id", {
+        [SESSION_ID]: [RUNNING_COMMAND, { ...PAUSED_WATCH, state: "ended" }],
+        default: [],
+      }),
+    });
+    await openProject(page);
+    await page
+      .locator(".conversation-list-item")
+      .filter({ hasText: "Density of FLiBe" })
+      .getByRole("button", { name: "Delete conversation" })
+      .click();
+
+    const dialog = page.locator(".modal");
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toContainText("This is still running");
+    await expect(alert).toContainText("bg-1");
+    await expect(alert).toContainText("python fit.py");
+    await expect(alert).not.toContainText("watch-2"); // an ended watch is not named
+    await dialog.getByRole("button", { name: "End them and delete" }).click();
+
+    await expect
+      .poll(async () => (await stub!.requests()).filter((r) => r.startsWith("DELETE /api/chat/session")))
+      .toEqual([
+        `DELETE /api/chat/session?project_name=molten-salt&chat_session_id=${SESSION_ID}&confirm=true`,
+      ]);
+  });
+
+  // -------------------------------------------------------------------------
   // Prompts come back
   // -------------------------------------------------------------------------
 

@@ -4,13 +4,15 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from ..db.db import SessionDep
-from ..db.schemas import InboxItemEdit, InboxItemPublic
+from ..agents.agents import agent_volume_root
+from ..db.schemas import BackgroundTaskPublic, InboxItemEdit, InboxItemPublic
+from ..services import background_tasks
 from ..services import chat_session as chat_session_service
 from ..services import inbox as inbox_service
 from ..services import project as project_service
@@ -195,3 +197,96 @@ async def delete_inbox_item(
         )
     await chat_run_registry.announce_inbox(chat_session_id)
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------
+# The conversation's background tasks (the Background tab)
+# ---------------------------------------------------------------------------
+
+LOG_TAIL_BYTES = 64 * 1024
+""" The most of a log the tab's preview is sent: its end, where a command is now. """
+
+
+def _task(record) -> BackgroundTaskPublic:
+    public = BackgroundTaskPublic.model_validate(record, from_attributes=True)
+    public.runtime_s = background_tasks.runtime_of(record)
+    return public
+
+
+async def _conversation_task(
+    session, project_name: str, chat_session_id: uuid.UUID, task_id: uuid.UUID
+):
+    project = await project_service.get_project_by_name(session, project_name)
+    await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
+    )
+    record = await background_tasks.get(session, task_id)
+    if record is None or record.chat_session_id != chat_session_id:
+        raise HTTPException(status_code=404, detail="No such task in this conversation")
+    return project, record
+
+
+@router.get("/{project_name}/chat-sessions/{chat_session_id}/tasks")
+async def list_tasks(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    session: SessionDep,
+) -> list[BackgroundTaskPublic]:
+    """The conversation's background commands and job watches, oldest first, finished ones too."""
+    project = await project_service.get_project_by_name(session, project_name)
+    await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
+    )
+    return [
+        _task(r) for r in await background_tasks.list_for_chat(session, chat_session_id)
+    ]
+
+
+@router.post("/{project_name}/chat-sessions/{chat_session_id}/tasks/{task_id}/stop")
+async def stop_task(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    task_id: uuid.UUID,
+    session: SessionDep,
+) -> BackgroundTaskPublic:
+    """
+    Stop a task, as the agent's `stop_task` does: a command ends with everything
+    it started, a watch stops watching and its job is left alone. A task that
+    has already ended is returned as it is.
+    """
+    _, record = await _conversation_task(
+        session, project_name, chat_session_id, task_id
+    )
+    if record.state in background_tasks.ENDED_STATES:
+        return _task(record)
+    await session.commit()  # the stop writes through its own session
+    stopped = await background_tasks.background_task_registry.stop(task_id)
+    return _task(stopped or record)
+
+
+@router.get("/{project_name}/chat-sessions/{chat_session_id}/tasks/{task_id}/log")
+async def task_log(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    task_id: uuid.UUID,
+    session: SessionDep,
+) -> PlainTextResponse:
+    """The end of a command's log, at most 64 KiB, cut at a line start when cut."""
+    project, record = await _conversation_task(
+        session, project_name, chat_session_id, task_id
+    )
+    if record.kind != "command":
+        raise HTTPException(status_code=404, detail="Only a command has a log")
+    path = background_tasks.host_log_path(agent_volume_root(project.id), record)
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            size = f.tell()
+            f.seek(max(0, size - LOG_TAIL_BYTES))
+            data = f.read()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="The log is not there yet")
+    text = data.decode("utf-8", errors="replace")
+    if size > LOG_TAIL_BYTES and "\n" in text:
+        text = text.split("\n", 1)[1]
+    return PlainTextResponse(text)

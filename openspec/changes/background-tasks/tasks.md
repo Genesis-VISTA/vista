@@ -50,9 +50,9 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 7. Background tab
 
-- [ ] 7.1 Add `GET /chat/{id}/tasks`, the stop route and the log-tail route; verify in a new `backend/tests/test_background_tasks_api.py` (another conversation's tasks are not listed)
-- [ ] 7.2 UI: add `BackgroundPanel` as a workspace tab shown once the conversation has a task, with state, advancing runtime, log link, stop control, the paused-watch line and the running count on the label; verify with a new `ui/tests/BackgroundPanel.test.tsx`
-- [ ] 7.3 UI: show the live tasks in the delete-conversation dialog; verify with a new case in the chat list's test
+- [x] 7.1 Add `GET /chat/{id}/tasks`, the stop route and the log-tail route; verify in a new `backend/tests/test_background_tasks_api.py` (another conversation's tasks are not listed)
+- [x] 7.2 UI: add `BackgroundPanel` as a workspace tab shown once the conversation has a task, with state, advancing runtime, log link, stop control, the paused-watch line and the running count on the label; verify with a new `ui/tests/BackgroundPanel.test.tsx`
+- [x] 7.3 UI: show the live tasks in the delete-conversation dialog; verify with a new case in the chat list's test
 
 ## 8. Agent guidance, docs and whole-change checks
 

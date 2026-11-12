@@ -1260,6 +1260,27 @@ class BackgroundTaskTable(SQLModel, table=True):
     ended_at: str | None = None
 
 
+class BackgroundTaskPublic(BaseModel):
+    """A background task as the Background tab shows it."""
+
+    id: uuid.UUID
+    label: str
+    kind: str
+    state: str
+    command: str | None = None
+    job_id: str | None = None
+    cluster: str | None = None
+    log_path: str | None = None
+    timeout_s: int | None = None
+    exit_status: int | None = None
+    last_job_state: str | None = None
+    paused_reason: str | None = None
+    created_at: str
+    ended_at: str | None = None
+    runtime_s: float = 0
+    """ Seconds from its start to its end, or to now while it runs. """
+
+
 class InboxItemPublic(BaseModel):
     """An inbox item as the API shows it."""
 

@@ -272,6 +272,10 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/chat/inbox": [],
   "PATCH /api/chat/inbox": {},
   "DELETE /api/chat/inbox": {},
+  // No background tasks, so no Background tab.
+  "GET /api/chat/tasks": [],
+  "POST /api/chat/tasks/stop": {},
+  "DELETE /api/chat/session": {},
   "PUT /api/chat/session": CHAT_SESSION,
   // No conversation is working or has an unseen outcome, so no dots show.
   "GET /api/chat/runs/status": [],

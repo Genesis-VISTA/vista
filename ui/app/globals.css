@@ -7352,3 +7352,117 @@ textarea.input:focus {
   margin: 0;
   font-size: 13px;
 }
+
+/* The Background tab (components/BackgroundPanel.tsx). */
+.background-view {
+  overflow-y: auto;
+}
+
+.background-empty {
+  padding: 18px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.background-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.background-task {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.background-task-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.background-task-label {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.background-task-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.background-task-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.background-task-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.background-task[data-state="running"] .background-task-state,
+.background-task[data-state="watching"] .background-task-state {
+  color: var(--brand);
+}
+
+.background-task[data-state="exited"] .background-task-state,
+.background-task[data-state="timed_out"] .background-task-state,
+.background-task[data-state="interrupted"] .background-task-state {
+  color: var(--ink-2);
+}
+
+.background-task-paused {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--warning-line);
+  border-radius: 6px;
+  color: var(--warning-ink);
+  font-size: 12px;
+}
+
+.background-task-log {
+  margin-top: 8px;
+}
+
+.background-task-log-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+/* The delete dialog naming what still runs. */
+.delete-live-tasks {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-line);
+  border-radius: var(--r-card);
+  background: var(--danger-tint);
+  color: var(--danger-ink);
+  font-size: 13px;
+}
+
+.delete-live-tasks ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}

@@ -8,6 +8,14 @@ import SandboxedHtmlCard from "@/components/SandboxedHtmlCard";
 import ElicitationModal from "@/components/ElicitationModal";
 import ToolApprovalModal, { type DecisionMetadata } from "@/components/ToolApprovalModal";
 import CampaignPanel from "@/components/CampaignPanel";
+import BackgroundPanel from "@/components/BackgroundPanel";
+import {
+  fetchTasks,
+  liveCount,
+  liveTasks,
+  taskSubject,
+  type BackgroundTask,
+} from "@/lib/background-tasks";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ModelPicker } from "@/components/ModelPicker";
 import { holdSendWithoutModel } from "@/lib/agent-settings";
@@ -85,7 +93,7 @@ import { RunStatusDot } from "@/components/RunStatusDot";
 import ArtifactFeed, { artifactElementId } from "@/components/ArtifactFeed";
 import { fetchDisplayedFiles, mergeFeed, type DisplayedFile } from "@/lib/displayed-files";
 
-type WorkspaceTab = "artifacts" | "activity" | "jobs";
+type WorkspaceTab = "artifacts" | "activity" | "jobs" | "background";
 
 /**
  * Openers for an empty conversation. These prefill the composer rather than
@@ -96,6 +104,7 @@ const WORKSPACE_TABS: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "artifacts", label: "Artifacts" },
   { id: "activity", label: "Activity" },
   { id: "jobs", label: "Jobs" },
+  { id: "background", label: "Background" },
 ];
 
 const SUGGESTIONS = [
@@ -719,6 +728,12 @@ function ChatPage() {
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null);
   const [showRawLog, setShowRawLog] = useState(false);
   const [hasCampaign, setHasCampaign] = useState(false);
+  /** The open conversation's background tasks, as the Background tab last read them. */
+  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundTask[]>([]);
+  /** Bumped by run events that may have changed the tasks: the tab reads them again. */
+  const [tasksRefresh, setTasksRefresh] = useState(0);
+  /** The live tasks of the conversation the delete dialog is for; null while read. */
+  const [deleteLiveTasks, setDeleteLiveTasks] = useState<BackgroundTask[] | null>(null);
   const [agentLogs, setAgentLogs] = useState<LogEntry[]>([]);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const latestReferences = useMemo(() => extractReferences(latestResult), [latestResult]);
@@ -1058,13 +1073,17 @@ function ChatPage() {
         if (live()) setProvisionalFiles((prev) => [file, ...prev]);
       },
       runFinished: () => {
-        if (live()) setFeedRefresh((n) => n + 1);
+        if (!live()) return;
+        setFeedRefresh((n) => n + 1);
+        setTasksRefresh((n) => n + 1);
       },
       inboxChanged: (queued) => {
         if (live()) setQueue(queuedMessages(queued));
       },
       inboxTaken: (itemId) => {
-        if (live()) setQueue((prev) => prev.filter((q) => q.id !== itemId));
+        if (!live()) return;
+        setQueue((prev) => prev.filter((q) => q.id !== itemId));
+        setTasksRefresh((n) => n + 1);
       },
       withdrawn: (texts) => {
         if (!live()) return;
@@ -1559,7 +1578,15 @@ function ChatPage() {
     const projectName = activeProject?.name ?? null;
     if (!projectName || !deleteSessionTarget) return;
     try {
-      await deletePersistedChatSession(projectName, deleteSessionTarget.id);
+      // The dialog named what runs, so deleting confirms ending it. Tasks that
+      // started since it was read are refused (409) and shown instead.
+      const refused = await deletePersistedChatSession(projectName, deleteSessionTarget.id, {
+        confirm: (deleteLiveTasks?.length ?? 0) > 0,
+      });
+      if (refused) {
+        setDeleteLiveTasks(refused);
+        return;
+      }
       setChatSessions((prev) => prev.filter((session) => session.id !== deleteSessionTarget.id));
       setDeleteSessionTarget(null);
     } catch (error) {
@@ -1568,6 +1595,24 @@ function ChatPage() {
       );
     }
   }
+
+  // What a conversation about to be deleted still runs, for its dialog to name.
+  useEffect(() => {
+    setDeleteLiveTasks(null);
+    const projectName = activeProject?.name ?? null;
+    if (!projectName || !deleteSessionTarget) return;
+    let current = true;
+    fetchTasks(projectName, deleteSessionTarget.id)
+      .then((tasks) => {
+        if (current) setDeleteLiveTasks(liveTasks(tasks));
+      })
+      .catch(() => {
+        if (current) setDeleteLiveTasks([]);
+      });
+    return () => {
+      current = false;
+    };
+  }, [activeProject?.name, deleteSessionTarget]);
 
   function beginInlineRename(chatSession: PersistedChatSessionSummary) {
     setEditingChatSessionId(chatSession.id);
@@ -1934,7 +1979,11 @@ function ChatPage() {
             conversation has a campaign — most never do, and a permanently
             empty tab reads worse than an absent one. */}
         <div className="panel-header workspace-tabs" role="tablist" aria-label="Workspace">
-          {WORKSPACE_TABS.filter((tab) => tab.id !== "jobs" || hasCampaign).map((tab) => (
+          {WORKSPACE_TABS.filter(
+            (tab) =>
+              (tab.id !== "jobs" || hasCampaign) &&
+              (tab.id !== "background" || backgroundTasks.length > 0)
+          ).map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -1950,10 +1999,38 @@ function ChatPage() {
               {tab.id === "activity" && activitySteps.length > 0 && (
                 <span className="workspace-tab-count">{activitySteps.length}</span>
               )}
+              {tab.id === "background" && liveCount(backgroundTasks) > 0 && (
+                <span className="workspace-tab-count" aria-label={`${liveCount(backgroundTasks)} running`}>
+                  {liveCount(backgroundTasks)}
+                </span>
+              )}
             </button>
           ))}
         </div>
         <div className="panel-body">
+          {/* Mounted regardless of the visible tab, like the Jobs panel: it
+              owns the reading that decides whether the tab exists at all. */}
+          <div
+            role="tabpanel"
+            id="workspace-panel-background"
+            aria-labelledby="workspace-tab-background"
+            hidden={workspaceTab !== "background"}
+            className="background-view"
+          >
+            <BackgroundPanel
+              projectName={activeProject?.name ?? null}
+              chatSessionId={activeChatSessionId}
+              active={workspaceTab === "background"}
+              refreshKey={tasksRefresh}
+              onTasksChange={(tasks) => {
+                setBackgroundTasks(tasks);
+                if (tasks.length === 0) {
+                  setWorkspaceTab((tab) => (tab === "background" ? "artifacts" : tab));
+                }
+              }}
+            />
+          </div>
+
           {/* Mounted regardless of the visible tab: it owns the polling that
               decides whether the Jobs tab exists at all. */}
           <div hidden={workspaceTab !== "jobs"}>
@@ -2180,12 +2257,32 @@ function ChatPage() {
               <p>
                 Delete <strong>{deleteSessionTarget.title}</strong>? This conversation history will be removed.
               </p>
+              {deleteLiveTasks && deleteLiveTasks.length > 0 && (
+                <div className="delete-live-tasks" role="alert">
+                  <p>
+                    {deleteLiveTasks.length === 1 ? "This is still running" : "These are still running"}, and
+                    deleting the conversation ends {deleteLiveTasks.length === 1 ? "it" : "them"}. Watched
+                    jobs keep running on their cluster; only the watch stops.
+                  </p>
+                  <ul>
+                    {deleteLiveTasks.map((task) => (
+                      <li key={task.id}>
+                        <strong>{task.label}</strong> {taskSubject(task)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               <div style={{ display: "flex", gap: 10 }}>
                 <button className="button ghost" onClick={() => setDeleteSessionTarget(null)}>
                   Cancel
                 </button>
-                <button className="button secondary" onClick={() => void handleDeleteConversation()}>
-                  Delete conversation
+                <button
+                  className="button secondary"
+                  disabled={deleteLiveTasks === null}
+                  onClick={() => void handleDeleteConversation()}
+                >
+                  {deleteLiveTasks && deleteLiveTasks.length > 0 ? "End them and delete" : "Delete conversation"}
                 </button>
               </div>
             </div>

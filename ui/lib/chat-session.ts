@@ -1,3 +1,4 @@
+import type { BackgroundTask } from "./background-tasks";
 import { useSyncExternalStore } from "react";
 import type { ModelMessage } from "./agent-events";
 import type { ChatMessage, ExecutionResult } from "./types";
@@ -195,18 +196,33 @@ export async function renamePersistedChatSession(
   });
 }
 
+/**
+ * Delete a conversation. One with background tasks running is refused unless
+ * `confirm`: the refusal resolves to those tasks, for the dialog to name. Any
+ * other failure throws.
+ */
 export async function deletePersistedChatSession(
   projectName: string,
   chatSessionId: string,
-): Promise<void> {
+  { confirm = false }: { confirm?: boolean } = {},
+): Promise<BackgroundTask[] | null> {
   const qs = new URLSearchParams({
     project_name: projectName,
     chat_session_id: chatSessionId,
   });
+  if (confirm) qs.set("confirm", "true");
   const res = await fetch(`/api/chat/session?${qs.toString()}`, {
     method: "DELETE",
   });
+  if (res.status === 409) {
+    const body: unknown = await res.clone().json().catch(() => null);
+    const fields = (body ?? {}) as { code?: unknown; tasks?: unknown };
+    if (fields.code === "live_tasks" && Array.isArray(fields.tasks)) {
+      return fields.tasks as BackgroundTask[];
+    }
+  }
   if (!res.ok) throw new Error(await extractError(res));
+  return null;
 }
 
 /**
