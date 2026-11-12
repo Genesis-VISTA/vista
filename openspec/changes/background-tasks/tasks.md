@@ -6,10 +6,10 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 ## 1. Sandbox: commands that outlive their call
 
 - [x] 1.1 Record the microsandbox spike's result in `design.md` Decision 5 and adjust the start and stop commands to it; verified: the decision names `setsid -f` with redirected descriptors on an exec without a terminal, and `kill -TERM -- -<pgid>` from a second exec
-- [ ] 1.2 Add the background path to `run_bash` in `dev_mcp_server/server.py` (`background`, `task_id`, `log_path`): start with `setsid -f` and redirected descriptors on an exec without a terminal, capped log, `.pid` and `.exit` files in `/mnt/data/tasks/`, return without reading output; verify with a new `mcp_servers/dev_mcp_server/tests/test_background_bash.py` against `UnSandbox` (start returns at once, log grows, exit status 7 lands in `.exit`, foreground call unchanged)
-- [ ] 1.3 Cap the log at 10 MB with the cut-off line while the command runs on; verify in `test_background_bash.py` with a small cap injected through settings
-- [ ] 1.4 Add `wait_task(id, max_wait)` and `signal_task(id)`; verify in `test_background_bash.py` that `wait_task` returns on exit, on `max_wait`, and when a signalled task's group is gone with no `.exit`, and that `signal_task` ends a command with child and grandchild processes and leaves a second command running
-- [ ] 1.5 **(sandbox)** Repeat the stop and outlive-the-call cases against the real microsandbox and container backends in `tests/test_sandbox_live.py`; verify by running that file with `-m sandbox` on a host with each runtime
+- [x] 1.2 Add the background path to `run_bash` in `dev_mcp_server/server.py` (`background`, `task_id`, `log_path`): start with `setsid -f` and redirected descriptors on an exec without a terminal, capped log, `.pid` and `.exit` files in `/mnt/data/tasks/`, return without reading output; verify with a new `mcp_servers/dev_mcp_server/tests/test_background_bash.py` against `UnSandbox` (start returns at once, log grows, exit status 7 lands in `.exit`, foreground call unchanged)
+- [x] 1.3 Cap the log at 10 MB with the cut-off line while the command runs on; verify in `test_background_bash.py` with a small cap injected through settings
+- [x] 1.4 Add `wait_task(id, max_wait)` and `signal_task(id)`; verify in `test_background_bash.py` that `wait_task` returns on exit, on `max_wait`, and when a signalled task's group is gone with no `.exit`, and that `signal_task` ends a command with child and grandchild processes and leaves a second command running
+- [x] 1.5 **(sandbox)** Repeat the stop and outlive-the-call cases against the real microsandbox and container backends in `tests/test_sandbox_live.py`; verify by running that file with `-m sandbox` on a host with each runtime
 
 ## 2. Inbox core
 

@@ -1,7 +1,8 @@
 """Live checks of the dev MCP server's tools against a real microsandbox microVM.
 
-Covers the scenarios in openspec/changes/windows-support/specs/code-execution-sandbox.
-Opt-in: `VISTA_RUN_SANDBOX=1 MSB_HOME=~/.msb-live uv run pytest -m sandbox`. The first run
+Covers the scenarios in openspec/changes/windows-support/specs/code-execution-sandbox, and the
+background-task cases of openspec/changes/background-tasks, which also run against the container
+backend. Opt-in: `VISTA_RUN_SANDBOX=1 MSB_HOME=~/.msb-live uv run pytest -m sandbox`. The first run
 builds the sandbox image with docker or podman and loads it into that store.
 
 `MSB_HOME` must be set so these tests never open (and migrate) the shared `~/.microsandbox`
@@ -17,6 +18,10 @@ import pytest
 
 import dev_mcp_server.server as server
 from dev_mcp_server.config import settings
+from dev_mcp_server.lib.container_sandbox import (
+    ContainerSandbox,
+    resolve_container_runtime,
+)
 from dev_mcp_server.lib.microsandbox_sandbox import MicrosandboxSandbox, MsbSandbox
 
 pytestmark = [
@@ -191,3 +196,141 @@ async def test_close_removes_sandbox(volume_dir):
     await sb.close()
     with pytest.raises(Exception):
         await MsbSandbox.get(name)
+
+
+# ─── Commands that outlive their call (openspec/changes/background-tasks, task 1.5) ──────────
+#
+# Run against both backends. The container one needs docker or podman, nothing else.
+
+
+async def _spawn(backend: str, volume: Path):
+    if backend == "microsandbox":
+        if "MSB_HOME" not in os.environ:
+            pytest.skip("set MSB_HOME so the live tests don't migrate ~/.microsandbox")
+        return await MicrosandboxSandbox.spawn(
+            volumes=[(volume, "/mnt", "w")],
+            dockerfile=settings.dockerfile,
+            image=settings.image,
+        )
+    try:
+        resolve_container_runtime()
+    except RuntimeError as e:
+        pytest.skip(str(e))
+    return await ContainerSandbox.spawn(
+        volumes=[(volume, "/mnt", "w")],
+        dockerfile=settings.dockerfile,
+        image=settings.image,
+    )
+
+
+@pytest.fixture(scope="module", params=["microsandbox", "container"])
+async def task_backend(request, tmp_path_factory):
+    volume = tmp_path_factory.mktemp(f"tasks-{request.param}")
+    sb = await _spawn(request.param, volume)
+    yield sb, volume
+    await sb.close()
+
+
+@pytest.fixture
+def task_sandbox(task_backend, monkeypatch):
+    sb, volume = task_backend
+    monkeypatch.setattr(server, "sandbox", sb, raising=False)
+    return sb, volume
+
+
+async def _guest(sb, script: str) -> str:
+    proc = await sb.exec("bash", args=["-c", script])
+    stdout, _ = await asyncio.wait_for(proc.communicate(), 30)
+    return stdout.decode().strip()
+
+
+async def _guest_alive(sb, pids: list[int]) -> list[int]:
+    out = await _guest(
+        sb, " ".join(f"kill -0 {p} 2>/dev/null && echo {p};" for p in pids)
+    )
+    return [int(p) for p in out.split()]
+
+
+async def test_task_outlives_its_call(task_sandbox):
+    sb, volume = task_sandbox
+    t0 = time.monotonic()
+    out = await asyncio.wait_for(
+        server.run_bash(
+            "echo started; sleep 3; echo done",
+            _Ctx(),
+            background=True,
+            task_id="live-1",
+        ),
+        30,
+    )
+    assert time.monotonic() - t0 < 10, "start must not wait for the command"
+    assert "/mnt/data/tasks/live-1.log" in out
+    log = volume / "data" / "tasks" / "live-1.log"
+    assert await server.wait_task("live-1", max_wait=0) == {"state": "running"}
+    assert log.read_text(encoding="utf-8").split() == ["started"]
+    assert await asyncio.wait_for(server.wait_task("live-1", max_wait=30), 40) == {
+        "state": "exited",
+        "exit_status": 0,
+    }
+    assert log.read_text(encoding="utf-8").split() == ["started", "done"]
+
+
+async def test_task_exit_status(task_sandbox):
+    await server.run_bash("exit 7", _Ctx(), background=True, task_id="live-2")
+    assert await asyncio.wait_for(server.wait_task("live-2", max_wait=30), 40) == {
+        "state": "exited",
+        "exit_status": 7,
+    }
+
+
+async def test_stop_ends_descendants_and_spares_other_tasks(task_sandbox):
+    sb, volume = task_sandbox
+    pids = "/mnt/live-3.pids"
+    await server.run_bash(
+        f"sleep 300 & echo $! >> {pids}; "
+        f"bash -c 'sleep 301 & echo $! >> {pids}; wait' & echo $! >> {pids}; wait",
+        _Ctx(),
+        background=True,
+        task_id="live-3",
+    )
+    await server.run_bash("sleep 300", _Ctx(), background=True, task_id="live-4")
+    pid_file = volume / "live-3.pids"
+    deadline = time.monotonic() + 15
+    while (
+        len(pid_file.read_text(encoding="utf-8").split() if pid_file.exists() else [])
+        < 3
+    ):
+        assert time.monotonic() < deadline, "descendants did not start"
+        await asyncio.sleep(0.2)
+    descendants = [int(p) for p in pid_file.read_text(encoding="utf-8").split()]
+    assert await _guest_alive(sb, descendants) == descendants
+
+    assert await asyncio.wait_for(server.signal_task("live-3"), 30) == {
+        "state": "ended"
+    }
+
+    assert await _guest_alive(sb, descendants) == []
+    assert await server.wait_task("live-3", max_wait=5) == {"state": "gone"}
+    assert await server.wait_task("live-4", max_wait=0) == {"state": "running"}
+    await server.signal_task("live-4")
+
+
+@pytest.mark.parametrize("backend", ["microsandbox", "container"])
+async def test_closing_the_sandbox_ends_its_tasks(backend, tmp_path, monkeypatch):
+    sb = await _spawn(backend, tmp_path)
+    monkeypatch.setattr(server, "sandbox", sb, raising=False)
+    try:
+        await server.run_bash(
+            "while :; do date +%s%N >> /mnt/beat; sleep 0.2; done",
+            _Ctx(),
+            background=True,
+            task_id="live-5",
+        )
+        await asyncio.sleep(1)
+    finally:
+        await sb.close()
+    beat = tmp_path / "beat"
+    await asyncio.sleep(2)  # the container backend is removed asynchronously
+    size = beat.stat().st_size
+    await asyncio.sleep(2)
+    assert beat.stat().st_size == size, "the task kept running after close"
