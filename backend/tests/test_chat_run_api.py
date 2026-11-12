@@ -509,6 +509,11 @@ def lifespan_env(engine, monkeypatch):
     monkeypatch.setattr(api_module, "init_db", no_init)
     monkeypatch.setattr(api_module, "get_vista_mcp_server", lambda: _FakeMcpServer())
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
+    from vista_backend.services import background_tasks
+
+    monkeypatch.setattr(
+        background_tasks, "session_factory", lambda: AsyncSession(engine)
+    )
     monkeypatch.setattr(api_module.settings.campaigns, "monitor_enabled", False)
 
 
@@ -699,3 +704,141 @@ async def test_a_chat_of_another_project_is_404(session, file_dirs):
 
     assert (await _displayed(session, project, chat_id)).status_code == 404
     assert (await _displayed(session, project, uuid.uuid4())).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Deleting a conversation with background tasks (openspec change
+# background-tasks, task 6.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tasks_env(session, monkeypatch, tmp_path):
+    from harness import FakeSandbox
+    from vista_backend.config import settings
+    from vista_backend.services import background_tasks
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(
+        background_tasks, "session_factory", lambda: AsyncSession(session.bind)
+    )
+    registry = background_tasks.BackgroundTaskRegistry()
+    monkeypatch.setattr(background_tasks, "background_task_registry", registry)
+    return SimpleNamespace(
+        registry=registry, sandbox=FakeSandbox(), tmp=tmp_path, tasks=background_tasks
+    )
+
+
+async def _command_with_log(env, project, conversation, command="sleep 600"):
+    async with env.tasks.session_factory() as db:
+        record = await env.tasks.create_command(
+            db, chat_session_id=conversation, project_id=project.id, command=command
+        )
+    volume = env.tmp / "volumes" / str(project.id)
+    log = env.tasks.host_log_path(volume, record)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("output\n", encoding="utf-8")
+    (log.parent / f"{record.id}.pid").write_text("123\n", encoding="utf-8")
+    return record, log
+
+
+async def test_deleting_a_conversation_with_a_running_command_asks_first(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    record, log = await _command_with_log(tasks_env, project, conversation)
+    tasks_env.sandbox.start(str(record.id))
+    await tasks_env.registry.watch_command(
+        record, call=tasks_env.sandbox, volume_root=log.parents[2]
+    )
+
+    with api_client(session) as (client, _):
+        asked = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        still_there = await client.get(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        confirmed = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation), "confirm": "true"},
+        )
+
+    assert asked.status_code == 409
+    assert asked.json()["code"] == "live_tasks"
+    [task] = asked.json()["tasks"]
+    assert (task["label"], task["kind"], task["command"]) == (
+        "bg-1",
+        "command",
+        "sleep 600",
+    )
+    assert still_there.status_code == 200
+    assert confirmed.status_code == 204
+    assert "signal_task" in tasks_env.sandbox.names_called(), "the command was ended"
+    assert not log.exists() and not (log.parent / f"{record.id}.pid").exists()
+    # The request's own session: the app commits it after the response.
+    assert (
+        await session.get(ChatSessionTable, conversation, populate_existing=True)
+        is None
+    )
+    assert chat_run.chat_run_registry.get(conversation) is None, (
+        "its result started no turn"
+    )
+
+
+async def test_deleting_a_conversation_whose_tasks_ended_needs_no_confirmation(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    record, log = await _command_with_log(tasks_env, project, conversation)
+    await tasks_env.tasks.record_end(record.id, "exited", 0)
+
+    with api_client(session) as (client, _):
+        deleted = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+
+    assert deleted.status_code == 204
+    assert not log.exists(), "the logs go with the conversation"
+
+
+async def test_a_watch_is_dropped_with_its_conversation_and_its_job_left_alone(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    async with AsyncSession(session.bind) as db:
+        watch = await tasks_env.tasks.create_watch(
+            db,
+            chat_session_id=conversation,
+            project_id=project.id,
+            job_id="4242",
+            cluster="odo",
+        )
+    calls: list[str] = []
+
+    async def read(record):
+        calls.append("read_hpc_job_state")
+        await asyncio.Event().wait()
+
+    tasks_env.registry.watch_job(watch, read=read)
+
+    with api_client(session) as (client, _):
+        asked = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        confirmed = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation), "confirm": "true"},
+        )
+
+    assert [t["job_id"] for t in asked.json()["tasks"]] == ["4242"]
+    assert confirmed.status_code == 204
+    assert set(calls) <= {"read_hpc_job_state"}, "nothing but readings: no cancel"
+    assert not tasks_env.registry.watching(watch.id)

@@ -758,6 +758,20 @@ PROMPT_EVENT_KINDS = frozenset(
 chat_run_registry = ChatRunRegistry()
 
 
+async def wake_queued_inboxes() -> int:
+    """At startup: offer a turn to every conversation with something queued. Returns how many started."""
+    async with session_factory() as db:
+        ids = await inbox_service.conversations_with_queued(db)
+    started = 0
+    for chat_session_id in ids:
+        try:
+            if await chat_run_registry.wake(chat_session_id) is not None:
+                started += 1
+        except Exception:
+            log.exception("Could not start a turn from %s's inbox", chat_session_id)
+    return started
+
+
 async def _on_inbox_put(chat_session_id: uuid.UUID) -> None:
     # Looked up at call time, so a test's registry receives it.
     if await chat_run_registry.wake(chat_session_id) is None:

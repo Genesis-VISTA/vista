@@ -343,7 +343,11 @@ def runtime_of(record: BackgroundTaskTable, now: float | None = None) -> float:
     return max(0.0, (end - start).total_seconds())
 
 
-def how_it_ended(record: BackgroundTaskTable) -> str:
+QUIT_REASON = "VISTA quit while it was running"
+LOST_REASON = "its sandbox went away before it ended"
+
+
+def how_it_ended(record: BackgroundTaskTable, reason: str = LOST_REASON) -> str:
     if record.state == "exited":
         return f"exited with status {record.exit_status}"
     if record.state == "timed_out":
@@ -352,13 +356,15 @@ def how_it_ended(record: BackgroundTaskTable) -> str:
         )
     if record.state == "stopped":
         return "was stopped"
-    return "was interrupted: its sandbox went away before it ended"
+    return f"was interrupted: {reason}"
 
 
-def end_event(record: BackgroundTaskTable, tail: str) -> tuple[str, dict[str, Any]]:
+def end_event(
+    record: BackgroundTaskTable, tail: str, reason: str = LOST_REASON
+) -> tuple[str, dict[str, Any]]:
     """The `task_event` text the agent receives, and the payload the UI's event row shows."""
     runtime = format_runtime(runtime_of(record))
-    ended = how_it_ended(record)
+    ended = how_it_ended(record, reason)
     lines = [
         f"Background task {record.label} {ended} after {runtime}.",
         f"Command: {record.command}",
@@ -816,6 +822,9 @@ class BackgroundTaskRegistry:
                         kind="task_event",
                         text=text,
                         payload=payload,
+                        # A lost sandbox is most often VISTA quitting, whose dev
+                        # servers die with it: the note waits for the researcher.
+                        wakes=state != "interrupted",
                     )
         except asyncio.CancelledError:
             raise
@@ -885,6 +894,92 @@ class BackgroundTaskRegistry:
 
 
 background_task_registry = BackgroundTaskRegistry()
+
+LIVE_STATES = ("running", "watching", "paused")
+
+
+async def live_tasks(
+    db: AsyncSession, chat_session_id: uuid.UUID
+) -> list[BackgroundTaskTable]:
+    """The conversation's commands still running and watches still active."""
+    return [
+        r for r in await list_for_chat(db, chat_session_id) if r.state in LIVE_STATES
+    ]
+
+
+def remove_task_files(volume_root: Path, records: list[BackgroundTaskTable]) -> None:
+    """A command's log, `.pid` and `.exit`, by task id, from the host side of the volume."""
+    for record in records:
+        if record.kind != "command":
+            continue
+        log_file = host_log_path(volume_root, record)
+        tasks_dir = log_file.parent
+        for path in (
+            log_file,
+            *(
+                tasks_dir / f"{record.id}{suffix}"
+                for suffix in (".pid", ".exit", ".pid.tmp", ".exit.tmp")
+            ),
+        ):
+            path.unlink(missing_ok=True)
+
+
+async def end_for_deletion(
+    chat_session_id: uuid.UUID, volume_root: Path
+) -> list[BackgroundTaskTable]:
+    """
+    Before a conversation is deleted: stop its live tasks (a watch's job is left
+    as it is) and remove its commands' logs. Returns the tasks that were live.
+    """
+    async with session_factory() as db:
+        records = await list_for_chat(db, chat_session_id)
+    live = [r for r in records if r.state in LIVE_STATES]
+    for record in live:
+        await background_task_registry.stop(record.id)
+    remove_task_files(volume_root, records)
+    return live
+
+
+async def recover_at_startup(read: StateReader | None = None) -> tuple[int, int]:
+    """
+    At startup (Decision 7): no command survives a quit, so each one still
+    recorded as running is recorded interrupted, with a note that waits for the
+    researcher's next message. Each watch whose job had not ended gets its task
+    back, reading at once, so a change while VISTA was closed is reported as it
+    would have been live. Returns (commands interrupted, watches resumed).
+    """
+    async with session_factory() as db:
+        rows = (
+            await db.exec(
+                select(BackgroundTaskTable).where(
+                    col(BackgroundTaskTable.state).in_(LIVE_STATES)
+                )
+            )
+        ).all()
+        records = [BackgroundTaskTable.model_validate(r) for r in rows]
+    commands = [r for r in records if r.kind == "command"]
+    watches = [r for r in records if r.kind == "job_watch"]
+    from ..agents.agents import agent_volume_root
+
+    for record in commands:
+        ended = await record_end(record.id, "interrupted")
+        if ended is None:
+            continue
+        tail = read_tail(host_log_path(agent_volume_root(ended.project_id), ended))
+        text, payload = end_event(ended, tail, reason=QUIT_REASON)
+        async with session_factory() as db:
+            await inbox_service.put(
+                db,
+                ended.chat_session_id,
+                kind="task_event",
+                text=text,
+                payload=payload,
+                wakes=False,
+                notify=False,
+            )
+    for record in watches:
+        background_task_registry.watch_job(record, read=read or shared_state_reader())
+    return len(commands), len(watches)
 
 
 def mcp_state_reader() -> StateReader:

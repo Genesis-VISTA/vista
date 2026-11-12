@@ -22,6 +22,8 @@ from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
 from ..services.background_tasks import background_task_registry
+from ..services.background_tasks import recover_at_startup as recover_background_tasks
+from ..services.chat_run import wake_queued_inboxes
 from ..services.collaboration import (
     CollaborationError,
     CollaborationForbidden,
@@ -88,6 +90,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logging.getLogger(__name__).info(
             "Marked chat runs from the last session as interrupted."
         )
+    # Then background tasks (openspec change background-tasks, Decision 7):
+    # lost commands are noted, watches resume, and then every inbox with
+    # something queued may start a turn, as the hold-back rule allows.
+    interrupted, resumed = await recover_background_tasks()
+    if interrupted or resumed:
+        logging.getLogger(__name__).info(
+            "Background tasks: %d interrupted by the last quit, %d watches resumed.",
+            interrupted,
+            resumed,
+        )
+    await wake_queued_inboxes()
 
     # The Hypothesis Lab's repository is a property of each project now, so
     # there is nothing deployment-wide to reconcile at boot — a project's forum

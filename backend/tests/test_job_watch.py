@@ -531,3 +531,44 @@ async def test_a_watch_that_crashes_does_not_stay_paused(registry, records, chat
     assert saved.state == "stopped" and saved.paused_reason is None
     async with AsyncSession(records) as db:
         assert await inbox.waiting_on_researcher(db, [chat[0]]) == set()
+
+
+# ---------------------------------------------------------------------------
+# Startup (task 6.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_job_that_finished_while_vista_was_closed_is_reported(
+    registry, records, chat
+):
+    watching = await _watch(records, chat, job_id="111")
+    paused = await _watch(records, chat, job_id="222")
+    async with AsyncSession(records) as db:
+        row = await db.get(background_tasks.BackgroundTaskTable, paused.id)
+        row.state, row.paused_reason = "paused", "Reconnect Frontier in Settings"
+        await db.commit()
+    readings = {"111": state("COMPLETED", exit_code=0), "222": state("RUNNING")}
+    read_at: list[str] = []
+
+    async def read(record):
+        read_at.append(record.job_id)
+        reading = readings.pop(record.job_id, None)
+        if reading is None:
+            await asyncio.Event().wait()
+        return reading
+
+    interrupted, resumed = await background_tasks.recover_at_startup(read=read)
+
+    assert (interrupted, resumed) == (0, 2)
+    await registry.wait(watching.id)
+    assert (await _record(records, watching)).state == "ended"
+
+    async def resumed_watch():
+        return (await _record(records, paused)).state == "watching"
+
+    await _until(resumed_watch)
+    assert sorted(read_at[:2]) == ["111", "222"], "each read at once"
+    events = {
+        e.payload["job_id"]: e.payload["event"] for e in await _events(records, chat[0])
+    }
+    assert events == {"111": "ended", "222": "started"}

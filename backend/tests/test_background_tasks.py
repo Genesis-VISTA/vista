@@ -188,6 +188,9 @@ async def test_a_lost_server_is_recorded_as_interrupted(
         assert (await background_tasks.get(db, record.id)).state == "interrupted"
     [event] = await _events(records, chat[0])
     assert "was interrupted" in event.text
+    assert event.wakes is False, (
+        "most often VISTA quitting: a note for the next message"
+    )
 
 
 async def test_a_command_gone_without_a_signal_from_here_is_interrupted(
@@ -319,3 +322,34 @@ async def test_watches_started_in_one_step_are_counted_one_at_a_time(records, ch
     labels = [r.label for r in results if not isinstance(r, Exception)]
     assert len(labels) == 8 and len(set(labels)) == 8
     assert sum(isinstance(r, background_tasks.TaskRefused) for r in results) == 1
+
+
+# ---------------------------------------------------------------------------
+# Startup (task 6.1)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_command_lost_to_a_quit_is_noted_and_starts_no_turn(
+    records, chat, monkeypatch, tmp_path
+):
+    from vista_backend.config import settings
+    from vista_backend.services import chat_run
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    record = await _command(records, chat, command="python fit.py")
+    _log(tmp_path / "volumes" / str(chat[1]), record, "step 1\nstep 2\n")
+
+    interrupted, resumed = await background_tasks.recover_at_startup()
+
+    assert (interrupted, resumed) == (1, 0)
+    async with AsyncSession(records) as db:
+        assert (await background_tasks.get(db, record.id)).state == "interrupted"
+    [note] = await _events(records, chat[0])
+    assert note.wakes is False
+    assert note.text.startswith(
+        "Background task bg-1 was interrupted: VISTA quit while it was running after "
+    )
+    assert note.text.endswith("step 1\nstep 2")
+
+    monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(records))
+    assert await chat_run.ChatRunRegistry().wake(chat[0]) is None, "no turn at launch"

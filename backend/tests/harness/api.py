@@ -20,7 +20,7 @@ from vista_backend.agents.agents import ProjectAgent
 from vista_backend.api import agent as agent_api
 from vista_backend.api.api import app
 from vista_backend.db.db import _get_session
-from vista_backend.services import chat_run
+from vista_backend.services import background_tasks, chat_run
 
 
 @dataclass
@@ -57,8 +57,12 @@ def api_client(
     # its own sessions: point both at the test's pool and database.
     original_run_pool = chat_run.project_agent_pool
     original_factory = chat_run.session_factory
+    original_tasks_factory = background_tasks.session_factory
     chat_run.project_agent_pool = pool  # type: ignore[assignment]
     chat_run.session_factory = lambda: AsyncSession(session.bind)
+    # Background tasks write their records the same way (startup recovery,
+    # deleting a conversation).
+    background_tasks.session_factory = lambda: AsyncSession(session.bind)
     client = AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
     try:
         yield client, pool
@@ -66,6 +70,7 @@ def api_client(
         agent_api.project_agent_pool = original_pool  # type: ignore[assignment]
         chat_run.project_agent_pool = original_run_pool
         chat_run.session_factory = original_factory
+        background_tasks.session_factory = original_tasks_factory
         app.dependency_overrides.clear()
 
 

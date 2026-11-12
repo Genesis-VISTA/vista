@@ -118,6 +118,18 @@ async def list_queued(
     )
 
 
+async def conversations_with_queued(db: AsyncSession) -> list[uuid.UUID]:
+    """Every conversation with something queued, for startup to offer each a turn."""
+    rows = (
+        await db.exec(
+            select(InboxItemTable.chat_session_id)
+            .where(InboxItemTable.state == "queued")
+            .distinct()
+        )
+    ).all()
+    return list(rows)
+
+
 async def get(
     db: AsyncSession, chat_session_id: uuid.UUID, item_id: int
 ) -> InboxItemTable:

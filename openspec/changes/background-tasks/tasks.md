@@ -45,8 +45,8 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 6. Restart and deletion
 
-- [ ] 6.1 At startup mark running commands interrupted with a `wakes=false` note, restart watches with an immediate reading, then let inboxes start turns; verify in `backend/tests/test_background_tasks.py` and `backend/tests/test_job_watch.py` (job finished while closed is reported; interrupted command starts no turn)
-- [ ] 6.2 Make deleting a conversation with live tasks answer with their list unless confirmed, and on confirmation stop them and remove their logs; verify in `backend/tests/test_chat_run_api.py`
+- [x] 6.1 At startup mark running commands interrupted with a `wakes=false` note, restart watches with an immediate reading, then let inboxes start turns; verify in `backend/tests/test_background_tasks.py` and `backend/tests/test_job_watch.py` (job finished while closed is reported; interrupted command starts no turn)
+- [x] 6.2 Make deleting a conversation with live tasks answer with their list unless confirmed, and on confirmation stop them and remove their logs; verify in `backend/tests/test_chat_run_api.py`
 
 ## 7. Background tab
 
