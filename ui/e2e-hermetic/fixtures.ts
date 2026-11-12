@@ -268,6 +268,10 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/chat/session": CHAT_SESSION,
   // Nothing has been displayed in the conversation.
   "GET /api/chat/displayed-files": [],
+  // Nothing is queued for the conversation's agent.
+  "GET /api/chat/inbox": [],
+  "PATCH /api/chat/inbox": {},
+  "DELETE /api/chat/inbox": {},
   "PUT /api/chat/session": CHAT_SESSION,
   // No conversation is working or has an unseen outcome, so no dots show.
   "GET /api/chat/runs/status": [],

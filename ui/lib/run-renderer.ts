@@ -13,6 +13,13 @@
  * Every bubble it creates carries the run's `run_id`. Drawing a run again (after
  * navigating away and back) first removes that run's earlier bubbles, so a
  * partially saved thread is redrawn rather than duplicated.
+ *
+ * What the agent receives comes from the conversation's inbox (openspec change
+ * background-tasks): one `inbox_taken` event per item, at the start of a turn or
+ * in the middle of one. A researcher's message is drawn as their bubble, at the
+ * point it was taken; a task's result as a one-line event row that expands to
+ * the full text. A run whose `run_started` carries no `origin` predates the
+ * inbox, and its question is drawn from `user_prompt` as before.
  */
 
 import type { DecisionMetadata } from "@/components/ToolApprovalModal";
@@ -31,6 +38,7 @@ import {
   type PartStartEvent,
 } from "./agent-events";
 import { provisionalDisplayedFile, type DisplayedFile } from "./displayed-files";
+import { readInboxChanged, type InboxItem } from "./message-queue";
 import { labelForTool } from "./tool-labels";
 import type { ChatMessage, ExecutionResult } from "./types";
 
@@ -65,6 +73,10 @@ export interface RunHost {
   showFile?(file: DisplayedFile): void;
   /** The run is over; whatever it recorded can be read back. */
   runFinished?(): void;
+  /** What is queued for the running turn changed: show these. */
+  inboxChanged?(queued: InboxItem[]): void;
+  /** Stop gave back these queued messages, unsent: put their text back in the box. */
+  withdrawn?(texts: string[]): void;
 }
 
 export type RunRendererOptions = {
@@ -80,6 +92,14 @@ export type RunRendererOptions = {
   drawUserPrompt?: boolean;
   newId?: () => string;
 };
+
+/** The event row's one line: the task's own summary, or the result's first line. */
+export function eventSummary(text: string, payload: unknown): string {
+  const summary = (payload as { summary?: unknown } | null)?.summary;
+  if (typeof summary === "string" && summary.trim()) return summary.trim();
+  const first = text.trim().split("\n", 1)[0] ?? "";
+  return first.length > 120 ? `${first.slice(0, 119)}…` : first || "Background task update";
+}
 
 export const FINISH_NOTES: Record<Exclude<RunFinishState, "done">, string> = {
   stopped: "Stopped",
@@ -100,6 +120,8 @@ export type RunRenderer = {
   readonly finishedState: RunFinishState | null;
   /** Whether a run result arrived, which older streams used instead of `run_finished`. */
   readonly sawResult: boolean;
+  /** The turn that started from the inbox as this one ended, to follow on to. */
+  readonly nextRunId: string | null;
 };
 
 export function createRunRenderer(host: RunHost, options: RunRendererOptions = {}): RunRenderer {
@@ -109,6 +131,7 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
   let runId: string | null = null;
   let finishedState: RunFinishState | null = null;
   let sawResult = false;
+  let nextRunId: string | null = null;
   let finalSignaled = false;
   let liveAssistantBubbleId: string | null = null;
 
@@ -127,11 +150,14 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
 
     switch (kind) {
       case "run_started": {
-        const ev = data as { run_id?: string; user_prompt?: string };
+        const ev = data as { run_id?: string; user_prompt?: string; origin?: string };
         if (typeof ev.run_id !== "string") break;
         runId = ev.run_id;
         const id = ev.run_id;
-        if (options.drawUserPrompt) {
+        if (typeof ev.origin === "string") {
+          // The question arrives as `inbox_taken`; only clear this run's old bubbles.
+          if (options.drawUserPrompt) host.setMessages((prev) => prev.filter((m) => m.run_id !== id));
+        } else if (options.drawUserPrompt) {
           const prompt = ev.user_prompt ?? "";
           host.setMessages((prev) => {
             // Redraw this run from scratch. The page may already hold bubbles
@@ -148,6 +174,39 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
         } else if (options.userBubbleId) {
           updateBubble(options.userBubbleId, { run_id: id });
         }
+        break;
+      }
+
+      case "inbox_taken": {
+        const ev = data as { kind?: string; text?: string; payload?: unknown };
+        if (typeof ev.text !== "string") break;
+        const text = ev.text;
+        if (ev.kind === "message") {
+          host.setMessages((prev) => {
+            // The bubble the page drew when it sent this, or one a send left
+            // behind without a run: claim it, and move it to where it was taken.
+            const mine = (m: ChatMessage) => m.role === "user" && !m.run_id && m.content === text;
+            let at = options.userBubbleId
+              ? prev.findIndex((m) => m.id === options.userBubbleId && mine(m))
+              : -1;
+            for (let i = prev.length - 1; at < 0 && i >= 0; i--) if (mine(prev[i])) at = i;
+            const bubble = at >= 0 ? prev[at] : { id: newId(), role: "user" as const, content: text };
+            const rest = at >= 0 ? [...prev.slice(0, at), ...prev.slice(at + 1)] : prev;
+            return [...rest, tagged(bubble)];
+          });
+        } else {
+          const summary = eventSummary(text, ev.payload);
+          host.setMessages((prev) => [
+            ...prev,
+            tagged({ id: newId(), role: "system", content: summary, event: { summary, text } }),
+          ]);
+        }
+        host.scrollToLatest();
+        break;
+      }
+
+      case "inbox_changed": {
+        host.inboxChanged?.(readInboxChanged(data));
         break;
       }
 
@@ -321,7 +380,16 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
           break;
         }
         finishedState = state;
+        const next = (data as { next_run_id?: unknown }).next_run_id;
+        nextRunId = typeof next === "string" ? next : null;
         host.runFinished?.();
+        const withdrawn = (data as { withdrawn?: unknown }).withdrawn;
+        if (Array.isArray(withdrawn)) {
+          const texts = withdrawn
+            .map((w) => (w as { text?: unknown })?.text)
+            .filter((t): t is string => typeof t === "string" && t.length > 0);
+          if (texts.length > 0) host.withdrawn?.(texts);
+        }
         host.setLiveStatus(null);
         host.setLatestIntermediateId(() => null);
         if (state !== "done") {
@@ -385,6 +453,9 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
     },
     get sawResult() {
       return sawResult;
+    },
+    get nextRunId() {
+      return nextRunId;
     },
   };
 }

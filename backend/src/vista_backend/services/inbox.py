@@ -72,8 +72,14 @@ async def put(
     text: str,
     payload: dict[str, Any] | None = None,
     wakes: bool = True,
+    notify: bool = True,
 ) -> InboxItemTable:
-    """Queue an item, commit, then tell the listeners. Returns a detached copy, as all of these do."""
+    """
+    Queue an item, commit, then tell the listeners. Returns a detached copy, as all of these do.
+
+    `notify=False` leaves the listeners out, for a caller that starts the turn
+    itself and must see why it could not (the send endpoint).
+    """
     item = InboxItemTable(
         chat_session_id=chat_session_id,
         kind=kind,
@@ -86,7 +92,7 @@ async def put(
     await db.commit()
     await db.refresh(item)
     item = _detached(item)
-    for listener in list(_listeners):
+    for listener in list(_listeners) if notify else []:
         try:
             await listener(chat_session_id)
         except Exception:
@@ -112,7 +118,7 @@ async def list_queued(
     )
 
 
-async def _get(
+async def get(
     db: AsyncSession, chat_session_id: uuid.UUID, item_id: int
 ) -> InboxItemTable:
     item = await db.get(InboxItemTable, item_id, populate_existing=True)
@@ -134,7 +140,7 @@ async def _set_if_queued(
         .values(**values)
     )
     await db.commit()
-    item = _detached(await _get(db, chat_session_id, item_id))
+    item = _detached(await get(db, chat_session_id, item_id))
     if result.rowcount == 0:  # type: ignore[attr-defined]
         raise ItemTaken(item)
     return item

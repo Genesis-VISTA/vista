@@ -1509,7 +1509,7 @@ textarea.input {
 }
 
 .skill-repo:hover {
-  color: var(--text);
+  color: var(--ink);
 }
 
 .skill-actions {
@@ -2158,6 +2158,86 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .chat-jump-latest:hover {
   filter: brightness(0.95);
+}
+
+/* Messages queued for the running turn (components/MessageQueue.tsx). */
+.message-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.message-queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.message-queue-chip.editing {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.message-queue-label {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.message-queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-queue-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  padding: 3px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.message-queue-icon:hover {
+  color: var(--ink);
+}
+
+.message-queue-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* A background task's result, where a researcher's message would be. */
+.chat-bubble.system.event {
+  align-self: stretch;
+  text-align: left;
+}
+
+.chat-event-row summary {
+  cursor: pointer;
+}
+
+.chat-event-row pre {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
 }
 
 .quick-chip {
@@ -4575,7 +4655,7 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .hub-card-repo:hover {
-  color: var(--text);
+  color: var(--ink);
 }
 
 .hub-card-tags {
@@ -4713,12 +4793,12 @@ button.chat-bubble.intermediate.collapsed:hover {
 }
 
 .kb-tab:hover {
-  color: var(--text);
+  color: var(--ink);
   background: var(--panel-2);
 }
 
 .kb-tab[data-active="true"] {
-  color: var(--text);
+  color: var(--ink);
   background: var(--panel);
   border-color: var(--line);
   border-bottom-color: var(--panel);

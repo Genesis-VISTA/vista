@@ -780,3 +780,32 @@ async def test_the_startup_sweep_leaves_the_conversation_quiet(env, monkeypatch)
     assert saved.run_state == "interrupted" and saved.quiet is True
     async with AsyncSession(env.engine) as db:
         assert await inbox.list_queued(db, row.id) == []
+
+
+async def test_a_message_left_queued_at_the_end_starts_the_next_turn_first(
+    env, monkeypatch
+):
+    """
+    An item that arrives after a turn's last step starts the next turn before
+    the first says it is over, so a watcher can follow on (`next_run_id`).
+    """
+    row, key = await env.conversation([call("gate"), say("first"), say("second")])
+
+    async def too_late(run):
+        return []  # as if the message arrived after the turn's last step
+
+    monkeypatch.setattr(env.registry, "_take_into", too_late)
+    first = await env.start(row, key)
+    await _until(env.at_gate.is_set)
+    await _put(env, row, kind="message", text="one more thing")
+    env.gate.set()
+    await first.wait()
+
+    finished = json.loads(first.events[-1].data)
+    following = env.registry.get(row.id)
+    assert following is not None
+    assert finished["next_run_id"] == following.run_id
+    assert following.user_prompt == "one more thing"
+    await following.wait()
+    stored = (await env.row(row.id)).run_events or []
+    assert "next_run_id" not in stored[-1]["data"], "only live watchers need it"

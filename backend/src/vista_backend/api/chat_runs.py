@@ -4,12 +4,13 @@ import uuid
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
 from ..db.db import SessionDep
+from ..db.schemas import InboxItemEdit, InboxItemPublic
 from ..services import chat_session as chat_session_service
 from ..services import inbox as inbox_service
 from ..services import project as project_service
@@ -95,3 +96,102 @@ async def chat_runs_status(
                 )
             )
     return statuses
+
+
+# ---------------------------------------------------------------------------
+# The conversation's inbox (openspec change background-tasks)
+# ---------------------------------------------------------------------------
+
+
+def _item(item) -> InboxItemPublic:
+    return InboxItemPublic.model_validate(item, from_attributes=True)
+
+
+def _refused(item, detail: str, code: str) -> JSONResponse:
+    # Carries the item as it now is, so the view can show it as delivered.
+    return JSONResponse(
+        status_code=409,
+        content={"detail": detail, "code": code, "item": _item(item).model_dump()},
+    )
+
+
+async def _queued_message(session, chat_session_id: uuid.UUID, item_id: int):
+    try:
+        item = await inbox_service.get(session, chat_session_id, item_id)
+    except inbox_service.ItemNotFound:
+        raise HTTPException(status_code=404, detail="No such queued message")
+    if item.kind != "message":
+        return None, _refused(
+            item, "Only a queued message can be changed.", "not_a_message"
+        )
+    return item, None
+
+
+@router.get("/{project_name}/chat-sessions/{chat_session_id}/inbox")
+async def list_inbox(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    session: SessionDep,
+) -> list[InboxItemPublic]:
+    """What is queued for the conversation's agent, in arrival order."""
+    project = await project_service.get_project_by_name(session, project_name)
+    await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
+    )
+    return [_item(i) for i in await inbox_service.list_queued(session, chat_session_id)]
+
+
+@router.patch(
+    "/{project_name}/chat-sessions/{chat_session_id}/inbox/{item_id}",
+    response_model=InboxItemPublic,
+)
+async def edit_inbox_item(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    item_id: int,
+    body: InboxItemEdit,
+    session: SessionDep,
+):
+    """Change a queued message's text. 409 once the agent has taken it, with the item as delivered."""
+    project = await project_service.get_project_by_name(session, project_name)
+    await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
+    )
+    _, refused = await _queued_message(session, chat_session_id, item_id)
+    if refused is not None:
+        return refused
+    try:
+        item = await inbox_service.edit(session, chat_session_id, item_id, body.text)
+    except inbox_service.ItemTaken as taken:
+        return _refused(
+            taken.item, "The agent has already taken this message.", "inbox_item_taken"
+        )
+    await chat_run_registry.announce_inbox(chat_session_id)
+    return _item(item)
+
+
+@router.delete(
+    "/{project_name}/chat-sessions/{chat_session_id}/inbox/{item_id}", status_code=204
+)
+async def delete_inbox_item(
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    item_id: int,
+    session: SessionDep,
+):
+    """Delete a queued message so the agent never receives it. 409 once it has been taken."""
+    project = await project_service.get_project_by_name(session, project_name)
+    await chat_session_service.get_chat_session(
+        session, project_id=project.id, chat_session_id=chat_session_id
+    )
+    _, refused = await _queued_message(session, chat_session_id, item_id)
+    if refused is not None:
+        return refused
+    try:
+        await inbox_service.withdraw(session, chat_session_id, item_id)
+    except inbox_service.ItemTaken as taken:
+        return _refused(
+            taken.item, "The agent has already taken this message.", "inbox_item_taken"
+        )
+    await chat_run_registry.announce_inbox(chat_session_id)
+    return Response(status_code=204)

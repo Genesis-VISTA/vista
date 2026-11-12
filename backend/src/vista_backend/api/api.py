@@ -178,9 +178,8 @@ async def _missing_inference_credential(
     expected state, and the request cannot be satisfied until the researcher
     supplies a value the server has no way to obtain. `detail` carries the
     message naming the setting and where to enter it, which is the shape
-    `ui/lib/user.ts:extractError` already surfaces. `code` tells it apart from
-    the chat endpoint's other 409, a conversation that is already running a
-    turn (`run_busy`).
+    `ui/lib/user.ts:extractError` already surfaces. `code` names the condition,
+    so a client never has to tell refusals apart by their wording.
     """
     return JSONResponse(
         status_code=409,

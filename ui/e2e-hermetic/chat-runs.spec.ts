@@ -255,7 +255,7 @@ test.describe("chat runs", () => {
   // Stop, busy conversations, and how a turn ended
   // -------------------------------------------------------------------------
 
-  test("a running conversation has its input disabled and a Stop that ends it as Stopped", async ({
+  test("a running conversation keeps its input, and a Stop ends it as Stopped", async ({
     page,
   }) => {
     stub = await installStub(page, ROUTES);
@@ -267,8 +267,9 @@ test.describe("chat runs", () => {
     await startRun(stub, QUESTION);
     await toolCall(stub);
 
-    await expect(page.getByPlaceholder(/Ask a question/)).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+    // Messages can be written while the agent works; Send appears once there is one.
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Queue message" })).toHaveCount(0);
     const stop = page.getByRole("button", { name: "Stop" });
     await expect(stop).toBeVisible();
 
@@ -288,6 +289,49 @@ test.describe("chat runs", () => {
     await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
     await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  });
+
+  test("a message sent during the turn is queued, editable, and given back by Stop", async ({
+    page,
+  }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await ask(page, QUESTION);
+    await stub.waitForStream();
+    await startRun(stub, QUESTION);
+    await toolCall(stub);
+
+    const queued = { id: 5, kind: "message", text: "plot it", state: "queued", created_at: "t" };
+    await stub.armQueued(queued);
+    await page.getByPlaceholder(/Ask a question/).fill("plot it");
+    await page.getByRole("button", { name: "Queue message" }).click();
+
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText("plot it");
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("");
+    await expect(bubbles(page, "user").filter({ hasText: "plot it" })).toHaveCount(0);
+
+    await stub.setRoute("PATCH /api/chat/inbox", { ...queued, text: "plot it in log scale" });
+    await chips.getByRole("button", { name: "Edit queued message" }).click();
+    const box = chips.getByRole("textbox", { name: "Edit queued message" });
+    await box.fill("plot it in log scale");
+    await chips.getByRole("button", { name: "Save" }).click();
+    await expect(chips).toContainText("plot it in log scale");
+    expect(await stub.bodies("PATCH /api/chat/inbox")).toEqual([{ text: "plot it in log scale" }]);
+    expect(await stub.requests()).toContain(
+      `PATCH /api/chat/inbox?project_name=molten-salt&chat_session_id=${SESSION_ID}&item_id=5`,
+    );
+
+    await page.getByRole("button", { name: "Stop" }).click();
+    await stub.send("run_finished", {
+      event_kind: "run_finished",
+      state: "stopped",
+      withdrawn: [{ id: 5, text: "plot it in log scale" }],
+    });
+    await stub.end();
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("plot it in log scale");
+    await expect(chips).toHaveCount(0);
   });
 
   test("a turn cut off by VISTA quitting shows as interrupted when reopened", async ({ page }) => {
@@ -311,28 +355,52 @@ test.describe("chat runs", () => {
     await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
   });
 
-  test("sending into a conversation that is already running re-attaches to that run", async ({
+  test("sending into a conversation another view is running queues it and shows that run", async ({
     page,
   }) => {
     stub = await installStub(page, ROUTES);
     await openProject(page);
     await openConversation(page, "Density of FLiBe");
 
-    await stub.armConflict();
+    await stub.armQueued({
+      id: 9,
+      kind: "message",
+      text: "A second question",
+      state: "queued",
+      created_at: "t",
+    });
     await stub.armAttach();
     await ask(page, "A second question");
 
-    // The refused send is taken back: the unsent text returns to the composer and
-    // the run that was already going is shown instead.
+    // The send was queued for the turn already going: that turn is shown, and the
+    // message waits as a chip until the agent takes it.
     await stub.waitForStream("attach");
-    await startRun(stub, QUESTION, "attach");
-    await toolCall(stub, "attach");
-    await expect(page.locator(".chat-bubble.user").filter({ hasText: QUESTION })).toHaveCount(1);
-    await expect(page.locator(".chat-bubble").filter({ hasText: "A second question" })).toHaveCount(
-      0,
+    await stub.send(
+      "run_started",
+      { event_kind: "run_started", run_id: RUN_ID, user_prompt: QUESTION, origin: "researcher" },
+      "attach",
     );
-    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("A second question");
+    await stub.send(
+      "inbox_taken",
+      { event_kind: "inbox_taken", item_id: 1, kind: "message", text: QUESTION },
+      "attach",
+    );
+    await toolCall(stub, "attach");
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText("A second question");
+    await expect(bubbles(page, "user")).toHaveText([QUESTION]);
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("");
     await expect(page.getByRole("status")).toHaveText("Searching the literature…");
+
+    // The agent takes it at its next step: the chip goes, the message is in the thread.
+    await stub.send("inbox_changed", { event_kind: "inbox_changed", queued: [] }, "attach");
+    await stub.send(
+      "inbox_taken",
+      { event_kind: "inbox_taken", item_id: 9, kind: "message", text: "A second question" },
+      "attach",
+    );
+    await expect(chips).toHaveCount(0);
+    await expect(bubbles(page, "user")).toHaveText([QUESTION, "A second question"]);
 
     await streamAnswer(stub, "attach");
     await finishRun(stub, "done", "attach");

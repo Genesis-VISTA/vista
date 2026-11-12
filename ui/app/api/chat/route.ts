@@ -16,6 +16,10 @@ export const dynamic = "force-dynamic";
  * Server-Sent Events with real `event:` lines — this route streams them
  * straight through; the parser lives in `app/page.tsx`.
  *
+ * A send to a conversation whose turn is still running is queued for it: the
+ * backend answers 202 with `{started: false, item}` as JSON, which passes through
+ * with its content type (`lib/message-queue.ts`).
+ *
  * A non-OK backend response with a JSON body (`{detail, code}`) passes through
  * with its status; any other body is wrapped as `{ ok: false, error }`.
  */

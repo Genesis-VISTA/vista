@@ -1,18 +1,13 @@
 /**
- * What the chat page does when `/api/chat` refuses a send.
+ * What the chat page says when `/api/chat` refuses a send.
  *
- * The backend refuses a turn with 409 for two unrelated reasons, told apart
- * only by `code`: the conversation already has a turn running (`run_busy`),
- * which the page answers by showing that turn, and anything else, such as no
- * API key or no model chosen (`inference_not_configured`), which it answers by
- * saying why. Never decided from the status or the wording alone.
+ * A send to a busy conversation is no longer refused: it is queued for the
+ * running turn (202, `lib/message-queue.ts`). Any refusal left, such as no API
+ * key or no model chosen (`inference_not_configured`), is shown with its own
+ * message so the researcher can fix it and resend.
  */
 
-export type RefusedSend =
-  /** The conversation is busy: show the turn that is running. */
-  | { kind: "attach" }
-  /** Any other refusal: show `message` in the conversation. */
-  | { kind: "note"; message: string };
+export type RefusedSend = { kind: "note"; message: string };
 
 /**
  * Decide on a refused send from its status and parsed JSON body.
@@ -23,7 +18,6 @@ export type RefusedSend =
  */
 export function readRefusedSend(status: number, body: unknown): RefusedSend {
   const fields = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
-  if (fields.code === "run_busy") return { kind: "attach" };
   const text = (value: unknown) => (typeof value === "string" && value ? value : null);
   return {
     kind: "note",

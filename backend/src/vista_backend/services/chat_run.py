@@ -40,7 +40,12 @@ from ..agents.agents import (
 )
 from ..agents.inference import describe_run_failure
 from ..db.db import get_engine
-from ..db.schemas import ChatSessionTable, DisplayedFileTable, InboxItemTable
+from ..db.schemas import (
+    ChatSessionTable,
+    DisplayedFileTable,
+    InboxItemPublic,
+    InboxItemTable,
+)
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
 from . import inbox as inbox_service
@@ -199,7 +204,6 @@ class ChatRunRegistry:
     def __init__(self) -> None:
         self._runs: dict[uuid.UUID, ChatRun] = {}
         self._wake_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        self._wakers: set[asyncio.Task] = set()
 
     def get(self, chat_session_id: uuid.UUID) -> ChatRun | None:
         return self._runs.get(chat_session_id)
@@ -313,16 +317,31 @@ class ChatRunRegistry:
                     await asyncio.shield(inbox_service.requeue(db, items))
                 raise
 
-    def _wake_later(self, chat_session_id: uuid.UUID) -> None:
-        async def wake() -> None:
-            try:
-                await self.wake(chat_session_id)
-            except Exception:
-                log.exception("Could not start a turn from %s's inbox", chat_session_id)
-
-        task = asyncio.create_task(wake())
-        self._wakers.add(task)
-        task.add_done_callback(self._wakers.discard)
+    async def announce_inbox(self, chat_session_id: uuid.UUID) -> None:
+        """
+        Tell everyone watching the conversation's active run what is queued now
+        (`inbox_changed`), so every view shows the same queue. Nothing when no
+        run is active: a view of an idle conversation reads the queue itself.
+        """
+        run = self._runs.get(chat_session_id)
+        if run is None:
+            return
+        async with session_factory() as db:
+            queued = await inbox_service.list_queued(db, chat_session_id)
+        await run.append(
+            "inbox_changed",
+            json.dumps(
+                {
+                    "event_kind": "inbox_changed",
+                    "queued": [
+                        InboxItemPublic.model_validate(
+                            i, from_attributes=True
+                        ).model_dump()
+                        for i in queued
+                    ],
+                }
+            ),
+        )
 
     async def _take_into(self, run: ChatRun) -> list[InboxItemTable]:
         """`InboxDelivery`'s take: what is queued now, reported on the run's events."""
@@ -335,6 +354,8 @@ class ChatRunRegistry:
                 await _reset_auto_turns(db, run.chat_session_id)
         for item in items:
             await _append_taken(run, item)
+        if items:
+            await self.announce_inbox(run.chat_session_id)
         return items
 
     async def stop_all(self, reason: str = "interrupted", timeout: float = 5.0) -> None:
@@ -473,14 +494,24 @@ class ChatRunRegistry:
             # `start` keeps refusing a second run until the outcome is saved, or
             # the new turn would read stale history.
             self._runs.pop(run.chat_session_id, None)
+            # Whatever arrived after the turn's last step starts the next turn,
+            # before this one says it is over, so its watchers can follow on
+            # (`next_run_id`). Not after a quit: nothing may start while VISTA
+            # is shutting down.
+            if reraise is None and run.state != "interrupted":
+                try:
+                    next_run = await self.wake(run.chat_session_id)
+                except Exception:
+                    log.exception("Could not start the turn after %s", run.run_id)
+                    next_run = None
+                if next_run is not None:
+                    finished_data = json.dumps(
+                        {**finished, "next_run_id": next_run.run_id}
+                    )
             await run.append("run_finished", finished_data)
             await run._finish()
         if reraise is not None:
             raise reraise
-        # Whatever arrived after the turn's last step starts the next one. Not
-        # after a quit: nothing may start while VISTA is shutting down.
-        if run.state != "interrupted":
-            self._wake_later(run.chat_session_id)
 
 
 async def resolve_prompt(
@@ -698,14 +729,15 @@ def compact_events(events: list[RunEvent]) -> list[dict[str, Any]]:
     Each part's start, deltas and end become one `part_start` carrying the final
     part, followed by its `part_end`: the shape campaign progress already emits,
     which the page draws. Prompt events are dropped, since answers must never be
-    stored and a stored prompt could never be answered anyway.
+    stored and a stored prompt could never be answered anyway. So is
+    `inbox_changed`: a queue a finished turn saw is not the queue now.
     """
     out: list[dict[str, Any]] = []
     open_parts: dict[int, dict[str, Any]] = {}
     for event in events:
         if event.kind in PROMPT_EVENT_KINDS or event.kind == "prompt_resolved":
             continue
-        if event.kind == "part_delta":
+        if event.kind in ("part_delta", "inbox_changed"):
             continue
         data = json.loads(event.data)
         entry = {"event": event.kind, "data": data}
@@ -728,7 +760,8 @@ chat_run_registry = ChatRunRegistry()
 
 async def _on_inbox_put(chat_session_id: uuid.UUID) -> None:
     # Looked up at call time, so a test's registry receives it.
-    await chat_run_registry.wake(chat_session_id)
+    if await chat_run_registry.wake(chat_session_id) is None:
+        await chat_run_registry.announce_inbox(chat_session_id)
 
 
 inbox_service.on_put(_on_inbox_put)

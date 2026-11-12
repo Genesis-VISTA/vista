@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { readRefusedSend } from "@/lib/refused-send";
 
+// A send to a busy conversation is queued now (202, `tests/message-queue.test.tsx`),
+// so every refusal left is one the page explains.
 describe("readRefusedSend", () => {
-  it("shows the running turn when the conversation is busy", () => {
-    const body = { detail: "This conversation already has a turn running.", code: "run_busy" };
-    expect(readRefusedSend(409, body)).toEqual({ kind: "attach" });
-  });
-
   it("says why when no inference key or model is configured", () => {
     const detail = "No inference API key is configured, so 'claude-sonnet' cannot be reached.";
     expect(readRefusedSend(409, { detail, code: "inference_not_configured" })).toEqual({
@@ -15,8 +12,8 @@ describe("readRefusedSend", () => {
     });
   });
 
-  it("does not take a 409 without a code for a busy conversation", () => {
-    expect(readRefusedSend(409, { detail: "Conflict." })).toEqual({
+  it("explains a 409 rather than taking it for a busy conversation", () => {
+    expect(readRefusedSend(409, { detail: "Conflict.", code: "run_busy" })).toEqual({
       kind: "note",
       message: "Conflict.",
     });

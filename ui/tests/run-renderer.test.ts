@@ -457,3 +457,120 @@ describe("readSseStream", () => {
     await expect(readSseStream(stream, () => {})).rejects.toThrow("aborted");
   });
 });
+
+// ---------------------------------------------------------------------------
+// The inbox (openspec change background-tasks, task 3.4)
+// ---------------------------------------------------------------------------
+
+const inboxStarted = (runId = "run-1", origin = "researcher", prompt = "fit it") => ({
+  event_kind: "run_started",
+  run_id: runId,
+  user_prompt: prompt,
+  origin,
+});
+
+const taken = (kind: string, text: string, payload: unknown = null) => ({
+  event_kind: "inbox_taken",
+  item_id: 1,
+  kind,
+  text,
+  payload,
+});
+
+describe("run renderer: what the inbox delivers", () => {
+  it("claims the bubble a live send drew, and draws a message taken mid-turn where it was taken", () => {
+    const user: ChatMessage = { id: "u1", role: "user", content: "fit it" };
+    const { state, host } = makeHost([user]);
+    const renderer = createRunRenderer(host, { userBubbleId: "u1", newId: counter() });
+    const dispatch = (name: string, data: unknown) => renderer.dispatch(name, data);
+
+    dispatch("run_started", inboxStarted());
+    dispatch("inbox_taken", taken("message", "fit it"));
+    dispatch("function_tool_call", {
+      event_kind: "function_tool_call",
+      part: { part_kind: "tool-call", tool_name: "run_bash", args: "{}" },
+    });
+    dispatch("inbox_taken", taken("message", "also plot it"));
+
+    const users = state.messages.filter((m) => m.role === "user");
+    expect(users.map((m) => [m.id, m.content, m.run_id])).toEqual([
+      ["u1", "fit it", "run-1"],
+      ["id-2", "also plot it", "run-1"],
+    ]);
+    expect(state.messages.map((m) => m.content)).toEqual([
+      "fit it",
+      "Calling `run_bash`…",
+      "also plot it",
+    ]);
+  });
+
+  it("opens a turn VISTA started with an event row, not a researcher's bubble", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { drawUserPrompt: true, newId: counter() });
+    const result = "bg-1 exited with status 0 after 4m 2s\n\nlast lines:\nconverged";
+
+    renderer.dispatch("run_started", inboxStarted("run-1", "task", result));
+    renderer.dispatch("inbox_taken", taken("task_event", result));
+    turn((name, data) => renderer.dispatch(name, data));
+
+    expect(state.messages.filter((m) => m.role === "user")).toHaveLength(0);
+    const row = state.messages[0];
+    expect(row).toMatchObject({
+      role: "system",
+      content: "bg-1 exited with status 0 after 4m 2s",
+      event: { summary: "bg-1 exited with status 0 after 4m 2s", text: result },
+      run_id: "run-1",
+    });
+  });
+
+  it("uses the task's own summary for the row when it gives one", () => {
+    const { state, host } = makeHost();
+    const renderer = createRunRenderer(host, { newId: counter() });
+    renderer.dispatch("run_started", inboxStarted("run-1", "task"));
+    renderer.dispatch(
+      "inbox_taken",
+      taken("task_event", "long text", { summary: "bg-3 finished · exit 0 · 4 min" }),
+    );
+    expect(state.messages[0].event?.summary).toBe("bg-3 finished · exit 0 · 4 min");
+  });
+
+  it("redraws a stored turn without duplicating its bubbles", () => {
+    const events: [string, unknown][] = [
+      ["run_started", inboxStarted("run-1", "researcher", "result\n\nwhat happened?")],
+      ["inbox_taken", taken("task_event", "bg-1 exited with status 7")],
+      ["inbox_taken", taken("message", "what happened?")],
+    ];
+    const { state, host } = makeHost();
+    for (let pass = 0; pass < 2; pass++) {
+      const renderer = createRunRenderer(host, { drawUserPrompt: true, newId: counter() });
+      for (const [name, data] of events) renderer.dispatch(name, data);
+    }
+    expect(state.messages.map((m) => [m.role, m.content])).toEqual([
+      ["system", "bg-1 exited with status 7"],
+      ["user", "what happened?"],
+    ]);
+  });
+
+  it("passes queue changes, withdrawn messages and the next turn to the page", () => {
+    const { host } = makeHost();
+    const queues: unknown[] = [];
+    const withdrawn: string[][] = [];
+    host.inboxChanged = (queued) => queues.push(queued);
+    host.withdrawn = (texts) => withdrawn.push(texts);
+    const renderer = createRunRenderer(host, { newId: counter() });
+
+    renderer.dispatch("run_started", inboxStarted());
+    const queued = { id: 2, kind: "message", text: "next", state: "queued", created_at: "t" };
+    renderer.dispatch("inbox_changed", { event_kind: "inbox_changed", queued: [queued] });
+    renderer.dispatch("run_finished", {
+      event_kind: "run_finished",
+      state: "stopped",
+      withdrawn: [{ id: 2, text: "next" }],
+      next_run_id: "run-2",
+    });
+
+    expect(queues).toEqual([[queued]]);
+    expect(withdrawn).toEqual([["next"]]);
+    expect(renderer.nextRunId).toBe("run-2");
+  });
+});

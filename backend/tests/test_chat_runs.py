@@ -214,32 +214,48 @@ async def test_reattaching_replays_the_run_from_its_start(session):
 # ---------------------------------------------------------------------------
 
 
-async def test_a_send_while_busy_is_refused_and_the_running_turn_finishes(
+async def test_a_send_while_busy_is_queued_and_taken_by_the_running_turn(
     session, engine
 ):
-    """Scenario: Send while busy."""
+    """Scenario: Send while busy (chat-runs), and Sending during a turn (conversation-inbox)."""
     project = await seed_project(session, tools=["*"])
     conversation = await _conversation(session, project)
+    seen: list[list[ModelMessage]] = []
+    steps = [call("gate"), say("first answer, and the plot")]
 
-    with scripted_agent(project, step_model([call("gate"), say("first answer")])) as (
-        agent,
-        turn,
-    ):
+    def driver(messages, info):
+        seen.append(list(messages))
+        return steps[len(seen) - 1]
+
+    with scripted_agent(project, scripted_model(driver)) as (agent, turn):
         with api_client(session, agent=agent) as (client, _):
             running = _send(client, project, conversation, "first")
             await _until(turn.at_gate.is_set)
 
-            refused = await client.post(
+            queued = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "second", "chat_session_id": str(conversation)},
             )
             turn.gate.set()
             finished = await running
 
-    assert refused.status_code == 409
+    assert queued.status_code == 202
+    assert queued.json()["item"]["text"] == "second"
     assert finished.status_code == 200
+    assert len(seen) == 2, "one run, which took the message after the tool call"
+    assert "second" in json.dumps([m.__dict__ for m in seen[1]], default=str)
+    taken = [
+        json.loads(data)
+        for name, data in parse_sse(finished.text)
+        if name == "inbox_taken"
+    ]
+    # Every send goes through the inbox: the one that started the turn too.
+    assert [(t["kind"], t["text"]) for t in taken] == [
+        ("message", "first"),
+        ("message", "second"),
+    ]
     blob = json.dumps((await _saved(engine, conversation)).message_history)
-    assert "first answer" in blob and "second" not in blob
+    assert "first answer, and the plot" in blob and "second" in blob
 
 
 # ---------------------------------------------------------------------------

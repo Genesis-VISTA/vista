@@ -1063,6 +1063,15 @@ class LocalSettingsTable(SQLModel, table=True):
 ChatMessageRole = Literal["user", "assistant", "system", "tool"]
 
 
+class ChatTranscriptEvent(BaseModel):
+    """What started a turn VISTA started, or was delivered into one: a task's result."""
+
+    summary: str
+    """ The one line the row shows. """
+    text: str
+    """ The full result the agent received, shown when the row is expanded. """
+
+
 class ChatTranscriptMessage(BaseModel):
     """
     Minimal persisted chat bubble for the UI.
@@ -1074,6 +1083,8 @@ class ChatTranscriptMessage(BaseModel):
     intermediate: bool | None = None
     run_id: str | None = None
     """ The chat run that drew this bubble, so replaying that run can redraw it without duplicates. """
+    event: ChatTranscriptEvent | None = None
+    """ Set on the row drawn for a task's result (openspec change background-tasks). """
 
 
 ChatRunState = Literal["idle", "running", "done", "failed", "interrupted", "stopped"]
@@ -1208,6 +1219,22 @@ class InboxItemTable(SQLModel, table=True):
     """ False for a note that waits for the researcher's next message. """
     created_at: str
     taken_at: str | None = None
+
+
+class InboxItemPublic(BaseModel):
+    """An inbox item as the API shows it."""
+
+    id: int
+    kind: str
+    text: str
+    payload: dict[str, Any] | None = None
+    state: str
+    created_at: str
+    taken_at: str | None = None
+
+
+class InboxItemEdit(BaseModel):
+    text: str
 
 
 class DisplayedFileTable(SQLModel, table=True):

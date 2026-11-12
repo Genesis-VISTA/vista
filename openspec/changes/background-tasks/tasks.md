@@ -22,10 +22,10 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 3. Sending through the inbox
 
-- [ ] 3.1 Route the send endpoint through the inbox so a send to a busy conversation is queued, and add the list, edit and delete routes for inbox items; verify in `backend/tests/test_chat_run_api.py` (busy send returns the queued item, no second run; edit after take answers 409)
-- [ ] 3.2 Announce queue changes on the run's event stream (`inbox_changed`); verify in `backend/tests/test_chat_run_api.py` that two subscribers both receive it
-- [ ] 3.3 UI: keep the message box enabled during a run, show queued messages as chips with edit and delete, and put withdrawn text back in the box after Stop; verify with a new `ui/tests/message-queue.test.tsx` and by updating `ui/tests/refused-send.test.ts`
-- [ ] 3.4 UI: draw `inbox_taken` messages as researcher bubbles mid-turn and `task_event` items as the expandable event row; verify in `ui/tests/run-renderer.test.ts`
+- [x] 3.1 Route the send endpoint through the inbox so a send to a busy conversation is queued, and add the list, edit and delete routes for inbox items; verify in `backend/tests/test_chat_run_api.py` (busy send returns the queued item, no second run; edit after take answers 409)
+- [x] 3.2 Announce queue changes on the run's event stream (`inbox_changed`); verify in `backend/tests/test_chat_run_api.py` that two subscribers both receive it
+- [x] 3.3 UI: keep the message box enabled during a run, show queued messages as chips with edit and delete, and put withdrawn text back in the box after Stop; verify with a new `ui/tests/message-queue.test.tsx` and by updating `ui/tests/refused-send.test.ts`
+- [x] 3.4 UI: draw `inbox_taken` messages as researcher bubbles mid-turn and `task_event` items as the expandable event row; verify in `ui/tests/run-renderer.test.ts`
 
 ## 4. Background commands in the backend
 
