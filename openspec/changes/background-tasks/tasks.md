@@ -26,6 +26,7 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 - [x] 3.2 Announce queue changes on the run's event stream (`inbox_changed`); verify in `backend/tests/test_chat_run_api.py` that two subscribers both receive it
 - [x] 3.3 UI: keep the message box enabled during a run, show queued messages as chips with edit and delete, and put withdrawn text back in the box after Stop; verify with a new `ui/tests/message-queue.test.tsx` and by updating `ui/tests/refused-send.test.ts`
 - [x] 3.4 UI: draw `inbox_taken` messages as researcher bubbles mid-turn and `task_event` items as the expandable event row; verify in `ui/tests/run-renderer.test.ts`
+- [x] 3.5 UI: draw a turn the page did not start (a task result, a startup wake, another view) in the open conversation: attach when its run status becomes active, replay its stored events when it ended between polls; verify in `ui/e2e-hermetic/chat-runs.spec.ts` (both cases)
 
 ## 4. Background commands in the backend
 

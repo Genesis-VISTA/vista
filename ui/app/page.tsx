@@ -285,6 +285,12 @@ function ChatPage() {
    * deleted once the transcript that replaces them is stored.
    */
   const [ackPending, setAckPending] = useState(false);
+  /**
+   * The open conversation's run status as last acted on, so a turn the page did
+   * not start (VISTA started it from a task result, or another view did) is
+   * drawn when its status changes, and only then.
+   */
+  const followedStatusRef = useRef<{ id: string; key: string } | null>(null);
   /** The latest `resumeRun`, so the hydration effect can call it without re-running when it changes. */
   const resumeRunRef = useRef<typeof resumeRun | null>(null);
   useEffect(() => {
@@ -538,6 +544,34 @@ function ChatPage() {
       current = false;
     };
   }, [activeProject?.name, activeChatSessionId]);
+
+  // A turn the page did not start shows up in the run status (a task's result
+  // started it, or another view did). Draw it as opening the conversation would:
+  // attach while it runs, or replay what it stored if it ended between polls.
+  // Opening the conversation does that itself, so only a change after it counts.
+  const openRunStatus = activeChatSessionId ? runStatus.byId.get(activeChatSessionId) : undefined;
+  const openRunKey = openRunStatus ? `${openRunStatus.status}:${openRunStatus.unseen}` : "idle";
+  useEffect(() => {
+    const projectName = activeProject?.name ?? null;
+    const id = activeChatSessionId;
+    if (!projectName || !id || !isSessionHydrated) return;
+    const previous = followedStatusRef.current;
+    followedStatusRef.current = { id, key: openRunKey };
+    if (!previous || previous.id !== id || previous.key === openRunKey) return;
+    if (openRunKey === "idle" || openRunKey === "done:false") return;
+    // Watching already (its own send, a follow-on run), or acknowledging one it drew.
+    if (streamRef.current || ackPending) return;
+    void (async () => {
+      let persisted: PersistedChatSession;
+      try {
+        persisted = await fetchPersistedChatSession(projectName, id);
+      } catch {
+        return;
+      }
+      if (readActiveChatSessionId(projectName) !== id || streamRef.current) return;
+      await resumeRunRef.current?.(projectName, id, persisted);
+    })();
+  }, [openRunKey, activeChatSessionId, activeProject?.name, isSessionHydrated, ackPending]);
 
   // The feed is one conversation's: empty until its own list arrives.
   useEffect(() => {
@@ -2023,6 +2057,11 @@ function ChatPage() {
               active={workspaceTab === "background"}
               refreshKey={tasksRefresh}
               onTasksChange={(tasks) => {
+                // A task that ended may have started a turn: ask for the status now
+                // rather than at the next poll, so the turn is drawn sooner.
+                if (liveCount(tasks) < liveCount(backgroundTasks) && activeProject?.name) {
+                  void refreshChatRunStatus(activeProject.name);
+                }
                 setBackgroundTasks(tasks);
                 if (tasks.length === 0) {
                   setWorkspaceTab((tab) => (tab === "background" ? "artifacts" : tab));

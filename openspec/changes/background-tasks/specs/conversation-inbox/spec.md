@@ -84,6 +84,12 @@ can be stopped, and shows the conversation's run status.
 - **THEN** a turn starts with the result
 - **AND** the conversation shows the "finished, not seen" look when the turn completes
 
+#### Scenario: Command ends while the conversation is open
+
+- **WHEN** a background command ends in a conversation that is idle and open
+- **THEN** the turn it starts is drawn in the open conversation as it runs, opening with its
+  event row, without the researcher reopening the conversation
+
 ### Requirement: A self-started turn shows what started it
 
 A turn that VISTA started SHALL open, where a researcher's message would be, with a one-line

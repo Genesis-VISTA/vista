@@ -467,6 +467,73 @@ test.describe("chat runs", () => {
     runtime_s: 30,
   };
 
+  const RESULT = "Background task bg-1 exited with status 0 after 4m 2s.\nCommand: python fit.py";
+  const resultTaken = {
+    event_kind: "inbox_taken",
+    item_id: 21,
+    kind: "task_event",
+    text: RESULT,
+    payload: { summary: "bg-1 finished · exit 0 · 4m 2s" },
+  };
+  const selfStarted = {
+    event_kind: "run_started",
+    run_id: RUN_ID,
+    user_prompt: RESULT,
+    origin: "task",
+  };
+
+  test("a turn VISTA starts in the open conversation is drawn live", async ({ page }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+
+    // A background command ended and its result started a turn, which the
+    // run status shows at its next poll.
+    await stub.setRoute("GET /api/chat/session", sessionRoute({ run_status: "working" }));
+    await stub.armAttach();
+    await stub.setRoute("GET /api/chat/runs/status", [
+      { chat_session_id: SESSION_ID, status: "working", unseen: false },
+    ]);
+
+    await stub.waitForStream("attach");
+    await stub.send("run_started", selfStarted, "attach");
+    await stub.send("inbox_taken", resultTaken, "attach");
+    await streamAnswer(stub, "attach");
+    await finishRun(stub, "done", "attach");
+    await stub.end("attach");
+
+    const row = page.locator(".chat-bubble.event");
+    await expect(row).toHaveText(/bg-1 finished · exit 0 · 4m 2s/);
+    await expect(bubbles(page, "user")).toHaveCount(0);
+    await expect(page.getByText(ANSWER)).toBeVisible();
+    await row.locator("summary").click();
+    await expect(row.locator("pre")).toContainText("Command: python fit.py");
+  });
+
+  test("a turn VISTA started and finished between polls is drawn from what it stored", async ({
+    page,
+  }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+
+    const stored = storedRun("done");
+    stored[0] = { event: "run_started", data: selfStarted };
+    stored.splice(1, 0, { event: "inbox_taken", data: resultTaken });
+    await stub.setRoute(
+      "GET /api/chat/session",
+      sessionRoute({ run_state: "done", run_status: "done", run_unseen: true, run_events: stored }),
+    );
+    await stub.setRoute("GET /api/chat/runs/status", [
+      { chat_session_id: SESSION_ID, status: "done", unseen: true },
+    ]);
+
+    await expect(page.locator(".chat-bubble.event")).toHaveText(/bg-1 finished/);
+    await expect(page.getByText(ANSWER)).toBeVisible();
+  });
+
   test("the Background tab appears with the conversation's first task, with its count", async ({
     page,
   }) => {
