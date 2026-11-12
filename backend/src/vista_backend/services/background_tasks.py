@@ -28,13 +28,16 @@ import logging
 import math
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.exceptions import ModelRetry
+from sqlalchemy import event
+from sqlalchemy.orm import Session
 from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -56,6 +59,35 @@ TAIL_BYTES = 8 * 1024
 SANDBOX_TASKS_DIR = "/mnt/data/tasks"
 
 COMMAND_ENDED_STATES = frozenset({"exited", "stopped", "timed_out", "interrupted"})
+WATCH_ENDED_STATES = frozenset({"ended", "stopped"})
+ENDED_STATES = COMMAND_ENDED_STATES | WATCH_ENDED_STATES
+
+WATCH_LIMIT = 8
+""" Job watches one conversation may have active at once. """
+WATCH_CLUSTERS = ("odo", "frontier", "lux", "perlmutter")
+
+FAST_POLL_S = 30.0
+""" Readings this far apart within the two fast windows (Decision 6, Pace). """
+FAST_WINDOW_S = 10 * 60.0
+""" The windows: after the watch starts, and after the job starts running. """
+SLOW_POLL_S = 300.0
+""" The longest interval between readings, and the wait on a 429 that names none. """
+PAUSED_RETRY_S = 300.0
+
+_RUNNING = {"RUNNING"}
+_SUCCESS = {"COMPLETED", "COMPLETE"}
+_FAILURE = {
+    "FAILED",
+    "CANCELLED",
+    "CANCELED",
+    "TIMEOUT",
+    "NODE_FAIL",
+    "OUT_OF_MEMORY",
+    "BOOT_FAIL",
+    "DEADLINE",
+    "PREEMPTED",
+    "ERROR",
+}
 
 
 def session_factory() -> AsyncSession:
@@ -330,13 +362,198 @@ def describe(record: BackgroundTaskTable) -> str:
             f"{record.label}  command  {state}  {runtime}  `{record.command}`  "
             f"log {record.log_path}"
         )
-    return f"{record.label}  {record.kind}  {record.state}  {runtime}"
+    line = f"{record.label}  job_watch  {record.state}  {runtime}  job {record.job_id} on {record.cluster}"
+    if record.last_job_state:
+        line += f", last read {record.last_job_state}"
+    if record.state == "paused" and record.paused_reason:
+        line += f" ({record.paused_reason})"
+    return line
+
+
+# ---------------------------------------------------------------------------
+# Job watches (Decision 6)
+# ---------------------------------------------------------------------------
+
+StateReader = Callable[[BackgroundTaskTable], Awaitable[dict[str, Any]]]
+""" One reading of a watched job: `read_hpc_job_state`'s answer for it. """
+
+
+class Clock:
+    """Wall time and sleeping, injected so tests can run a watch on a fake clock."""
+
+    def now(self) -> float:
+        return time.time()
+
+    async def sleep(self, seconds: float, *wake: asyncio.Event) -> None:
+        """Sleep `seconds`, or less if any of `wake` is set."""
+        if any(e.is_set() for e in wake):
+            return
+        waiters = [asyncio.ensure_future(e.wait()) for e in wake]
+        try:
+            await asyncio.wait(
+                waiters, timeout=max(0.0, seconds), return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for w in waiters:
+                w.cancel()
+
+
+async def create_watch(
+    db: AsyncSession,
+    *,
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID,
+    job_id: str,
+    cluster: str,
+) -> BackgroundTaskTable:
+    """Make the record for a job watch, or refuse it (`TaskRefused`)."""
+    if cluster not in WATCH_CLUSTERS:
+        raise TaskRefused(
+            f"There is no cluster {cluster!r} to watch on; use one of {', '.join(WATCH_CLUSTERS)}."
+        )
+    if not job_id.strip():
+        raise TaskRefused("A watch needs the job id submit_hpc_job returned.")
+    active = (
+        await db.exec(
+            select(func.count())
+            .select_from(BackgroundTaskTable)
+            .where(
+                BackgroundTaskTable.chat_session_id == chat_session_id,
+                BackgroundTaskTable.kind == "job_watch",
+                col(BackgroundTaskTable.state).in_(["watching", "paused"]),
+            )
+        )
+    ).one()
+    if active >= WATCH_LIMIT:
+        raise TaskRefused(
+            f"This conversation already watches {WATCH_LIMIT} jobs, the limit. Wait for one "
+            "to end, or stop one with stop_task (which does not cancel its job)."
+        )
+    count = (
+        await db.exec(
+            select(func.count())
+            .select_from(BackgroundTaskTable)
+            .where(BackgroundTaskTable.chat_session_id == chat_session_id)
+        )
+    ).one()
+    record = BackgroundTaskTable(
+        chat_session_id=chat_session_id,
+        project_id=project_id,
+        label=f"watch-{count + 1}",
+        kind="job_watch",
+        state="watching",
+        job_id=job_id.strip(),
+        cluster=cluster,
+        created_at=now_iso(),
+    )
+    db.add(record)
+    await db.commit()
+    await db.refresh(record)
+    return BackgroundTaskTable.model_validate(record)
+
+
+def watch_started_message(record: BackgroundTaskTable) -> str:
+    return (
+        f"Watching job {record.job_id} on {record.cluster} as {record.label}. You will be "
+        f"told once when it starts running and once when it ends, in this turn or a new "
+        f"one, so there is no need to poll it. stop_task {record.label} drops the watch "
+        f"without cancelling the job."
+    )
+
+
+def _cluster_name(cluster: str | None) -> str:
+    return (cluster or "").title()
+
+
+def _job_event(
+    record: BackgroundTaskTable, what: str, reading: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    state = str(reading.get("state", "")).upper()
+    exit_code = reading.get("exit_code")
+    job = f"Job {record.job_id} on {_cluster_name(record.cluster)}"
+    if what == "started":
+        text = f"{job} ({record.label}) started running."
+        summary = f"{record.label}: job {record.job_id} on {_cluster_name(record.cluster)} started"
+    else:
+        ended = state + (f", exit code {exit_code}" if exit_code is not None else "")
+        text = (
+            f"{job} ({record.label}) has ended: {ended}. Read its logs and outputs with "
+            f"get_hpc_job_status, and tell the researcher how it went."
+        )
+        if reading.get("message"):
+            text += f"\nThe facility says: {reading['message']}"
+        summary = f"{record.label}: job {record.job_id} on {_cluster_name(record.cluster)} {state.lower()}"
+    payload = {
+        "task_id": str(record.id),
+        "label": record.label,
+        "kind": "job_watch",
+        "event": what,
+        "job_id": record.job_id,
+        "cluster": record.cluster,
+        "job_state": state,
+        "exit_code": exit_code,
+        "summary": summary,
+    }
+    return text, payload
+
+
+async def _save_watch(task_id: uuid.UUID, **values: Any) -> BackgroundTaskTable | None:
+    async with session_factory() as db:
+        record = await db.get(BackgroundTaskTable, task_id)
+        if record is None:  # the conversation was deleted
+            return None
+        for key, value in values.items():
+            setattr(record, key, value)
+        db.add(record)
+        await db.commit()
+        await db.refresh(record)
+        return BackgroundTaskTable.model_validate(record)
+
+
+async def _put_event(
+    record: BackgroundTaskTable, text: str, payload: dict[str, Any]
+) -> None:
+    async with session_factory() as db:
+        await inbox_service.put(
+            db, record.chat_session_id, kind="task_event", text=text, payload=payload
+        )
+
+
+def _iso(at: float) -> str:
+    return datetime.fromtimestamp(at, tz=timezone.utc).isoformat()
+
+
+class _Pace:
+    """
+    How long until the next reading (Decision 6, Pace): every 30 s within 10
+    minutes of the watch starting and of the job starting to run, otherwise
+    doubling from 30 s up to 5 minutes.
+    """
+
+    def __init__(self, started_at: float) -> None:
+        self.started_at = started_at
+        self.running_since: float | None = None
+        self.slow = FAST_POLL_S
+
+    def job_started(self, at: float) -> None:
+        self.running_since = at
+        self.slow = FAST_POLL_S
+
+    def next(self, now: float) -> float:
+        in_window = now - self.started_at < FAST_WINDOW_S or (
+            self.running_since is not None and now - self.running_since < FAST_WINDOW_S
+        )
+        if in_window:
+            return FAST_POLL_S
+        self.slow = min(self.slow * 2, SLOW_POLL_S)
+        return self.slow
 
 
 @dataclass
 class _Watch:
     record: BackgroundTaskTable
     stop: asyncio.Event = field(default_factory=asyncio.Event)
+    nudge: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task | None = None
     done: asyncio.Event = field(default_factory=asyncio.Event)
 
@@ -347,6 +564,122 @@ class BackgroundTaskRegistry:
 
     def watching(self, task_id: uuid.UUID) -> bool:
         return task_id in self._watches
+
+    def nudge_paused(self) -> None:
+        """A Settings save: every paused watch reads its job again now."""
+        for watch in self._watches.values():
+            watch.nudge.set()
+
+    def watch_job(
+        self,
+        record: BackgroundTaskTable,
+        *,
+        read: StateReader,
+        clock: Clock | None = None,
+    ) -> None:
+        """Follow a job until it reaches a final state, reporting its start and its end."""
+        watch = _Watch(record=record)
+        self._watches[record.id] = watch
+        watch.task = asyncio.create_task(self._watch_job(watch, read, clock or Clock()))
+
+    async def _watch_job(self, watch: _Watch, read: StateReader, clock: Clock) -> None:
+        record = watch.record
+        try:
+            await self._follow_job(watch, read, clock)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Watching job %s failed", record.label)
+        finally:
+            self._watches.pop(record.id, None)
+            watch.done.set()
+
+    async def _follow_job(self, watch: _Watch, read: StateReader, clock: Clock) -> None:
+        record = watch.record
+        pace = _Pace(started_at=datetime.fromisoformat(record.created_at).timestamp())
+        failed_before = False
+        while True:
+            if watch.stop.is_set():
+                await _save_watch(
+                    record.id, state="stopped", ended_at=now_iso(), next_poll_at=None
+                )
+                return
+            watch.nudge.clear()
+            # Raced with Stop: a reading may be held for a long time, and a stop
+            # must not wait for it.
+            reading_task = asyncio.ensure_future(read(record))
+            stopping = asyncio.ensure_future(watch.stop.wait())
+            try:
+                await asyncio.wait(
+                    {reading_task, stopping}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                stopping.cancel()
+            if not reading_task.done():
+                reading_task.cancel()
+                continue  # the loop's top records the stop
+            try:
+                reading = reading_task.result()
+            except Exception as e:
+                log.warning("Reading job %s failed", record.label, exc_info=True)
+                reading = {"error": "failed", "message": str(e)}
+            now = clock.now()
+            error = reading.get("error")
+            if error == "access_lost":
+                reason = f"Reconnect {_cluster_name(record.cluster)} in Settings"
+                if record.state != "paused" or record.paused_reason != reason:
+                    record = (
+                        await _save_watch(
+                            record.id, state="paused", paused_reason=reason
+                        )
+                        or record
+                    )
+                delay = PAUSED_RETRY_S
+            elif error == "rate_limited":
+                retry_after = reading.get("retry_after")
+                delay = (
+                    max(float(retry_after), 1.0)
+                    if retry_after is not None
+                    else SLOW_POLL_S
+                )
+            elif error:
+                delay = pace.next(
+                    now
+                )  # the facility had a bad moment: read again later
+            else:
+                state = str(reading.get("state", "")).upper()
+                changes: dict[str, Any] = {"last_job_state": state}
+                if record.state == "paused":
+                    changes.update(
+                        state="watching", paused_reason=None
+                    )  # no agent turn
+                ended = state in _SUCCESS or (state in _FAILURE and failed_before)
+                failed_before = state in _FAILURE
+                if state in _RUNNING and not record.started_reported:
+                    changes["started_reported"] = True
+                    pace.job_started(now)
+                    record = await _save_watch(record.id, **changes) or record
+                    await _put_event(record, *_job_event(record, "started", reading))
+                    changes = {}
+                if ended:
+                    record = (
+                        await _save_watch(
+                            record.id,
+                            **changes,
+                            state="ended",
+                            ended_at=now_iso(),
+                            next_poll_at=None,
+                        )
+                        or record
+                    )
+                    await _put_event(record, *_job_event(record, "ended", reading))
+                    return
+                if changes:
+                    record = await _save_watch(record.id, **changes) or record
+                # A failure is believed on its second reading: look again soon.
+                delay = FAST_POLL_S if failed_before else pace.next(now)
+            await _save_watch(record.id, next_poll_at=_iso(now + delay))
+            await clock.sleep(delay, watch.stop, watch.nudge)
 
     async def watch_command(
         self,
@@ -385,6 +718,8 @@ class BackgroundTaskRegistry:
             record = await get(db, task_id)
         if record is not None and record.state == "running":
             record = await record_end(task_id, "interrupted")
+        elif record is not None and record.state in ("watching", "paused"):
+            record = await _save_watch(task_id, state="stopped", ended_at=now_iso())
         return record
 
     async def wait(self, task_id: uuid.UUID) -> None:
@@ -501,6 +836,62 @@ class BackgroundTaskRegistry:
 
 
 background_task_registry = BackgroundTaskRegistry()
+
+
+def mcp_state_reader() -> StateReader:
+    """
+    Read a watched job with the vista MCP server's `read_hpc_job_state`, on a
+    connection of the watches' own (Decision 6), so a watch never waits behind a
+    prompt a turn is showing. The researcher's credentials are read from
+    Settings at each reading, so a token reconnected there applies to the next one.
+    """
+    server: Any = None
+
+    async def read(record: BackgroundTaskTable) -> dict[str, Any]:
+        nonlocal server
+        from ..agents.agents import get_vista_mcp_server
+        from ..agents.campaign.mcp_invoke import build_metadata, project_paths_for
+        from . import local_settings
+
+        if server is None:
+            server = get_vista_mcp_server()
+        async with session_factory() as db:
+            local = await local_settings.get_public(db)
+        metadata = build_metadata(local, project_paths_for(record.project_id))
+        try:
+            result = await server.direct_call_tool(
+                "read_hpc_job_state",
+                {"job_id": record.job_id, "cluster": record.cluster},
+                metadata,
+            )
+        except ModelRetry as e:
+            return {"error": "failed", "message": str(e)}
+        if not isinstance(result, dict):
+            return {"error": "failed", "message": f"unexpected answer: {result!r}"}
+        return result
+
+    return read
+
+
+_shared_reader: StateReader | None = None
+
+
+def shared_state_reader() -> StateReader:
+    global _shared_reader
+    if _shared_reader is None:
+        _shared_reader = mcp_state_reader()
+    return _shared_reader
+
+
+def nudge_after_commit(session: AsyncSession) -> None:
+    """A Settings save: once it commits, paused watches read their jobs again."""
+    session.info["_nudge_job_watches"] = True
+
+
+@event.listens_for(Session, "after_commit")
+def _nudge_job_watches(session: Session) -> None:
+    if session.info.pop("_nudge_job_watches", False):
+        background_task_registry.nudge_paused()
 
 
 def holding(agent: Any) -> AbstractAsyncContextManager[Any] | None:

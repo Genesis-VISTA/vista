@@ -422,6 +422,9 @@ def get_dev_mcp_server(
 HIDDEN_SANDBOX_TOOLS = frozenset({"wait_task", "signal_task"})
 """ Dev MCP server tools only VISTA's own background-task watcher calls, never the agent. """
 
+HIDDEN_TOOLS = HIDDEN_SANDBOX_TOOLS | {"read_hpc_job_state"}
+""" Every MCP tool VISTA calls itself and the agent is never offered: these, and the job watches' reading. """
+
 BACKEND_RUN_BASH_ARGS = ("task_id", "log_path")
 """ `run_bash` arguments VISTA fills in for a background run; the model is not shown them. """
 
@@ -650,8 +653,8 @@ class ProjectAgent:
         async def list_tasks() -> str:
             """
             List this conversation's background tasks (commands started with
-            run_bash(background=true)), each with its id, kind, state, runtime and
-            log. Finished tasks are listed too.
+            run_bash(background=true), and job watches from watch_hpc_job), each
+            with its id, kind, state and runtime. Finished tasks are listed too.
             """
             from ..services import background_tasks
 
@@ -664,10 +667,41 @@ class ProjectAgent:
             return "\n".join(background_tasks.describe(r) for r in records)
 
         @agent.tool_plain
+        async def watch_hpc_job(
+            job_id: str, cluster: Literal["odo", "frontier", "lux", "perlmutter"]
+        ) -> str:
+            """
+            Have VISTA watch a job you submitted with submit_hpc_job, and tell this
+            conversation once when it starts running and once when it ends, so you
+            need not poll it. Use the job id and cluster submit_hpc_job reported.
+            Report every final state to the researcher, a failure as much as a success.
+            """
+            from ..services import background_tasks
+
+            if self.session_id is None:
+                return "Refused: a watch needs a conversation to report back to."
+            try:
+                async with background_tasks.session_factory() as session:
+                    record = await background_tasks.create_watch(
+                        session,
+                        chat_session_id=self.session_id,
+                        project_id=self.project.id,
+                        job_id=job_id,
+                        cluster=cluster,
+                    )
+            except background_tasks.TaskRefused as refused:
+                return f"Refused: {refused}"
+            background_tasks.background_task_registry.watch_job(
+                record, read=background_tasks.shared_state_reader()
+            )
+            return background_tasks.watch_started_message(record)
+
+        @agent.tool_plain
         async def stop_task(task_id: str) -> str:
             """
             Stop one of this conversation's background tasks by its id (such as
-            bg-3). A command is ended with everything it started.
+            bg-3 or watch-2). A command is ended with everything it started; a
+            watch stops watching, and its job is left as it is.
             """
             from ..services import background_tasks
 
@@ -677,7 +711,7 @@ class ProjectAgent:
                 record = await background_tasks.find(session, self.session_id, task_id)
             if record is None:
                 return f"No background task {task_id!r} in this conversation."
-            if record.state in background_tasks.COMMAND_ENDED_STATES:
+            if record.state in background_tasks.ENDED_STATES:
                 return f"{record.label} has already ended ({record.state})."
             ended = await background_tasks.background_task_registry.stop(record.id)
             state = ended.state if ended else "unknown"
@@ -805,7 +839,7 @@ class ProjectAgent:
         least one allow pattern matches and no deny pattern matches. If there are no allow_patterns,
         assume allow "*".
         """
-        if name in HIDDEN_SANDBOX_TOOLS:
+        if name in HIDDEN_TOOLS:
             return False
         patterns = list(self.project.tools)
         if not self.project.knowledge_bases and "!rag_search" not in patterns:
@@ -895,6 +929,7 @@ class ProjectAgent:
         HPC_TOOLS = {
             "submit_hpc_job",
             "get_hpc_job_status",
+            "read_hpc_job_state",
             "get_hpc_job_outputs",
             "cancel_hpc_job",
             "hpc_list_files",

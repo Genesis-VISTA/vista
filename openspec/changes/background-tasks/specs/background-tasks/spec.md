@@ -131,9 +131,9 @@ expired, the watch SHALL pause, SHALL show in the task list which cluster needs 
 and SHALL NOT report to the agent. It SHALL resume without further action once the credentials
 work again. A paused watch SHALL NOT be reported as a finished or failed job.
 
-#### Scenario: Globus session expires during a queue wait
+#### Scenario: Token expires during a queue wait
 
-- **WHEN** a watch's reading fails because the cluster's session has expired
+- **WHEN** a watch's reading fails because the researcher's token for the cluster has expired
 - **THEN** the watch is shown as paused, naming the cluster, and no agent turn starts
 
 #### Scenario: Researcher reconnects

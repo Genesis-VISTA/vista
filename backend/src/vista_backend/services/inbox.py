@@ -27,7 +27,7 @@ from sqlalchemy.exc import OperationalError
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import ChatSessionTable, InboxItemTable
+from ..db.schemas import BackgroundTaskTable, ChatSessionTable, InboxItemTable
 from ..utils.misc import now_iso
 
 log = logging.getLogger(__name__)
@@ -245,12 +245,13 @@ async def waiting_on_researcher(
     db: AsyncSession, chat_session_ids: Sequence[uuid.UUID]
 ) -> set[uuid.UUID]:
     """
-    The conversations among these with a task result queued, which, while no
-    turn runs, waits for the researcher: "needs you" (Decision 3).
+    The conversations among these that wait for the researcher: "needs you"
+    (Decision 3). One has a task result queued, which while no turn runs waits
+    for their next message, or a job watch paused for lost cluster access.
     """
     if not chat_session_ids:
         return set()
-    rows = (
+    results = (
         await db.exec(
             select(InboxItemTable.chat_session_id)
             .where(
@@ -261,7 +262,17 @@ async def waiting_on_researcher(
             .distinct()
         )
     ).all()
-    return set(rows)
+    paused = (
+        await db.exec(
+            select(BackgroundTaskTable.chat_session_id)
+            .where(
+                col(BackgroundTaskTable.chat_session_id).in_(chat_session_ids),
+                BackgroundTaskTable.state == "paused",
+            )
+            .distinct()
+        )
+    ).all()
+    return set(results) | set(paused)
 
 
 TakeItems = Callable[[], Awaitable[list[InboxItemTable]]]

@@ -183,10 +183,17 @@ the watcher is recorded as `interrupted`.
 ### 6. Job watches: one task per watch, on a connection of their own
 
 `watch_hpc_job` checks the limit of 8, creates a `job_watch` record and starts its task. The
-task reads the job with `get_hpc_job_status` through one shared, callback-free connection to
-the vista MCP server (as `mcp_invoke.build_mcp_invoke` does), attaching metadata built from
-Settings as read at each poll, so a reconnected credential applies to the next reading. A
-connection of its own keeps a watch from stalling behind an unanswered prompt in a turn.
+task reads the job's state with `read_hpc_job_state`, a vista MCP tool the agent never sees,
+through one shared, callback-free connection to the vista MCP server (as
+`mcp_invoke.build_mcp_invoke` does), attaching metadata built from Settings as read at each
+poll, so a reconnected credential applies to the next reading. A connection of its own keeps
+a watch from stalling behind an unanswered prompt in a turn.
+
+A reading is the job's state alone: one IRI status call, answered as `{state, exit_code?}` or
+as a structured error (`rate_limited` with `retry_after`, `access_lost` with the cluster).
+`get_hpc_job_status` also tails the job's log over Globus once the job runs, about four
+facility calls per reading, and a lapsed Globus session would then hold back a result that
+S3M can still give. The log and outputs are the agent's to fetch once told the job ended.
 
 - **Events.** First reading in a running state puts a "started" `task_event` (once,
   `started_reported`). A final state puts an "ended" one and ends the watch. A failure is
@@ -195,10 +202,12 @@ connection of its own keeps a watch from stalling behind an unanswered prompt in
 - **Pace.** 30 s while within 10 minutes of the watch starting or of the job starting to run;
   otherwise the interval doubles from 30 s up to 300 s. `next_poll_at` is saved.
 - **Too many requests.** The IRI client maps HTTP 429 to a typed error carrying
-  `Retry-After`; the tool reports it in a form the watcher recognises, and the watcher waits
-  at least that long, 300 s when no value is given.
-- **Lost access.** A missing token, an expired token or `GlobusSessionExpired` pauses the
-  watch with the cluster's name. A paused watch retries every 300 s and on every Settings
+  `Retry-After` (`IriRateLimited`); the reading reports it as `rate_limited`, and the watcher
+  waits at least that long, 300 s when no value is given. `get_hpc_job_status` raises the
+  same typed error, so its message says to wait.
+- **Lost access.** A missing or rejected S3M or NERSC IRI token (`MissingCredential`,
+  `IriCredentialRejected`) pauses the watch with the cluster's name. Globus is never read by
+  a watch, so a lapsed Globus session cannot pause one. A paused watch retries every 300 s and on every Settings
   save, and resumes on the first reading that works.
 - **Restart.** At startup every `watching` or `paused` record gets its task back, and its
   first reading is immediate.
@@ -254,9 +263,3 @@ tables and columns unused.
 
 The UI and backend ship together in one package, so the changed send response has no
 out-of-step client.
-
-## Open Questions
-
-- Whether the watcher should call `get_hpc_job_status` as it is, which also tails the job's
-  log on OLCF clusters, or a lighter state-only reading for the polls between events. Either
-  satisfies the specs; decide when the 429 handling is written, from what one reading costs.

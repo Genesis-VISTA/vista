@@ -72,6 +72,10 @@ async def update(
     session.add(row)
     await session.flush()
     await session.refresh(row)
+    # A job watch paused for lost cluster access tries again on every save.
+    from .background_tasks import nudge_after_commit
+
+    nudge_after_commit(session)
     if changed - AGENT_IRRELEVANT:
         # Every agent was built from these settings (the update switches are
         # not ones they read). Imported here because the agent pool reads this module to

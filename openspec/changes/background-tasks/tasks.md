@@ -37,11 +37,11 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 5. Job watches
 
-- [ ] 5.1 Make expired or missing credentials and HTTP 429 (with `Retry-After`) recognisable in `get_hpc_job_status` failures; verify in `mcp_servers/vista_mcp_server/tests/test_job_status_errors.py` with the fake IRI and Globus clients
-- [ ] 5.2 Add the `watch_hpc_job` agent tool and the watch task on its own vista MCP connection (limit of 8, metadata from Settings at each poll); verify in a new `backend/tests/test_job_watch.py` with an injected status reader
-- [ ] 5.3 Events and pace: started once, ended once, failure believed on the second reading, 30 s within the two 10-minute windows then doubling to 300 s, wait honoured on 429; verify in `backend/tests/test_job_watch.py` with a fake clock
-- [ ] 5.4 Pause on lost access, retry every 300 s and on a Settings save, resume without an agent turn, and show "needs you" while paused; verify in `backend/tests/test_job_watch.py`
-- [ ] 5.5 Decide the open question in `design.md` (full status call or state-only reading between events) from what one reading costs, and record the decision there; verify the Open Questions section is empty or removed
+- [x] 5.1 Make expired or missing credentials and HTTP 429 (with `Retry-After`) recognisable in `get_hpc_job_status` failures, and add the state-only `read_hpc_job_state` the watch reads with (Decision 6); verify in `mcp_servers/vista_mcp_server/tests/test_job_status_errors.py` with the fake IRI and Globus clients
+- [x] 5.2 Add the `watch_hpc_job` agent tool and the watch task on its own vista MCP connection (limit of 8, metadata from Settings at each poll); verify in a new `backend/tests/test_job_watch.py` with an injected status reader
+- [x] 5.3 Events and pace: started once, ended once, failure believed on the second reading, 30 s within the two 10-minute windows then doubling to 300 s, wait honoured on 429; verify in `backend/tests/test_job_watch.py` with a fake clock
+- [x] 5.4 Pause on lost access, retry every 300 s and on a Settings save, resume without an agent turn, and show "needs you" while paused; verify in `backend/tests/test_job_watch.py`
+- [x] 5.5 Decide the open question in `design.md` (full status call or state-only reading between events) from what one reading costs, and record the decision there; verify the Open Questions section is empty or removed
 
 ## 6. Restart and deletion
 

@@ -459,3 +459,52 @@ async def test_tasks_are_listed_stopped_and_reported_after_the_agent_is_rebuilt(
     assert "No background task 'bg-9'" in await tools["stop_task"].function(
         task_id="bg-9"
     )
+
+
+# ---------------------------------------------------------------------------
+# Job watches (openspec change background-tasks, task 5.2)
+# ---------------------------------------------------------------------------
+
+
+def test_the_watch_reading_is_hidden_from_the_agent_but_carries_credentials():
+    agent = _agent(make_project(tools=["*"]))
+    assert not agent._tool_allowed("read_hpc_job_state")
+    assert "user" in agent._build_vista_metadata("read_hpc_job_state")["vista"]
+
+
+@pytest.mark.anyio
+async def test_watch_hpc_job_starts_a_watch_and_says_what_will_follow(
+    background, monkeypatch
+):
+    import asyncio
+
+    from vista_backend.services import background_tasks
+
+    reads: list[str] = []
+
+    async def read(record):
+        reads.append(record.job_id)
+        await asyncio.Event().wait()  # stays queued
+
+    monkeypatch.setattr(background_tasks, "shared_state_reader", lambda: read)
+    tools = background.build().agent._function_toolset.tools
+
+    answer = await tools["watch_hpc_job"].function(job_id="4242", cluster="frontier")
+
+    assert answer.startswith("Watching job 4242 on frontier as watch-1.")
+    assert "without cancelling the job" in answer
+    async with background_tasks.session_factory() as db:
+        [record] = await background_tasks.list_for_chat(db, background.chat_id)
+    assert (record.kind, record.state, record.cluster) == (
+        "job_watch",
+        "watching",
+        "frontier",
+    )
+    await asyncio.sleep(0)
+    assert reads == ["4242"], "the first reading is immediate"
+    listed = await tools["list_tasks"].function()
+    assert "watch-1  job_watch  watching" in listed and "job 4242 on frontier" in listed
+
+    assert await tools["stop_task"].function(task_id="watch-1") == "watch-1 is stopped."
+    refused = await tools["watch_hpc_job"].function(job_id="1", cluster="summit")
+    assert refused.startswith("Refused:")
