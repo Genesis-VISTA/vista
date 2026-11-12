@@ -78,7 +78,10 @@ async def test_without_a_token_the_status_says_where_to_get_one(oidc_server, ses
     status = await collaboration.status(local)
     assert status.reachable and not status.signed_in and status.sign_in_required
     assert status.sign_in_url == f"{URL}/sign-in"
-    assert f"Get a token from {URL}/sign-in" in status.reason
+    assert status.reason == (
+        f"Sign in to {URL} to publish and import: get a token from its sign-in "
+        "page and paste it under Settings → Collaboration."
+    )
 
     with pytest.raises(CollaborationUnauthorized):
         async with collaboration.client_for(local) as client:
@@ -101,8 +104,11 @@ async def test_an_account_without_access_is_not_sent_to_sign_in_again(
     status = await collaboration.status(local)
     assert status.reachable and not status.signed_in
     assert not status.sign_in_required
-    assert "not been given access" in status.reason
-    assert "ask the administrators" in status.reason
+    assert status.refused and status.shown
+    assert status.reason == (
+        f"{URL} refused this sign-in. Signing in again won't help: ask the "
+        f"administrators of {URL} for access."
+    )
 
     with api_client(session) as (client, _):
         res = await client.get("/collaboration/skills")
@@ -126,7 +132,14 @@ async def test_the_gateway_asking_for_a_token(monkeypatch, session):
         await _save(session, collaboration_server_url=URL)
     )
     assert not status.reachable and status.sign_in_required
-    assert f"{URL}/sign-in" in status.reason
+    assert status.reason == (
+        f"Sign in to {URL} to publish and import: get a token from its sign-in "
+        "page and paste it under Settings → Collaboration."
+    )
+    assert "Unauthorized" not in status.reason
+    # Not signed in and no token saved: quiet.
+    assert not status.shown and not status.refused
+    assert status.sign_in_url == f"{URL}/sign-in"
 
 
 @pytest.mark.parametrize(
@@ -215,3 +228,70 @@ async def test_the_sign_in_git_sends_to_a_hosted_forum_is_the_one_the_server_acc
         assert (await http.get("/me", headers=sent)).status_code == 200
         wrong = {**sent, "Authorization": "Bearer not-the-token"}
         assert (await http.get("/me", headers=wrong)).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# VISTA's default server, as its gateway answers
+# ---------------------------------------------------------------------------
+
+DEFAULT = collaboration.DEFAULT_COLLABORATION_SERVER_URL
+GATEWAY_401 = {"error": "access_denied", "message": "Authorization Required"}
+""" What Obsidian's gateway answers `/version` and `/me` without a token (2026-11-06). """
+
+
+def _answer(monkeypatch, status: int, body: dict) -> None:
+    monkeypatch.setattr(
+        collaboration,
+        "transport",
+        httpx.MockTransport(lambda request: httpx.Response(status, json=body)),
+    )
+
+
+async def test_not_signed_in_on_the_default_server(monkeypatch, session):
+    """A fresh install: the configuration's default, no token, the gateway's 401."""
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "collaboration_server_url", DEFAULT)
+    _answer(monkeypatch, 401, GATEWAY_401)
+    status = await collaboration.status(await local_settings.get_public(session))
+    assert (status.url, status.source) == (DEFAULT, "config")
+    assert status.sign_in_required and status.default_server
+    assert not status.shown and not status.refused
+    assert status.reason == (
+        f"Sign in to {DEFAULT} to publish and import: get a token from its "
+        "sign-in page and paste it under Settings → Collaboration."
+    )
+    assert "Unauthorized" not in status.reason
+
+
+async def test_a_saved_token_shows_the_controls_even_when_refused(monkeypatch, session):
+    """An expired token: still shown, disabled with the reason."""
+    _answer(monkeypatch, 401, GATEWAY_401)
+    local = await _save(
+        session, collaboration_server_url=DEFAULT, collaboration_token="expired"
+    )
+    status = await collaboration.status(local)
+    assert status.sign_in_required and status.shown
+    assert "Unauthorized" not in status.reason
+
+
+async def test_refused_on_the_default_server(monkeypatch, session):
+    _answer(monkeypatch, 403, {"detail": "This account has not been given access."})
+    local = await _save(
+        session, collaboration_server_url=DEFAULT, collaboration_token="t"
+    )
+    status = await collaboration.status(local)
+    assert status.refused and status.shown and status.default_server
+    assert not status.sign_in_required
+    assert status.reason == (
+        f"{DEFAULT} refused this sign-in. Signing in again won't help: reach out "
+        "to the VISTA team for access."
+    )
+
+
+async def test_another_server_is_not_the_default(monkeypatch, session):
+    _answer(monkeypatch, 401, GATEWAY_401)
+    status = await collaboration.status(
+        await _save(session, collaboration_server_url=URL)
+    )
+    assert not status.default_server

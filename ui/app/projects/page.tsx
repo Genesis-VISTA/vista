@@ -258,15 +258,17 @@ function ProjectsPageContent() {
       <div className="app-page-body">
       <p className="page-lede">
         Pick a project to scope the chat session with its system prompt, skills, and tools.{" "}
-        <button
-          type="button"
-          className="button ghost button-sm"
-          disabled={!collab.available}
-          title={collab.available ? "Import a project from the collaboration server" : (collab.reason ?? undefined)}
-          onClick={() => setShowImport(true)}
-        >
-          Import from the collaboration server
-        </button>
+        {collab.shown && (
+          <button
+            type="button"
+            className="button ghost button-sm"
+            disabled={!collab.available}
+            title={collab.available ? "Import a project from the collaboration server" : (collab.reason ?? undefined)}
+            onClick={() => setShowImport(true)}
+          >
+            Import from the collaboration server
+          </button>
+        )}
       </p>
 
       {notice && (
@@ -324,11 +326,15 @@ function ProjectsPageContent() {
               project={project}
               tourTarget={project.name === tourProjectName}
               active={activeName === project.name}
-              sharing={projectSharingLabel(
-                project,
-                serverUrl,
-                project.remoteId ? heads[project.remoteId] : undefined
-              )}
+              sharing={
+                collab.shown
+                  ? projectSharingLabel(
+                      project,
+                      serverUrl,
+                      project.remoteId ? heads[project.remoteId] : undefined
+                    )
+                  : null
+              }
               onServer={isProjectOnServer(project, serverUrl)}
               publishing={busyName === project.name}
               publishDisabledReason={collab.available ? null : collab.reason}
@@ -454,8 +460,8 @@ function ProjectCard({
   /** The card the first-boot tour points at. */
   tourTarget: boolean;
   active: boolean;
-  /** Where it stands with the collaboration server. */
-  sharing: string;
+  /** Where it stands with the collaboration server; null hides it and Publish, as while collaboration is quiet or off. */
+  sharing: string | null;
   onServer: boolean;
   publishing: boolean;
   /** Why Publish is off; null when it can be used. */
@@ -503,7 +509,7 @@ function ProjectCard({
         </div>
       )}
       <div className="project-card-desc">{project.description || "No description."}</div>
-      <div className="project-card-sharing">{sharing}</div>
+      {sharing !== null && <div className="project-card-sharing">{sharing}</div>}
 
       <ChipRow label="Skills" items={project.skills} />
       <ChipRow label="Knowledge Bases" items={project.knowledgeBases} />
@@ -523,7 +529,7 @@ function ProjectCard({
         </button>
         {/* A private project is first published into a team picked for it;
             one in a team publishes its new versions there. */}
-        {(inTeam || teamsShown) && (
+        {sharing !== null && (inTeam || teamsShown) && (
           <button
             type="button"
             className="button ghost button-sm"

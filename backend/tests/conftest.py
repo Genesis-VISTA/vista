@@ -69,6 +69,18 @@ def _no_update_checks_against_github(monkeypatch):
     monkeypatch.setattr(settings.updates, "github_api", "http://127.0.0.1:9")
 
 
+@pytest.fixture(autouse=True)
+def _no_default_collaboration_server(monkeypatch):
+    """
+    The configuration defaults to VISTA's collaboration server on Obsidian. A
+    test that left it in place would reach the network for a status, or stamp
+    `team_server` with Obsidian's address. Tests that want a server set one.
+    """
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "collaboration_server_url", None)
+
+
 @pytest.fixture
 async def engine(tmp_path_factory):
     """

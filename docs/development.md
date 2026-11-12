@@ -122,6 +122,12 @@ caller's identity headers as sent, so it refuses to listen on anything but loopb
 never start one. How the server works, and how a deployment signs researchers in, is in
 [The collaboration server](collaboration-server.md).
 
+Without `--collab`, a dev stack uses VISTA's default server on Obsidian, like an installed
+VISTA: it checks its status whenever a page asks, a few seconds at most and never failing. To
+keep a stack off it, put `VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`, or turn
+collaboration off under Settings → Collaboration. Backend tests never reach it: `conftest.py`
+sets the configured address to none for every test.
+
 ### By hand
 
 Build once, then start each service in its own terminal:

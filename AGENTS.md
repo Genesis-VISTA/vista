@@ -161,15 +161,24 @@ is in effect again. The server's `POST /items/{id}/copy` is unused by VISTA.
 cd collaboration_server && uv run vista-collaboration-server
 ```
 No package, package launcher or Electron startup starts one. The backend reads its address
-from Settings, falling back to `VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets);
-with neither, publishing and importing are off and `GET /collaboration/status` says why. An
-unreachable server is never fatal. To sign in, the researcher opens the server's `/sign-in`
+from Settings, falling back to `Settings.collaboration_server_url`, which defaults to
+`DEFAULT_COLLABORATION_SERVER_URL` (Obsidian's, in `config.py`) and is overridden by
+`VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets; blank means none, the way to
+keep a dev stack off Obsidian). Backend tests set it to none in `conftest.py`, so one that
+wants a server sets it. An unreachable server is never fatal. The Collaboration switch
+(`LocalSettings.collaboration_enabled`, None is on) turns it all off: `status()` returns
+early, `client_for`/`required_url` refuse with `OFF_REASON`, and a forum hosted on the server
+has no lab (`project_forum.hosted_while_off`), so nothing reaches the server; keep any new
+traffic to it behind those. On, the UI stays quiet until signed in: the status's `shown`
+(a token saved, or the server signed this install in) gates every collaboration control
+outside Settings and the Skill Hub, and once shown they stay, disabled with the reason. To sign in, the researcher opens the server's `/sign-in`
 page (a login gateway in front of the server logs them in; Obsidian's APISIX on the deployment)
 and pastes the token it shows into Settings: `collaboration_token`, write-only like
 `github_token`. The backend sends it only over https (or loopback), forgets it when the server
 address changes, and keeps it out of every settings dump. Nothing in VISTA knows which login is
 behind the gateway, so a self-hosted server can use any. The UI's Publish and Import controls read `useCollaboration()`
-(`ui/lib/collaboration.ts`), which needs `reachable` and `signed_in`.
+(`ui/lib/collaboration.ts`): drawn while `shown`, enabled when `available` (`reachable` and
+`signed_in`); the Skill Hub's sidebar entry follows `enabled`.
 Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
 a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
 The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local

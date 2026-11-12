@@ -11,7 +11,10 @@ import { extractError } from "@/lib/settings";
  * One store for the page, the same pattern as `lib/agent-settings.ts`: the
  * Settings section and every control show the same answer, and saving the
  * server address calls `refreshCollaborationStatus()` so they all follow. A
- * control is disabled whenever `available` is false, and shows `reason`.
+ * control is hidden while `shown` is false: collaboration is off, or this
+ * install has never signed in (no token saved, and the server has not signed
+ * it in), or no answer has arrived yet. Once shown, it is disabled whenever
+ * `available` is false, and shows `reason`.
  *
  * It also carries the researcher's teams. Here a project, skill or knowledge
  * base is either private (`team_id` null: on this computer only, as everything
@@ -52,6 +55,8 @@ export type TeamMember = CollaborationUser & {
 
 /** Backend `CollaborationStatus`. */
 export type CollaborationStatus = {
+  /** The Collaboration switch is on. Off contacts no server, and nothing else here is true. */
+  enabled: boolean;
   /** A server address is set, in Settings or the installation's configuration. */
   configured: boolean;
   /** It answered, and speaks the API this VISTA does. */
@@ -67,6 +72,16 @@ export type CollaborationStatus = {
   signed_in: boolean;
   /** The server, or a gateway in front of it, refused the token or its absence. */
   sign_in_required: boolean;
+  /** The server knows this sign-in and refuses it access (403): a new token won't help. */
+  refused: boolean;
+  /**
+   * Collaboration controls are shown at all: a token is saved, or the server
+   * signed this install in. Until then, controls outside Settings and the
+   * Skill Hub stay hidden.
+   */
+  shown: boolean;
+  /** The address in effect is VISTA's default server. */
+  default_server: boolean;
   /** The server's sign-in page, where the researcher gets a token to paste. */
   sign_in_url: string | null;
   /** Who the server takes this installation to be; null unless signed in. */
@@ -83,12 +98,47 @@ type Snapshot = {
   checking: boolean;
   /** Client clock, ms, of the last answer. */
   checkedAt: number | null;
+  /**
+   * The teams of the last signed-in answer, and the address they are on, so a
+   * shown install keeps naming its items' teams after its token expires (the
+   * server lists teams only to a signed-in install). Kept in localStorage too.
+   */
+  remembered: RememberedTeams | null;
 };
+
+type RememberedTeams = { url: string; teams: CollaborationTeam[] };
+
+const REMEMBERED_KEY = "vista.collaboration.teams.v1";
+
+function loadRemembered(): RememberedTeams | null {
+  try {
+    const raw = window.localStorage.getItem(REMEMBERED_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RememberedTeams;
+    return typeof parsed?.url === "string" && Array.isArray(parsed.teams) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveRemembered(remembered: RememberedTeams): void {
+  try {
+    window.localStorage.setItem(REMEMBERED_KEY, JSON.stringify(remembered));
+  } catch {
+    // A convenience only: badges after an expiry come back at the next sign-in.
+  }
+}
 
 /** A new subscriber re-asks once the answer is older than this. */
 export const STALE_MS = 30_000;
 
-const initial = (): Snapshot => ({ status: null, error: null, checking: false, checkedAt: null });
+const initial = (): Snapshot => ({
+  status: null,
+  error: null,
+  checking: false,
+  checkedAt: null,
+  remembered: typeof window === "undefined" ? null : loadRemembered(),
+});
 
 let snapshot: Snapshot = initial();
 let request = 0;
@@ -118,7 +168,12 @@ export async function refreshCollaborationStatus(
     const status = (await res.json()) as CollaborationStatus;
     // A slower, older request must not overwrite a newer answer.
     if (id !== request) return;
-    set({ status, error: null, checking: false, checkedAt: Date.now() });
+    const update: Partial<Snapshot> = { status, error: null, checking: false, checkedAt: Date.now() };
+    if (status.signed_in && status.url) {
+      update.remembered = { url: status.url, teams: status.teams };
+      saveRemembered(update.remembered);
+    }
+    set(update);
   } catch (e) {
     if (id !== request) return;
     // One failed request (a backend restarting) does not throw away the last
@@ -142,12 +197,17 @@ function subscribe(cb: () => void): () => void {
 }
 
 const getSnapshot = () => snapshot;
-const SERVER_SNAPSHOT: Snapshot = initial();
+const SERVER_SNAPSHOT: Snapshot = { status: null, error: null, checking: false, checkedAt: null, remembered: null };
 const getServerSnapshot = () => SERVER_SNAPSHOT;
 
-/** For tests: forget everything, as a fresh page load would. */
+/** For tests: forget everything, as a fresh page load would, stored teams included. */
 export function resetCollaborationForTests(): void {
   request++;
+  try {
+    window.localStorage.removeItem(REMEMBERED_KEY);
+  } catch {
+    // nothing stored
+  }
   snapshot = initial();
 }
 
@@ -169,9 +229,37 @@ export function availability(s: Pick<Snapshot, "status" | "error">): {
   return { available: false, reason: "Checking the collaboration server…" };
 }
 
+/**
+ * Whether collaboration is on and its controls are drawn. Pure, for testing.
+ * A failed later check keeps the last answer, as `availability` does.
+ */
+export function visibility(s: Pick<Snapshot, "status">): {
+  enabled: boolean;
+  shown: boolean;
+  default_server: boolean;
+} {
+  return {
+    enabled: s.status?.enabled ?? true,
+    shown: s.status?.shown ?? false,
+    default_server: s.status?.default_server ?? false,
+  };
+}
+
 export type CollaborationView = {
   status: CollaborationStatus | null;
   checking: boolean;
+  /**
+   * The Collaboration switch is on. Assumed on until the first answer, so the
+   * Skill Hub entry, which a switched-on install always has, does not flash in.
+   */
+  enabled: boolean;
+  /**
+   * Collaboration controls are drawn at all (`CollaborationStatus.shown`).
+   * False until the first answer, so nothing flashes in and out for a quiet install.
+   */
+  shown: boolean;
+  /** The address in effect is VISTA's default server. */
+  default_server: boolean;
   /** Publish and Import can be used. */
   available: boolean;
   /** Why they cannot, for the disabled control; null when they can. */
@@ -187,6 +275,7 @@ export function useCollaboration(): CollaborationView {
     status: s.status,
     checking: s.checking,
     error: s.error,
+    ...visibility(s),
     ...availability(s),
     refresh: () => refreshCollaborationStatus(),
   };
@@ -228,10 +317,18 @@ export function usableInProject(
 
 export type TeamsView = {
   /**
-   * Teams can be shown: a server answered and signed this installation in.
-   * When false everything here is treated as private.
+   * Teams can be shown: collaboration controls are shown, and a server
+   * answered and signed this installation in. When false everything here is
+   * treated as private.
    */
   shown: boolean;
+  /**
+   * Team badges are drawn: collaboration controls are shown and the teams'
+   * names are known, from this answer or, after a token has expired, the last
+   * signed-in one on the same address. Wider than `shown`, which is about
+   * acting with teams now.
+   */
+  badges: boolean;
   /** The researcher's teams, the public team first. Private is not one of them. */
   teams: CollaborationTeam[];
   user: CollaborationUser | null;
@@ -253,14 +350,26 @@ export function teamLabel(team: CollaborationTeam | null): string {
 }
 
 /** The teams part of a status. Pure, for testing. */
-export function teamsView(s: Pick<Snapshot, "status" | "error">): TeamsView {
+export function teamsView(
+  s: Pick<Snapshot, "status" | "error"> & { remembered?: RememberedTeams | null },
+): TeamsView {
   const status = s.status;
   const teams = status?.teams ?? [];
-  const shown = availability(s).available && teams.length > 0;
+  const collabShown = visibility(s).shown;
+  const shown = collabShown && availability(s).available && teams.length > 0;
   const known = new Set(teams.map((t) => t.id));
-  const names = new Map(teams.map((t) => [t.id, teamLabel(t)]));
+  // The names to badge with: this answer's teams, or after an expiry the last
+  // signed-in answer's on the same address.
+  const named =
+    teams.length > 0
+      ? teams
+      : status?.url && s.remembered?.url === status.url
+        ? s.remembered.teams
+        : [];
+  const names = new Map(named.map((t) => [t.id, teamLabel(t)]));
   return {
     shown,
+    badges: collabShown && named.length > 0,
     teams,
     user: status?.user ?? null,
     teamOf: (teamId) => (shown ? effectiveTeam(teamId, known) : (teamId ?? null)),

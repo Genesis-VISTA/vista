@@ -23,7 +23,7 @@ from ..db.schemas import (
 WRITE_ONLY_TOKENS = ("github_token", "gitlab_token", "collaboration_token")
 """Fields that are never read back, so a save that sends null keeps them."""
 
-AGENT_IRRELEVANT = {"update_checks", "update_prereleases"}
+AGENT_IRRELEVANT = {"update_checks", "update_prereleases", "collaboration_enabled"}
 """Fields no agent reads, so changing them leaves the built agents alone."""
 
 

@@ -209,8 +209,11 @@ If you delete the active project, the pointer is cleared and you land back at
 
 Projects are shared the way skills are (see the
 [skill onboarding doc](skill-onboarding.md#publishing-and-importing-through-a-collaboration-server)):
-explicitly, through the collaboration server set in **Settings → Collaboration**.
-Without one that answers, Publish and Import say why and do nothing.
+explicitly, through the collaboration server in **Settings → Collaboration**,
+VISTA's own unless you set another. Until you sign in there, `/projects` shows no
+Import, Publish or sharing line; once signed in they stay, and when the server
+cannot be used they say why and do nothing. With the **Collaboration** switch
+off they are hidden, and VISTA contacts no server.
 
 **Publishing.** Each card on `/projects` says where the project stands (*Not
 published*, *Version 2*, *Differs here from version 2*, *Version 3

@@ -39,7 +39,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from ..config import settings
+from ..config import DEFAULT_COLLABORATION_SERVER_URL, settings
 from ..db.schemas import LocalSettingsPublic
 
 API_VERSION = 3
@@ -72,6 +72,9 @@ NOT_CONFIGURED = (
     "No collaboration server is set. Add its address under Settings → "
     "Collaboration to publish and import."
 )
+
+OFF_REASON = "Collaboration is off. Turn it on under Settings → Collaboration."
+""" Why nothing works while the Collaboration switch is off, when nothing is contacted. """
 
 
 class CollaborationError(Exception):
@@ -124,6 +127,11 @@ class SharingConflict(Exception):
 
 
 class CollaborationStatus(BaseModel):
+    enabled: bool = True
+    """
+    The Collaboration switch is on. While it is off nothing is contacted, and
+    every other field says so: not reachable, not shown, `OFF_REASON`.
+    """
     configured: bool
     """ A server address is set, in Settings or in this installation's configuration. """
     reachable: bool
@@ -139,6 +147,20 @@ class CollaborationStatus(BaseModel):
     """ The server accepts this installation: `/me` answered. """
     sign_in_required: bool = False
     """ The server, or a gateway in front of it, refused the token or its absence. """
+    refused: bool = False
+    """
+    The server knows this sign-in and refuses it access (403): a new token
+    will not help, unlike `sign_in_required`.
+    """
+    shown: bool = False
+    """
+    Whether the interface shows collaboration controls at all: once a token
+    is saved or the server has signed this installation in. Until then a
+    switched-on install stays quiet outside Settings and the Skill Hub; after
+    it, a failure leaves the controls disabled with `reason`, not hidden.
+    """
+    default_server: bool = False
+    """ The address in effect is VISTA's default server (`DEFAULT_COLLABORATION_SERVER_URL`). """
     sign_in_url: str | None = None
     """
     The server's sign-in page, where the researcher gets a token to paste;
@@ -249,7 +271,12 @@ def server_url(
 
 
 def required_url(local: LocalSettingsPublic) -> str:
-    """The server address in effect; raises `CollaborationUnavailable` when none is set."""
+    """
+    The server address in effect; raises `CollaborationUnavailable` when
+    collaboration is off or none is set.
+    """
+    if not local.collaboration_enabled:
+        raise CollaborationUnavailable(OFF_REASON)
     url, _ = server_url(local)
     if url is None:
         raise CollaborationUnavailable(NOT_CONFIGURED)
@@ -331,16 +358,13 @@ class CollaborationClient:
                 f"The collaboration server at {self.base_url} redirects to "
                 f"{location}; use that address in Settings → Collaboration."
             )
+        # Neither the server's `detail` nor the gateway's reason phrase
+        # ("Unauthorized") tells the researcher anything these don't.
         if response.status_code == 403:
-            raise CollaborationForbidden(
-                f"{_detail(response)} Signing in again will not help: ask the "
-                f"administrators of {self.base_url} for access.",
-                403,
-            )
+            raise CollaborationForbidden(refused_message(self.base_url), 403)
         if response.status_code == 401:
             raise CollaborationUnauthorized(
-                f"{_detail(response)} {sign_in_message(self.base_url)}",
-                response.status_code,
+                not_signed_in_message(self.base_url), response.status_code
             )
         if response.status_code == 409:
             try:
@@ -628,10 +652,12 @@ class CollaborationClient:
 def client_for(
     local: LocalSettingsPublic, *, timeout: httpx.Timeout = TRANSFER_TIMEOUT
 ) -> CollaborationClient:
-    """A client on the server in effect, as this installation. Raises when none is set."""
-    url, _ = server_url(local)
-    if url is None:
-        raise CollaborationUnavailable(NOT_CONFIGURED)
+    """
+    A client on the server in effect, as this installation. Raises
+    `CollaborationUnavailable` when collaboration is off or no server is set,
+    so that nothing reaches a server while the switch is off.
+    """
+    url = required_url(local)
     return CollaborationClient(
         url,
         install_id=local.install_id,
@@ -656,6 +682,25 @@ def _private_channel(url: str) -> bool:
 def sign_in_page(url: str) -> str:
     """The server's `/sign-in` page, where the researcher gets a token."""
     return f"{url.rstrip('/')}/sign-in"
+
+
+def not_signed_in_message(url: str) -> str:
+    """Why publishing and importing are off while the server wants a sign-in."""
+    if not _private_channel(url):
+        return sign_in_message(url)
+    return (
+        f"Sign in to {url} to publish and import: get a token from its sign-in "
+        "page and paste it under Settings → Collaboration."
+    )
+
+
+def refused_message(url: str) -> str:
+    """Why a sign-in the server knows is refused (403): a new token will not help."""
+    if url == DEFAULT_COLLABORATION_SERVER_URL:
+        who = "reach out to the VISTA team for access."
+    else:
+        who = f"ask the administrators of {url} for access."
+    return f"{url} refused this sign-in. Signing in again won't help: {who}"
 
 
 def sign_in_message(url: str) -> str:
@@ -709,8 +754,19 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
     """
     Whether publishing and importing can work right now, and if not, why.
     Never raises: an unreachable server is a state to show, not a failure.
+    While collaboration is off it contacts nothing.
     """
     url, source = server_url(local)
+    if not local.collaboration_enabled:
+        return CollaborationStatus(
+            enabled=False,
+            configured=url is not None,
+            reachable=False,
+            reason=OFF_REASON,
+            url=url,
+            source=source,
+            default_server=url == DEFAULT_COLLABORATION_SERVER_URL,
+        )
     if url is None:
         return CollaborationStatus(
             configured=False,
@@ -726,6 +782,10 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
         url=url,
         source=source,
         sign_in_url=sign_in_page(url) if _private_channel(url) else None,
+        default_server=url == DEFAULT_COLLABORATION_SERVER_URL,
+        # A saved token means the researcher has signed in here once: from
+        # then on the controls stay, disabled with the reason when it fails.
+        shown=bool(local.collaboration_token),
     )
     try:
         async with client_for(local, timeout=STATUS_TIMEOUT) as client:
@@ -738,10 +798,15 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
         status.sign_in_required = True
         status.reason = str(error)
         return status
+    except CollaborationForbidden as error:
+        status.refused = True
+        status.reason = str(error)
+        return status
     except CollaborationError as error:
         status.reason = str(error)
         return status
     status.signed_in = True
+    status.shown = True
     status.user = RemoteUser(sub=me.sub, email=me.email, name=me.name)
     status.teams = me.teams
     if not local.collaboration_token:

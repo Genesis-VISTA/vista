@@ -32,6 +32,12 @@ vi.mock("@/lib/projects", () => ({
   refreshProjects: vi.fn(async () => []),
 }));
 vi.mock("@/lib/loaded-skills", () => ({ setSkillLoaded: vi.fn() }));
+const { tour } = vi.hoisted(() => ({ tour: { current: null as null | { step: string; subStep: string } } }));
+vi.mock("@/components/TourProvider", () => ({
+  useTour: () => ({ position: tour.current, report: () => {} }),
+}));
+const { openSettingsMock } = vi.hoisted(() => ({ openSettingsMock: vi.fn() }));
+vi.mock("@/lib/settings-modal", () => ({ openSettings: openSettingsMock }));
 vi.mock("@/components/AppTopBar", () => ({
   AppTopBar: ({ title }: { title: string }) => <h1>{title}</h1>,
 }));
@@ -49,8 +55,12 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: SERVER,
     source: "settings",
     server_version: "0.1.0",
+    enabled: true,
     signed_in: true,
     sign_in_required: false,
+    refused: false,
+    shown: true,
+    default_server: false,
     sign_in_url: null,
     user: null,
     teams: [],
@@ -111,6 +121,7 @@ let routes: Record<string, Handler>;
 const fetchMock = vi.fn();
 
 beforeEach(() => {
+  tour.current = null;
   resetCollaborationForTests();
   project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: [] };
   routes = { "GET /api/collaboration/status": () => json(status()) };
@@ -218,6 +229,54 @@ describe("publishSkill", () => {
 });
 
 describe("the Skill Hub", () => {
+  const SIGN_IN =
+    "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.";
+  const quiet = (overrides: Partial<CollaborationStatus> = {}) =>
+    status({
+      url: "https://obsidian.ccs.ornl.gov/vista/api",
+      source: "config",
+      reachable: false,
+      signed_in: false,
+      sign_in_required: true,
+      shown: false,
+      default_server: true,
+      reason: SIGN_IN,
+      ...overrides,
+    });
+  const listed = () => fetchMock.mock.calls.some(([u]) => String(u).startsWith("/api/collaboration/skills"));
+
+  it("says collaboration is off, with Open Settings", async () => {
+    const reason = "Collaboration is off. Turn it on under Settings → Collaboration.";
+    routes["GET /api/collaboration/status"] = () =>
+      json(status({ enabled: false, reachable: false, signed_in: false, shown: false, reason }));
+    render(<SkillHubPage />);
+    expect(await screen.findByText(reason)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("collaboration");
+    expect(listed()).toBe(false);
+  });
+
+  it("asks a quiet install on the default server to sign in", async () => {
+    routes["GET /api/collaboration/status"] = () => json(quiet());
+    render(<SkillHubPage />);
+    expect(await screen.findByText("Sign in to see what others share.")).toBeInTheDocument();
+    expect(screen.getByText(/Your own work stays on this computer until you publish it\./)).toBeInTheDocument();
+    expect(screen.getByText("No access yet? Reach out to the VISTA team.")).toBeInTheDocument();
+    expect(screen.getByText(/at https:\/\/obsidian\.ccs\.ornl\.gov\/vista\/api\./)).toBeInTheDocument();
+    expect(screen.queryByText(SIGN_IN)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open Settings" }));
+    expect(openSettingsMock).toHaveBeenCalledWith("collaboration");
+    expect(listed()).toBe(false);
+  });
+
+  it("leaves out the VISTA team on another server", async () => {
+    routes["GET /api/collaboration/status"] = () =>
+      json(quiet({ url: "https://collab.example.org", default_server: false }));
+    render(<SkillHubPage />);
+    expect(await screen.findByText("Sign in to see what others share.")).toBeInTheDocument();
+    expect(screen.queryByText("No access yet? Reach out to the VISTA team.")).toBeNull();
+  });
+
   it("lists nothing without a server, and says why", async () => {
     const reason = "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.";
     routes["GET /api/collaboration/status"] = () =>
@@ -283,6 +342,28 @@ describe("the Skill Hub", () => {
 });
 
 describe("the Skills page", () => {
+  it("shows no collaboration control while quiet (a fresh install)", async () => {
+    routes["GET /api/collaboration/status"] = () => json(status({
+  reachable: false,
+  signed_in: false,
+  sign_in_required: true,
+  shown: false,
+  default_server: true,
+  reason: "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+    }));
+    const mine = local({ originServer: SERVER, remoteId: remote().id, remoteVersion: 1, modified: true });
+    routes["GET /api/skills"] = () => json([mine]);
+    routes["GET /api/collaboration/skills?manifests=false"] = () =>
+      json([remote({ id: remote().id, head_version: 2, manifest: null })]);
+    render(<SkillsPage />);
+    expect(await screen.findByRole("button", { name: "Load" })).toBeInTheDocument();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/collaboration/status", expect.anything()));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: /^Publish/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Update to version/ })).toBeNull();
+    expect(document.querySelector(".skill-sharing")).toBeNull();
+  });
+
   it("offers the three choices when the server's head has moved on", async () => {
     const mine = local({ originServer: SERVER, remoteId: remote().id, remoteVersion: 1, modified: true });
     project.current = { id: "p1", name: "molten-salt", teamId: "00000000-0000-4000-8000-000000000000", skills: ["salt-density"] };
@@ -335,5 +416,140 @@ describe("the Skills page", () => {
     expect(screen.getAllByRole("button", { name: "Load" })).toHaveLength(2);
     // Nor deleted: it ships with VISTA.
     expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(1);
+  });
+});
+
+describe("the tour's collaboration step", () => {
+  // A fresh install on the default server: quiet, so no team filter, badge or
+  // publish control would normally show.
+  const QUIET = status({
+    url: "https://obsidian.ccs.ornl.gov/vista/api",
+    source: "config",
+    reachable: false,
+    signed_in: false,
+    sign_in_required: true,
+    shown: false,
+    default_server: true,
+    reason: "Sign in to publish and import.",
+  });
+  const badges = () => [...document.querySelectorAll(".team-badge")].map((b) => b.textContent);
+  const examples = () => document.querySelectorAll(".tour-example-tag").length;
+
+  beforeEach(() => {
+    routes["GET /api/collaboration/status"] = () => json(QUIET);
+    routes["GET /api/skills"] = () => json([local({ slug: "salt-density", teamId: null })]);
+  });
+
+  it("shows the example skills, teams and badges in the Skill Hub, and only during the step", async () => {
+    tour.current = { step: "collaboration", subStep: "teams" };
+    const { rerender } = render(<SkillHubPage />);
+    expect(await screen.findByText("plot-results")).toBeInTheDocument();
+    expect(screen.getByText("batch-job-submit")).toBeInTheDocument();
+    expect(screen.getByText(/Importing one is your decision to trust it/)).toBeInTheDocument();
+    expect(screen.queryByText("Sign in to see what others share.")).toBeNull();
+    const filter = screen.getByRole("combobox", { name: "Team" });
+    expect(within(filter).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All teams",
+      "Public",
+      "Example team",
+    ]);
+    // Sorted by name: batch-job-submit first.
+    expect(badges()).toEqual(["Example team", "Public"]);
+    // Two cards and the filter.
+    expect(examples()).toBe(3);
+
+    tour.current = { step: "first-question", subStep: "send" };
+    rerender(<SkillHubPage />);
+    expect(screen.queryByText("plot-results")).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Team" })).toBeNull();
+    expect(badges()).toEqual([]);
+    expect(examples()).toBe(0);
+    expect(await screen.findByText("Sign in to see what others share.")).toBeInTheDocument();
+  });
+
+  it("sends nothing for the Skill Hub's examples: Import, a card, the team filter", async () => {
+    tour.current = { step: "collaboration", subStep: "hub-item" };
+    const user = userEvent.setup();
+    render(<SkillHubPage />);
+    await screen.findByText("plot-results");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const before = fetchMock.mock.calls.length;
+
+    for (const button of screen.getAllByRole("button", { name: "Import" })) await user.click(button);
+    await user.click(screen.getByText("plot-results"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Team" }), "Example team");
+    expect(screen.queryByText("plot-results")).toBeNull();
+    expect(screen.getByText("batch-job-submit")).toBeInTheDocument();
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
+  it("adds the example skills to the Skills page, and only during the step", async () => {
+    tour.current = { step: "collaboration", subStep: "share" };
+    const { rerender } = render(<SkillsPage />);
+    expect(await screen.findByText("csv-cleanup")).toBeInTheDocument();
+    expect(screen.getByText("salt-density")).toBeInTheDocument();
+    expect(screen.getByText("run-summary")).toBeInTheDocument();
+    expect(screen.getByText("Not published · on this computer only")).toBeInTheDocument();
+    expect(screen.getByText("Changed here since version 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Publish…" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Publish changes" })).toBeEnabled();
+    expect(badges()).toEqual(["Example team"]);
+    expect(examples()).toBe(2);
+
+    tour.current = null;
+    rerender(<SkillsPage />);
+    expect(screen.queryByText("csv-cleanup")).toBeNull();
+    expect(screen.queryByText("run-summary")).toBeNull();
+    expect(screen.getByText("salt-density")).toBeInTheDocument();
+    expect(badges()).toEqual([]);
+  });
+
+  it("sends nothing for the Skills page's examples, and opens no team picker", async () => {
+    tour.current = { step: "collaboration", subStep: "share" };
+    const user = userEvent.setup();
+    render(<SkillsPage />);
+    await screen.findByText("csv-cleanup");
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/collaboration/status", expect.anything()));
+    await new Promise((r) => setTimeout(r, 0));
+    const before = fetchMock.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Publish…" }));
+    await user.click(screen.getByRole("button", { name: "Publish changes" }));
+    await user.click(screen.getByText("csv-cleanup"));
+    expect(screen.queryByRole("dialog", { name: "Publish skill" })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetchMock.mock.calls.length).toBe(before);
+  });
+
+  it("adds the examples first, and only once the real list has answered", async () => {
+    tour.current = { step: "collaboration", subStep: "share" };
+    let answer: (r: Response) => void = () => {};
+    routes["GET /api/skills"] = () => new Promise<Response>((resolve) => (answer = resolve));
+    render(<SkillsPage />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/skills"));
+    // Drawn before the list, the tour's card would be pushed away by it.
+    expect(screen.queryByText("csv-cleanup")).toBeNull();
+    expect(document.querySelector('[data-tour="collaboration:share"]')).toBeNull();
+
+    answer(json([local({ slug: "alpha-skill", name: "alpha-skill", teamId: null })]));
+    expect(await screen.findByText("csv-cleanup")).toBeInTheDocument();
+    const names = [...document.querySelectorAll('[data-tour="skills:available"] .skill-name')].map(
+      (n) => n.firstChild?.textContent,
+    );
+    expect(names).toEqual(["csv-cleanup", "run-summary", "alpha-skill"]);
+  });
+
+  it("lets a real skill with an example's name win", async () => {
+    tour.current = { step: "collaboration", subStep: "share" };
+    routes["GET /api/skills"] = () => json([local({ slug: "csv-cleanup", name: "csv-cleanup", teamId: null })]);
+    render(<SkillsPage />);
+    await screen.findByText("run-summary");
+    expect(screen.getAllByText("csv-cleanup")).toHaveLength(1);
+    expect(screen.queryByText("Not published · on this computer only")).toBeNull();
   });
 });

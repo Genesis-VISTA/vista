@@ -6,6 +6,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import DebateThread from "@/components/DebateThread";
 import DebateVerdict from "@/components/DebateVerdict";
 import { RoleModelSelects } from "@/components/RoleModelSelects";
+import { openSettings } from "@/lib/settings-modal";
 import {
   DEBATE_ROLES,
   DebatePost,
@@ -529,6 +530,26 @@ function DebatesPage() {
             and its credentials, so the lab turns on once git 2.34 or later is
             installed. Reload this page afterwards. The rest of VISTA works
             without it.
+          </p>
+        </header>
+      </main>
+    );
+  }
+
+  // A forum hosted on the collaboration server is out of reach while
+  // collaboration is off; the fix is the switch, not the project.
+  if (forum !== null && !forum.enabled && forum.collaboration_off) {
+    return (
+      <main className="debate-page">
+        <header className="debate-page__header">
+          <h1>Hypothesis Lab</h1>
+          <p className="debate-page__lede">
+            This project&rsquo;s forum is on the collaboration server, and collaboration is off.
+          </p>
+          <p className="debate-page__lede">
+            <button type="button" onClick={() => openSettings("collaboration")}>
+              Open Settings
+            </button>
           </p>
         </header>
       </main>

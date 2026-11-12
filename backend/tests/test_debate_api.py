@@ -1376,6 +1376,7 @@ async def test_forum_status_says_this_project_has_no_lab(
         "remote": None,
         "git_ok": True,
         "git_reason": None,
+        "collaboration_off": False,
         "unpublished": 0,
         "publish_error": None,
     }

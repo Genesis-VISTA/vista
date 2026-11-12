@@ -11,6 +11,7 @@ import {
   type TourInput,
   type TourStepId,
 } from "@/lib/onboarding";
+import { visibility } from "@/lib/collaboration";
 import { coachmarkFor } from "@/lib/onboarding-copy";
 
 /** A fresh install on AmSC MAG: no credential, no project, nothing done yet. */
@@ -20,6 +21,7 @@ function input(over: Partial<TourInput> = {}): TourInput {
     stored: null,
     inference: { hasCredential: false, model: "openai:claude-sonnet", modelIsDefault: true, providerDefault: "claude-sonnet" },
     activeProject: null,
+    collaboration: { enabled: true },
     events: new Set<TourEvent>(),
     skipped: new Set<TourStepId>(),
     acknowledged: new Set<Acknowledgement>(),
@@ -116,6 +118,7 @@ describe("nextTourStep", () => {
     ["knowledge-bases", "/knowledge-bases"],
     ["skills", "/skills"],
     ["files", "/files"],
+    ["collaboration", "/skill-hub"],
   ] as const)("takes a visit to %s as done on its page only, then shows the overview", (step, page) => {
     expect(nextTourStep(input({ ...at(step), pathname: "/" }))).toEqual({ step, subStep: "visit" });
     expect(nextTourStep(input({ ...at(step), pathname: `${page}/x` }))).toEqual({ step, subStep: "visit" });
@@ -192,6 +195,84 @@ describe("nextTourStep", () => {
     expect(
       nextTourStep(input({ ...opened, acknowledged: acks("hpc:resources", "hpc:card", "hpc:check") })),
     ).toEqual({ step: "hpc", subStep: "settings" });
+  });
+
+  it("goes from HPC to collaboration, then to the first question", () => {
+    const hpcDone = acks("hpc:resources", "hpc:card", "hpc:check", "hpc:settings");
+    const afterHpc = { ...at("hpc"), events: events("hpc-card-opened"), acknowledged: hpcDone };
+    expect(nextTourStep(input(afterHpc))).toEqual({ step: "collaboration", subStep: "visit" });
+    const collabDone = acks(
+      ...hpcDone,
+      "collaboration:overview",
+      "collaboration:local",
+      "collaboration:teams",
+      "collaboration:hub-item",
+      "collaboration:share",
+      "collaboration:sign-in",
+      "collaboration:off",
+    );
+    expect(nextTourStep(input({ ...afterHpc, pathname: "/skill-hub", acknowledged: collabDone }))).toEqual({
+      step: "first-question",
+      subStep: "send",
+    });
+  });
+
+  it("walks the collaboration coachmarks in order with Next", () => {
+    const base = { ...at("collaboration"), pathname: "/skill-hub" };
+    const order = ["overview", "local", "teams", "hub-item", "share", "sign-in", "off"] as const;
+    for (let i = 0; i < order.length; i++) {
+      const done = acks(...order.slice(0, i).map((sub) => `collaboration:${sub}` as Acknowledgement));
+      expect(nextTourStep(input({ ...base, acknowledged: done }))).toEqual({ step: "collaboration", subStep: order[i] });
+    }
+  });
+
+  it("stays past the visit once the Skill Hub is explained, though the step moves on to Skills", () => {
+    const onSkills = {
+      ...at("collaboration"),
+      pathname: "/skills",
+      acknowledged: acks("collaboration:overview", "collaboration:local", "collaboration:teams", "collaboration:hub-item"),
+    };
+    expect(nextTourStep(input(onSkills))).toEqual({ step: "collaboration", subStep: "share" });
+    // Before it is explained, the visit still waits for the Skill Hub.
+    expect(nextTourStep(input({ ...at("collaboration"), pathname: "/skills" }))).toEqual({
+      step: "collaboration",
+      subStep: "visit",
+    });
+  });
+
+  it("skips the collaboration step while collaboration is off", () => {
+    const off = { collaboration: { enabled: false } };
+    const hpcDone = acks("hpc:resources", "hpc:card", "hpc:check", "hpc:settings");
+    const afterHpc = { ...at("hpc"), events: events("hpc-card-opened"), acknowledged: hpcDone, ...off };
+    expect(nextTourStep(input(afterHpc))).toEqual({ step: "first-question", subStep: "send" });
+    // Resumed at it, too.
+    expect(nextTourStep(input({ ...at("collaboration"), ...off }))).toEqual({ step: "first-question", subStep: "send" });
+  });
+
+  it("shows the collaboration step before the first status arrives", () => {
+    // What TourProvider passes: useCollaboration().enabled, from `visibility`.
+    const unknown = { collaboration: { enabled: visibility({ status: null }).enabled } };
+    expect(nextTourStep(input({ ...at("collaboration"), ...unknown }))).toEqual({ step: "collaboration", subStep: "visit" });
+  });
+
+  it("ends the collaboration step when it is turned off during it", () => {
+    const atOff = {
+      ...at("collaboration"),
+      pathname: "/skill-hub",
+      acknowledged: acks(
+        "collaboration:overview",
+        "collaboration:local",
+        "collaboration:teams",
+        "collaboration:hub-item",
+        "collaboration:share",
+        "collaboration:sign-in",
+      ),
+    };
+    expect(nextTourStep(input(atOff))).toEqual({ step: "collaboration", subStep: "off" });
+    expect(nextTourStep(input({ ...atOff, collaboration: { enabled: false } }))).toEqual({
+      step: "first-question",
+      subStep: "send",
+    });
   });
 
   it("follows the first question from send, through the agent at work, to the answer", () => {
@@ -293,6 +374,39 @@ describe("the script", () => {
     expect(custom?.body).not.toContain("Suggested");
   });
 
+  it("says the tour takes nine minutes, and that the finish covers sharing", () => {
+    const ctx = { providerDefault: null, hasCredential: true };
+    expect(coachmarkFor("welcome", "intro", ctx)?.body).toContain("This tour takes about nine minutes.");
+    expect(coachmarkFor("first-question", "finish", ctx)?.body).toBe(
+      "You opened a project, connected a model, saw knowledge bases, skills, files and clusters, and learned how sharing works. Replay this tour any time from Settings, Research profile.",
+    );
+  });
+
+  it("adds the VISTA team sentence to sign-in on the default server only", () => {
+    const ctx = { providerDefault: null, hasCredential: true, collabSignedIn: false, collabUrl: "https://obsidian.ccs.ornl.gov/vista/api" };
+    const signIn =
+      "Sign in here once you have access: open the server's sign-in page, log in, and paste the token it shows.";
+    expect(coachmarkFor("collaboration", "sign-in", { ...ctx, collabDefaultServer: true })).toEqual({
+      title: "Signing in",
+      body: `${signIn} No access yet? Reach out to the VISTA team.`,
+    });
+    expect(coachmarkFor("collaboration", "sign-in", { ...ctx, collabDefaultServer: false })?.body).toBe(signIn);
+  });
+
+  it("tells a signed-in installation its server and Manage teams…", () => {
+    const mark = coachmarkFor("collaboration", "sign-in", {
+      providerDefault: null,
+      hasCredential: true,
+      collabSignedIn: true,
+      collabUrl: "https://obsidian.ccs.ornl.gov/vista/api/",
+      collabDefaultServer: true,
+    });
+    expect(mark?.body).toBe(
+      "You're signed in to obsidian.ccs.ornl.gov/vista/api. Anything you publish goes to that server. Make a team, or add people to one, with Manage teams….",
+    );
+    expect(mark?.body).not.toContain("VISTA team");
+  });
+
   it("links the documentation from the last coachmark", () => {
     const mark = coachmarkFor("first-question", "finish", { providerDefault: null, hasCredential: true });
     expect(mark?.link?.href).toBe("https://genesis-vista.github.io/");
@@ -315,6 +429,7 @@ describe("completesOnNext", () => {
       ["files", "open-chart"],
       ["files", "open-report"],
       ["hpc", "open-card"],
+      ["collaboration", "visit"],
       ["first-question", "send"],
       ["first-question", "activity"],
     ];
@@ -335,6 +450,9 @@ describe("completesOnNext", () => {
     expect(completesOnNext("hpc", "resources")).toBe(true);
     expect(completesOnNext("hpc", "card")).toBe(true);
     expect(completesOnNext("hpc", "settings")).toBe(true);
+    for (const sub of ["overview", "local", "teams", "hub-item", "share", "sign-in", "off"]) {
+      expect(completesOnNext("collaboration", sub)).toBe(true);
+    }
     expect(completesOnNext("first-question", "answer")).toBe(true);
     expect(completesOnNext("first-question", "finish")).toBe(true);
   });

@@ -587,6 +587,20 @@ main {
 /* ---------- Teams --------------------------------------------------- */
 
 /* A resource's team, beside its name, when it is in one. */
+/* One of the tour's examples (onboarding-examples.ts). */
+.tour-example-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px dashed var(--line-strong);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .team-badge {
   display: inline-block;
   margin-left: 6px;
@@ -3680,6 +3694,13 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 7px;
   font-size: 12px;
   color: var(--muted-2);
+}
+
+/* The tour's sign-in anchor in Settings › Collaboration: lays out as the section body does. */
+.settings-collab-signin {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .settings-section-body {

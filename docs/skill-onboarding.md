@@ -221,8 +221,12 @@ folder in that project.
 
 Skills are shared through a collaboration server, explicitly: nothing leaves
 your computer until you publish it, and nothing arrives until you import it.
-Set the server's address in **Settings → Collaboration**; without one that
-answers, the Skill Hub and every Publish button say why and do nothing. (For
+VISTA uses its own server unless you set another in **Settings →
+Collaboration**. Until you sign in there (paste the token from the server's
+sign-in page), the Skill Hub asks you to, and no Publish button or sharing line
+shows on `/skills`. Once signed in they stay: when the server cannot be used,
+they say why and do nothing. The **Collaboration** switch in Settings turns all
+of it off, Skill Hub included, and then VISTA contacts no server. (For
 development, `./launch.sh logs --collab` starts a local server.)
 
 **Teams.** Everything on the server belongs to a team, and only its members see

@@ -28,6 +28,12 @@ export type CopyContext = {
   skillName?: string | null;
   /** Why the first question failed, when it did. */
   failure?: TourFailure | null;
+  /** Whether this installation is signed in to its collaboration server. */
+  collabSignedIn?: boolean;
+  /** The collaboration server's address, as `useCollaboration().url` gives it. */
+  collabUrl?: string | null;
+  /** Whether that server is VISTA's default one. */
+  collabDefaultServer?: boolean;
 };
 
 /** What the last step puts in the message box. */
@@ -73,10 +79,29 @@ export function coachmarkFor(
       body: context.skillName ? `Open ${context.skillName} to read it.` : "Open the highlighted skill to read it.",
     };
   }
+  if (key === "collaboration:sign-in") {
+    if (context.collabSignedIn && context.collabUrl) {
+      return {
+        title: "Signing in",
+        body: `You're signed in to ${serverLabel(context.collabUrl)}. Anything you publish goes to that server. Make a team, or add people to one, with Manage teams….`,
+      };
+    }
+    const signIn =
+      "Sign in here once you have access: open the server's sign-in page, log in, and paste the token it shows.";
+    return {
+      title: "Signing in",
+      body: context.collabDefaultServer ? `${signIn} No access yet? Reach out to the VISTA team.` : signIn,
+    };
+  }
   if (key === "first-question:send" && context.failure) {
     return FAILURE_COACHMARKS[context.failure];
   }
   return COACHMARKS[key] ?? null;
+}
+
+/** A server address as the coachmark names it: no scheme, no trailing slash. */
+function serverLabel(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/+$/, "");
 }
 
 /** The first question's coachmark after a failure: what went wrong, and what fixes it. */
@@ -97,13 +122,14 @@ const FAILURE_COACHMARKS: Record<TourFailure, Coachmark> = {
 
 /**
  * Overviews are anchored to the page's top bar and drawn without dimming
- * (TourProvider). `model:picker` and `model:pick` are worded in `coachmarkFor`,
- * because they depend on the credential and the provider's suggestion.
+ * (TourProvider). `model:picker`, `model:pick` and `collaboration:sign-in` are
+ * worded in `coachmarkFor`, because they depend on the credential, the
+ * provider's suggestion and the collaboration status.
  */
 const COACHMARKS: Record<string, Coachmark> = {
   "welcome:intro": {
     title: "Welcome to VISTA",
-    body: "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for modeling and simulation (ModSim) that carries scientists from a research question to running campaigns on OLCF and AmSC resources. This tour takes about eight minutes.",
+    body: "Visual Intelligence for Scientific & Tooling Assistant (VISTA) is an agentic platform for modeling and simulation (ModSim) that carries scientists from a research question to running campaigns on OLCF and AmSC resources. This tour takes about nine minutes.",
     nextLabel: "Start the tour",
   },
   "welcome:sidebar": {
@@ -269,6 +295,35 @@ const COACHMARKS: Record<string, Coachmark> = {
     body: "Settings is where you connect a cluster; Recheck runs these checks again.",
   },
 
+  "collaboration:visit": {
+    title: "Sharing with others",
+    body: "Open Skill Hub in the sidebar.",
+  },
+  "collaboration:overview": {
+    title: "The Skill Hub",
+    body: "Skills other researchers have published to the collaboration server, ready to import. Projects and knowledge bases are shared the same way, from their own pages.",
+  },
+  "collaboration:local": {
+    title: "Nothing is shared on its own",
+    body: "Your projects, skills and knowledge bases stay on this computer. One reaches the server only when you publish it, and someone else's reaches you only when you import it.",
+  },
+  "collaboration:teams": {
+    title: "Private, a team, or Public",
+    body: "Everything you make starts Private, on this computer only. Published, it goes to one team and stays there: a team is its members, and Public is everyone who signs in to the server. Each item shows its team; this narrows the list to one.",
+  },
+  "collaboration:hub-item": {
+    title: "A shared skill",
+    body: "Each one shows its team. Import copies it to this computer; review what it does before you load it. These are examples.",
+  },
+  "collaboration:share": {
+    title: "Sharing your own",
+    body: "Publish… shares something private: you pick its team the first time, and it stays in that team. After that, Publish changes sends each new version there.",
+  },
+  "collaboration:off": {
+    title: "Working alone?",
+    body: "Turn collaboration off and VISTA stops contacting the server and hides the Skill Hub, team badges and sharing buttons. Turn it on again here any time.",
+  },
+
   "first-question:send": {
     title: "Ask your first question",
     body: `We've written one for you: “${STARTER_QUESTION}” Edit it if you like, then send it.`,
@@ -283,7 +338,7 @@ const COACHMARKS: Record<string, Coachmark> = {
   },
   "first-question:finish": {
     title: "You're set up",
-    body: "You opened a project, connected a model, and saw knowledge bases, skills, files and clusters. Replay this tour any time from Settings, Research profile.",
+    body: "You opened a project, connected a model, saw knowledge bases, skills, files and clusters, and learned how sharing works. Replay this tour any time from Settings, Research profile.",
     link: { label: "Documentation", href: DOCUMENTATION_URL },
     nextLabel: "Done",
   },

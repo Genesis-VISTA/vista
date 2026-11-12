@@ -4,7 +4,10 @@ import {
   availability,
   refreshCollaborationStatus,
   resetCollaborationForTests,
+  teamsView,
   useCollaboration,
+  useTeams,
+  visibility,
   type CollaborationStatus,
 } from "@/lib/collaboration";
 
@@ -16,8 +19,12 @@ function status(overrides: Partial<CollaborationStatus> = {}): CollaborationStat
     url: "http://127.0.0.1:8002",
     source: "settings",
     server_version: "0.1.0",
+    enabled: true,
     signed_in: true,
     sign_in_required: false,
+    refused: false,
+    shown: true,
+    default_server: false,
     sign_in_url: null,
     user: null,
     teams: [],
@@ -81,7 +88,102 @@ describe("availability", () => {
   });
 });
 
+const QUIET = {
+  reachable: false,
+  signed_in: false,
+  sign_in_required: true,
+  shown: false,
+  default_server: true,
+  reason:
+    "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+};
+
+describe("visibility", () => {
+  it("hides the controls while checking, and assumes on", () => {
+    expect(visibility({ status: null })).toEqual({ enabled: true, shown: false, default_server: false });
+  });
+
+  it("hides them for a quiet install, which is on", () => {
+    expect(visibility({ status: status(QUIET) })).toEqual({ enabled: true, shown: false, default_server: true });
+  });
+
+  it("hides them, and the Skill Hub, when off", () => {
+    const off = status({ enabled: false, reachable: false, signed_in: false, shown: false });
+    expect(visibility({ status: off })).toMatchObject({ enabled: false, shown: false });
+  });
+
+  it("shows them once signed in", () => {
+    expect(visibility({ status: status() }).shown).toBe(true);
+  });
+
+  it("teams are not shown while quiet, even with teams in the answer", () => {
+    const team = {
+      id: "00000000-0000-4000-8000-000000000000",
+      name: "public",
+      public: true,
+      created_by: "x",
+      created_by_name: null,
+      created_at: "2026-11-10",
+    };
+    expect(teamsView({ status: status({ teams: [team] }), error: null }).shown).toBe(true);
+    expect(teamsView({ status: status({ teams: [team], shown: false }), error: null }).shown).toBe(false);
+  });
+});
+
 describe("collaboration store", () => {
+  it("keeps team badges, by the last signed-in answer's names, after a token expires", async () => {
+    const beta = {
+      id: "22222222-2222-4222-8222-222222222222",
+      name: "Beta",
+      public: false,
+      created_by: "me",
+      created_by_name: null,
+      created_at: "2026-11-10",
+    };
+    current = status({ teams: [beta] });
+    const { result } = renderHook(() => useTeams());
+    await waitFor(() => expect(result.current.shown).toBe(true));
+    expect(result.current.badges).toBe(true);
+    expect(window.localStorage.getItem("vista.collaboration.teams.v1")).toContain("Beta");
+
+    current = status({ ...QUIET, url: "http://127.0.0.1:8002", shown: true, teams: [] });
+    await act(() => refreshCollaborationStatus());
+    // Acting with teams is off; naming them is not.
+    expect(result.current.shown).toBe(false);
+    expect(result.current.badges).toBe(true);
+    expect(result.current.teamName(beta.id)).toBe("Beta");
+
+    // Not on another address, nor while quiet.
+    current = status({ ...QUIET, url: "http://other:8002", shown: true, teams: [] });
+    await act(() => refreshCollaborationStatus());
+    expect(result.current.badges).toBe(false);
+    current = status({ ...QUIET, url: "http://127.0.0.1:8002", teams: [] });
+    await act(() => refreshCollaborationStatus());
+    expect(result.current.badges).toBe(false);
+  });
+
+  it("is hidden while checking and while quiet", async () => {
+    current = status(QUIET);
+    const { result } = renderHook(() => useCollaboration());
+    expect(result.current.shown).toBe(false);
+    expect(result.current.reason).toBe("Checking the collaboration server…");
+    await waitFor(() => expect(result.current.checking).toBe(false));
+    expect(result.current.shown).toBe(false);
+    expect(result.current.enabled).toBe(true);
+    expect(result.current.default_server).toBe(true);
+  });
+
+  it("stays shown, disabled with the reason, after a saved token expires", async () => {
+    const { result } = renderHook(() => useCollaboration());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    const reason = QUIET.reason;
+    current = status({ ...QUIET, shown: true });
+    await act(() => refreshCollaborationStatus());
+    expect(result.current.shown).toBe(true);
+    expect(result.current.available).toBe(false);
+    expect(result.current.reason).toBe(reason);
+  });
+
   it("loads on first subscribe", async () => {
     const { result } = renderHook(() => useCollaboration());
     expect(result.current.available).toBe(false);

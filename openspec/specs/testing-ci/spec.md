@@ -48,7 +48,7 @@ while keeping catalog parsing, metadata injection, and HPC dry-run paths real.
 
 ### Requirement: Local CI mirror
 
-`./scripts/ci-local.sh` SHALL mirror GitLab CI targets (`backend`, `ui`, `mcp`,
+`./scripts/ci-local.sh` SHALL mirror GitLab CI targets (`backend`, `collab`, `ui`, `mcp`,
 `electron`) and actions (`lint`, `test`) so developers can reproduce pipeline failures
 locally.
 
@@ -63,6 +63,14 @@ locally.
 - **WHEN** a developer runs `./scripts/ci-local.sh ui test`
 - **THEN** the component suite and the hermetic browser suite both run
 - **AND** with `--fast`, only the component suite runs
+
+#### Scenario: Collab target covers the collaboration server
+
+- **WHEN** a developer runs `./scripts/ci-local.sh collab`
+- **THEN** the collaboration server is linted, type-checked and tested, as `collab:lint`,
+  `collab:typecheck` and `collab:test` do in GitLab CI
+- **AND** `./scripts/ci-local.sh backend test` also runs the backend's collaboration tests
+  against the server mounted in-process
 
 ### Requirement: VISTAGuard out of scope
 

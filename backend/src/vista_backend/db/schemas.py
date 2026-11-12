@@ -594,6 +594,8 @@ class LocalSettingsUpdate(SQLModel):
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
     collaboration_server_url: OptionalHttpUrl = None
     """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
+    collaboration_enabled: bool | None = None
+    """ The Collaboration switch. Off sends nothing to any collaboration server; null is on, as never chosen. """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -698,6 +700,8 @@ class LocalSettingsPublic(SQLModel):
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
     collaboration_server_url: str | None = None
+    collaboration_enabled: bool = True
+    """ The Collaboration switch; never chosen (null on the row) reads as on. """
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -765,6 +769,11 @@ class LocalSettingsPublic(SQLModel):
     not on the row; `services/local_settings.to_public` fills it.
     """
 
+    @field_validator("collaboration_enabled", mode="before")
+    @classmethod
+    def _never_chosen_is_on(cls, v):
+        return True if v is None else v
+
     @field_validator("hpc_hidden_clusters", mode="before")
     @classmethod
     def _null_is_none_hidden(cls, v):
@@ -798,6 +807,13 @@ class LocalSettingsTable(SQLModel, table=True):
     The collaboration server this installation publishes to and imports from.
     `None` falls back to `Settings.collaboration_server_url`; with neither,
     publishing and importing are off. Not a secret.
+    """
+    collaboration_enabled: bool | None = None
+    """
+    The Collaboration switch in Settings. `False` contacts no collaboration
+    server and hides every collaboration control (`services/collaboration`);
+    `None`, never chosen, is on. Nullable without a server default so the
+    schema stays additive (AGENTS.md) and "never chosen" stays visible.
     """
     collaboration_team_id: uuid.UUID | None = None
     """
