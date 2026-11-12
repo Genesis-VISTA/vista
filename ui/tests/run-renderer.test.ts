@@ -574,3 +574,22 @@ describe("run renderer: what the inbox delivers", () => {
     expect(renderer.nextRunId).toBe("run-2");
   });
 });
+
+describe("run renderer: a queue read just before the take", () => {
+  it("drops every item the agent takes from the queue, the first message too", () => {
+    const { host } = makeHost();
+    const taken: number[] = [];
+    host.inboxTaken = (id) => taken.push(id);
+    const renderer = createRunRenderer(host, { newId: counter() });
+
+    renderer.dispatch("run_started", inboxStarted());
+    renderer.dispatch("inbox_taken", { ...taken_("message", "fit it"), item_id: 8 });
+    renderer.dispatch("inbox_taken", { ...taken_("task_event", "bg-1 exited"), item_id: 9 });
+
+    expect(taken).toEqual([8, 9]);
+  });
+});
+
+function taken_(kind: string, text: string) {
+  return { event_kind: "inbox_taken", item_id: 1, kind, text, payload: null };
+}

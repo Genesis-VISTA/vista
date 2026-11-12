@@ -1063,6 +1063,9 @@ function ChatPage() {
       inboxChanged: (queued) => {
         if (live()) setQueue(queuedMessages(queued));
       },
+      inboxTaken: (itemId) => {
+        if (live()) setQueue((prev) => prev.filter((q) => q.id !== itemId));
+      },
       withdrawn: (texts) => {
         if (!live()) return;
         setInput((prev) => restoreWithdrawn(prev, texts));

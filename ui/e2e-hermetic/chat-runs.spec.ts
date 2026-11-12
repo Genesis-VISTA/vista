@@ -291,6 +291,39 @@ test.describe("chat runs", () => {
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
   });
 
+  test("a queue read just before the turn takes the message shows no chip once it is taken", async ({
+    page,
+  }) => {
+    // The conversation's queue is read as it opens, which can land between the
+    // send queueing its message and the turn taking it.
+    const message = { id: 8, kind: "message", text: QUESTION, state: "queued", created_at: "t" };
+    stub = await installStub(page, { ...ROUTES, "GET /api/chat/inbox": [message] });
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText(QUESTION);
+
+    await ask(page, QUESTION);
+    await stub.waitForStream();
+    await stub.send("run_started", {
+      event_kind: "run_started",
+      run_id: RUN_ID,
+      user_prompt: QUESTION,
+      origin: "researcher",
+    });
+    await stub.send("inbox_taken", {
+      event_kind: "inbox_taken",
+      item_id: 8,
+      kind: "message",
+      text: QUESTION,
+    });
+
+    await expect(chips).toHaveCount(0);
+    await expect(bubbles(page, "user")).toHaveText([QUESTION]);
+    await finishRun(stub, "done");
+    await stub.end();
+  });
+
   test("a message sent during the turn is queued, editable, and given back by Stop", async ({
     page,
   }) => {

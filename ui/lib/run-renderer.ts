@@ -75,6 +75,12 @@ export interface RunHost {
   runFinished?(): void;
   /** What is queued for the running turn changed: show these. */
   inboxChanged?(queued: InboxItem[]): void;
+  /**
+   * The agent took this item: it is no longer queued. Sent for every item, also
+   * the ones a turn starts with, so a queue read a moment before the take
+   * cannot leave it shown as waiting.
+   */
+  inboxTaken?(itemId: number): void;
   /** Stop gave back these queued messages, unsent: put their text back in the box. */
   withdrawn?(texts: string[]): void;
 }
@@ -178,7 +184,8 @@ export function createRunRenderer(host: RunHost, options: RunRendererOptions = {
       }
 
       case "inbox_taken": {
-        const ev = data as { kind?: string; text?: string; payload?: unknown };
+        const ev = data as { item_id?: unknown; kind?: string; text?: string; payload?: unknown };
+        if (typeof ev.item_id === "number") host.inboxTaken?.(ev.item_id);
         if (typeof ev.text !== "string") break;
         const text = ev.text;
         if (ev.kind === "message") {
