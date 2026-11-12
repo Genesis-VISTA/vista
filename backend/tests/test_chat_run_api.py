@@ -211,7 +211,16 @@ async def test_an_edited_message_is_delivered_and_an_edit_after_the_take_is_409(
     assert too_late_delete.status_code == 409
     async with AsyncSession(engine) as other:
         saved = await other.get(ChatSessionTable, conversation)
-        assert _prompts(saved) == ["fit it", "plot it in log scale"]
+        assert _prompts(saved) == [
+            "fit it",
+            f"{inbox.MID_TURN_NOTE}\nplot it in log scale",
+        ]
+        taken = [
+            e["data"] for e in saved.run_events or [] if e["event"] == "inbox_taken"
+        ]
+        assert taken[-1]["text"] == "plot it in log scale", (
+            "the thread draws the words sent"
+        )
 
 
 async def test_a_deleted_message_never_reaches_the_agent(session, engine):

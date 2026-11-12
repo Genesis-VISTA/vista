@@ -277,6 +277,19 @@ async def waiting_on_researcher(
 
 TakeItems = Callable[[], Awaitable[list[InboxItemTable]]]
 
+MID_TURN_NOTE = (
+    "[The researcher sent this while you were working. Their earlier request "
+    "still stands unless this changes it.]"
+)
+""" Put before a researcher message taken mid-turn, which models otherwise read as a new request. """
+
+
+def mid_turn_text(item: InboxItemTable) -> str:
+    """What the agent receives for an item taken mid-turn."""
+    if item.kind == "message":
+        return f"{MID_TURN_NOTE}\n{item.text}"
+    return item.text
+
 
 class InboxDelivery(AbstractCapability[Any]):
     """
@@ -287,7 +300,9 @@ class InboxDelivery(AbstractCapability[Any]):
     So items are taken one hook earlier, before each model request node runs, and
     once more when the run would end, ahead of the drain's end-of-run redirect
     (its `after_node_run` runs last). Each taken item becomes its own user prompt
-    part, in arrival order.
+    part, in arrival order. A researcher message is marked as sent while the
+    agent worked (`MID_TURN_NOTE`): bare, a model takes it for a new request
+    and drops the rest of the one it was answering.
 
     `take` marks the items taken and reports them to the run's watchers. If the
     database is locked, which a campaign tool's unflushed transaction in the same
@@ -304,7 +319,7 @@ class InboxDelivery(AbstractCapability[Any]):
             log.warning("Inbox delivery skipped a step: the database is locked")
             return False
         if items:
-            ctx.enqueue(*(UserPromptPart(content=i.text) for i in items))
+            ctx.enqueue(*(UserPromptPart(content=mid_turn_text(i)) for i in items))
         return bool(items)
 
     async def before_node_run(self, ctx, *, node):

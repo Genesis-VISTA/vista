@@ -130,11 +130,14 @@ async def test_items_put_during_a_tool_call_are_in_the_next_request_in_order(
         and any(isinstance(p, ToolReturnPart) for p in m.parts)
     )
     delivered = [t for m in second[return_at:] for t in _user_texts(m)]
-    assert delivered == ["bg-1 exited with status 0", "also plot it"]
+    framed = f"{inbox.MID_TURN_NOTE}\nalso plot it"
+    assert delivered == ["bg-1 exited with status 0", framed], (
+        "a message taken mid-turn says the earlier request still stands; a result needs no note"
+    )
 
     result = next(e for e in events if isinstance(e, ProjectAgentResultEvent)).result
     saved = [t for m in result.new_messages for t in _user_texts(m)]
-    assert saved == ["start", "bg-1 exited with status 0", "also plot it"]
+    assert saved == ["start", "bg-1 exited with status 0", framed]
     async with AsyncSession(engine) as db:
         assert await inbox.list_queued(db, chat_id) == []
 
