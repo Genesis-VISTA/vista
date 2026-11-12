@@ -54,14 +54,28 @@ JSON, state `queued` | `taken` | `withdrawn`, wakes bool, created_at, taken_at) 
 `services/inbox.py` with `put`, `edit`, `withdraw`, `take_queued` and `on_put`.
 
 Delivery into a running turn is a pull, not a push: `run_stream` passes a per-run capability
-whose hook runs between the agent's steps, calls `take_queued` and hands the items to
-`ctx.enqueue(..., priority="asap")`. Taking and marking `taken` happen together in that hook,
-which makes "editable until taken" exact and removes the race of pushing into a run that has
-just ended.
+(`InboxDelivery`) whose hook runs between the agent's steps, calls `take_queued` and hands the
+items to `ctx.enqueue(..., priority="asap")`. Taking and marking `taken` happen together in
+that hook, which makes "editable until taken" exact and removes the race of pushing into a run
+that has just ended. PydanticAI's own drain is outermost and empties the queue in
+`before_model_request` before our hook would see it, so the take runs in `before_node_run` of
+each `ModelRequestNode`, and once more in `after_node_run` when the run would end (the drain's
+end-of-run redirect runs after ours). If the database is locked, which a campaign tool's
+flushed but uncommitted writes in the same turn can cause, that step delivers nothing and the
+items wait for the next.
 
-When a run ends, `ChatRunRegistry` asks the inbox whether anything is still queued and, if the
-conversation may start a turn (Decision 3), starts one. `on_put` does the same for an idle
-conversation.
+Each item is its own user prompt part. A researcher message taken mid-turn is preceded by a
+note (`MID_TURN_NOTE`): "[The researcher sent this while you were working. Their earlier
+request still stands unless this changes it.]". Bare, the model took it for a new request and
+dropped the rest of the one it was answering; the base system prompt names the note too. The
+thread draws the words sent, from `inbox_taken`, not the noted text.
+
+When a run ends, `ChatRunRegistry.wake` asks the inbox whether anything is still queued and,
+if the conversation may start a turn (Decision 3), starts one. It does so before the ending
+run's `run_finished` is sent, which names the new run (`next_run_id`) so a watching view
+follows on to it. `on_put` does the same for an idle conversation. A turn started from several
+queued items takes them all, in arrival order, as one prompt joined by blank lines; the
+`inbox_taken` events keep them apart for the UI.
 
 *Alternative: push with `enqueue` from the watcher.* Rejected: an item pushed after the last
 drain raises `UndrainedPendingMessagesError` or is lost, and the moment a message stops being
@@ -71,16 +85,21 @@ restart.
 
 ### 2. A send always goes through the inbox
 
-The send endpoint puts a `message` item and returns it with whether a run was started. The
-`RunBusy` 409 goes away for sends; `ChatRunRegistry.start` keeps raising it internally as a
+The send endpoint puts a `message` item without notifying the registry, then calls `wake`
+itself, so a failure to start the turn reaches the request (the item is withdrawn). A started
+turn is streamed as before; a send to a busy conversation answers 202 `{started: false,
+item}`. The `RunBusy` 409 goes away for sends; `ChatRunRegistry.start` keeps raising it internally as a
 guard. New routes: `PATCH` and `DELETE` on an inbox item (409 once taken) and `GET` for the
 queued items, which the run's event stream also announces (`inbox_changed`) so open views stay
 in step.
 
 A run records its origin (`researcher` or `task`) and emits an `inbox_taken` event for each
-item delivered, with its kind and text. The UI draws a `message` as a researcher bubble and a
-`task_event` as the event row; compaction keeps these events so a turn nobody watched is drawn
-the same way.
+item delivered, with its id, kind and text, also for the items a turn starts with. The UI
+draws a `message` as a researcher bubble and a `task_event` as the event row, and drops the
+item from its queue chips: a queue read in the moment between a send queueing its message and
+the turn taking it would otherwise leave a chip for the whole turn. Compaction keeps
+`inbox_taken` so a turn nobody watched is drawn the same way, and drops `inbox_changed`, since
+a queue a finished turn saw is not the queue now.
 
 ### 3. Three things can hold a conversation back, all on the chat row
 
@@ -93,7 +112,8 @@ and `auto_turns < 10`.
   clears `quiet`.
 - Stop, and the startup sweep for interrupted runs, set `quiet` and withdraw untaken `message`
   items, whose text the UI puts back in the message box.
-- An interrupted command's note is put with `wakes=false`.
+- An interrupted command's note is put with `wakes=false`: at startup, and whenever its
+  sandbox is lost mid-command, which is most often VISTA quitting with its dev servers.
 
 "Needs you" for these cases is derived, not stored: queued `task_event` items in an idle
 conversation, or a paused watch. `row_status` and `live_status` gain that branch.
@@ -118,7 +138,12 @@ server knows nothing of the old one's tasks.
 The agent calls the MCP tool `run_bash(command, background=true, timeout=...)`. The agent's
 existing `process_tool_call` wrapper sees the background flag and, before forwarding, checks
 the limit of 4, creates the record, and adds the task id and log path to the call. Refusals
-come back as tool errors.
+come back as the tool's answer, beginning "Refused:", so the agent can act on them without
+spending a retry. The check and the insert run under a lock per conversation: a model step's
+tool calls run concurrently, and five starts in one step otherwise all counted none running
+and all took the label `bg-1`. Watches take the same lock. `task_id` and `log_path` are
+removed from `run_bash`'s schema as the model sees it (a `prepared` toolset); `timeout` stays,
+and the dev server accepts it without acting on it.
 
 In the dev MCP server the background path starts, without reading its output:
 
@@ -130,12 +155,18 @@ on an exec without a terminal (`combine_streams=False`). The wrapper writes its 
 `setsid` makes the session and group id, to `<id>.pid`; runs
 
 ```
-bash -c '<command>' 2>&1 | { head -c $CAP > LOG; echo "[output cut off at 10 MB]" >> LOG; cat > /dev/null; }
+bash -c '<command>' </dev/null 2>&1 | perl -e '<capper>' $CAP LOG '[output cut off at 10 MB]'
 ```
 
 and writes the command's own status (`PIPESTATUS[0]`) to `<id>.exit`; all three files sit in
-`/mnt/data/tasks/`. `head` bounds the log; the trailing `cat` keeps the command from dying of
-a closed pipe; the cut-off line is written only if `head` reached the cap.
+`/mnt/data/tasks/`. The capper reads with `sysread` and writes each chunk at once, stops
+writing at the cap, adds the cut-off line only when output went past it, and keeps reading so
+the command never dies of a closed pipe. `head -c` was the first choice and does not work: it
+holds its output in a stdio buffer on both GNU coreutils (the sandbox image) and macOS, so a
+running task's log stayed empty until the command ended. `perl` is in Ubuntu's `perl-base`
+and on macOS. The start waits up to 10 s for `<id>.pid` before returning, so a stop or a wait
+always has a group to act on; `wait_task` and `signal_task` refuse any pid that is not a
+number above 1, so a bad file cannot signal every process.
 
 The shape of the start comes from a spike against real microsandbox 0.7.2 sandboxes:
 
@@ -162,9 +193,14 @@ Two dev MCP tools are hidden from the agent by the existing tool filter:
 - `signal_task(id)` runs, as a second exec, `kill -TERM -- -<pgid>`, waits a few seconds, then
   `kill -KILL -- -<pgid>`.
 
-The watcher task holds `project_agent_pool.get(key)` for the life of the command, which keeps
-that agent and sandbox alive across idle expiry and across a rebuild (see Context), and loops
-on `wait_task` through `direct_call_tool`. On exit it reads the tail of the log from the host
+The watcher task holds the agent that started the command for the life of the command, through
+`TTLPool.hold(agent)`, which keeps that agent and sandbox alive across idle expiry and across
+a rebuild (see Context), and loops on `wait_task` through `direct_call_tool`. Holding
+`project_agent_pool.get(key)` would pin whatever agent the key maps to when the watcher
+starts: a Settings change during the very turn that starts the command would leave the key
+pointing at a new agent with an empty sandbox. `hold` finds the entry that holds this agent,
+including one already deleted and waiting for its holders, and defers its cleanup until
+released; the watcher takes it before the starting turn lets go. On exit it reads the tail of the log from the host
 side of the volume, updates the record and puts a `task_event`. The time limit is the
 watcher's: at the deadline it calls `signal_task` and records `timed_out`. `stop_task` and the
 tab's stop control go through the same watcher, so they reach the sandbox that owns the
@@ -175,8 +211,8 @@ held call proves fragile; it needs no MCP call but is polling. *Alternative: a s
 notification.* Rejected: FastMCP has no request context to send from after the tool returns.
 
 The spike covered the microsandbox backend only. The container backend runs every exec
-without a terminal, the case that behaved simply above, but it has not been run; task 1.5
-checks both. Whether a task ended by a signal is `stopped` or `timed_out` is the watcher's
+without a terminal, the case that behaved simply above; task 1.5 ran the start, stop,
+outlive-the-call and close cases against both, and both passed. Whether a task ended by a signal is `stopped` or `timed_out` is the watcher's
 knowledge, since it sent the signal; a group that vanishes with no `.exit` and no signal from
 the watcher is recorded as `interrupted`.
 
@@ -218,23 +254,40 @@ the campaign monitor on those rows does not apply.
 ### 7. Startup and deletion
 
 Startup, after the existing interrupted-run sweep: mark `running` commands `interrupted` and
-put a `wakes=false` note for each; restart watches; then let each conversation's inbox start
-a turn if Decision 3 allows.
+put a `wakes=false` note for each; restart watches, each reading at once; then let each
+conversation's inbox start a turn if Decision 3 allows. A turn started then takes every queued
+item, so an interrupted command's note arrives with a job result that started the turn, ahead
+of it, rather than waiting for the researcher's message. At a quit the watchers are cancelled
+without recording anything, but the dev servers can die first, in which case a watcher records
+the command `interrupted` itself; the note is the same quiet one (Decision 3).
 
 Deleting a conversation: the delete endpoint refuses with the list of live tasks unless the
-request confirms; on confirmation it stops them through the registry before the row, and with
-it the cascade, goes. Its logs under `data/tasks/` are removed by task id.
+request confirms; on confirmation it sets the conversation `quiet`, so the results of the tasks
+it stops start no turn, stops them through the registry before the row, and with it the
+cascade, goes. Its commands' logs, `.pid` and `.exit` under `data/tasks/` are removed by task
+id, also when every task had already ended.
 
 ### 8. UI
 
 - The message box stays enabled during a run. Queued messages are chips above it with edit
   and delete, driven by `inbox_changed`.
 - `BackgroundPanel` is a fourth workspace tab, shown once the conversation has a task, fed by
-  `GET /chat/{id}/tasks` polled every 3 s while the tab is open and refreshed on run events.
-  The log link opens the existing file preview on a tail endpoint for the task's log.
+  `GET /chat/{id}/tasks` polled every 3 s while the tab is open, every 15 s while it is closed
+  and something runs (for the running count on its label), and refreshed on run events.
+  Like the Jobs panel it stays mounted, since it decides whether its tab exists. The log link
+  opens the existing file preview on a tail endpoint for the task's log (its last 64 KiB),
+  with a Refresh, since the preview reads a URL once. A paused watch's row says what it
+  needs ("Paused: Reconnect Odo in Settings"); the conversation's "needs you" dot itself does
+  not.
+- A turn the page did not start (VISTA started it from a task result or at startup, or
+  another view did) is drawn in the open conversation: when that conversation's run status
+  changes while nothing is watched, the page attaches if a run is going and replays the
+  stored events if it ended between polls. The tab asks for the status at once when a task
+  ends. A view following a run it watched to its end follows `next_run_id` instead.
 - The event row is a new renderer in the run renderer for `inbox_taken` items of kind
   `task_event`.
-- The delete dialog shows the live tasks the endpoint returned.
+- The delete dialog reads the conversation's live tasks when it opens, names them, and confirms
+  ending them; a task that started since is refused by the endpoint and shown instead.
 
 ## Risks / Trade-offs
 
@@ -254,6 +307,10 @@ it the cascade, goes. Its logs under `data/tasks/` are removed by task id.
   interval, at most 8 watches per conversation.
 - [A message taken at the moment the researcher edits it] → the edit is refused with 409 and
   the view shows the message as delivered.
+- [A campaign tool's flushed, uncommitted writes hold SQLite's write lock for the rest of its
+  turn, and the inbox take writes through its own session] → the take reads first, which
+  needs no write lock, and a locked write skips that step; delivery waits for the next step or
+  for the turn's end. Campaign mode is off by default.
 
 ## Migration Plan
 

@@ -57,7 +57,8 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 8. Agent guidance, docs and whole-change checks
 
-- [ ] 8.1 Describe background runs in the `run_bash` description and the three tools in `agents/base_system_prompt.md`, including "report every final state" for watches; verify in `backend/tests/test_project_agent_prompt.py`
-- [ ] 8.2 Add a "Background tasks" section to `AGENTS.md` and a page under `docs/`, listed or excluded in `docs/site.toml`; verify `./scripts/ci-local.sh docs` passes
+- [x] 8.1 Describe background runs in the `run_bash` description and the three tools in `agents/base_system_prompt.md`, including "report every final state" for watches; verify in `backend/tests/test_project_agent_prompt.py`
+- [x] 8.2 Add a "Background tasks" section to `AGENTS.md` and a page under `docs/`, listed or excluded in `docs/site.toml`; verify `./scripts/ci-local.sh docs` passes
 - [ ] 8.3 Run `./scripts/ci-local.sh` (all lint and tests) outside the checkout's `.env` and `openspec validate background-tasks --strict`; verify both pass
 - [ ] 8.4 **(live)** Try it in the running app: start a background command, send a message while a turn runs and edit it, stop a turn with a task running, watch a dry-run job to its end; verify each against the scenarios in `specs/`
+- [x] 8.5 Record in `design.md` what implementation changed: the `perl` log reader (Decision 5), `TTLPool.hold`, the per-conversation start lock, refusals as answers, the mid-turn note, joined prompts and `next_run_id` (Decisions 1, 2), quiet notes for a lost sandbox (3, 7), and the Background tab, live redraw and delete dialog as built (8); verify `openspec validate background-tasks --strict`

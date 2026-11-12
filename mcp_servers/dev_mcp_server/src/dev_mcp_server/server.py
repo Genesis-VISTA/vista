@@ -121,6 +121,14 @@ async def run_bash(
     `display_file` with its path. Saving a file does not display it.
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
+
+    For a command that will take more than about a minute, pass background=true:
+    the call returns at once with a task id (bg-N) and a log under
+    /mnt/data/tasks/, the command keeps running after your turn ends, and its
+    result (exit status, runtime, the log's last lines) is sent to this
+    conversation when it ends. timeout is the most seconds it may run (default
+    3600, at most 86400). At most 4 run at once in a conversation. Read the log
+    with `view` while it runs; list_tasks and stop_task show and end them.
     """
     # `timeout` is enforced by the caller that waits on the task (VISTA's backend),
     # which stops it with `signal_task`; the sandbox itself only starts it.

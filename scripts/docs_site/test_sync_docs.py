@@ -296,8 +296,8 @@ class Sync(unittest.TestCase):
         self.write_site("site_name: t\ndocs_dir: documentation\nnav: [{Home: index.md}]\n")
         pages = sync_docs.sync(REPO_ROOT, self.site, "v0")
         out = self.site / "documentation" / "reference"
-        self.assertEqual(len(pages), 13)
-        self.assertEqual(len(list(out.glob("*.md"))), 13)
+        self.assertEqual(len(pages), 14)
+        self.assertEqual(len(list(out.glob("*.md"))), 14)
         self.assertEqual(len(self.generated()["nav"]), 3)
 
 
