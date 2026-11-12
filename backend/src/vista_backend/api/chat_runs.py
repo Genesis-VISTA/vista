@@ -11,6 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from ..db.db import SessionDep
 from ..services import chat_session as chat_session_service
+from ..services import inbox as inbox_service
 from ..services import project as project_service
 from ..services.chat_run import chat_run_registry, row_status
 
@@ -81,9 +82,10 @@ async def chat_runs_status(
     """Every conversation in the project that is working, needs the researcher, or has an unseen outcome."""
     project = await project_service.get_project_by_name(session, project_name)
     rows = await chat_session_service.list_chat_sessions(session, project_id=project.id)
+    waiting = await inbox_service.waiting_on_researcher(session, [r.id for r in rows])
     statuses = []
     for row in rows:
-        status = row_status(row)
+        status = row_status(row, waiting=row.id in waiting)
         if status != "idle":
             statuses.append(
                 ChatRunStatus(

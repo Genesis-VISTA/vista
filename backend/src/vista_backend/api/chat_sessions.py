@@ -11,6 +11,7 @@ from ..db.schemas import (
 )
 from ..services import chat_session as chat_session_service
 from ..services import displayed_files as displayed_files_service
+from ..services import inbox as inbox_service
 from ..services import project as project_service
 from ..services.chat_run import chat_run_registry, live_status
 from ..services.displayed_files import DisplayedFileInfo
@@ -19,11 +20,12 @@ from ..services.displayed_files import DisplayedFileInfo
 router = APIRouter(prefix="/projects", tags=["chat-sessions"])
 
 
-def _public(row) -> ChatSessionPublic:
+async def _public(session, row) -> ChatSessionPublic:
     public = ChatSessionPublic.model_validate(row, from_attributes=True)
-    public.run_status = live_status(chat_run_registry.get(row.id)) or (
-        row.run_state if row.run_unseen else "idle"
-    )
+    live = live_status(chat_run_registry.get(row.id))
+    if live is None and await inbox_service.waiting_on_researcher(session, [row.id]):
+        live = "needs_you"  # a task result waits for the researcher's next message
+    public.run_status = live or (row.run_state if row.run_unseen else "idle")
     return public
 
 
@@ -55,7 +57,7 @@ async def create_chat_session(
         project_id=project.id,
         payload=body,
     )
-    return _public(chat_session)
+    return await _public(session, chat_session)
 
 
 @router.get("/{project_name}/chat-session")
@@ -70,7 +72,7 @@ async def get_chat_session(
         project_id=project.id,
         chat_session_id=chat_session_id,
     )
-    return _public(chat_session)
+    return await _public(session, chat_session)
 
 
 @router.put("/{project_name}/chat-session")
@@ -87,7 +89,7 @@ async def put_chat_session(
         updates=body,
         chat_session_id=chat_session_id,
     )
-    return _public(chat_session)
+    return await _public(session, chat_session)
 
 
 @router.delete("/{project_name}/chat-session", status_code=204)

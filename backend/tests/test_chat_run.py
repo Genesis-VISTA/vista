@@ -16,10 +16,12 @@ import mcp.types
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
+    ModelRequest,
     ModelResponse,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.toolsets.function import FunctionToolset
 from sqlmodel import select
@@ -29,8 +31,13 @@ from harness import call, make_local_settings, make_project, say, seed_project
 from harness import scripted_model, step_model
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.config import settings
-from vista_backend.db.schemas import ChatSessionTable, DisplayedFileTable
+from vista_backend.db.schemas import (
+    ChatSessionTable,
+    DisplayedFileTable,
+    InboxItemTable,
+)
 from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.services import inbox
 from vista_backend.services.displayed_files import file_status
 from vista_backend.services.chat_run import (
     ChatRunRegistry,
@@ -59,6 +66,8 @@ class Env:
         self.stack = stack
         self.agents: dict[uuid.UUID, ProjectAgent] = {}
         self.hang_started = asyncio.Event()
+        self.at_gate = asyncio.Event()
+        self.gate = asyncio.Event()
         self.registry = ChatRunRegistry()
         self.display_errors: set[str] = set()
         """ uris `display_file` answers with `{error}`, as the real tool does for a bad path. """
@@ -124,6 +133,15 @@ class Env:
             target = agent.output_dir / path
             target.write_bytes(target.read_bytes() + b" and more")
             return "rewritten"
+
+        env = self
+
+        @toolset.tool_plain
+        async def gate() -> str:
+            """Blocks until the test releases it."""
+            env.at_gate.set()
+            await env.gate.wait()
+            return "gate passed"
 
         @toolset.tool_plain
         async def hang() -> str:
@@ -196,6 +214,7 @@ async def test_a_run_can_be_started_subscribed_to_and_awaited(env):
         "event_kind": "run_started",
         "run_id": run.run_id,
         "user_prompt": "go",
+        "origin": "researcher",
     }
     assert seen[-1].kind == "run_finished"
     assert json.loads(seen[-1].data) == {"event_kind": "run_finished", "state": "done"}
@@ -621,3 +640,143 @@ async def test_a_file_overwritten_later_in_the_run_reads_as_changed(env):
     assert (
         file_status(output_dir, record.path, record.size, record.mtime_ns) == "changed"
     )
+
+
+# ---------------------------------------------------------------------------
+# The inbox (openspec change background-tasks, tasks 2.4 and 2.6)
+# ---------------------------------------------------------------------------
+
+
+def _user_prompts(history) -> list[str]:
+    return [
+        p.content
+        for m in history
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, UserPromptPart) and isinstance(p.content, str)
+    ]
+
+
+def _history(row: ChatSessionTable):
+    return chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
+        row.message_history
+    )
+
+
+async def _put(env, row, kind="task_event", text="bg-1 exited with status 0", **kw):
+    return await inbox.put(env.session, row.id, kind=kind, text=text, **kw)
+
+
+async def test_a_result_at_an_idle_conversation_starts_a_saved_turn_with_it(env):
+    row, _ = await env.conversation([say("bg-1 is done")])
+
+    await _put(env, row, payload={"task": "bg-1", "state": "exited"})
+    run = env.registry.get(row.id)
+    assert run is not None, "the put started a turn"
+    await run.wait()
+
+    assert run.origin == "task"
+    saved = await env.row(row.id)
+    assert saved.run_state == "done" and saved.run_unseen is True
+    assert saved.auto_turns == 1
+    history = _history(saved)
+    assert _user_prompts(history)[0] == "bg-1 exited with status 0"
+    assert _texts(history) == ["bg-1 is done"]
+
+    taken = [e for e in saved.run_events or [] if e["event"] == "inbox_taken"]
+    assert len(taken) == 1, "the saved turn keeps what started it"
+    assert taken[0]["data"]["kind"] == "task_event"
+    assert taken[0]["data"]["text"] == "bg-1 exited with status 0"
+    assert taken[0]["data"]["payload"] == {"task": "bg-1", "state": "exited"}
+    started = next(e for e in saved.run_events or [] if e["event"] == "run_started")
+    assert started["data"]["origin"] == "task"
+
+
+async def test_a_result_put_mid_run_is_taken_by_that_run(env):
+    row, key = await env.conversation([call("gate"), say("saw the result")])
+    run = await env.start(row, key, prompt="fit it")
+    await _until(env.at_gate.is_set)
+
+    await _put(env, row)
+    assert env.registry.get(row.id) is run, "no second run"
+    env.gate.set()
+    await run.wait()
+
+    history = _history(await env.row(row.id))
+    assert _user_prompts(history) == ["fit it", "bg-1 exited with status 0"]
+    taken = [json.loads(e.data) for e in run.events if e.kind == "inbox_taken"]
+    assert [t["text"] for t in taken] == ["bg-1 exited with status 0"]
+    async with AsyncSession(env.engine) as db:
+        assert await inbox.list_queued(db, row.id) == []
+
+
+async def test_a_result_after_stop_waits_for_the_next_message(env):
+    row, key = await env.conversation([call("hang"), say("got both")])
+    await env.start(row, key)
+    await _until(env.hang_started.is_set)
+    await env.registry.stop(row.id)
+
+    await _put(env, row)  # a command ends a second later
+    assert env.registry.get(row.id) is None, "no turn starts"
+    saved = await env.row(row.id)
+    assert saved.quiet is True
+    assert chat_run.row_status(saved, waiting=True) == "needs_you"
+
+    await _put(env, row, kind="message", text="what happened?")
+    run = env.registry.get(row.id)
+    assert run is not None
+    await run.wait()
+
+    assert run.origin == "researcher"
+    saved = await env.row(row.id)
+    assert saved.quiet is False and saved.auto_turns == 0
+    assert _user_prompts(_history(saved))[-1] == (
+        "bg-1 exited with status 0\n\nwhat happened?"
+    )
+
+
+async def test_stop_returns_a_queued_message_untaken(env):
+    row, key = await env.conversation([call("hang"), say("unreachable")])
+    run = await env.start(row, key)
+    await _until(env.hang_started.is_set)
+    item = await _put(env, row, kind="message", text="also plot it")
+
+    await env.registry.stop(row.id)
+
+    finished = json.loads(run.events[-1].data)
+    assert finished["withdrawn"] == [{"id": item.id, "text": "also plot it"}]
+    async with AsyncSession(env.engine) as db:
+        assert (await db.get(InboxItemTable, item.id)).state == "withdrawn"
+    assert "also plot it" not in _user_prompts(_history(await env.row(row.id)))
+    assert env.registry.get(row.id) is None, "the withdrawn message starts nothing"
+
+
+async def test_an_interrupted_run_leaves_the_conversation_quiet(env):
+    row, key = await env.conversation([call("hang"), say("unreachable")])
+    await env.start(row, key)
+    await _until(env.hang_started.is_set)
+    await _put(env, row, kind="message", text="queued at quit")
+
+    await env.registry.stop_all(reason="interrupted")
+
+    saved = await env.row(row.id)
+    assert saved.quiet is True
+    async with AsyncSession(env.engine) as db:
+        assert await inbox.list_queued(db, row.id) == []
+
+
+async def test_the_startup_sweep_leaves_the_conversation_quiet(env, monkeypatch):
+    row, _ = await env.conversation([])
+    async with AsyncSession(env.engine) as db:
+        saved = await db.get(ChatSessionTable, row.id)
+        saved.run_state = "running"
+        await db.commit()
+    monkeypatch.setattr(inbox, "_listeners", [])  # nothing may start yet
+    await _put(env, row, kind="message", text="sent before the crash")
+
+    assert await chat_run.sweep_interrupted_runs() == 1
+
+    saved = await env.row(row.id)
+    assert saved.run_state == "interrupted" and saved.quiet is True
+    async with AsyncSession(env.engine) as db:
+        assert await inbox.list_queued(db, row.id) == []

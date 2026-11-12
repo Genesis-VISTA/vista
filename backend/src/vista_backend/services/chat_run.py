@@ -10,6 +10,11 @@ The registry is in-process, like the agent pool: one backend, one researcher.
 The run's outcome is written to the `chat_session` row by the run itself (its
 model history, its `run_state`, and its compacted events), so a turn nobody
 watched is still there when the conversation is next opened.
+
+A turn also takes what arrives in the conversation's inbox (`services/inbox.py`,
+openspec change background-tasks): between its steps while it runs, and, through
+`wake`, as the start of a new turn when an item arrives at an idle conversation
+or is still queued when a turn ends. Each item taken is an `inbox_taken` event.
 """
 
 import asyncio
@@ -35,9 +40,10 @@ from ..agents.agents import (
 )
 from ..agents.inference import describe_run_failure
 from ..db.db import get_engine
-from ..db.schemas import ChatSessionTable, DisplayedFileTable
+from ..db.schemas import ChatSessionTable, DisplayedFileTable, InboxItemTable
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from . import inbox as inbox_service
 from .displayed_files import sandbox_path_to_file
 from .project_agent import (
     ProjectAgentKey,
@@ -65,6 +71,12 @@ _END_NOTES = {
 # Outcomes the researcher has not yet seen. A stop is their own action, so it
 # leaves no dot.
 _UNSEEN_STATES = {"done", "failed", "interrupted"}
+
+# Outcomes after which only the researcher's next message starts a turn.
+_QUIET_STATES = {"stopped", "interrupted"}
+
+Origin = Literal["researcher", "task"]
+""" Who started a turn: the researcher's message, or a task result from the inbox. """
 
 
 class RunBusy(Exception):
@@ -101,6 +113,9 @@ class ChatRun:
     agent_key: ProjectAgentKey
     user_prompt: str
     prior_history: list[ModelMessage]
+    origin: Origin = "researcher"
+    items: list[InboxItemTable] = field(default_factory=list)
+    """ The inbox items the turn started with; their texts make up `user_prompt`. """
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     state: str = "running"
     events: list[RunEvent] = field(default_factory=list)
@@ -183,6 +198,8 @@ class ChatRun:
 class ChatRunRegistry:
     def __init__(self) -> None:
         self._runs: dict[uuid.UUID, ChatRun] = {}
+        self._wake_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        self._wakers: set[asyncio.Task] = set()
 
     def get(self, chat_session_id: uuid.UUID) -> ChatRun | None:
         return self._runs.get(chat_session_id)
@@ -198,12 +215,17 @@ class ChatRunRegistry:
         agent_key: ProjectAgentKey,
         user_prompt: str,
         prior_history: list[ModelMessage],
+        origin: Origin = "researcher",
+        items: list[InboxItemTable] | None = None,
     ) -> ChatRun:
         """
         Start a turn in the background. Raises `RunBusy` if the conversation has one.
 
         Returns once the run's task is executing, so `stop` can never hit a task
         that has not yet entered its cleanup handler.
+
+        A researcher's turn resets the count of turns VISTA started in a row and
+        ends the quiet a Stop left; a `task` turn adds one to the count.
         """
         if chat_session_id in self._runs:
             raise RunBusy(str(chat_session_id))
@@ -213,10 +235,14 @@ class ChatRunRegistry:
             agent_key=agent_key,
             user_prompt=user_prompt,
             prior_history=prior_history,
+            origin=origin,
+            items=list(items or []),
         )
         self._runs[chat_session_id] = run
         try:
-            await _write_row(run, state="running", unseen=False, events=None)
+            await _write_row(
+                run, state="running", unseen=False, events=None, origin=origin
+            )
         except BaseException:
             self._runs.pop(chat_session_id, None)
             raise
@@ -238,6 +264,78 @@ class ChatRunRegistry:
         if wait:
             await run.wait()
         return True
+
+    async def wake(self, chat_session_id: uuid.UUID) -> ChatRun | None:
+        """
+        Start a turn from the conversation's inbox if it is idle and may start one.
+
+        Called after every inbox `put` and when a run ends. The turn takes every
+        queued item, in arrival order, as its prompt. Returns the run it started,
+        or None: a run is going (it takes items itself), nothing is queued, or
+        the hold-back rule says wait (`inbox.may_start_turn`).
+        """
+        if chat_session_id in self._runs:
+            return None
+        lock = self._wake_locks.setdefault(chat_session_id, asyncio.Lock())
+        async with lock:
+            if chat_session_id in self._runs:
+                return None
+            async with session_factory() as db:
+                row = await db.get(ChatSessionTable, chat_session_id)
+                if row is None:
+                    return None
+                queued = await inbox_service.list_queued(db, chat_session_id)
+                if not queued or not inbox_service.may_start_turn(row, queued):
+                    return None
+                # Read before the take commits and expires the row.
+                project_id = row.project_id
+                history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
+                    row.message_history
+                )
+                items = await inbox_service.take_queued(db, chat_session_id)
+                if not items:
+                    return None
+            origin: Origin = (
+                "researcher" if any(i.kind == "message" for i in items) else "task"
+            )
+            try:
+                return await self.start(
+                    chat_session_id=chat_session_id,
+                    project_id=project_id,
+                    agent_key=(chat_session_id, project_id),
+                    user_prompt="\n\n".join(i.text for i in items),
+                    prior_history=history,
+                    origin=origin,
+                    items=items,
+                )
+            except BaseException:
+                async with session_factory() as db:
+                    await asyncio.shield(inbox_service.requeue(db, items))
+                raise
+
+    def _wake_later(self, chat_session_id: uuid.UUID) -> None:
+        async def wake() -> None:
+            try:
+                await self.wake(chat_session_id)
+            except Exception:
+                log.exception("Could not start a turn from %s's inbox", chat_session_id)
+
+        task = asyncio.create_task(wake())
+        self._wakers.add(task)
+        task.add_done_callback(self._wakers.discard)
+
+    async def _take_into(self, run: ChatRun) -> list[InboxItemTable]:
+        """`InboxDelivery`'s take: what is queued now, reported on the run's events."""
+        async with session_factory() as db:
+            # A read first: it needs no write lock, and most steps find nothing.
+            if not await inbox_service.list_queued(db, run.chat_session_id):
+                return []
+            items = await inbox_service.take_queued(db, run.chat_session_id)
+            if any(i.kind == "message" for i in items):
+                await _reset_auto_turns(db, run.chat_session_id)
+        for item in items:
+            await _append_taken(run, item)
+        return items
 
     async def stop_all(self, reason: str = "interrupted", timeout: float = 5.0) -> None:
         """Stop every run, for shutdown. Waits at most `timeout` seconds in all."""
@@ -266,15 +364,21 @@ class ChatRunRegistry:
                                 "event_kind": "run_started",
                                 "run_id": run.run_id,
                                 "user_prompt": run.user_prompt,
+                                "origin": run.origin,
                             }
                         ),
                     )
+                    for item in run.items:
+                        await _append_taken(run, item)
                     async for event in agent.run_stream(
                         user_prompt=run.user_prompt,
                         message_history=run.prior_history,
                         enable_elicitation=True,
                         db_session=db,
                         capture=run.capture,
+                        capabilities=[
+                            inbox_service.InboxDelivery(lambda: self._take_into(run))
+                        ],
                     ):
                         prompt_id = None
                         _note_display(run, agent, event)
@@ -325,9 +429,21 @@ class ChatRunRegistry:
         # left the registry. A page that acknowledges the run the moment it sees
         # this event then finds the row final, and a fetch of the conversation
         # no longer reports a run in progress.
-        finished = {"event_kind": "run_finished", "state": run.state}
+        finished: dict[str, Any] = {"event_kind": "run_finished", "state": run.state}
         if error_msg:
             finished["error"] = error_msg
+        quiet = run.state in _QUIET_STATES
+        if quiet:
+            # Before the row is final, so the turn `wake` may start next sees it.
+            try:
+                withdrawn = await asyncio.shield(_withdraw_messages(run))
+            except Exception:
+                log.exception("Could not withdraw %s's queued messages", run.run_id)
+            else:
+                if withdrawn:
+                    finished["withdrawn"] = [
+                        {"id": i.id, "text": i.text} for i in withdrawn
+                    ]
         finished_data = json.dumps(finished)
         try:
             await asyncio.shield(
@@ -346,6 +462,7 @@ class ChatRunRegistry:
                         ]
                     ),
                     history=history,
+                    quiet=True if quiet else None,
                 )
             )
 
@@ -360,6 +477,10 @@ class ChatRunRegistry:
             await run._finish()
         if reraise is not None:
             raise reraise
+        # Whatever arrived after the turn's last step starts the next one. Not
+        # after a quit: nothing may start while VISTA is shutting down.
+        if run.state != "interrupted":
+            self._wake_later(run.chat_session_id)
 
 
 async def resolve_prompt(
@@ -451,6 +572,36 @@ async def _write_displays(run: ChatRun) -> None:
     run.completed_display_files.clear()
 
 
+async def _append_taken(run: ChatRun, item: InboxItemTable) -> None:
+    await run.append(
+        "inbox_taken",
+        json.dumps(
+            {
+                "event_kind": "inbox_taken",
+                "item_id": item.id,
+                "kind": item.kind,
+                "text": item.text,
+                "payload": item.payload,
+            }
+        ),
+    )
+
+
+async def _withdraw_messages(run: ChatRun) -> list[InboxItemTable]:
+    async with session_factory() as db:
+        return await inbox_service.withdraw_messages(db, run.chat_session_id)
+
+
+async def _reset_auto_turns(db: AsyncSession, chat_session_id: uuid.UUID) -> None:
+    """A researcher message: VISTA may start turns again, and the count starts over."""
+    row = await db.get(ChatSessionTable, chat_session_id)
+    if row is not None:
+        row.auto_turns = 0
+        row.quiet = False
+        db.add(row)
+        await db.commit()
+
+
 async def _write_row(
     run: ChatRun,
     *,
@@ -458,6 +609,8 @@ async def _write_row(
     unseen: bool,
     events: list[dict[str, Any]] | None,
     history: list[ModelMessage] | None = None,
+    origin: Origin | None = None,
+    quiet: bool | None = None,
 ) -> None:
     async with session_factory() as db:
         row = await chat_session_service.get_chat_session_optional(
@@ -472,6 +625,13 @@ async def _write_row(
         row.run_state = state
         row.run_unseen = unseen
         row.run_events = events
+        if origin == "researcher":
+            row.auto_turns = 0
+            row.quiet = False
+        elif origin == "task":
+            row.auto_turns += 1
+        if quiet is not None:
+            row.quiet = quiet
         row.updated_at = now_iso()
         db.add(row)
         await db.commit()
@@ -484,16 +644,20 @@ def live_status(run: ChatRun | None) -> str | None:
     return "needs_you" if run.pending else "working"
 
 
-def row_status(row: ChatSessionTable) -> str:
+def row_status(row: ChatSessionTable, waiting: bool = False) -> str:
     """
     A conversation's status as the list shows it, from its saved row and live run.
 
     `done`, `failed` and `interrupted` are reported only while unseen. A `stopped`
-    turn leaves no dot, since the researcher did it themselves.
+    turn leaves no dot, since the researcher did it themselves. `waiting` says a
+    task result is queued in its inbox (`inbox.waiting_on_researcher`), which
+    with no turn running is `needs_you`.
     """
     live = live_status(chat_run_registry.get(row.id))
     if live is not None:
         return live
+    if waiting:
+        return "needs_you"
     if row.run_state == "running":
         return "working"  # Saved as running a moment before the run registered.
     if row.run_state in _UNSEEN_STATES and row.run_unseen:
@@ -506,7 +670,8 @@ async def sweep_interrupted_runs() -> int:
     At startup, turn every `running` row into `interrupted` and unseen.
 
     No run survives a restart, so a row still saying `running` belongs to a turn
-    that died with the previous process (design D4).
+    that died with the previous process (design D4). Like a stopped turn, it
+    leaves the conversation quiet and withdraws its queued messages.
     """
     async with session_factory() as db:
         rows = (
@@ -514,12 +679,16 @@ async def sweep_interrupted_runs() -> int:
                 select(ChatSessionTable).where(ChatSessionTable.run_state == "running")
             )
         ).all()
+        ids = [row.id for row in rows]
         for row in rows:
             row.run_state = "interrupted"
             row.run_unseen = True
+            row.quiet = True
             db.add(row)
         await db.commit()
-    return len(rows)
+        for chat_session_id in ids:
+            await inbox_service.withdraw_messages(db, chat_session_id)
+    return len(ids)
 
 
 def compact_events(events: list[RunEvent]) -> list[dict[str, Any]]:
@@ -555,3 +724,11 @@ PROMPT_EVENT_KINDS = frozenset(
 )
 
 chat_run_registry = ChatRunRegistry()
+
+
+async def _on_inbox_put(chat_session_id: uuid.UUID) -> None:
+    # Looked up at call time, so a test's registry receives it.
+    await chat_run_registry.wake(chat_session_id)
+
+
+inbox_service.on_put(_on_inbox_put)

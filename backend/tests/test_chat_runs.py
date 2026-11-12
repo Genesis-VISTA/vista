@@ -35,6 +35,7 @@ from vista_backend.agents.agents import ProjectAgent
 from vista_backend.api import api as api_module
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.services import inbox
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -422,3 +423,50 @@ async def test_unseen_outcomes_survive_an_app_restart(session, engine, monkeypat
     ]
     by_id = {s["chat_session_id"]: s["status"] for s in status.json()}
     assert by_id == {str(finished): "done", str(killed): "interrupted"}
+
+
+# ---------------------------------------------------------------------------
+# Waiting on the researcher (openspec change background-tasks, task 2.5)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_result_held_back_after_a_stop_shows_needs_you(session, engine):
+    """Scenario: Result lands just after Stop (conversation-inbox), as the list shows it."""
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    other = await _conversation(session, project)
+
+    with scripted_agent(project, step_model([call("hang"), say("unreachable")])) as (
+        agent,
+        turn,
+    ):
+        with api_client(session, agent=agent) as (client, _):
+            running = _send(client, project, conversation, "fit it")
+            await _until(turn.at_hang.is_set)
+            await client.post(STOP.format(name=project.name, id=conversation))
+            await running
+
+            async with AsyncSession(engine) as db:
+                await inbox.put(
+                    db,
+                    conversation,
+                    kind="task_event",
+                    text="bg-1 exited with status 0",
+                )
+            assert chat_run.chat_run_registry.get(conversation) is None, "no turn"
+
+            status = await client.get(STATUS.format(name=project.name))
+            one = await client.get(
+                f"/projects/{project.name}/chat-session",
+                params={"chat_session_id": str(conversation)},
+            )
+            quiet = await client.get(
+                f"/projects/{project.name}/chat-session",
+                params={"chat_session_id": str(other)},
+            )
+
+    assert {s["chat_session_id"]: s["status"] for s in status.json()} == {
+        str(conversation): "needs_you"
+    }
+    assert one.json()["run_status"] == "needs_you"
+    assert quiet.json()["run_status"] == "idle"

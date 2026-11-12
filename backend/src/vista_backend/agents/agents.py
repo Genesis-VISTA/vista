@@ -11,7 +11,7 @@ import uuid
 import asyncio
 from contextlib import aclosing
 from typing import AsyncGenerator, AsyncIterator, Literal, Annotated as A, Any
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from urllib.parse import quote
 
@@ -26,6 +26,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.models import Model
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -1070,6 +1071,7 @@ class ProjectAgent:
         enable_elicitation: bool = False,
         db_session: AsyncSession | None = None,
         capture: RunCapture | None = None,
+        capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
         Run the agent and return a stream of events.
@@ -1086,6 +1088,9 @@ class ProjectAgent:
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
 
         Pass capture to read the turn's messages after it is cancelled or fails (see `RunCapture`).
+
+        Pass capabilities to add PydanticAI capabilities to this turn only, such as the inbox's
+        `InboxDelivery`, which hands queued items to the agent between its steps.
 
         Raises:
             MissingInferenceCredential: if no inference credential is
@@ -1199,6 +1204,7 @@ class ProjectAgent:
                                 user_prompt,
                                 message_history=message_history,
                                 usage_limits=usage_limits,
+                                capabilities=capabilities,
                             ):
                                 yield model_event
 

@@ -13,12 +13,12 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 2. Inbox core
 
-- [ ] 2.1 Add the `inbox_item` table and the `auto_turns` and `quiet` columns on `chat_session` (additive, server defaults); verify `db/schema_check.py` passes against a database created before the change, in `backend/tests/test_schema_check.py`
-- [ ] 2.2 Add `services/inbox.py` (`put`, `edit`, `withdraw`, `take_queued`, `on_put`); verify with a new `backend/tests/test_inbox.py` (arrival order, edit and withdraw before take, both refused after)
-- [ ] 2.3 Add the per-run capability that takes queued items between steps and enqueues them on the run context, and pass it from `ProjectAgent.run_stream`; verify with a new `backend/tests/test_inbox_delivery.py` using a `FunctionModel` that an item put during a tool call is in the next model request, in arrival order
-- [ ] 2.4 Give `ChatRun` an origin and an `inbox_taken` event, keep those events through `compact_events`, and have the registry start a turn from the inbox when a run ends or an item arrives at an idle conversation; verify in `backend/tests/test_chat_run.py` that a `task_event` put to an idle conversation produces a saved turn whose history begins with it, and one put mid-run appears in that run's history
-- [ ] 2.5 Apply the hold-back rule (design Decision 3): cap of 10, reset on a researcher message, `wakes=false` items, and the derived "needs you" in `live_status` / `row_status`; verify in `backend/tests/test_inbox.py` (eleventh result waits and is delivered ahead of the next message) and `backend/tests/test_chat_runs.py` (status)
-- [ ] 2.6 Make Stop and the interrupted-run sweep set `quiet` and withdraw untaken messages; verify in `backend/tests/test_chat_run.py` that a result arriving after Stop starts no turn and is delivered with the next message
+- [x] 2.1 Add the `inbox_item` table and the `auto_turns` and `quiet` columns on `chat_session` (additive, server defaults); verify `db/schema_check.py` passes against a database created before the change, in `backend/tests/test_schema_check.py`
+- [x] 2.2 Add `services/inbox.py` (`put`, `edit`, `withdraw`, `take_queued`, `on_put`); verify with a new `backend/tests/test_inbox.py` (arrival order, edit and withdraw before take, both refused after)
+- [x] 2.3 Add the per-run capability that takes queued items between steps and enqueues them on the run context, and pass it from `ProjectAgent.run_stream`; verify with a new `backend/tests/test_inbox_delivery.py` using a `FunctionModel` that an item put during a tool call is in the next model request, in arrival order
+- [x] 2.4 Give `ChatRun` an origin and an `inbox_taken` event, keep those events through `compact_events`, and have the registry start a turn from the inbox when a run ends or an item arrives at an idle conversation; verify in `backend/tests/test_chat_run.py` that a `task_event` put to an idle conversation produces a saved turn whose history begins with it, and one put mid-run appears in that run's history
+- [x] 2.5 Apply the hold-back rule (design Decision 3): cap of 10, reset on a researcher message, `wakes=false` items, and the derived "needs you" in `live_status` / `row_status`; verify in `backend/tests/test_inbox.py` (eleventh result waits and is delivered ahead of the next message) and `backend/tests/test_chat_runs.py` (status)
+- [x] 2.6 Make Stop and the interrupted-run sweep set `quiet` and withdraw untaken messages; verify in `backend/tests/test_chat_run.py` that a result arriving after Stop starts no turn and is delivered with the next message
 
 ## 3. Sending through the inbox
 

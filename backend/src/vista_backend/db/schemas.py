@@ -6,7 +6,7 @@ import re
 import uuid
 from contextvars import ContextVar
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
+from sqlalchemy import JSON, Boolean, Column, Index, Integer, String, false, true
 from pydantic_ai import UsageLimits
 from pydantic import (
     BaseModel,
@@ -1163,6 +1163,51 @@ class ChatSessionTable(ChatSessionBase, table=True):
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+    # What may start a turn from the inbox (openspec change background-tasks,
+    # design Decision 3). Server defaults keep them additive.
+    auto_turns: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
+    )
+    """ Turns VISTA started in a row without a message from the researcher. """
+    quiet: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+    """ Set by Stop or an interrupted turn: only a researcher message starts a turn. """
+
+
+class InboxItemTable(SQLModel, table=True):
+    """
+    One thing addressed to a conversation's agent: a researcher `message` or a
+    background task's `task_event` (openspec change background-tasks, Decision 1).
+
+    `queued` until a turn takes it, then `taken`; a queued message the researcher
+    deletes, or one Stop returns to the message box, is `withdrawn`. The integer id
+    is the arrival order.
+    """
+
+    __tablename__: str = "inbox_item"
+    __table_args__ = (Index("ix_inbox_item_chat_state", "chat_session_id", "state"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    kind: str
+    """ `message` or `task_event`. """
+    text: str
+    """ What the agent receives. """
+    payload: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ For a `task_event`, what the UI's event row shows (task, state, runtime). """
+    state: str = "queued"
+    wakes: bool = True
+    """ False for a note that waits for the researcher's next message. """
+    created_at: str
+    taken_at: str | None = None
 
 
 class DisplayedFileTable(SQLModel, table=True):

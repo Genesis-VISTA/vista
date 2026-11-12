@@ -111,3 +111,12 @@ def test_a_database_made_before_the_collaboration_switch_passes(conn):
 
     assert schema_problems(conn)  # a strict check still names it
     assert schema_problems(conn, assume_additive=True) == []
+
+
+def test_a_database_from_before_background_tasks_passes(conn):
+    """openspec change background-tasks: the inbox table and its two columns are additive."""
+    conn.execute("DROP TABLE inbox_item")
+    conn.execute("ALTER TABLE chat_session DROP COLUMN auto_turns")
+    conn.execute("ALTER TABLE chat_session DROP COLUMN quiet")
+
+    assert schema_problems(conn, assume_additive=True) == []
