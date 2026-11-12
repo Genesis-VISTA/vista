@@ -102,6 +102,10 @@ async def run_bash(
         bool,
         "Start the command and return at once; its combined output goes to a log file",
     ] = False,
+    timeout: A[
+        int | None,
+        "Seconds a background command may run before it is stopped (default 3600, at most 86400)",
+    ] = None,
     task_id: A[
         str | None, "Id of the background task (required with background)"
     ] = None,
@@ -118,6 +122,8 @@ async def run_bash(
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
     """
+    # `timeout` is enforced by the caller that waits on the task (VISTA's backend),
+    # which stops it with `signal_task`; the sandbox itself only starts it.
     if background:
         if not task_id:
             raise ValueError("A background command needs a task_id")

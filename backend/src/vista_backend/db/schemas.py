@@ -1221,6 +1221,45 @@ class InboxItemTable(SQLModel, table=True):
     taken_at: str | None = None
 
 
+class BackgroundTaskTable(SQLModel, table=True):
+    """
+    Work a conversation's agent started that outlives its turn (openspec change
+    background-tasks, Decision 4): a sandbox `command`, or a `job_watch` on a
+    cluster job. Kept until the conversation is deleted.
+
+    A command is `running`, then `exited`, `stopped`, `timed_out` or
+    `interrupted`; a watch is `watching` or `paused`, then `ended` or `stopped`.
+    """
+
+    __tablename__: str = "background_task"
+    __table_args__ = (Index("ix_background_task_chat", "chat_session_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    """ Also the sandbox's task id: its `.pid`, `.exit` and log are named after it. """
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    project_id: uuid.UUID
+    label: str
+    """ What the agent and the researcher call it, such as `bg-3`. """
+    kind: str
+    """ `command` or `job_watch`. """
+    state: str
+    command: str | None = None
+    job_id: str | None = None
+    cluster: str | None = None
+    log_path: str | None = None
+    """ The log's path inside the sandbox, under /mnt/data/tasks. """
+    timeout_s: int | None = None
+    exit_status: int | None = None
+    last_job_state: str | None = None
+    started_reported: bool = False
+    paused_reason: str | None = None
+    next_poll_at: str | None = None
+    created_at: str
+    ended_at: str | None = None
+
+
 class InboxItemPublic(BaseModel):
     """An inbox item as the API shows it."""
 

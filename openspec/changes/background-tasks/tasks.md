@@ -29,11 +29,11 @@ Tests marked **(sandbox)** need a real sandbox and stay out of PR CI
 
 ## 4. Background commands in the backend
 
-- [ ] 4.1 Add the `background_task` table and `services/background_tasks.py` with its registry; verify with a new `backend/tests/test_background_tasks.py` (create, state changes, limit of 4 refused with the limit named)
-- [ ] 4.2 Intercept background `run_bash` calls in the agent's `process_tool_call` wrapper (limit, record, id and log path, 24-hour ceiling) and hide `wait_task` / `signal_task` from the agent's tools; verify in `backend/tests/test_project_agent_tools.py`
-- [ ] 4.3 Add the command watcher: hold the pooled agent, loop on `wait_task`, read the log tail, record the end, put the `task_event`, enforce the time limit; verify in `backend/tests/test_background_tasks.py` with a fake dev server (exit 7 reported, timeout recorded as timed out, lost server recorded as interrupted)
-- [ ] 4.4 Add the `list_tasks` and `stop_task` agent tools; verify in `backend/tests/test_project_agent_tools.py` that both answer from records after `invalidate_agents` rebuilds the agent, and that the running command still delivers its result
-- [ ] 4.5 **(sandbox)** End to end with a real sandbox: a background `sleep` started in one turn starts a second turn when it exits; verify with a new `backend/tests/test_background_tasks_live.py`
+- [x] 4.1 Add the `background_task` table and `services/background_tasks.py` with its registry; verify with a new `backend/tests/test_background_tasks.py` (create, state changes, limit of 4 refused with the limit named)
+- [x] 4.2 Intercept background `run_bash` calls in the agent's `process_tool_call` wrapper (limit, record, id and log path, 24-hour ceiling) and hide `wait_task` / `signal_task` from the agent's tools; verify in `backend/tests/test_project_agent_tools.py`
+- [x] 4.3 Add the command watcher: hold the pooled agent, loop on `wait_task`, read the log tail, record the end, put the `task_event`, enforce the time limit; verify in `backend/tests/test_background_tasks.py` with a fake dev server (exit 7 reported, timeout recorded as timed out, lost server recorded as interrupted)
+- [x] 4.4 Add the `list_tasks` and `stop_task` agent tools; verify in `backend/tests/test_project_agent_tools.py` that both answer from records after `invalidate_agents` rebuilds the agent, and that the running command still delivers its result
+- [x] 4.5 **(sandbox)** End to end with a real sandbox: a background `sleep` started in one turn starts a second turn when it exits; verify with a new `backend/tests/test_background_tasks_live.py`
 
 ## 5. Job watches
 

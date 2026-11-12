@@ -21,6 +21,7 @@ from ..config import settings
 from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
+from ..services.background_tasks import background_task_registry
 from ..services.collaboration import (
     CollaborationError,
     CollaborationForbidden,
@@ -149,6 +150,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # End runs while their agents still exist, each saving its partial history.
         # Bounded so it fits inside the launcher's 10 s grace on quit.
         await chat_run_registry.stop_all(reason="interrupted", timeout=5)
+        # Background commands end with their sandboxes; the next start marks
+        # them interrupted. Their watchers hold agents, so they go first.
+        await background_task_registry.shutdown()
         # `project_agent_pool.clear()` runs `_cleanup_project_agent` for every entry,
         # which cancels pending elicitations and drops their tracker entries.
         await project_agent_pool.clear()

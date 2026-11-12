@@ -2,6 +2,7 @@
 Logic to build the actual PydanticAI Agent
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from pydantic_ai import (
 from pydantic_ai.exceptions import ModelHTTPError, ModelRetry
 from pydantic_ai.models import Model
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.mcp import (
     MCPServer,
     MCPServerStdio,
@@ -417,6 +419,35 @@ def get_dev_mcp_server(
     )
 
 
+HIDDEN_SANDBOX_TOOLS = frozenset({"wait_task", "signal_task"})
+""" Dev MCP server tools only VISTA's own background-task watcher calls, never the agent. """
+
+BACKEND_RUN_BASH_ARGS = ("task_id", "log_path")
+""" `run_bash` arguments VISTA fills in for a background run; the model is not shown them. """
+
+
+async def _hide_backend_args(
+    ctx: RunContext[Any], tool_defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    """Drop the arguments VISTA sets itself from `run_bash`'s schema, as the model sees it."""
+    out = []
+    for tool_def in tool_defs:
+        if tool_def.name == "run_bash":
+            schema = dict(tool_def.parameters_json_schema)
+            schema["properties"] = {
+                k: v
+                for k, v in schema.get("properties", {}).items()
+                if k not in BACKEND_RUN_BASH_ARGS
+            }
+            if "required" in schema:
+                schema["required"] = [
+                    r for r in schema["required"] if r not in BACKEND_RUN_BASH_ARGS
+                ]
+            tool_def = dataclasses.replace(tool_def, parameters_json_schema=schema)
+        out.append(tool_def)
+    return out
+
+
 class ProjectAgent:
     def __init__(
         self,
@@ -515,28 +546,31 @@ class ProjectAgent:
             if cb:
                 return await cb(params)
 
+        self._dev_mcp_server = get_dev_mcp_server(
+            volumes=[
+                (str(self.volume_root), "/mnt", "w"),
+                # Read-only over the writable /mnt: the MCP server submits
+                # `<skill>/<job>` from these files, so an agent able to write
+                # here could add a cluster job to a loaded skill with no
+                # import by the researcher.
+                (str(self.skills_volume_dir), "/mnt/skills", "r"),
+            ],
+            elicitation_callback=elicitation_callback,
+            process_tool_call=process_tool_call,
+            log_handler=log_handler,
+        )
         self._mcp_servers: list[MCPServer] = [
             get_vista_mcp_server(
                 elicitation_callback=elicitation_callback,
                 process_tool_call=process_tool_call,
                 log_handler=log_handler,
             ),
-            get_dev_mcp_server(
-                volumes=[
-                    (str(self.volume_root), "/mnt", "w"),
-                    # Read-only over the writable /mnt: the MCP server submits
-                    # `<skill>/<job>` from these files, so an agent able to write
-                    # here could add a cluster job to a loaded skill with no
-                    # import by the researcher.
-                    (str(self.skills_volume_dir), "/mnt/skills", "r"),
-                ],
-                elicitation_callback=elicitation_callback,
-                process_tool_call=process_tool_call,
-                log_handler=log_handler,
-            ),
+            self._dev_mcp_server,
         ]
         toolsets = [
-            s.filtered(lambda ctx, tool: self._tool_allowed(tool.name))
+            s.filtered(lambda ctx, tool: self._tool_allowed(tool.name)).prepared(
+                _hide_backend_args
+            )
             for s in self._mcp_servers
         ]
 
@@ -611,6 +645,43 @@ class ProjectAgent:
             return "\n\n".join([p for p in parts if p])
 
         register_campaign_tools(agent, self._campaign_driver_deps())
+
+        @agent.tool_plain
+        async def list_tasks() -> str:
+            """
+            List this conversation's background tasks (commands started with
+            run_bash(background=true)), each with its id, kind, state, runtime and
+            log. Finished tasks are listed too.
+            """
+            from ..services import background_tasks
+
+            if self.session_id is None:
+                return "No background tasks: this is not a conversation."
+            async with background_tasks.session_factory() as session:
+                records = await background_tasks.list_for_chat(session, self.session_id)
+            if not records:
+                return "No background tasks in this conversation."
+            return "\n".join(background_tasks.describe(r) for r in records)
+
+        @agent.tool_plain
+        async def stop_task(task_id: str) -> str:
+            """
+            Stop one of this conversation's background tasks by its id (such as
+            bg-3). A command is ended with everything it started.
+            """
+            from ..services import background_tasks
+
+            if self.session_id is None:
+                return "No background tasks: this is not a conversation."
+            async with background_tasks.session_factory() as session:
+                record = await background_tasks.find(session, self.session_id, task_id)
+            if record is None:
+                return f"No background task {task_id!r} in this conversation."
+            if record.state in background_tasks.COMMAND_ENDED_STATES:
+                return f"{record.label} has already ended ({record.state})."
+            ended = await background_tasks.background_task_registry.stop(record.id)
+            state = ended.state if ended else "unknown"
+            return f"{record.label} is {state}."
 
         @agent.tool_plain
         async def fetch_repository(url: str, ref: str | None = None) -> str:
@@ -734,6 +805,8 @@ class ProjectAgent:
         least one allow pattern matches and no deny pattern matches. If there are no allow_patterns,
         assume allow "*".
         """
+        if name in HIDDEN_SANDBOX_TOOLS:
+            return False
         patterns = list(self.project.tools)
         if not self.project.knowledge_bases and "!rag_search" not in patterns:
             patterns.append("!rag_search")
@@ -907,12 +980,60 @@ class ProjectAgent:
         ) -> ToolResult:
             # PALISADE no longer mediates here: gate enforcement runs
             # via the Agent's capability hooks (Phase 3.5). This callback
-            # only injects the per-call MCP metadata (credentials + metrics
-            # correlation), built by the shared helper.
+            # injects the per-call MCP metadata (credentials + metrics
+            # correlation), built by the shared helper, and hands a
+            # background `run_bash` to the background-task service.
             metadata = self._build_vista_metadata(name)
+            if name == "run_bash" and tool_args.get("background"):
+                return await self._run_in_background(call_tool, tool_args, metadata)
             return await call_tool(name, tool_args, metadata=metadata)
 
         return process_tool_call
+
+    async def _run_in_background(
+        self,
+        call_tool: CallToolFunc,
+        tool_args: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        """
+        Start a background `run_bash` (openspec change background-tasks, Decision 5):
+        check the limits and record it, start it in the sandbox with the record's id
+        and log path, and set a watcher on it. A refusal is the tool's answer, for
+        the agent to act on.
+        """
+        from ..services import background_tasks
+
+        try:
+            start = await background_tasks.start_command(
+                chat_session_id=self.session_id,
+                project_id=self.project.id,
+                tool_args=tool_args,
+            )
+        except background_tasks.TaskRefused as refused:
+            return f"Refused: {refused}"
+        try:
+            await call_tool("run_bash", start.args, metadata=metadata)
+        except BaseException:
+            await background_tasks.record_end(start.record.id, "interrupted")
+            raise
+        await background_tasks.background_task_registry.watch_command(
+            start.record,
+            call=self.call_sandbox_tool,
+            volume_root=self.volume_root,
+            hold=background_tasks.holding(self),
+        )
+        return background_tasks.started_message(start.record)
+
+    async def call_sandbox_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        """
+        Call one of the dev MCP server's hidden task tools (`wait_task`,
+        `signal_task`) outside any run, for the background-task watcher. Returns
+        the tool's structured result.
+        """
+        if name not in HIDDEN_SANDBOX_TOOLS:
+            raise KeyError(f"{name!r} is not a sandbox task tool")
+        return await self._dev_mcp_server.direct_call_tool(name, arguments)
 
     def _make_mcp_elicitation_callback(
         self, stream_merger: StreamMerger[ProjectAgentStreamEvent]

@@ -308,3 +308,68 @@ async def test_clear_removes_everything():
 
     assert sorted(cleaned) == ["v-a", "v-b"]
     assert pool._items == {}
+
+
+class _Value:
+    """A value told apart by identity, as a pooled agent is."""
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+
+
+@pytest.mark.anyio
+async def test_hold_keeps_a_value_alive_after_its_key_is_rebuilt():
+    """A background command pins the agent that started it, not its key's next one."""
+    cleaned: list[_Value] = []
+
+    async def factory(k: str) -> _Value:
+        return _Value(k)
+
+    async def cleanup(v: _Value) -> None:
+        cleaned.append(v)
+
+    pool = TTLPool[str, _Value](timedelta(seconds=60), 10, factory, cleanup)
+    async with pool.get("chat") as first:
+        held = pool.hold(first)
+        await held.__aenter__()
+    pool.delete("chat")  # a Settings change evicts it
+    async with pool.get("chat") as second:
+        assert second is not first
+    await asyncio.sleep(0)
+    assert cleaned == [], "the held value outlives its eviction"
+
+    await held.__aexit__(None, None, None)
+    await pool.flush()
+    assert cleaned == [first]
+
+
+@pytest.mark.anyio
+async def test_hold_of_a_value_no_entry_has_is_refused():
+    async def factory(k: str) -> _Value:
+        return _Value(k)
+
+    pool = TTLPool[str, _Value](timedelta(seconds=60), 10, factory, _noop_cleanup)
+    with pytest.raises(LookupError):
+        async with pool.hold(_Value("stranger")):
+            pass
+    async with pool.get("chat") as value:
+        pass
+    pool.delete("chat")
+    await pool.flush()
+    with pytest.raises(LookupError):
+        async with pool.hold(value):
+            pass
+
+
+@pytest.mark.anyio
+async def test_a_held_entry_is_not_expired_by_ttl():
+    async def factory(k: str) -> _Value:
+        return _Value(k)
+
+    pool = TTLPool[str, _Value](timedelta(seconds=0), 10, factory, _noop_cleanup)
+    async with pool.get("chat") as value:
+        pass
+    async with pool.hold(value):
+        pool.expire()
+        async with pool.get("chat") as again:
+            assert again is value, "the next turn reuses the agent the command holds"

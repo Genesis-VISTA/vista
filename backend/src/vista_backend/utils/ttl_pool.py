@@ -55,6 +55,8 @@ class TTLPool[Key, Value]:
         self._factory = factory
         self._cleanup = cleanup
         self._items: OrderedDict[Key, TTLPool._Entry[Value]] = OrderedDict()
+        self._retiring: set[TTLPool._Entry[Value]] = set()
+        """ Deleted entries whose cleanup waits for their holders. """
         self._pending_cleanups: set[asyncio.Task] = set()
 
     def expire(self) -> None:
@@ -119,6 +121,34 @@ class TTLPool[Key, Value]:
             if key in self._items:
                 self._items.move_to_end(key)
 
+    @asynccontextmanager
+    async def hold(self, value: Value) -> AsyncIterator[Value]:
+        """
+        Pin the entry holding `value` itself, rather than whatever entry its key
+        maps to now. A deleted entry that has not been cleaned up yet can still be
+        held, which defers its cleanup until released: something started by a
+        value (a sandbox command) can keep that value alive after its key has
+        moved on to a new one. Raises `LookupError` when no live entry holds it.
+        """
+        entry = next(
+            (
+                e
+                for e in [*self._items.values(), *self._retiring]
+                if e.task.done()
+                and not e.task.cancelled()
+                and e.task.exception() is None
+                and e.task.result() is value
+            ),
+            None,
+        )
+        if entry is None:
+            raise LookupError("no live pool entry holds this value")
+        entry.acquire()
+        try:
+            yield value
+        finally:
+            entry.release()
+
     def keys(self) -> Iterable[Key]:
         """Iterator over keys"""
         return self._items.keys()
@@ -133,13 +163,19 @@ class TTLPool[Key, Value]:
         entry = self._items.pop(key, None)
         if entry is None:
             return
+        self._retiring.add(entry)
 
         async def _cleanup() -> None:
             try:
                 value = await entry.task
             except BaseException:
+                self._retiring.discard(entry)
                 return  # factory failed; nothing to clean up
-            await entry.idle_event.wait()  # wait until no in-use holders remain
+            # Wait until no in-use holders remain. Looped: `hold` may take the
+            # entry again between the event being set and this waking up.
+            while entry.ref_count > 0:
+                await entry.idle_event.wait()
+            self._retiring.discard(entry)
             try:
                 await self._cleanup(value)
             except Exception:

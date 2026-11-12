@@ -14,12 +14,14 @@ a scripted `FunctionModel` against an in-process fake toolset.
 from .agent import agent_under_test
 from .api import FakeAgentPool, api_client, parse_sse
 from .fake_mcp import FakeMcp, ToolCallRecord, fake_mcp
+from .fake_sandbox import FakeSandbox
 from .factories import make_local_settings, make_project, seed_project
 from .scripted import always_calls, call, say, scripted_model, step_model
 
 __all__ = [
     "FakeAgentPool",
     "FakeMcp",
+    "FakeSandbox",
     "ToolCallRecord",
     "agent_under_test",
     "always_calls",
