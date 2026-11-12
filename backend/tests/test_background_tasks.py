@@ -274,3 +274,48 @@ def test_runtimes_read_as_a_person_would_say_them():
     assert background_tasks.format_runtime(4) == "4s"
     assert background_tasks.format_runtime(242) == "4m 2s"
     assert background_tasks.format_runtime(3 * 3600 + 120) == "3h 2m"
+
+
+async def test_commands_started_in_one_step_are_counted_one_at_a_time(records, chat):
+    """
+    A model step's tool calls run concurrently. Five starts at once must still
+    give four commands, labelled apart, and one refusal (found trying it: all
+    five ran, every one `bg-1`).
+    """
+    chat_id, project_id = chat
+
+    async def start():
+        return await background_tasks.start_command(
+            chat_session_id=chat_id,
+            project_id=project_id,
+            tool_args={"command": "sleep 300", "background": True},
+        )
+
+    results = await asyncio.gather(*(start() for _ in range(5)), return_exceptions=True)
+
+    started = [r.record.label for r in results if not isinstance(r, Exception)]
+    refused = [r for r in results if isinstance(r, background_tasks.TaskRefused)]
+    assert sorted(started) == ["bg-1", "bg-2", "bg-3", "bg-4"]
+    assert len(refused) == 1
+
+
+async def test_watches_started_in_one_step_are_counted_one_at_a_time(records, chat):
+    chat_id, project_id = chat
+
+    async def watch(n):
+        async with AsyncSession(records) as db:
+            return await background_tasks.create_watch(
+                db,
+                chat_session_id=chat_id,
+                project_id=project_id,
+                job_id=str(n),
+                cluster="odo",
+            )
+
+    results = await asyncio.gather(
+        *(watch(n) for n in range(9)), return_exceptions=True
+    )
+
+    labels = [r.label for r in results if not isinstance(r, Exception)]
+    assert len(labels) == 8 and len(set(labels)) == 8
+    assert sum(isinstance(r, background_tasks.TaskRefused) for r in results) == 1

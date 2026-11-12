@@ -90,6 +90,19 @@ _FAILURE = {
 }
 
 
+_start_locks: dict[uuid.UUID, asyncio.Lock] = {}
+
+
+def _start_lock(chat_session_id: uuid.UUID) -> asyncio.Lock:
+    """
+    One start at a time per conversation. A model step's tool calls run
+    concurrently, and each start counts what is running and numbers its label
+    from what exists: unserialised, five starts at once all see none running
+    and all take `bg-1`.
+    """
+    return _start_locks.setdefault(chat_session_id, asyncio.Lock())
+
+
 def session_factory() -> AsyncSession:
     """The session records are read and written through; tests point it at their own engine."""
     return AsyncSession(get_engine())
@@ -174,6 +187,24 @@ async def create_command(
 ) -> BackgroundTaskTable:
     """Make the record for a background command, or refuse it (`TaskRefused`)."""
     timeout_s = _parse_timeout(timeout)
+    async with _start_lock(chat_session_id):
+        return await _create_command(
+            db,
+            chat_session_id=chat_session_id,
+            project_id=project_id,
+            command=command,
+            timeout_s=timeout_s,
+        )
+
+
+async def _create_command(
+    db: AsyncSession,
+    *,
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID,
+    command: str,
+    timeout_s: int,
+) -> BackgroundTaskTable:
     running = (
         await db.exec(
             select(func.count())
@@ -413,6 +444,24 @@ async def create_watch(
         )
     if not job_id.strip():
         raise TaskRefused("A watch needs the job id submit_hpc_job returned.")
+    async with _start_lock(chat_session_id):
+        return await _create_watch(
+            db,
+            chat_session_id=chat_session_id,
+            project_id=project_id,
+            job_id=job_id,
+            cluster=cluster,
+        )
+
+
+async def _create_watch(
+    db: AsyncSession,
+    *,
+    chat_session_id: uuid.UUID,
+    project_id: uuid.UUID,
+    job_id: str,
+    cluster: str,
+) -> BackgroundTaskTable:
     active = (
         await db.exec(
             select(func.count())
