@@ -103,6 +103,104 @@ async def test_the_address_is_saved_and_cleared(session):
 
 
 # ---------------------------------------------------------------------------
+# The Collaboration switch
+# ---------------------------------------------------------------------------
+
+
+def _no_requests(monkeypatch) -> list[httpx.Request]:
+    """A transport that records and fails every request: while off, there must be none."""
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise AssertionError(f"{request.method} {request.url} reached the server")
+
+    _fake(monkeypatch, handler)
+    return sent
+
+
+async def _switch(session, on: bool | None):
+    await local_settings.update(
+        session, LocalSettingsUpdate.model_validate({"collaboration_enabled": on})
+    )
+    return await local_settings.get_public(session)
+
+
+async def test_never_chosen_is_on(local):
+    assert local.collaboration_enabled is True
+
+
+async def test_the_switch_round_trips_through_the_settings_route(session):
+    with api_client(session) as (client, _):
+        assert (await client.get("/settings")).json()["collaboration_enabled"] is True
+        off = await client.put("/settings", json={"collaboration_enabled": False})
+        assert off.json()["collaboration_enabled"] is False
+        assert (await client.get("/settings")).json()["collaboration_enabled"] is False
+        # A save of anything else leaves it alone.
+        await client.put("/settings", json={"display_name": "Ada"})
+        assert (await client.get("/settings")).json()["collaboration_enabled"] is False
+        on = await client.put("/settings", json={"collaboration_enabled": True})
+        assert on.json()["collaboration_enabled"] is True
+
+
+async def test_off_contacts_no_server(monkeypatch, session):
+    sent = _no_requests(monkeypatch)
+    await _set_url(session, URL)
+    local = await _switch(session, False)
+    status = await collaboration.status(local)
+    assert sent == []
+    assert not status.enabled and not status.reachable and not status.shown
+    assert status.reason == collaboration.OFF_REASON
+    assert status.reason == (
+        "Collaboration is off. Turn it on under Settings → Collaboration."
+    )
+    with pytest.raises(CollaborationUnavailable, match="Collaboration is off"):
+        collaboration.client_for(local)
+    with pytest.raises(CollaborationUnavailable, match="Collaboration is off"):
+        collaboration.required_url(local)
+
+
+async def test_off_refuses_every_route_that_would_contact_the_server(
+    monkeypatch, session, tmp_path
+):
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    sent = _no_requests(monkeypatch)
+    await _set_url(session, URL)
+    await _switch(session, False)
+    item = uuid.uuid4()
+    skill = {"name": "salt-density", "description": "A skill.", "body": "Body."}
+    with api_client(session) as (client, _):
+        assert (await client.post("/skills", json=skill)).status_code == 201
+        responses = [
+            await client.post("/skills/salt-density/publish", json={}),
+            await client.get("/collaboration/skills"),
+            await client.get("/collaboration/projects"),
+            await client.get("/collaboration/knowledge-bases"),
+            await client.post(f"/collaboration/skills/{item}/import", json={}),
+            await client.post(f"/collaboration/projects/{item}/import", json={}),
+            await client.post(f"/collaboration/knowledge-bases/{item}/import", json={}),
+            await client.post("/collaboration/teams", json={"name": "Salts"}),
+            await client.get("/collaboration/users"),
+        ]
+        status = (await client.get("/collaboration/status")).json()
+    assert sent == []
+    for res in responses:
+        assert res.status_code == 503, (res.request.url, res.text)
+        assert res.json() == {
+            "detail": collaboration.OFF_REASON,
+            "code": "collaboration_unavailable",
+        }
+    assert status["enabled"] is False and status["shown"] is False
+
+
+async def test_turning_it_back_on_contacts_the_server_again(collab_server, session):
+    await _set_url(session, URL)
+    await _switch(session, False)
+    status = await collaboration.status(await _switch(session, True))
+    assert status.enabled and status.reachable and status.shown
+
+
+# ---------------------------------------------------------------------------
 # Status: never fatal, always with a reason
 # ---------------------------------------------------------------------------
 
@@ -133,6 +231,8 @@ async def test_a_server_that_needs_no_token_offers_no_sign_in(collab_server, ses
     )
     assert status.signed_in
     assert status.sign_in_url is None
+    # Signed in with no token saved: shown all the same.
+    assert status.shown
 
 
 async def test_the_status_route_without_a_server(session):
@@ -140,6 +240,7 @@ async def test_the_status_route_without_a_server(session):
         res = await client.get("/collaboration/status")
     assert res.status_code == 200
     assert res.json() == {
+        "enabled": True,
         "configured": False,
         "reachable": False,
         "reason": collaboration.NOT_CONFIGURED,
@@ -148,10 +249,12 @@ async def test_the_status_route_without_a_server(session):
         "server_version": None,
         "signed_in": False,
         "sign_in_required": False,
+        "refused": False,
+        "shown": False,
+        "default_server": False,
         "sign_in_url": None,
         "user": None,
         "teams": [],
-        "team_id": None,
     }
 
 
@@ -228,6 +331,15 @@ def test_a_malformed_configured_address_stops_startup(monkeypatch, given):
     monkeypatch.setenv("VISTA_BACKEND_COLLABORATION_SERVER_URL", given)
     with pytest.raises(ValidationError, match="server's address"):
         Settings.model_validate({})
+
+
+def test_a_fresh_configuration_names_the_default_server(monkeypatch):
+    from vista_backend.config import DEFAULT_COLLABORATION_SERVER_URL, Settings
+
+    monkeypatch.delenv("VISTA_BACKEND_COLLABORATION_SERVER_URL", raising=False)
+    fresh = Settings(_env_file=None)
+    assert fresh.collaboration_server_url == DEFAULT_COLLABORATION_SERVER_URL
+    assert DEFAULT_COLLABORATION_SERVER_URL == "https://obsidian.ccs.ornl.gov/vista/api"
 
 
 @pytest.mark.parametrize("blank", ["", "   "])

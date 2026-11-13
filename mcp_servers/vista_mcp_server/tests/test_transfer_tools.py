@@ -108,10 +108,44 @@ async def test_the_three_tools_are_on_the_server():
 
 
 @pytest.mark.parametrize("tool", sorted(TOOLS))
-async def test_only_odo_and_frontier_are_offered(tool):
+async def test_the_globus_clusters_are_offered_and_perlmutter_is_not(tool):
     [spec] = [s for s in await t.mcp.list_tools() if s.name == tool]
-    assert spec.parameters["properties"]["cluster"]["enum"] == ["odo", "frontier"]
+    assert spec.parameters["properties"]["cluster"]["enum"] == [
+        "odo",
+        "frontier",
+        "lux",
+    ]
     assert "cluster" in spec.parameters["required"]
+
+
+LUX_CFG = UserConfig(
+    frontier_globus_token="t", frontier_globus_https_token="h", lux_remote_dir="/r"
+)
+
+
+async def test_lux_lists_through_frontiers_collection(globus):
+    globus.ls_entries["/data"] = [
+        {"name": "a.nc", "type": "file", "size": 10, "path": "/data/a.nc"}
+    ]
+    text = await t._list_files(LUX_CFG, "lux", "/data", False)
+    assert "/data/a.nc" in text and "on Lux" in text
+    assert globus.ls_calls == [("frontier-c", "/data")]
+
+
+async def test_lux_uploads_through_frontiers_collection(globus, project, approver):
+    (Path(project.uploads_dir) / "salt.xyz").write_text("Li 0 0 0", encoding="utf-8")
+    await t._upload_files(
+        LUX_CFG, project, "lux", ["/mnt/data/uploads/salt.xyz"], "inputs", approver
+    )
+    assert globus.files["/r.jdoe.jobs/transfers/inputs/salt.xyz"] == b"Li 0 0 0"
+    assert globus.mkdir_p_calls == [
+        ("frontier-c", "/r.jdoe.jobs/transfers/inputs", "/")
+    ]
+
+
+async def test_lux_without_frontiers_globus_names_lux(globus):
+    with pytest.raises(ToolError, match="not connected for Lux"):
+        await t._list_files(UserConfig(lux_remote_dir="/r"), "lux", "/data", False)
 
 
 @pytest.mark.parametrize("tool", sorted(TOOLS))

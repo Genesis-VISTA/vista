@@ -61,7 +61,8 @@ export type SharingCode =
   | "collaboration_sign_in_required"
   | "collaboration_forbidden"
   | "collaboration_refused"
-  | "collaboration_error";
+  | "collaboration_error"
+  | "not_in_team";
 
 export type SharingRefusal = {
   ok: false;
@@ -92,9 +93,14 @@ export async function refusal(res: Response): Promise<SharingRefusal> {
     // not JSON; fall back to the status
   }
   const detail = body.detail ?? body.error;
-  // The token expired or was refused since the last check: every Publish and
-  // Import control follows, rather than each failing the same way in turn.
-  if (body.code === "collaboration_sign_in_required" || body.code === "collaboration_forbidden")
+  // The token expired or was refused, or the researcher left the team, since
+  // the last check: every Publish and Import control follows (a team left
+  // turns Publish into Publish…), rather than each failing the same way in turn.
+  if (
+    body.code === "collaboration_sign_in_required" ||
+    body.code === "collaboration_forbidden" ||
+    body.code === "not_in_team"
+  )
     void refreshCollaborationStatus();
   return {
     ok: false,

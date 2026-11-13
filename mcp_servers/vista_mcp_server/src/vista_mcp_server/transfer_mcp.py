@@ -1,5 +1,5 @@
 """
-MCP for moving files to and from Odo and Frontier outside a job.
+MCP for moving files to and from Odo, Frontier and Lux outside a job.
 
 Three tools on the same Globus client the job tools use (`lib/globus.py`), each
 acting as the researcher's own Globus identity, so the facility decides what
@@ -19,8 +19,8 @@ fenced to `transfers/` as a second guard: an approval is only as careful as the
 researcher reading it, and the fence limits what an approved upload can replace
 to files in a folder meant for this. It sits in the sources folder their
 identity already owns, so a job can read what lands there.
-Perlmutter and Lux are not offered: Perlmutter's IRI download is text-only and
-Lux moves files over SFTP.
+Lux is offered through Frontier's collection, which it mounts. Perlmutter is not
+offered: its files go through IRI filesystem tasks, not Globus.
 """
 from __future__ import annotations
 import logging, os
@@ -44,7 +44,7 @@ from .submit_job_mcp import (
 
 mcp = FastMCP("Transfer")
 
-TransferCluster = Literal["odo", "frontier"]
+TransferCluster = Literal["odo", "frontier", "lux"]
 
 TRANSFERS = "transfers"
 """ The folder name for transfers: in the project's output folder, and in the sources folder on the cluster. """
@@ -122,7 +122,7 @@ async def hpc_list_files(
     processed by a job there.
 
     Args:
-        cluster: "odo" or "frontier".
+        cluster: "odo", "frontier" or "lux" (Lux files are reached through Frontier's).
         path: Absolute path of the folder on the cluster.
         recursive: Also list everything below it. Stops after 200 folders.
             Hidden folders (names starting with ".") and __pycache__ are listed
@@ -175,7 +175,7 @@ async def hpc_download_files(
     for a job to process. For a job's own outputs, use get_hpc_job_outputs.
 
     Args:
-        cluster: "odo" or "frontier".
+        cluster: "odo", "frontier" or "lux" (Lux files are reached through Frontier's).
         remote_paths: Absolute paths of the files on the cluster.
 
     Returns:
@@ -359,7 +359,7 @@ async def hpc_upload_files(
     Pass the reported remote paths to the job that should read them.
 
     Args:
-        cluster: "odo" or "frontier".
+        cluster: "odo", "frontier" or "lux" (Lux files are reached through Frontier's).
         local_paths: Sandbox paths of the files to upload.
         remote_dir: Subfolder of the transfers folder to put them in, such as
             "inputs". Relative, without "..". Empty for the transfers folder itself.

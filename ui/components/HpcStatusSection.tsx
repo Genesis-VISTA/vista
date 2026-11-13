@@ -48,7 +48,7 @@ const SUBTITLES: Record<HpcCluster, string> = {
   frontier: "OLCF · moderate enclave · jobs via AmSC IRI",
   odo: "OLCF · open enclave · jobs via AmSC IRI",
   perlmutter: "NERSC · jobs via NERSC IRI",
-  lux: "OLCF · Slurm over SSH",
+  lux: "OLCF · moderate enclave · jobs via AmSC IRI",
 };
 
 const SHORT: Record<HpcCluster, string> = { frontier: "Fr", odo: "Od", perlmutter: "Pm", lux: "Lx" };
@@ -84,14 +84,7 @@ function clock(iso: string): string {
 
 type Row = { ok: boolean | null; title: string; detail: string };
 
-function facilityRow(cluster: HpcCluster, check: HpcCheck): Row {
-  // Lux is in no facility status feed; its check is whether its login node's SSH
-  // server answers, and a failure there is never a reported outage.
-  if (cluster === "lux") {
-    return check.ok
-      ? { ok: true, title: "Lux is reachable", detail: check.message }
-      : { ok: null, title: "Couldn't reach Lux", detail: check.message };
-  }
+function facilityRow(check: HpcCheck): Row {
   if (check.ok) return { ok: true, title: "Facility is up", detail: check.message };
   if (check.reason === "degraded") {
     const incident = check.incident;
@@ -108,11 +101,6 @@ function facilityRow(cluster: HpcCluster, check: HpcCheck): Row {
 }
 
 function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
-  if (cluster === "lux") {
-    // Nothing is stored to check: the row says how sign-in works.
-    const parts = [check.project ? `Project ${check.project}` : null, check.message].filter(Boolean);
-    return { ok: check.ok, title: "Sign in from a chat", detail: parts.join(" · ") };
-  }
   const kind = cluster === "perlmutter" ? "NERSC IRI token" : "S3M token";
   if (check.ok) {
     // Only S3M carries an expiry; nothing is said about any other credential's.
@@ -140,7 +128,7 @@ function credentialRow(cluster: HpcCluster, check: HpcCheck, now: number): Row {
 
 function settingsRow(cluster: HpcCluster, check: HpcCheck): Row {
   if (check.ok) {
-    // Lux's account is already on the sign-in row; Perlmutter's is shown here.
+    // The OLCF clusters' project is on the token row; Perlmutter's account is shown here.
     const parts = [
       check.message,
       cluster === "perlmutter" && check.project ? `Account ${check.project}` : null,
@@ -167,13 +155,25 @@ export function failureSummary(status: HpcClusterStatus | null): string | null {
   return failed.length ? failed.map((c) => c.message).join(" ") : null;
 }
 
-function globusRow(check: HpcCheck): Row {
+function globusRow(cluster: HpcCluster, check: HpcCheck): Row {
+  // Frontier and Lux share the Orion filesystem, and one Globus connection to it.
+  const shared = cluster === "frontier" || cluster === "lux";
   if (check.ok) {
-    return { ok: true, title: "Globus file transfer connected", detail: "Your own identity" };
+    return {
+      ok: true,
+      title: "Globus file transfer connected",
+      detail: shared ? "Orion connection, shared by Frontier and Lux · your own identity" : "Your own identity",
+    };
   }
   switch (check.reason) {
     case "not_connected":
-      return { ok: false, title: "Globus not connected", detail: "Outputs can't be fetched until you connect it." };
+      return {
+        ok: false,
+        title: "Globus not connected",
+        detail: shared
+          ? "Frontier and Lux share the Orion Globus connection. Outputs can't be fetched until you connect it."
+          : "Outputs can't be fetched until you connect it.",
+      };
     case "session_expired":
       return { ok: false, title: "Globus session expired", detail: check.message };
     default:
@@ -435,10 +435,10 @@ function HpcDetails({
   const title = HPC_CLUSTER_TITLES[cluster];
   const rows: Row[] = status
     ? [
-        facilityRow(cluster, status.checks.facility),
+        facilityRow(status.checks.facility),
         credentialRow(cluster, status.checks.credential, now),
         settingsRow(cluster, status.checks.settings),
-        ...(status.checks.globus ? [globusRow(status.checks.globus)] : []),
+        ...(status.checks.globus ? [globusRow(cluster, status.checks.globus)] : []),
       ]
     : [];
   const checked =

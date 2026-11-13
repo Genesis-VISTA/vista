@@ -3,36 +3,42 @@
 How VISTA submits jobs to remote clusters, what each researcher connects, and where a job's
 files go. To add or change the jobs the agent can submit, see [hpc-jobs.md](hpc-jobs.md).
 
-The agent submits only predefined jobs from `hpc_jobs/`, to four clusters. On Odo and Frontier
-it can also move files outside a job (see [Moving files outside a job](#moving-files-outside-a-job)).
+The agent submits only predefined jobs from `hpc_jobs/`, to four clusters, all through an IRI
+service and one client (`lib/iri.py`): S3M's IRI v2 for the OLCF clusters, NERSC's IRI v1 for
+Perlmutter. On Odo, Frontier and Lux it can also move files outside a job (see [Moving files outside a job](#moving-files-outside-a-job)).
 
 | Cluster | Compute | Files | Runs as |
 |---|---|---|---|
-| Odo (OLCF, open enclave) | AmSC IRI API, authorized by an S3M token | Globus | the project's IRI automation user |
-| Frontier (OLCF, moderate enclave) | AmSC IRI API, authorized by an S3M token | Globus | the project's IRI automation user |
-| Perlmutter (NERSC) | NERSC IRI API (`amscrot-py`) | NERSC IRI filesystem API | the researcher |
-| Lux (OLCF) | `sbatch` over SSH, since Lux has no IRI service | SFTP on the same connection | the researcher |
+| Odo (OLCF, open enclave) | S3M IRI API (v2), authorized by an S3M token | Globus | the project's IRI automation user |
+| Frontier (OLCF, moderate enclave) | S3M IRI API (v2), authorized by an S3M token | Globus | the project's IRI automation user |
+| Lux (OLCF, moderate enclave) | S3M IRI API (v2), authorized by a Lux S3M token | Globus, through Frontier's collection (both mount Orion) | the project's IRI automation user |
+| Perlmutter (NERSC) | NERSC IRI API (v1), authorized by a NERSC IRI token | NERSC IRI filesystem API | the researcher |
+
+Each cluster is named by a configured IRI URL, API version and resource id
+(`VISTA_MCP_<CLUSTER>_IRI_URL`, `_IRI_API_VERSION`, `_IRI_RESOURCE_ID`; Perlmutter also
+`VISTA_MCP_PERLMUTTER_IRI_STORAGE_ID`). Nothing is discovered from a resource listing: the
+moderate enclave lists Lux and Frontier side by side, and picking from it once sent Frontier jobs
+to Lux.
 
 ## Credentials
 
 Per-user HPC credentials are **not** env vars: each researcher connects them in the UI, in each
 cluster's section of Settings, and nothing is exported before VISTA starts.
 
-- **S3M (Odo, Frontier).** An S3M token is scoped to one OLCF project, and that project is the
-  Slurm account the cluster's jobs are charged to. A token from any project with S3M access
-  works, and Odo and Frontier each need their own; mint them per the
+- **S3M (Odo, Frontier, Lux).** An S3M token is scoped to one OLCF project, and that project is
+  the Slurm account the cluster's jobs are charged to. A token from any project with S3M access
+  works, and each cluster needs its own (a Frontier token is refused on Lux); mint them per the
   [S3M docs](https://docs.olcf.ornl.gov/services_and_applications/s3m/overview.html#get-a-token).
   They expire in 24 hours.
 - **NERSC IRI (Perlmutter).** A NERSC IRI token.
-- **Globus (Odo, Frontier).** A one-time authorization per cluster. Every Odo and Frontier file
+- **Globus (Odo, Frontier, Lux).** A one-time authorization per cluster. Every OLCF file
   operation acts as that researcher's own identity, so the facility decides what they may read
   and write; there is no deployment-wide Globus login to fall back on. A researcher's own Odo or
-  Frontier connection wins, falling back to one they connected for both.
-- **Lux.** No token: the researcher logs in through the OLCF hub with their own passcodes, once
-  per chat session. Each researcher also sets a **Lux account**, the OLCF project Lux jobs are
-  charged to (`#SBATCH -A`), since there is no token to take a project from.
+  Frontier connection wins, falling back to one they connected for both. Lux has no collection
+  of its own: it mounts Frontier's filesystem, so it uses Frontier's collection and connection,
+  and connecting from either section of Settings connects both.
 
-Absent Globus is never fatal; it costs only Odo and Frontier's file operations.
+Absent Globus is never fatal; it costs only the OLCF clusters' file operations.
 
 ### Globus
 
@@ -49,7 +55,9 @@ directory. The implementation notes are in
 
 #### When the Globus card isn't Ready
 
-The Odo and Frontier cards list Globus as a row in each cluster's details. When the S3M token is
+The Odo, Frontier and Lux cards list Globus as a row in each cluster's details. Frontier and
+Lux share the Orion filesystem, so Settings shows one Globus connection, labelled Orion, in both
+sections, and connecting it in either connects both. When the S3M token is
 also rejected, the card's own word reads "Token rejected", which outranks the Globus states; the
 Globus row still shows in the details. Three states mean Globus needs attention:
 
@@ -66,7 +74,7 @@ Globus row still shows in the details. Three states mean Globus needs attention:
     listing the card makes). The card names the login Globus asks for, and leaves out
     `clients.auth.globus.org`, Globus's own app domain, which is never a login you use. Globus
     supplies the domain, but it is fixed per facility: `opensso.ccs.ornl.gov` for Odo and
-    `sso.ccs.ornl.gov` for Frontier. Log in with the named domain. Without one, the message ends
+    `sso.ccs.ornl.gov` for Frontier and Lux. Log in with the named domain. Without one, the message ends
     after "has expired."
   - A saved connection no longer accepted reads "Globus no longer accepts the saved Odo
     connection. Connect Globus again." Globus refused to exchange the saved refresh token
@@ -108,16 +116,15 @@ it, and never creates the directory itself:
 <remote dir>.out/<job>/              state a job's runs share, exported as $VISTA_JOB_DIR
 ```
 
-`<user>` is your account on that cluster: Globus reports it on Odo and Frontier, and Lux takes it
-from your SSH login. On Perlmutter the same folders live inside the remote directory instead, as
+`<user>` is your account on that cluster, as Globus reports it. On Perlmutter the same folders live inside the remote directory instead, as
 `<remote dir>/jobs/...` and `<remote dir>/out/...`, because Perlmutter jobs run as you and VISTA
 manages the files through NERSC's IRI filesystem API. Every cluster's paths follow from the
 remote directory and the job id alone, so VISTA finds a job's files again from its id, after a
 restart or from another install sharing the directory.
 
 Why OLCF splits them: each folder is created by the only identity that writes to it. VISTA
-uploads your sources through your Globus identity (SFTP on Lux), so `.<user>.jobs` belongs to you,
-one per researcher. Odo and Frontier jobs run as the project's IRI automation user, and Slurm
+uploads your sources through your Globus identity, so `.<user>.jobs` belongs to you, one per
+researcher. OLCF jobs run as the project's IRI automation user, and Slurm
 creates `.out` for their logs as that user. So the folder holding the remote directory must be
 writable by the project's group. OLCF's `proj-shared` already is, so a new remote directory directly
 under it needs no setup. Anywhere else, create the output folder once with
@@ -126,11 +133,12 @@ needed. Every job then keeps `.out` writable by the project's group (`umask 002`
 `chmod 2775` when it owns the folder), so colleagues who set the same remote directory, and your
 Lux and Frontier jobs if you give both the same one, can all write there. This is a temporary
 workaround: S3M tokens cannot use the IRI filesystem API yet, which would let VISTA create one
-folder as the automation user.
+folder as the automation user. A `.out` folder that Lux jobs created as you, when they were
+submitted over SSH, needs `chmod 2775` by you once.
 
 ## Moving files outside a job
 
-On Odo and Frontier the agent has three tools for files that no job of yours produced, or that
+On Odo, Frontier and Lux the agent has three tools for files that no job of yours produced, or that
 a job should read. They need only your Globus connection for that cluster, not an S3M token,
 and they act as your own Globus identity, so the facility decides what you may read and write.
 
@@ -165,8 +173,8 @@ call with no chat, cannot transfer.
 If Globus cannot be reached for a download (the session expired, or it is not connected) and
 every requested file is already held, you get the local copies with a warning that the cluster
 could not be checked for newer versions. Otherwise the call fails, and an expired session is
-reported as expired by these tools, never as a missing file or an empty folder. Perlmutter and
-Lux are not offered: Perlmutter's IRI download is text-only, and Lux moves files over SFTP.
+reported as expired by these tools, never as a missing file or an empty folder. Perlmutter is
+not offered: its IRI download is text-only.
 
 ## Operational behaviour
 

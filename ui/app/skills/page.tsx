@@ -18,10 +18,12 @@ import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import { SkillImportModal } from "@/components/SkillImportModal";
 import { PublishConfirmModal } from "@/components/PublishConfirmModal";
-import { CopyToTeamModal, copyTargets } from "@/components/CopyToTeamModal";
+import { PublishToTeamModal } from "@/components/PublishToTeamModal";
 import { PublishConflictModal, type Conflict } from "@/components/PublishConflictModal";
 import { HpcJobsBadge } from "@/components/HpcJobsBadge";
-import { TeamBadge } from "@/components/TeamSwitcher";
+import { TeamBadge } from "@/components/TeamBadge";
+import { ExampleTag } from "@/components/ExampleTag";
+import { EXAMPLE_LOCAL_SKILLS, isExample, useTourExamples, type ExampleLocalSkill } from "@/lib/onboarding-examples";
 import { useTour } from "@/components/TourProvider";
 import { TOUR_SKILL } from "@/lib/default-project";
 import type { SkillDetail, SkillSummary } from "@/lib/types";
@@ -33,9 +35,12 @@ export default function SkillsPage() {
   const teams = useTeams();
   const serverUrl = collab.status?.reachable ? collab.status.url : null;
   const [skills, setSkills] = useState<SkillSummary[]>([]);
+  /** The list has answered once (or failed to), so the page has its real length. */
+  const [listed, setListed] = useState(false);
   const [filter, setFilter] = useState("");
   const [selected, setSelected] = useState<SkillDetail | null>(null);
   const tour = useTour();
+  const examples = useTourExamples();
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
   const [pendingPublish, setPendingPublish] = useState<SkillSummary | null>(null);
@@ -46,13 +51,15 @@ export default function SkillsPage() {
   /** The server's newest version of each item, by id, for "version N available". */
   const [heads, setHeads] = useState<Record<string, number>>({});
 
-  const [copying, setCopying] = useState<SkillSummary | null>(null);
+  /** A private skill being published for the first time, into a team picked for it. */
+  const [publishingToTeam, setPublishingToTeam] = useState<SkillSummary | null>(null);
 
   const loadSkills = useCallback(() => {
     fetch("/api/skills")
       .then((res) => res.json())
       .then((data) => setSkills(Array.isArray(data) ? data : []))
-      .catch(() => setSkills([]));
+      .catch(() => setSkills([]))
+      .finally(() => setListed(true));
   }, []);
 
   useEffect(() => {
@@ -187,34 +194,79 @@ export default function SkillsPage() {
     () => skills.filter((s) => loadedSlugs.has(s.slug) && matches(s)),
     [skills, loadedSlugs, matches]
   );
-  // The loaded ones are the project's, whatever team is selected; the others
-  // are the selected team's alone (Private's: those on this computer only).
-  const otherSkills = useMemo(
-    () => skills.filter((s) => !loadedSlugs.has(s.slug) && teams.show(s.teamId) && matches(s)),
-    [skills, loadedSlugs, matches, teams]
+  // Every skill here, whatever its team; each card says which.
+  const realOtherSkills = useMemo(
+    () => skills.filter((s) => !loadedSlugs.has(s.slug) && matches(s)),
+    [skills, loadedSlugs, matches]
   );
+  // During the tour's collaboration step its example skills join them, unless
+  // a real skill has the name. They exist only here. They come first, and only
+  // once the list has answered: the tour points at one, and a card drawn before
+  // the real skills arrive would be pushed out from under its coachmark.
+  const otherSkills = useMemo<SkillSummary[]>(() => {
+    if (!examples || !listed) return realOtherSkills;
+    const extra = EXAMPLE_LOCAL_SKILLS.filter((e) => !skills.some((s) => s.slug === e.slug) && matches(e));
+    return [...extra, ...realOtherSkills];
+  }, [examples, listed, realOtherSkills, skills, matches]);
 
   // The cards the tour points at: the tour's skill (loaded first, else among the
   // others), else the first skill; and the first Load button.
   const tourSkill =
     loadedSkills.find((s) => s.slug === TOUR_SKILL) ??
-    otherSkills.find((s) => s.slug === TOUR_SKILL) ??
+    realOtherSkills.find((s) => s.slug === TOUR_SKILL) ??
     loadedSkills[0] ??
-    otherSkills[0];
+    realOtherSkills[0];
   const tourOpenSlug = tourSkill?.slug;
-  const tourLoadSlug = otherSkills[0]?.slug;
+  const tourLoadSlug = realOtherSkills[0]?.slug;
+
+  /**
+   * One of the tour's examples: its team and sharing line, and the one publish
+   * button its kind has, which does nothing. No Load, Delete or details, so
+   * nothing about it reaches the backend.
+   */
+  function exampleCard(skill: ExampleLocalSkill) {
+    return (
+      <div
+        key={skill.slug}
+        className="skill-item"
+        data-tour={skill.teamName === null ? "collaboration:share" : undefined}
+      >
+        <div className="skill-name">
+          {skill.name}
+          <TeamBadge teamId={skill.teamId} exampleName={skill.teamName} />
+          <ExampleTag />
+        </div>
+        <div className="skill-desc">{skill.description}</div>
+        <div className="skill-meta">
+          <span className="skill-sharing">{skill.sharing}</span>
+        </div>
+        <div className="skill-actions">
+          <button
+            type="button"
+            className="button button-sm"
+            title="An example for the tour: it does nothing"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {skill.teamName ? "Publish changes" : "Publish…"}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   function card(skill: SkillSummary, loaded: boolean) {
+    if (isExample(skill)) return exampleCard(skill as ExampleLocalSkill);
     const busy = busySlug === skill.slug;
     const onServer = isOnServer(skill, serverUrl);
     const head = skill.remoteId ? heads[skill.remoteId] : undefined;
-    const behind = onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
-    // A private skill is shared by copying it to a team; one in a team
-    // publishes new versions to it.
-    // A bundled one too, once copied: it is then its team's copy of it.
-    const canPublish = Boolean(skill.teamId) && (!onServer || skill.modified);
-    const canCopy = teams.shown && copyTargets(teams.teams, skill.teamId).length > 0;
-    // A project loads only skills of exactly its own team.
+    // Every collaboration control is hidden while collaboration is quiet or off.
+    const behind =
+      collab.shown && onServer && head !== undefined && head > (skill.remoteVersion ?? 0);
+    // A private one (or one of a team left since) is first published into a
+    // team picked for it; one in a team publishes its new versions there.
+    const team = teams.teamOf(skill.teamId);
+    const canPublish = collab.shown && (team ? !onServer || skill.modified : teams.shown);
+    // A team's project loads only skills of exactly its own team; a private one, any.
     const usable = usableInProject(skill.teamId, activeProject?.teamId);
     return (
       <div
@@ -239,10 +291,10 @@ export default function SkillsPage() {
         </div>
         <div className="skill-desc">{skill.description || "No description"}</div>
         <div className="skill-meta">
-          <span className="skill-sharing">{sharingLabel(skill, serverUrl, head)}</span>
+          {collab.shown && <span className="skill-sharing">{sharingLabel(skill, serverUrl, head)}</span>}
           {skill.repoUrl && (
             <>
-              <span className="skill-meta-sep">·</span>
+              {collab.shown && <span className="skill-meta-sep">·</span>}
               <a
                 href={skill.repoUrl}
                 target="_blank"
@@ -263,30 +315,19 @@ export default function SkillsPage() {
               disabled={busy || !collab.available}
               onClick={(e) => {
                 e.stopPropagation();
-                if (onServer) void publish(skill);
+                if (!team) setPublishingToTeam(skill);
+                else if (onServer) void publish(skill);
                 else setPendingPublish(skill);
               }}
               title={
-                collab.available
-                  ? "Publish this skill to its team"
-                  : (collab.reason ?? undefined)
+                !collab.available
+                  ? (collab.reason ?? undefined)
+                  : team
+                    ? `Publish this skill to ${teams.teamName(team) ?? "its team"}`
+                    : "Choose a team to publish this skill to"
               }
             >
-              {onServer ? "Publish changes" : "Publish"}
-            </button>
-          )}
-          {canCopy && (
-            <button
-              type="button"
-              className="button ghost button-sm"
-              disabled={busy}
-              onClick={(e) => {
-                e.stopPropagation();
-                setCopying(skill);
-              }}
-              title="Copy this skill to a team"
-            >
-              Copy to team…
+              {!team ? "Publish…" : onServer ? "Publish changes" : "Publish"}
             </button>
           )}
           {behind && (
@@ -325,7 +366,7 @@ export default function SkillsPage() {
                 title={
                   usable
                     ? undefined
-                    : "This skill is in another team: a project uses only its own team's skills."
+                    : `Not in ${activeProject?.name ?? "the project"}'s team: a team's project uses only its own team's skills.`
                 }
                 data-tour={skill.slug === tourLoadSlug ? "skills:load" : undefined}
                 onClick={(e) => {
@@ -526,13 +567,12 @@ export default function SkillsPage() {
         />
       )}
 
-      {copying && (
-        <CopyToTeamModal
+      {publishingToTeam && (
+        <PublishToTeamModal
           kind="skill"
-          name={copying.slug}
-          teamId={copying.teamId}
-          onClose={() => setCopying(null)}
-          onCopied={() => {
+          name={publishingToTeam.slug}
+          onClose={() => setPublishingToTeam(null)}
+          onChanged={() => {
             loadSkills();
             refreshHeads();
             void refreshProjects();

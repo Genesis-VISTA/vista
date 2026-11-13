@@ -15,10 +15,6 @@
 #   VISTA_VERSION           the release version; the build's own fallback when unset
 #   VERIFY_WITHOUT_SANDBOX  1 to pass --verify-without-sandbox, for a host that
 #                           cannot run the sandbox (hosted macOS)
-#   AMSC_GIT_TOKEN          a gitlab.com token that can read amscrot-py. Applied
-#                           through a temporary global git config for this build
-#                           only, so a maintainer's own git credentials are used
-#                           when it is unset
 #
 # Writes `archive=` and `sha256=` to $GITHUB_OUTPUT when that is set.
 
@@ -61,17 +57,6 @@ import microsandbox
 msb = pathlib.Path(microsandbox.__file__).parent / "_bundled" / "bin" / "msb.exe"
 sys.exit(subprocess.run([str(msb), "doctor"]).returncode)
 ' || echo "msb doctor did not report ready (exit $?); the smoke test will say whether that matters"
-fi
-
-# The token reaches git through a config file of its own, never the command
-# line or the log, and only for this build.
-if [[ -n "${AMSC_GIT_TOKEN:-}" ]]; then
-  git_config="$(mktemp)"
-  trap 'rm -f "$git_config"' EXIT
-  git config --file "$git_config" \
-    "url.https://oauth2:${AMSC_GIT_TOKEN}@gitlab.com/amsc2/.insteadOf" \
-    "https://gitlab.com/amsc2/"
-  export GIT_CONFIG_GLOBAL="$git_config"
 fi
 
 args=(

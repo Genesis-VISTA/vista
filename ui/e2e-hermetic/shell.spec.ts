@@ -289,16 +289,17 @@ test.describe("HPC availability cards", () => {
     await expect(rail.getByRole("button", { name: "Frontier: Ready" })).toBeVisible();
   });
 
-  test("Lux is Ready from its SSH probe, and its settings are the sidebar switch and its folder", async ({ page }) => {
-    const stub = await installStub(page);
+  test("Lux is Ready like Frontier, and its settings are its token, folder and the Orion Globus connection", async ({ page }) => {
+    const stub = await installStub(page, { "PUT /api/settings": SETTINGS });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: "Lux: Ready" }).click();
 
     const details = page.getByRole("dialog", { name: "Lux connection details" });
-    await expect(details).toContainText("Lux is reachable");
-    await expect(details).not.toContainText("Project");
-    await expect(details).not.toContainText("Globus");
+    await expect(details).toContainText("Facility is up");
+    await expect(details).toContainText("Project lmn456");
+    await expect(details).toContainText("Orion connection, shared by Frontier and Lux");
+    await expect(details).not.toContainText("passcode");
     await details.getByRole("button", { name: "Recheck" }).click();
     await expect
       .poll(() => stub.requests())
@@ -309,9 +310,13 @@ test.describe("HPC availability cards", () => {
     await expect(settings.getByRole("button", { name: /^Compute,/ })).toHaveAttribute("aria-current", "page");
     const lux = settings.getByRole("region", { name: "Lux" });
     await expect(lux.getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    await expect(lux.getByRole("textbox")).toHaveCount(2);
-    await expect(lux.getByLabel("Lux account")).toBeVisible();
-    await expect(lux.getByLabel("Lux remote directory")).toBeVisible();
+    await expect(lux.getByLabel("Lux S3M token")).toBeVisible();
+    // Its empty folder is filled from the token's project, and saved.
+    await expect(lux.getByLabel("Lux remote directory")).toHaveValue("/lustre/orion/lmn456/proj-shared/vista");
+    await expect(lux).toContainText("Filled from your S3M token's project, lmn456.");
+    await expect(settings.getByRole("status")).toHaveText("Lux remote directory saved.");
+    await expect(lux.getByLabel("Lux account")).toHaveCount(0);
+    await expect(lux).toContainText("share the Orion filesystem");
     expect(await stub.unstubbed()).toEqual([]);
   });
 
@@ -402,7 +407,10 @@ test.describe("HPC availability cards", () => {
   });
 
   test("pasting a token saves it and rechecks only that cluster", async ({ page }) => {
-    const stub = await installStub(page, { "PUT /api/settings": SETTINGS });
+    // A typed folder, so the only save is the token's: an empty one would be
+    // filled from the token's project, a save of its own.
+    const typed = { ...SETTINGS, odo_remote_dir: "/gpfs/wolf2/olcf/xyz789/proj-shared/sam" };
+    const stub = await installStub(page, { "GET /api/settings": typed, "PUT /api/settings": typed });
     await page.goto("/skills");
     const rail = page.getByRole("complementary", { name: "Primary navigation" });
     await rail.getByRole("button", { name: /^Odo:/ }).click();

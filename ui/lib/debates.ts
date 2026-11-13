@@ -426,6 +426,8 @@ export type ForumStatus = {
   git_ok: boolean;
   /** Why git is unusable, written for the reader. Shown verbatim. */
   git_reason: string | null;
+  /** The forum is hosted on the collaboration server and collaboration is off. */
+  collaboration_off?: boolean;
   /** This install's posts the remote does not have yet — e.g. written offline. */
   unpublished: number;
   /** Why publishing last failed; null once a push succeeds. */

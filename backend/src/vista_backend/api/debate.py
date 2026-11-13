@@ -26,7 +26,12 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.forum import simulation
 from ..agents.forum.debate import ROSTER, end_run_on_forum
-from ..agents.forum.project_forum import build_client_for, forum_url_of, lab_enabled
+from ..agents.forum.project_forum import (
+    build_client_for,
+    forum_url_of,
+    hosted_while_off,
+    lab_enabled,
+)
 from ..agents.forum.roles import Verdict
 from ..agents.forum.wiring import (
     continue_debate_task,
@@ -112,6 +117,12 @@ class ForumStatus(BaseModel):
     git_reason: str | None = None
     """Why git is unusable, in words for the page. None when `git_ok`."""
 
+    collaboration_off: bool = False
+    """
+    The forum is hosted on the collaboration server and collaboration is off,
+    which is why `enabled` is false.
+    """
+
     unpublished: int = 0
     """This install's posts the remote does not have yet — e.g. written offline."""
 
@@ -129,9 +140,15 @@ async def forum_status(project_name: str, session: SessionDep) -> ForumStatus:
     """
     project = await project_service.get_project_by_name(session, project_name)
     git = git_status()
-    if not lab_enabled(project):
+    if not await _has_lab(session, project):
         return ForumStatus(
-            enabled=False, shared=False, git_ok=git.ok, git_reason=git.reason
+            enabled=False,
+            shared=False,
+            git_ok=git.ok,
+            git_reason=git.reason,
+            collaboration_off=hosted_while_off(
+                project, await local_settings.get(session)
+            ),
         )
 
     client = await _client(session, project)
@@ -434,6 +451,11 @@ async def _maybe_refresh(
     return await _throttled(f"thread:{thread_id}", FORUM_REFRESH_SECONDS, refresh)
 
 
+async def _has_lab(session: AsyncSession, project) -> bool:
+    """Whether the project has a lab, counting a hosted forum while collaboration is off as none."""
+    return lab_enabled(project, await local_settings.get(session))
+
+
 async def _client(session: AsyncSession, project) -> ForumClient:
     """This project's forum client, sending the token the forum should use."""
     return build_client_for(project, await local_settings.get(session))
@@ -489,7 +511,7 @@ async def _lab(session: AsyncSession, project_name: str):
         client = await _client(session, project)
     except ForumDisabled as exc:
         raise HTTPException(status_code=503, detail=str(exc))
-    if not lab_enabled(project):
+    if not await _has_lab(session, project):
         raise HTTPException(
             status_code=503, detail=f"Project {project.name!r} has no Hypothesis Lab."
         )
@@ -517,7 +539,7 @@ async def list_threads(project_name: str, session: SessionDep) -> list[ThreadPub
     """
     project = await project_service.get_project_by_name(session, project_name)
     project_id = project.id
-    if not lab_enabled(project):
+    if not await _has_lab(session, project):
         return []
     client = await _client(session, project)
     await _sync_list(session, project_id, client)
@@ -563,7 +585,9 @@ async def get_thread(
 ) -> ThreadStatePublic:
     project = await project_service.get_project_by_name(session, project_name)
     project_id = project.id  # a refresh commits, which expires `project`
-    client = await _client(session, project) if lab_enabled(project) else None
+    client = (
+        await _client(session, project) if await _has_lab(session, project) else None
+    )
     await _require(session, project_id, thread_id)
     if client is not None:
         await _maybe_refresh(session, project_id, thread_id, client)
@@ -777,7 +801,9 @@ async def thread_events(
     project = await project_service.get_project_by_name(session, project_name)
     project_id = project.id
     await _require(session, project_id, thread_id)
-    forum = await _client(session, project) if lab_enabled(project) else None
+    forum = (
+        await _client(session, project) if await _has_lab(session, project) else None
+    )
     host_id = forum.host_id if forum is not None else ""
 
     async def events() -> AsyncIterator[dict]:

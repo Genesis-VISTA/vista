@@ -1,55 +1,36 @@
 """
-IRI client for job submission via the amscrot SDK.
+VISTA's IRI client: job submission, status and cancel on every cluster, and
+NERSC's filesystem tasks for Perlmutter.
 
-Used for both NERSC IRI (Perlmutter) and OLCF AmSC IRI (Frontier, moderate
-enclave). ``submit_job_mcp.py`` dispatches between Odo (S3M) and both IRI
-backends through this client.
+One client for every cluster, each named by a configured compute resource id
+at a configured API version (`IriTarget`, from `iri_target`): S3M's IRI v2 for
+Odo, Frontier and Lux, NERSC's IRI v1 for Perlmutter. Nothing is discovered: the
+moderate enclave lists Lux before Frontier, and picking from a listing is how
+Frontier jobs once went to Lux.
 
-Amscrot is imported lazily so hermetic unit tests (FakeIriClient / dry-run /
-catalog) can run in CI without cloning the private ``amscrot-py`` package.
+Compute calls differ between versions only in the path prefix. Filesystem calls
+differ in method and argument placement (`_FS_OPS`). Both facilities' responses
+are recorded under `tests/fixtures/iri/`, whose README says what they look like.
 """
+
 from __future__ import annotations
 
 import asyncio
-import logging
-import os
-import tempfile
+import base64
+import binascii
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable, Literal
 
-from pydantic import BaseModel
+import httpx
+from fastmcp.exceptions import ToolError
+from pydantic import BaseModel, field_validator
 
 from ..config import settings
 
-
-def _default_amscrot_log_location() -> None:
-    """
-    Give amscrot a log file it can open, on hosts where its default cannot be.
-
-    amscrot opens its log file when it is imported, at `AMSCROT_LOG_LOCATION` or
-    `/tmp/amscrot.log`. On Windows that is `C:\\tmp\\amscrot.log`, and `C:\\tmp`
-    does not normally exist, so the import raised FileNotFoundError and every
-    IRI call -- Odo and Frontier as well as NERSC -- failed. Only when unset and
-    only where `/tmp` is missing, so macOS and Linux keep logging where they did.
-    """
-    if "AMSCROT_LOG_LOCATION" not in os.environ and not Path("/tmp").is_dir():
-        os.environ["AMSCROT_LOG_LOCATION"] = str(Path(tempfile.gettempdir()) / "amscrot.log")
-
-
-def _require_amscrot():
-    """Import amscrot on first real IRI use; fail with a clear error if missing."""
-    _default_amscrot_log_location()
-    try:
-        from amscrot.client.job import Job, JobServiceType, JobSpec, JobType
-        from amscrot.serviceclient import ServiceClient
-        from amscrot.util.constants import Constants
-    except ImportError as e:
-        raise ImportError(
-            "amscrot-py is required for live IRI/HPC submission. Install vista-mcp-server "
-            "dependencies with access to the private amsc-isro-toolkit git package "
-            "(see README). Hermetic tests should use FakeIriClient instead."
-        ) from e
-    return Job, JobServiceType, JobSpec, JobType, ServiceClient, Constants
+ApiVersion = Literal["v1", "v2"]
+IriCluster = Literal["odo", "frontier", "lux", "perlmutter"]
 
 
 class IriResourceSpec(BaseModel):
@@ -59,7 +40,10 @@ class IriResourceSpec(BaseModel):
     cpu_cores_per_process: int | None = None
     exclusive_node_use: bool = True
     gpus_per_node: int | None = None
-    """ Lux only: rendered as `#SBATCH --gpus-per-node`. The IRI clusters bind GPUs themselves. """
+    """
+    Sent to IRI as `gpu_cores_per_process`, this divided by processes per node
+    (`_iri_resources`). Lux needs it to hand out any GPU at all.
+    """
 
 
 class IriAttributes(BaseModel):
@@ -69,15 +53,25 @@ class IriAttributes(BaseModel):
     """ Slurm constraint, e.g. "gpu" on Perlmutter. Omitted on Frontier. """
     partition: str | None = None
     """
-    Lux only: rendered as `#SBATCH -p`. Lux refuses a job that names no
-    partition. `queue_name` there is the QOS (`-q`); the IRI clusters choose
-    the partition themselves.
+    Lux only: sent as IRI's `queue_name`, which Lux's IRI service takes as the
+    Slurm partition; Lux refuses a job that names none. The other clusters
+    choose the partition themselves.
     """
     image: str | None = None
     module: str | None = None
     pre_launch: str | None = None
-    """ Inline shell text run on the compute node before the main executable. """
+    """ No longer used; refused, so a job that still sets it fails loudly. """
     environment: dict[str, str] = {}
+
+    @field_validator("pre_launch")
+    @classmethod
+    def _no_pre_launch(cls, value: str | None) -> None:
+        if value is not None:
+            raise ValueError(
+                "iri.pre_launch is no longer used: put those commands in the job's "
+                "setup_<cluster>.sh, which VISTA runs inside the job before the job script"
+            )
+        return None
 
 
 class IriDefaults(BaseModel):
@@ -88,306 +82,482 @@ class IriDefaults(BaseModel):
     iri: IriAttributes = IriAttributes()
 
 
+# ---------------------------------------------------------------------------- targets
+
+@dataclass(frozen=True)
+class IriTarget:
+    """ Where one cluster's IRI service is, at which version, and which resources are its. """
+    cluster: IriCluster
+    base_url: str
+    api_version: ApiVersion
+    compute_resource_id: str
+    storage_resource_id: str | None = None
+    """ Only Perlmutter's: the OLCF clusters move files through Globus. """
+
+    def url(self, path: str) -> str:
+        return f"{self.base_url.rstrip('/')}/api/{self.api_version}/{path}"
+
+
+_TOKEN_NAMES: dict[str, str] = {
+    "odo": "Odo S3M token",
+    "frontier": "Frontier S3M token",
+    "lux": "Lux S3M token",
+    "perlmutter": "NERSC IRI token",
+}
+
+
+def iri_target(cluster: IriCluster) -> IriTarget:
+    """ The configured IRI target for `cluster` (the `<cluster>_iri_*` settings). """
+    return IriTarget(
+        cluster=cluster,
+        base_url=getattr(settings, f"{cluster}_iri_url"),
+        api_version=getattr(settings, f"{cluster}_iri_api_version"),
+        compute_resource_id=getattr(settings, f"{cluster}_iri_resource_id"),
+        storage_resource_id=settings.perlmutter_iri_storage_id if cluster == "perlmutter" else None,
+    )
+
+
+# ---------------------------------------------------------------------------- errors
+
+class IriError(ToolError):
+    """ An IRI call failed; the message says what to do about it. """
+
+
+class IriFileNotFound(IriError):
+    """ A filesystem task found nothing at the path (the facility's 404). """
+
+    def __init__(self, path: str):
+        super().__init__(f"No such file or directory: {path}")
+        self.path = path
+
+
+class IriTaskFailed(IriError):
+    """ A filesystem task failed or was canceled, for a reason other than a missing path. """
+
+
+class IriTaskTimeout(IriError):
+    """ A filesystem task was still running when its bound ran out. """
+
+
+# ---------------------------------------------------------------------------- job specs
+
+# JobSpec fields that sit beside `attributes` on the wire.
+_JOBSPEC_TOP_LEVEL = (
+    "name", "directory", "stdout_path", "stderr_path", "stdin_path",
+    "inherit_environment", "environment", "pre_launch", "post_launch", "launcher",
+    "container",
+)
+_JOB_ATTRIBUTES = ("duration", "queue_name", "account", "reservation_id", "custom_attributes")
+
+
+def wire_job_spec(spec: dict[str, Any], *, name: str) -> dict[str, Any]:
+    """
+    The IRI `JobSpec` body for `spec`.
+
+    Fields given as None are left out, since both facilities reject a null for a
+    field with a minimum length. NERSC refuses unknown top-level fields, so only
+    `JobSpec`'s own are sent, and an unknown attribute (`resource_id`, a field
+    that belongs at the top level) is an error here rather than a silently
+    ignored one there: the resource is the target's, named in the path.
+    """
+    attrs = {k: v for k, v in (spec.get("attributes") or {}).items() if v is not None}
+    body: dict[str, Any] = {"name": name}
+    for key in _JOBSPEC_TOP_LEVEL:
+        if spec.get(key) is not None:
+            body[key] = spec[key]
+    body["executable"] = spec.get("executable") or "bash"
+    if spec.get("arguments"):
+        body["arguments"] = list(spec["arguments"])
+    resources = {k: v for k, v in (spec.get("resources") or {}).items() if v is not None}
+    if resources:
+        body["resources"] = resources
+    if unknown := sorted(set(attrs) - set(_JOB_ATTRIBUTES)):
+        raise ValueError(f"Unknown IRI job attributes: {unknown}")
+    if attrs:
+        body["attributes"] = attrs
+    return body
+
+
+TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELED", "TIMEOUT"}
+""" Upper-cased IRI job states after which a job no longer runs. """
+
+
+def normalize_job_status(job: dict[str, Any]) -> dict[str, Any]:
+    """
+    `{state, exit_code?, message?}` from an IRI `Job`.
+
+    The state is upper-cased. Both facilities report exit code 0 for a job still
+    in the queue, so the exit code is kept only once the job has finished. S3M
+    sends an absent message as the string "None"; that and an empty one are
+    dropped, as is `meta_data` (S3M's whole Slurm record).
+    """
+    status = job.get("status") or {}
+    state = str(status.get("state") or "UNKNOWN").upper()
+    out: dict[str, Any] = {"state": state}
+    if state in TERMINAL_STATES and status.get("exit_code") is not None:
+        out["exit_code"] = status["exit_code"]
+    message = status.get("message")
+    if message is not None and str(message).strip() not in ("", "None"):
+        out["message"] = str(message)
+    return out
+
+
+# ---------------------------------------------------------------------------- filesystem
+
+@dataclass(frozen=True)
+class _FsOp:
+    v1_method: str
+    """ The method on v1, which takes GET/DELETE arguments as query parameters; v2 POSTs JSON. """
+    multipart: bool = False
+    """ The file goes as multipart `file` and its path as a query parameter, on both versions. """
+
+
+_FS_OPS: dict[str, _FsOp] = {
+    "mkdir": _FsOp("POST"),
+    "ls": _FsOp("GET"),
+    "head": _FsOp("GET"),
+    "stat": _FsOp("GET"),
+    "download": _FsOp("GET"),
+    "upload": _FsOp("POST", multipart=True),
+}
+
+_TASK_BOUND_S = 120.0
+_TASK_FIRST_DELAY_S = 0.5
+_TASK_MAX_DELAY_S = 5.0
+
+
+def _size_bound(size: int) -> float:
+    """ How long to wait for a transfer task: the usual bound plus 10 s per MB. """
+    return _TASK_BOUND_S + size / 100_000
+
+
+def _is_missing(error: str) -> bool:
+    return "404" in error or "No such file or directory" in error
+
+
+# ---------------------------------------------------------------------------- client
+
 class IriClient:
     """
-    Submits jobs and accesses files on a NERSC IRI facility (Perlmutter) via amscrot.
+    One cluster's IRI service, as one researcher (`token`).
 
-    All amscrot calls are synchronous; we run them in a worker thread to avoid
-    blocking the MCP server's event loop.
+    Each request opens its own connection; a tool call makes a handful.
+    `transport` and `sleep` are for tests (`httpx.MockTransport`, a fake clock).
     """
 
     def __init__(
-        self, *,
-        api_endpoint: str,
-        api_key: str,
-        machine: str,
-        profile: str = "nersc-iri",
-        compute_resource_id: str | None = None,
+        self,
+        target: IriTarget,
+        token: str,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        timeout: float = 60.0,
     ):
-        self.api_endpoint = api_endpoint
-        self.machine = machine
-        self.profile = profile
-
-        _, _, _, _, ServiceClient, Constants = _require_amscrot()
-
-        # Pass credentials in-memory; skips the ~/.amscrot/credentials.yml read.
-        self._service_client = ServiceClient.create(
-            type=Constants.ServiceType.AMSC_IRI,
-            name=profile,
-            credential={"api_key": api_key, "api_endpoint": api_endpoint},
-        )
-        # Explicit override: when set, init_resources() skips compute discovery
-        # and uses this id directly. Used for Odo (open enclave) where discovery
-        # returns multiple unrelated resources and `machine="odo"` doesn't reliably
-        # match by name/group; matches the pattern in odo-iri-test.py.
-        self._compute_resource_id: str | None = compute_resource_id
-        self._storage_resource_id: str | None = None
-
-    async def init_resources(self) -> None:
-        """ Resolve compute and storage resource IDs by calling the IRI discover() API. """
-        await asyncio.to_thread(self._resolve_resources)
-        logging.info(
-            f"IRI resources resolved: compute={self._compute_resource_id} "
-            f"storage={self._storage_resource_id}"
-        )
-
-    def _resolve_resources(self) -> None:
-        # A pre-pinned compute id means no discovery at all: the only pinning
-        # caller (Odo) does its file ops through Globus, never IRI storage, so
-        # the discover() roundtrip would add latency to every tool call for a
-        # storage id that is never used.
-        if self._compute_resource_id:
-            return
-
-        discovery = self._service_client.discover()
-        if not discovery.compute:
-            raise RuntimeError(
-                f"No IRI compute resources discovered for profile {self.profile!r} "
-                f"(check token validity / endpoint)"
-            )
-
-        # Match logic from amscrot_vit.py: in NERSC_IRI normalized discovery, resources are
-        # grouped under the facility (site); the entry with group=<machine> & name="compute"
-        # is the right one. Fall back to the first compute resource if no exact match.
-        compute_res = None
-        for c in discovery.compute:
-            if (c.data and c.data.get("group") == self.machine and c.name == "compute") or c.name == self.machine:
-                compute_res = c
-                break
-        if not compute_res:
-            compute_res = discovery.compute[0]
-            logging.warning(
-                f"IRI: no exact compute match for '{self.machine}', using fallback {compute_res.name!r}"
-            )
-        self._compute_resource_id = compute_res.data.get("id")
-
-        # Storage: prefer one with "home" in its name (mirrors IriServiceClient._get_storage_resource_id).
-        for s in discovery.storage:
-            if "home" in (s.name or "").lower():
-                self._storage_resource_id = s.data.get("id")
-                break
-        if not self._storage_resource_id and discovery.storage:
-            self._storage_resource_id = discovery.storage[0].data.get("id")
+        self.target = target
+        self._token = token
+        self._transport = transport
+        self._sleep = sleep
+        self._timeout = timeout
 
     @property
     def compute_resource_id(self) -> str:
-        if not self._compute_resource_id:
-            raise RuntimeError("IRI resources not initialized; call init_resources() first")
-        return self._compute_resource_id
+        return self.target.compute_resource_id
 
     @property
     def storage_resource_id(self) -> str:
-        if not self._storage_resource_id:
-            raise RuntimeError("IRI storage resource not initialized")
-        return self._storage_resource_id
+        if not self.target.storage_resource_id:
+            raise IriError(
+                f"{self.target.cluster}'s files are not reached through IRI; "
+                "they go through Globus."
+            )
+        return self.target.storage_resource_id
+
+    # ------------------------------------------------------------------ http
+
+    async def _request(self, method: str, path: str, *, what: str, **kwargs) -> httpx.Response:
+        t = self.target
+        async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as http:
+            try:
+                response = await http.request(
+                    method, t.url(path),
+                    headers={"Authorization": f"Bearer {self._token}"},
+                    **kwargs,
+                )
+            except httpx.TimeoutException as e:
+                if method == "POST" and path.startswith("compute/job/"):
+                    raise IriError(
+                        f"Submitting to {t.cluster} timed out ({e.__class__.__name__}). "
+                        "The job may have been submitted: check its status before resubmitting."
+                    ) from e
+                raise IriError(f"{what} on {t.cluster} timed out ({e.__class__.__name__}).") from e
+            except httpx.HTTPError as e:
+                raise IriError(f"{what} on {t.cluster} failed: {e}") from e
+        if response.status_code >= 300:
+            self._raise_for(response, what=what, path=path)
+        return response
+
+    def _raise_for(self, response: httpx.Response, *, what: str, path: str) -> None:
+        t, code = self.target, response.status_code
+        body = response.text[:300]
+        if code in (401, 403):
+            raise IriError(
+                f"{t.cluster} rejected your {_TOKEN_NAMES[t.cluster]} (HTTP {code}). It may have "
+                f"expired: mint a new one and save it in VISTA's Settings. ({body})"
+            )
+        if code == 404 and path.startswith("compute/job/"):
+            raise IriError(
+                f"IRI at {t.base_url} ({t.api_version}) has no compute resource "
+                f"{t.compute_resource_id!r} for {t.cluster} (HTTP 404). Check the "
+                f"`{t.cluster}_iri_resource_id` and `{t.cluster}_iri_api_version` settings. ({body})"
+            )
+        if code == 404 and path.startswith("compute/"):
+            raise IriError(f"{what} on {t.cluster}: no such job (HTTP 404). ({body})")
+        raise IriError(f"{what} on {t.cluster} failed: HTTP {code}: {body}")
+
+    # ------------------------------------------------------------------ compute
 
     async def submit_job(self, spec: dict[str, Any], *, name: str) -> str:
         """
-        Submit a job. ``spec`` follows the same shape as amscrot ``JobSpec`` kwargs:
-        ``executable``, ``arguments``, ``resources``, ``attributes``.
-
-        Returns the IRI job id.
+        Submit `spec` and return the job id. Never retried: neither facility honours
+        an idempotency key, so a second POST would be a second job.
         """
-        return await asyncio.to_thread(self._submit_job, spec, name)
-
-    def _submit_job(self, spec: dict[str, Any], name: str) -> str:
-        Job, JobServiceType, JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
-        job_spec = JobSpec(
-            executable=spec.get("executable", "bash"),
-            arguments=spec.get("arguments", []),
-            resources=spec.get("resources", {}),
-            attributes=spec.get("attributes", {}),
+        body = wire_job_spec(spec, name=name)
+        response = await self._request(
+            "POST", f"compute/job/{self.compute_resource_id}", what="Job submission", json=body,
         )
-        job = Job(
-            name=name,
-            type=JobType.COMPUTE,
-            service_type=JobServiceType.BATCH,
-            service_client=self._service_client,
-            job_spec=job_spec,
-        )
-        # `skip_checks=True` downgrades plan errors to logged warnings instead of raising.
-        # Needed because OLCF's moderate-enclave IRI doesn't update its per-resource
-        # status feed — Frontier shows `current_status="unknown"` from
-        # /api/v1/status/resources/<id> even though the list endpoint and OLCF's own
-        # status board show "up"/"OPERATIONAL". `create()` itself doesn't depend on
-        # `plan()` succeeding, so this only loses non-status checks (resource_id
-        # lookup, executable presence, spec conversion) as failures — they still log
-        # as warnings, and `create()` would re-do them anyway.
-        self._service_client.plan(job, skip_checks=True)
-        self._service_client.create(job)
-        if not job.id:
-            raise RuntimeError(f"IRI submission for '{name}' returned no job id")
-        return str(job.id)
+        job_id = (response.json() or {}).get("id")
+        if not job_id:
+            raise IriError(
+                f"{self.target.cluster} accepted job {name!r} but returned no job id: "
+                f"{response.text[:300]}"
+            )
+        return str(job_id)
 
-    async def get_job_status(self, job_id: str) -> dict:
-        """ Returns the amscrot ``JobStatus.to_dict()`` for the given job id. """
-        return await asyncio.to_thread(self._get_job_status, job_id)
-
-    def _get_job_status(self, job_id: str) -> dict:
-        Job, JobServiceType, _JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
-        job = Job(
-            name="status-probe",
-            type=JobType.COMPUTE,
-            service_type=JobServiceType.BATCH,
-            service_client=self._service_client,
+    async def get_job_status(self, job_id: str) -> dict[str, Any]:
+        """ `{state, exit_code?, message?}`; see `normalize_job_status`. """
+        response = await self._request(
+            "GET", f"compute/status/{self.compute_resource_id}/{job_id}", what="Job status",
         )
-        job.id = job_id
-        job.resource_id = self.compute_resource_id
-        return self._service_client.status(job).to_dict()
+        return normalize_job_status(response.json() or {})
+
+    async def list_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        The jobs IRI lists for this token on the compute resource, each
+        `{id, name, state}` with the state upper-cased. `POST compute/status/{id}`
+        with no filters; the name comes from the job's spec, or from S3M's Slurm
+        record where the spec is not returned.
+        """
+        response = await self._request(
+            "POST", f"compute/status/{self.compute_resource_id}", what="Job list",
+            params={"limit": limit, "include_spec": "true"},
+        )
+        body = response.json() or []
+        jobs = []
+        for job in body if isinstance(body, list) else []:
+            if not isinstance(job, dict) or not job.get("id"):
+                continue
+            status = job.get("status") or {}
+            spec = job.get("job_spec") or {}
+            slurm = ((status.get("meta_data") or {}).get("s3m") or {})
+            jobs.append({
+                "id": str(job["id"]),
+                "name": spec.get("name") or slurm.get("name") or "",
+                "state": str(status.get("state") or "UNKNOWN").upper(),
+            })
+        return jobs
 
     async def facility_status(self) -> dict[str, Any]:
         """
         The compute resource's status ("up", "down", "degraded", "unknown") and
-        its incidents that are not resolved, from the IRI status API. The
-        researcher's position in the queue is not part of IRI, nor is its depth.
+        its incidents active now, from the facility's public IRI status feed.
+
+        The same reading as the backend's HPC cards (`services/hpc_status.py`):
+        the `status/resources` list, matched by the resource id jobs go to
+        (`status/resources/{id}` answers `unknown` at OLCF, and the moderate
+        enclave lists Lux beside Frontier, so never by name), and
+        `status/incidents` at the current time (unfiltered, NERSC returns its
+        oldest; OLCF answers "none active" with a 404). Public: sent without
+        the researcher's token, so an expired one cannot hide the status. The
+        queue's depth is not part of IRI.
         """
-        return await asyncio.to_thread(self._facility_status)
-
-    def _facility_status(self) -> dict[str, Any]:
-        api = self._service_client._status_api
-        resource = api.get_resource(resource_id=self.compute_resource_id)
-        status = getattr(resource.current_status, "value", resource.current_status)
-        incidents = []
-        for incident in api.get_incidents(resource_id=self.compute_resource_id, limit=20) or []:
-            resolution = getattr(incident.resolution, "value", incident.resolution)
-            if resolution in ("completed", "cancelled"):
+        now = datetime.now(UTC)
+        async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as http:
+            try:
+                resources, incidents = await asyncio.gather(
+                    http.get(self.target.url("status/resources")),
+                    http.get(
+                        self.target.url("status/incidents"),
+                        params={"time": now.strftime("%Y-%m-%dT%H:%M:%SZ")},
+                    ),
+                )
+            except httpx.HTTPError as e:
+                raise IriError(f"{self.target.cluster}'s status feed did not answer: {e}") from e
+        if resources.status_code >= 300:
+            raise IriError(
+                f"{self.target.cluster}'s status feed failed: HTTP {resources.status_code}"
+            )
+        rows = resources.json()
+        # A failed incidents feed costs only the incidents, not the status.
+        active = incidents.json() if incidents.status_code < 300 else []
+        rid = self.compute_resource_id
+        row = next(
+            (r for r in rows or [] if isinstance(r, dict) and r.get("id") == rid), None
+        )
+        found = []
+        for raw in active if isinstance(active, list) else []:
+            if not isinstance(raw, dict):
                 continue
-            incidents.append({
-                "name": incident.name or "incident",
-                "status": getattr(incident.status, "value", incident.status),
-                "type": getattr(incident.type, "value", incident.type),
-                "start": incident.start.isoformat() if incident.start else None,
-                "end": incident.end.isoformat() if incident.end else None,
+            uris = raw.get("resource_uris") or []
+            if not any(str(u).rstrip("/").endswith(f"/{rid}") for u in uris):
+                continue
+            found.append({
+                "name": raw.get("name") or "incident",
+                "status": raw.get("status"),
+                "type": raw.get("type"),
+                "start": raw.get("start"),
+                "end": raw.get("end"),
             })
-        return {"status": status, "incidents": incidents}
-
-    async def list_jobs(self) -> list[dict[str, Any]]:
-        """ The jobs IRI lists for this token on the compute resource: id, name, state. """
-        return await asyncio.to_thread(self._list_jobs)
-
-    def _list_jobs(self) -> list[dict[str, Any]]:
-        api = self._service_client._compute_api
-        jobs = api.get_jobs(resource_id=self.compute_resource_id, include_spec=True, limit=50)
-        return [
-            {
-                "id": job.id,
-                "name": (job.job_spec.name if job.job_spec else None) or "",
-                "state": str(getattr(job.status.state, "value", job.status.state)) if job.status else "UNKNOWN",
-            }
-            for job in jobs or []
-        ]
+        status = str(row.get("current_status") or "unknown") if row else "not listed"
+        return {"status": status, "incidents": found}
 
     async def cancel_job(self, job_id: str) -> None:
-        await asyncio.to_thread(self._cancel_job, job_id)
-
-    def _cancel_job(self, job_id: str) -> None:
-        Job, JobServiceType, _JobSpec, JobType, _ServiceClient, _Constants = _require_amscrot()
-        job = Job(
-            name="cancel-probe",
-            type=JobType.COMPUTE,
-            service_type=JobServiceType.BATCH,
-            service_client=self._service_client,
+        await self._request(
+            "DELETE", f"compute/cancel/{self.compute_resource_id}/{job_id}", what="Job cancel",
         )
-        job.id = job_id
-        job.resource_id = self.compute_resource_id
-        self._service_client.destroy(job)
 
-    async def mkdir(self, path: str | Path, *, parents: bool = True) -> dict:
-        return await asyncio.to_thread(
-            lambda: self._service_client.filesystem.mkdir(
-                self.storage_resource_id, str(path), p=parents,
+    # ------------------------------------------------------------------ filesystem tasks
+
+    async def _task(
+        self,
+        op: str,
+        path: str,
+        args: dict[str, Any] | None = None,
+        *,
+        files: dict | None = None,
+        bound: float = _TASK_BOUND_S,
+    ) -> Any:
+        """ Run filesystem operation `op` on `path` as a task, and return its output. """
+        spec = _FS_OPS[op]
+        url_path = f"filesystem/{op}/{self.storage_resource_id}"
+        fields = {"path": path, **(args or {})}
+        what = f"{op} {path}"
+        if spec.multipart:
+            response = await self._request(
+                "POST", url_path, what=what, params={"path": path}, files=files,
             )
-        )
+        elif self.target.api_version == "v2" or spec.v1_method == "POST":
+            response = await self._request("POST", url_path, what=what, json=fields)
+        else:
+            params = {k: (str(v).lower() if isinstance(v, bool) else v) for k, v in fields.items()}
+            response = await self._request(spec.v1_method, url_path, what=what, params=params)
+        task_id = (response.json() or {}).get("task_id")
+        if not task_id:
+            raise IriError(f"{what} on {self.target.cluster} returned no task: {response.text[:300]}")
+        return await self._await_task(task_id, op=op, path=path, bound=bound)
 
-    async def ls(self, path: str | Path, *, recursive: bool = False) -> dict:
-        return await asyncio.to_thread(
-            lambda: self._service_client.filesystem.ls(
-                self.storage_resource_id, str(path), recursive=recursive,
-            )
-        )
+    async def _await_task(self, task_id: str, *, op: str, path: str, bound: float) -> Any:
+        """
+        Poll the task until it finishes, waiting 0.5 s and doubling up to 5 s between
+        polls, for at most `bound` seconds of waiting in all.
+        """
+        waited, delay = 0.0, _TASK_FIRST_DELAY_S
+        while True:
+            response = await self._request("GET", f"task/{task_id}", what=f"{op} {path}")
+            task = response.json() or {}
+            status = task.get("status")
+            result = task.get("result") or {}
+            if status == "completed":
+                return result.get("output") if isinstance(result, dict) else result
+            if status in ("failed", "canceled"):
+                error = str(result.get("error") if isinstance(result, dict) else result)
+                if _is_missing(error):
+                    raise IriFileNotFound(path)
+                raise IriTaskFailed(f"{op} {path} on {self.target.cluster} {status}: {error[:300]}")
+            if waited >= bound:
+                raise IriTaskTimeout(
+                    f"{op} {path} on {self.target.cluster} was still {status or 'pending'} "
+                    f"after {bound:.0f} s (task {task_id})."
+                )
+            await self._sleep(delay)
+            waited += delay
+            delay = min(delay * 2, _TASK_MAX_DELAY_S)
+
+    async def mkdir(self, path: str | Path, *, parents: bool = True) -> None:
+        await self._task("mkdir", str(path), {"parent": parents})
+
+    async def ls(self, path: str | Path, *, recursive: bool = False) -> list[dict[str, Any]]:
+        """
+        Entries under `path`, each `{path, type, size}` with `path` under the path
+        asked for, and the folder itself left out.
+
+        NERSC names entries by their resolved path (`/global/u1/...` for a
+        `/global/homes/...` folder) and lists the folder first, so the names are
+        rewritten onto the path asked for, which is the one callers compare with.
+        """
+        root = str(path).rstrip("/")
+        output = await self._task("ls", root, {"recursive": recursive}) or []
+        names = [str(e.get("name", "")).rstrip("/") for e in output]
+        real = names[0] if names else root
+        if not all(n == real or n.startswith(real + "/") for n in names):
+            real = root  # not the recorded shape: take the names as they come
+        entries = []
+        for e, name in zip(output, names):
+            if name == real:
+                continue
+            rel = name[len(real):] if name.startswith(real + "/") else "/" + name.lstrip("/")
+            entries.append({"path": root + rel, "type": e.get("type"), "size": int(e.get("size") or 0)})
+        return entries
 
     async def head(self, path: str | Path, *, lines: int | None = None) -> str:
-        return await asyncio.to_thread(
-            lambda: self._service_client.filesystem.head(
-                self.storage_resource_id, str(path), lines=lines,
-            )
-        )
+        output = await self._task("head", str(path), {"lines": lines} if lines else None)
+        if isinstance(output, dict):
+            return str(output.get("content") or "")
+        return str(output or "")
+
+    async def stat(self, path: str | Path) -> dict[str, Any]:
+        return await self._task("stat", str(path)) or {}
 
     async def download(self, remote: str | Path, local: str | Path) -> str:
         """
-        Download a file via the IRI Filesystem API.
+        Download `remote` to `local`, text or binary, and return `local`.
 
-        Note: amscrot's ``IriFilesystem.download`` writes text only. Binary file
-        download (e.g. ``.pt`` checkpoints) is not yet supported through this path.
+        The facility returns a text file as its text and a binary one as base64,
+        with nothing to say which, so the file's `stat` size decides: the text
+        when its UTF-8 length matches, else the base64 when its decoded length
+        does. Anything else fails, naming the file, rather than saving it altered.
         """
-        return await asyncio.to_thread(
-            lambda: self._service_client.filesystem.download(
-                self.storage_resource_id, str(remote), str(local),
-            )
+        remote = str(remote)
+        size = int((await self.stat(remote)).get("size") or 0)
+        output = await self._task("download", remote, bound=_size_bound(size))
+        if not isinstance(output, str):
+            raise IriError(f"Download of {remote} on {self.target.cluster} returned no content.")
+        data = output.encode("utf-8")
+        if len(data) != size:
+            try:
+                data = base64.b64decode(output, validate=True)
+            except (binascii.Error, ValueError):
+                data = b""
+            if len(data) != size:
+                raise IriError(
+                    f"Download of {remote} on {self.target.cluster} matches its size "
+                    f"({size} bytes) neither as text nor as base64; not saved."
+                )
+        Path(local).write_bytes(data)
+        return str(local)
+
+    async def upload(self, local: str | Path, remote: str | Path) -> None:
+        data = Path(local).read_bytes()
+        await self._task(
+            "upload", str(remote),
+            files={"file": (Path(remote).name, data, "application/octet-stream")},
+            bound=_size_bound(len(data)),
         )
 
-    async def upload(self, local: str | Path, remote: str | Path) -> dict:
-        return await asyncio.to_thread(
-            lambda: self._service_client.filesystem.upload(
-                self.storage_resource_id, str(local), str(remote),
-            )
-        )
 
+# ---------------------------------------------------------------------------- factories
 
-# TODO maybe should cache this per session
-async def create_iri_client(*, iri_token: str) -> IriClient:
-    """ NERSC IRI client (Perlmutter). """
-    client = IriClient(
-        api_endpoint=settings.nersc_iri_url,
-        api_key=iri_token,
-        machine=settings.nersc_machine,
-        profile="nersc-iri",
-    )
-    await client.init_resources()
-    return client
+def client_for(cluster: IriCluster, token: str) -> IriClient:
+    """ The IRI client for `cluster`, as the researcher whose token this is. """
+    return IriClient(iri_target(cluster), token)
 
-
-async def create_olcf_iri_client(*, iri_token: str) -> IriClient:
-    """
-    OLCF AmSC IRI client (Frontier, moderate enclave).
-
-    Reuses the user's S3M token — the same bearer that authenticates against Odo's
-    S3M endpoint also works against the OLCF moderate-enclave IRI service. The
-    token's `iri-frontend-moderate` scope authorizes compute discovery/submit but
-    NOT storage; the caller must handle file ops out-of-band (SSH) since
-    `storage_resource_id` will raise on use.
-    """
-    client = IriClient(
-        api_endpoint=settings.frontier_iri_url,
-        api_key=iri_token,
-        machine=settings.frontier_machine,
-        profile="olcf-iri",
-    )
-    await client.init_resources()
-    return client
-
-
-async def create_odo_iri_client(*, iri_token: str) -> IriClient:
-    """
-    OLCF AmSC IRI client (Odo, open enclave).
-
-    Uses the same S3M token the user already configures for Odo, but routes
-    compute through the IRI service at `odo_iri_url` (open enclave) instead of
-    the legacy direct S3M REST endpoint. File ops on Odo go through Globus
-    (`lib/globus.py`) — IRI's storage scope isn't authorized for this token —
-    so `storage_resource_id` will raise on use, same as the Frontier client.
-
-    Pins the compute resource id from settings (matches the working pattern in
-    odo-iri-test.py) rather than relying on `discover()` to match
-    `machine="odo"` — open-enclave discovery returns several unrelated resources
-    (Odo / Defiant / Wombat / Quokka) without a stable naming convention.
-    """
-    client = IriClient(
-        api_endpoint=settings.odo_iri_url,
-        api_key=iri_token,
-        machine=settings.odo_machine,
-        profile="odo-iri",
-        compute_resource_id=settings.odo_compute_resource_id,
-    )
-    await client.init_resources()
-    return client

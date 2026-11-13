@@ -86,10 +86,10 @@ export const HPC_STATUS = {
       state: "ready",
       checked_at: NOW,
       checks: {
-        facility: OK("Lux lux.olcf.ornl.gov answered (SSH-2.0-OpenSSH_9.9)."),
-        credential: OK("Sign in with PIN + RSA passcode when a chat first uses Lux."),
-        globus: null,
-        settings: { ...OK("/lustre/orion/abc123/proj-shared/vista-lux"), project: "abc123" },
+        facility: OK("The facility reports Lux up."),
+        credential: { ...OK("Lux accepted the S3M token."), project: "lmn456" },
+        globus: OK("Globus reaches Lux's files."),
+        settings: OK("/lustre/orion/abc123/proj-shared/vista-lux"),
       },
     },
   ],
@@ -243,23 +243,27 @@ export const SLACK_CONFIG = {
 };
 
 /**
- * `GET /collaboration/status`: no collaboration server set, as on a fresh
- * install, so Publish and Import would be off with this reason.
+ * `GET /collaboration/status`: a fresh install, on VISTA's default server and
+ * not signed in, so collaboration is quiet: no Publish, Import or sharing line
+ * outside Settings and the Skill Hub.
  */
 export const COLLABORATION_STATUS = {
-  configured: false,
+  enabled: true,
+  configured: true,
   reachable: false,
   reason:
-    "No collaboration server is set. Add its address under Settings → Collaboration to publish and import.",
-  url: null,
-  source: null,
+    "Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.",
+  url: "https://obsidian.ccs.ornl.gov/vista/api",
+  source: "config",
   server_version: null,
   signed_in: false,
-  sign_in_required: false,
-  sign_in_url: null,
+  sign_in_required: true,
+  refused: false,
+  shown: false,
+  default_server: true,
+  sign_in_url: "https://obsidian.ccs.ornl.gov/vista/api/sign-in",
   user: null,
   teams: [],
-  team_id: null,
 };
 
 /** `GET /api/version` for a development checkout, which never checks for updates. */

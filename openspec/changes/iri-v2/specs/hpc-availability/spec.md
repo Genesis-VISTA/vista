@@ -1,0 +1,382 @@
+# Spec Delta
+
+## ADDED Requirements
+
+### Requirement: Facility status for every cluster
+For every cluster, the system SHALL determine whether the facility reports the
+cluster's compute resource as up, using the facility's IRI resource status list at the
+cluster's configured API version. It
+SHALL find the resource by the cluster's configured compute resource id, and SHALL NOT
+take another listed resource in its place. It SHALL treat the facility
+as degraded when the resource is not up, when it is not listed, or when an incident
+naming it is currently open. An incident that has ended SHALL NOT affect the result.
+
+The facility check SHALL NOT require any credential.
+
+#### Scenario: Facility up, no open incidents
+- **WHEN** the facility lists the cluster's compute resource as `up` and no open incident names it
+- **THEN** the facility check passes
+
+#### Scenario: Resolved incident is ignored
+- **WHEN** the only incident naming the resource has an end time in the past
+- **THEN** the facility check passes
+
+#### Scenario: Facility reports down or maintenance
+- **WHEN** the resource is listed as anything other than `up`, or an open incident names it
+- **THEN** the facility check fails with the facility's status and, when present, the incident's name and time window
+
+#### Scenario: Lux checked on the moderate enclave
+- **WHEN** the moderate enclave lists `lux` as `up` and `frontier` as `down`
+- **THEN** Lux's facility check passes and Frontier's fails
+
+#### Scenario: Perlmutter's compute, not its login nodes
+- **WHEN** NERSC lists Perlmutter's `compute` resource as `down` and its `login` resource as `up`
+- **THEN** Perlmutter's facility check fails
+
+#### Scenario: Resource not listed
+- **WHEN** the moderate enclave's list has no resource with Lux's configured id
+- **THEN** Lux's facility check fails, naming the missing resource id
+
+#### Scenario: Facility unreachable
+- **WHEN** the facility's status endpoint does not answer within the check timeout
+- **THEN** the facility check fails as unreachable, and the cluster is not reported Ready
+
+### Requirement: Credential check for every cluster
+For each cluster with a saved credential, the system SHALL verify it with an
+authenticated, read-only call to the cluster's IRI service, at its configured API version, that the facility
+refuses for an invalid token. Merely having a credential saved SHALL NOT count
+as passing. For Odo, Frontier and Lux the system SHALL also introspect the S3M
+token, and SHALL report the token's project and planned expiration. It SHALL
+NOT compare the token's project with any configured account. An answer that
+is neither success nor 401 SHALL be reported as unverifiable, not as rejected.
+
+#### Scenario: Token accepted
+- **WHEN** the IRI service answers the authenticated call successfully
+- **THEN** the credential check passes and, for Odo, Frontier and Lux, reports the token's project and planned expiration
+
+#### Scenario: Token for another project
+- **WHEN** an Odo S3M token is valid and belongs to a project VISTA has no configuration for
+- **THEN** the credential check passes, reporting that project, and there is no Wrong project outcome
+
+#### Scenario: No credential saved
+- **WHEN** the researcher has no token for the cluster
+- **THEN** the cluster is Not connected, and no authenticated call is made
+
+#### Scenario: Token rejected
+- **WHEN** the IRI service or S3M introspection answers 401
+- **THEN** the credential check fails as rejected
+
+#### Scenario: Token not yet active
+- **WHEN** introspection reports a delayed start whose time is still in the future
+- **THEN** the credential check fails as rejected, with the reason "not active until" that time
+
+#### Scenario: Unexpected answer
+- **WHEN** the IRI service answers with a status other than success or 401
+- **THEN** the credential check is unverifiable, and reports that HTTP status
+
+## MODIFIED Requirements
+
+### Requirement: Per-cluster S3M credentials
+The system SHALL store a separate S3M token for Odo, for Frontier and for Lux. Each
+field SHALL accept a token from any OLCF project, including different
+projects for different clusters. Job submission for each cluster SHALL use only
+that cluster's token. The legacy single S3M token SHALL NOT be read, shown, or
+sent anywhere, and SHALL NOT be migrated into any cluster's field. A Frontier token
+SHALL NOT be used for Lux, nor a Lux token for Frontier, although both are for the
+same enclave.
+
+#### Scenario: Both clusters connected
+- **WHEN** a researcher saves an Odo token minted in one project and a Frontier token minted in another
+- **THEN** jobs can be submitted to both clusters, each using its own token and charged to its own token's project
+
+#### Scenario: Lux has its own token
+- **WHEN** a researcher has a Frontier token and no Lux token
+- **THEN** Lux is Not connected, and Lux job submission reports that no token is configured for Lux
+
+#### Scenario: Legacy token ignored
+- **WHEN** a researcher has only the legacy single S3M token saved
+- **THEN** Odo, Frontier and Lux are Not connected, and job submission to any of them reports that no token is configured for that cluster
+
+#### Scenario: Clearing one token
+- **WHEN** a researcher clears the Frontier token and saves
+- **THEN** the Odo and Lux tokens and their job submission are unaffected
+
+### Requirement: Supported clusters
+The system SHALL report availability for exactly these clusters: Frontier,
+Odo, Perlmutter, and Lux. Frontier, Odo and Lux SHALL be checked with that cluster's
+S3M token and Globus connection. Perlmutter SHALL be checked with the
+researcher's NERSC IRI token.
+
+#### Scenario: Cluster list
+- **WHEN** a signed-in researcher with no clusters hidden requests HPC status
+- **THEN** the response contains one entry each for Frontier, Odo, Perlmutter, and Lux, and no others
+
+### Requirement: Globus check for OLCF clusters
+For Odo, Frontier and Lux the system SHALL verify the Globus connection the
+cluster's file operations would use. It SHALL choose the same credential
+source, in the same order, that those operations choose; Lux SHALL use Frontier's
+connection and collection. Only credentials the
+researcher connected count; there is no deployment-wide credential. It SHALL
+verify the connection with a live call to the cluster's collection, so that an
+expired High Assurance session is detected rather than reported as connected.
+It SHALL NOT estimate when a session will lapse.
+
+The check SHALL fail as Session expired whenever Globus refuses in a way that
+reconnecting Globus fixes: a refusal that asks the researcher to authenticate
+again, whatever its HTTP status, or a refresh token Globus will no longer
+exchange. Its detail SHALL say to connect Globus again for that cluster and,
+when Globus names the login it requires, name that login. Any other failure
+SHALL be Couldn't verify, with a detail that says what Globus answered or that
+it did not answer in time; it SHALL NOT be reported as Session expired. Every
+failure SHALL be logged with Globus's HTTP status, error code and the start of
+its response, and no detail or log line SHALL carry a token.
+
+#### Scenario: Globus verified
+- **WHEN** the researcher has a complete Globus credential for the cluster and a read-only call to its collection succeeds
+- **THEN** the Globus check passes
+
+#### Scenario: Lux shares Frontier's connection
+- **WHEN** the researcher connected Globus from Frontier's section and the call to the Frontier collection succeeds
+- **THEN** both Frontier's and Lux's Globus checks pass
+
+#### Scenario: Globus missing or incomplete
+- **WHEN** none of the researcher's sources holds both the Transfer and the collection token for the cluster
+- **THEN** the Globus check fails as Not connected
+
+#### Scenario: Deployment credential does not count
+- **WHEN** the researcher has connected no Globus account and `VISTA_MCP_ODO_GLOBUS_REFRESH_TOKEN` and `VISTA_MCP_ODO_GLOBUS_HTTPS_REFRESH_TOKEN` are set in the environment
+- **THEN** Odo's Globus check fails as Not connected
+
+#### Scenario: Globus session expired
+- **WHEN** the collection answers 401
+- **THEN** the Globus check fails as Session expired, distinct from Not connected
+
+#### Scenario: High Assurance login lapsed
+- **WHEN** the token exchange succeeds and Globus refuses the call to Odo's collection with HTTP 502, code `ExternalError.DirListingFailed.LoginFailed`, asking for a new session in `opensso.ccs.ornl.gov`
+- **THEN** the Globus check fails as Session expired, and its detail says to connect Globus again for Odo and that Globus needs a login with opensso.ccs.ornl.gov
+
+#### Scenario: Saved connection no longer accepted
+- **WHEN** Globus refuses to exchange the researcher's refresh token for Frontier with HTTP 400 `invalid_grant`
+- **THEN** the Globus check fails as Session expired, and its detail says Globus no longer accepts the saved Frontier connection and to connect Globus again
+
+#### Scenario: Globus fails otherwise
+- **WHEN** Globus answers the token exchange or the call to the collection with HTTP 503, or does not answer within the check's time limit
+- **THEN** the Globus check fails as Couldn't verify, not Session expired, and its detail names the HTTP status or says Globus did not answer in time
+
+### Requirement: Cluster state
+The system SHALL resolve each cluster to exactly one state, by taking the first
+that applies in this order: Checking, Degraded, Couldn't verify, Not connected,
+Token rejected, Globus not connected, Globus session expired, Ready. A cluster
+SHALL be Ready only when every check that applies to it passes. For Odo, Frontier
+and Lux that includes the Globus check, and for every cluster the settings
+check. A failed settings check SHALL make the cluster Not connected.
+
+#### Scenario: Odo without Globus
+- **WHEN** Odo's facility, credential and settings checks pass but the Globus check fails
+- **THEN** Odo's state is Globus not connected (or Globus session expired), not Ready
+
+#### Scenario: Perlmutter ready
+- **WHEN** Perlmutter's facility, credential and settings checks pass
+- **THEN** Perlmutter's state is Ready, with no Globus check applied
+
+#### Scenario: Lux ready
+- **WHEN** Lux's facility, credential, Globus and settings checks pass
+- **THEN** Lux's state is Ready
+
+#### Scenario: Token but no remote directory
+- **WHEN** Frontier's facility, credential and Globus checks pass but no Frontier remote directory is set
+- **THEN** Frontier's state is Not connected, not Ready
+
+#### Scenario: Facility down outranks credentials
+- **WHEN** a cluster's facility check fails and its credential check also fails
+- **THEN** its state is Degraded
+
+#### Scenario: Unverifiable credential
+- **WHEN** the facility is up and the credential check is unverifiable
+- **THEN** the state is Couldn't verify, neither Ready nor Token rejected
+
+### Requirement: Cluster visibility setting
+The researcher SHALL be able to choose which clusters appear in the NavRail.
+The choice SHALL persist per user, and all clusters SHALL be shown by default,
+including a cluster added after the researcher last changed the setting.
+Hiding a cluster SHALL NOT delete or change any of its credentials.
+
+#### Scenario: Hide Perlmutter
+- **WHEN** a researcher turns off "Show in sidebar" for Perlmutter
+- **THEN** the rail no longer shows Perlmutter, including after a reload, and the saved NERSC IRI token is unchanged
+
+#### Scenario: New user
+- **WHEN** a researcher has never changed the setting
+- **THEN** Frontier, Odo, Perlmutter, and Lux all appear
+
+#### Scenario: Lux appears for an existing choice
+- **WHEN** a researcher hid Perlmutter before Lux was supported
+- **THEN** Lux appears and Perlmutter stays hidden
+
+#### Scenario: Hide Lux
+- **WHEN** a researcher turns off "Show in sidebar" for Lux
+- **THEN** the rail no longer shows Lux, no outbound call is made for Lux, and the saved Lux S3M token is unchanged
+
+#### Scenario: All hidden
+- **WHEN** every cluster is hidden
+- **THEN** the rail's Resources section is not shown
+
+### Requirement: Settings modal organisation
+Each supported cluster SHALL have its own section in the settings modal's
+resource tree, under its institution and facility: Odo, Frontier and Lux under
+ORNL › OLCF, and Perlmutter under LBNL › NERSC. Each cluster's section SHALL
+contain:
+- its institution and facility, its status dot and word as the rail shows
+  them, and its "Show in sidebar" switch;
+- all of its settings: for Odo, Frontier and Lux, the S3M token, the remote
+  directory, and its Globus connection; for Perlmutter, the NERSC account,
+  remote directory, and IRI token.
+
+The S3M token fields SHALL say that a token from any OLCF project with S3M
+access works. The Odo, Frontier and Lux remote directory fields SHALL say that VISTA
+keeps `<dir>.<user>.jobs` and `<dir>.out` beside the directory, and that the
+folder containing them must be writable by the project's group. A Globus
+connection SHALL belong to its cluster's section only; there SHALL be no
+separate Globus section. Frontier's and Lux's sections SHALL show the one
+connection they share, and each SHALL say that connecting or disconnecting it
+applies to both.
+
+Opened from a cluster's details, the modal SHALL show that cluster's section.
+Saving a cluster's credentials, or connecting its Globus account, SHALL trigger
+a fresh check of that cluster, and of Frontier and Lux both when it is their shared
+Globus connection.
+
+#### Scenario: Deep link from a card
+- **WHEN** a researcher opens Frontier's details and follows its Settings link
+- **THEN** the settings modal opens showing Frontier's section
+
+#### Scenario: Default open
+- **WHEN** a researcher opens settings from the rail's settings button
+- **THEN** the modal opens on the Agent section, with every cluster listed in the resource tree and none of their sections shown
+
+#### Scenario: Fix and see it
+- **WHEN** a researcher pastes a new Odo token
+- **THEN** Odo is rechecked immediately, and its status in the modal and its rail card update without waiting for the next poll
+
+#### Scenario: Globus connected from the cluster
+- **WHEN** a researcher connects Globus from Frontier's section
+- **THEN** Frontier's and Lux's Globus checks pass on their rechecks, and Odo's Globus state is unchanged
+
+#### Scenario: Lux section
+- **WHEN** a researcher opens the Lux section
+- **THEN** it shows the "Show in sidebar" switch, the Lux S3M token, the Lux remote directory and the Globus connection shared with Frontier, and no Lux account field
+
+#### Scenario: Remote directory saved
+- **WHEN** a researcher enters a Frontier remote directory
+- **THEN** it is stored for that researcher, and a cleared field is stored as not set
+
+### Requirement: NavRail presentation
+The expanded rail SHALL show a Resources section with one card per visible
+cluster, grouped under a header naming each cluster's facility (OLCF, NERSC),
+in the same facility order as the settings tree. A facility with no visible
+cluster SHALL have no header. Each card SHALL show a status dot, whose shape
+differs between states as well as its color, and a status word. Clicking any
+card, in any state, SHALL open a details view containing:
+- each check with its reason;
+- for Odo, Frontier and Lux, the S3M token's project and planned expiration;
+- the settings check, with the remote directory once it is set;
+- when the checks ran;
+- a Recheck control;
+- a link to that cluster's settings.
+
+No other credential expiry SHALL be shown. Hovering a card that is not Ready
+SHALL show why, from the message of each check that failed, in both the
+expanded and the collapsed rail. The collapsed rail SHALL show each
+visible cluster's dot with a short label, grouped under a short facility label,
+and an accessible name that includes the state. The rail SHALL run checks on
+load, on Recheck, and every 5 minutes while the page is visible. While a check
+runs it SHALL keep showing the last known state.
+
+If the status request itself fails, the rail SHALL keep showing the last known
+states, noting how long ago they were checked. Once that result is more than
+15 minutes old, it SHALL show every visible cluster as Couldn't verify.
+
+#### Scenario: Ready card
+- **WHEN** a cluster's state is Ready
+- **THEN** its card shows a filled green dot and the word "Ready"
+
+#### Scenario: Grouped by facility
+- **WHEN** Odo, Frontier, Lux and Perlmutter are all visible
+- **THEN** the rail's Resources section shows Odo, Frontier and Lux under OLCF, then Perlmutter under NERSC
+
+#### Scenario: Facility with nothing visible
+- **WHEN** Perlmutter is hidden
+- **THEN** the Resources section has no NERSC header
+
+#### Scenario: Details explain a failure
+- **WHEN** a researcher opens a card whose state is not Ready
+- **THEN** the details show which check failed and why, and link to where it can be fixed
+
+#### Scenario: Not connected still shows the facility
+- **WHEN** a researcher opens a Not connected card
+- **THEN** the same details view opens, showing the facility's status and the Settings link
+
+#### Scenario: Hover names a missing setting
+- **WHEN** a researcher hovers the Odo card and no Odo remote directory is set
+- **THEN** the card says "No Odo remote directory is set." without being opened
+
+#### Scenario: Lux details
+- **WHEN** a researcher opens the Lux card
+- **THEN** the details show the facility, credential, Globus and settings checks, with the Lux token's project and planned expiration, as for Frontier
+
+#### Scenario: Collapsed rail is labelled
+- **WHEN** the rail is collapsed
+- **THEN** each cluster's control has an accessible name such as "Frontier: Ready"
+
+#### Scenario: Recheck
+- **WHEN** the researcher presses Recheck
+- **THEN** a fresh check runs and the card updates without a page reload
+
+#### Scenario: Backend briefly unavailable
+- **WHEN** a poll fails and the last successful result is 6 minutes old
+- **THEN** the cards keep their last states with a "checked 6 min ago" note
+
+#### Scenario: Backend unavailable for long
+- **WHEN** polls have failed and the last successful result is more than 15 minutes old
+- **THEN** every visible card shows Couldn't verify
+
+#### Scenario: Hermetic coverage
+- **WHEN** PR CI runs
+- **THEN** the endpoint, the settings modal, and the rail are tested against faked facility, S3M and Globus responses with no network access, and any live check is marked `live` and excluded from PR CI
+
+### Requirement: Settings check
+The system SHALL check, for every visible cluster, that the researcher has set
+what a submission to it needs: a remote directory on every cluster, plus the
+NERSC account on Perlmutter. The check SHALL fail as
+not connected, naming each missing setting, when one is unset. It SHALL fail as
+invalid when a value would be refused at submission: a remote directory that is
+not absolute, is `/`, or holds characters other than letters, digits and
+`. _ + , : = @ - /` (such as a `<project>` placeholder left in). The check SHALL
+read only the user's settings, make no outbound call, and reflect a saved change on
+the next status request even while the facility checks are cached.
+
+#### Scenario: Remote directory missing
+- **WHEN** a researcher has an Odo S3M token and Globus but no Odo remote directory
+- **THEN** the settings check fails as not connected with "No Odo remote directory is set."
+
+#### Scenario: Placeholder left in
+- **WHEN** the Frontier remote directory is `/lustre/orion/<project>/proj-shared/vista`
+- **THEN** the settings check fails as invalid, saying to replace `<project>` with the project's name
+
+#### Scenario: Lux account not needed
+- **WHEN** a researcher has a Lux remote directory and no Lux account
+- **THEN** Lux's settings check passes
+
+#### Scenario: Saved setting shows at once
+- **WHEN** a researcher saves the missing remote directory and the status is requested within the facility cache's lifetime
+- **THEN** the cluster's settings check passes without the facility, S3M or Globus checks running again
+
+## REMOVED Requirements
+
+### Requirement: Facility check
+**Reason**: Lux is now in the moderate enclave's IRI status list, so its SSH greeting probe (and the probe's sharing and rate limits) is no longer needed.
+**Migration**: Replaced by "Facility status for every cluster", which checks Lux by its IRI resource id like Odo and Frontier. `lux_ssh_hosts` is no longer read by the status check.
+
+### Requirement: Credential check
+**Reason**: Lux now has a saved S3M token, so its credential check is no longer a description of an interactive PIN + RSA sign-in.
+**Migration**: Replaced by "Credential check for every cluster", which introspects and verifies the Lux S3M token like Odo's and Frontier's.

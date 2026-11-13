@@ -32,7 +32,7 @@ function status(
     checks: {
       facility: OK,
       credential: OK,
-      globus: cluster === "perlmutter" || cluster === "lux" ? null : OK,
+      globus: cluster === "perlmutter" ? null : OK,
       settings: { ...OK, message: `/proj-shared/${cluster}` },
       ...checks,
     },
@@ -190,7 +190,7 @@ describe("HpcStatusSection", () => {
     expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
     expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
     expect(within(dialog).getByText("Project abc123 · expires in 22 h")).toBeInTheDocument();
-    expect(within(dialog).getByText("Your own identity")).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Orion connection, shared by Frontier and Lux/)).toBeInTheDocument();
     expect(within(dialog).getByText("Checked 2 min ago")).toBeInTheDocument();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Recheck" }));
@@ -381,13 +381,12 @@ describe("HpcStatusSection: the tour's anchors", () => {
 
 describe("HpcStatusSection: Lux", () => {
   const LUX_READY = status("lux", "ready", {
-    facility: {
-      ...OK,
-      message: "Lux lux.olcf.ornl.gov answered (SSH-2.0-OpenSSH_9.9).",
-    },
+    facility: { ...OK, message: "The facility reports Lux up." },
     credential: {
       ...OK,
-      message: "Sign in with PIN + RSA passcode when a chat first uses Lux.",
+      message: "Lux accepted the S3M token.",
+      project: "lmn456",
+      expires_at: "2026-09-26T15:00:00Z",
     },
   });
 
@@ -402,46 +401,39 @@ describe("HpcStatusSection: Lux", () => {
     expect(screen.getByRole("button", { name: "Lux: Ready" })).toHaveTextContent("Lx");
   });
 
-  it("details show Lux reachability and how sign-in works, with no Globus or expiry", async () => {
+  it("details read like Frontier's: IRI facility, its own S3M token, the Orion Globus connection", async () => {
     useHpcStatusMock.mockReturnValue(view([{ status: LUX_READY }]));
     renderSection({ visible: ["lux"] });
     await userEvent.click(screen.getByRole("button", { name: "Lux: Ready" }));
 
     const dialog = screen.getByRole("dialog", { name: "Lux connection details" });
-    expect(within(dialog).getByText("OLCF · Slurm over SSH")).toBeInTheDocument();
-    expect(within(dialog).getByText("Lux is reachable")).toBeInTheDocument();
-    expect(within(dialog).getByText(/lux\.olcf\.ornl\.gov answered/)).toBeInTheDocument();
-    expect(within(dialog).getByText("Sign in from a chat")).toBeInTheDocument();
-    // No project: Lux jobs go to the researcher's default Slurm account.
-    expect(
-      within(dialog).getByText("Sign in with PIN + RSA passcode when a chat first uses Lux."),
-    ).toBeInTheDocument();
-    expect(within(dialog).queryByText(/Project/)).toBeNull();
-    expect(within(dialog).queryByText(/Globus/)).toBeNull();
-    expect(within(dialog).queryByText(/expires/)).toBeNull();
-    expect(within(dialog).queryByText("Facility is up")).toBeNull();
+    expect(within(dialog).getByText("OLCF · moderate enclave · jobs via AmSC IRI")).toBeInTheDocument();
+    expect(within(dialog).getByText("Facility is up")).toBeInTheDocument();
+    expect(within(dialog).getByText("S3M token accepted")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Project lmn456/)).toBeInTheDocument();
+    expect(within(dialog).getByText("Globus file transfer connected")).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Orion connection, shared by Frontier and Lux/)).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent(/SSH|passcode|Sign in/);
   });
 
-  it("an unreachable Lux reads Couldn't verify, not a facility outage", async () => {
+  it("without the Orion Globus connection, the card says which one Lux needs", async () => {
     useHpcStatusMock.mockReturnValue(
       view([
         {
-          status: status("lux", "unverifiable", {
-            facility: {
+          status: status("lux", "globus_not_connected", {
+            globus: {
               ok: false,
-              reason: "unreachable",
-              message: "Lux lux.olcf.ornl.gov did not answer within 5 s.",
+              reason: "not_connected",
+              message:
+                "Globus file transfer is not connected for Lux (Lux uses Frontier's connection).",
             },
-            credential: LUX_READY.checks.credential,
           }),
         },
       ]),
     );
     renderSection({ visible: ["lux"] });
-    await userEvent.click(screen.getByRole("button", { name: "Lux: Couldn't verify" }));
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Couldn't reach Lux")).toBeInTheDocument();
-    expect(within(dialog).getByText(/did not answer within 5 s/)).toBeInTheDocument();
-    expect(within(dialog).queryByText(/degraded/i)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /^Lux: / }));
+    const dialog = screen.getByRole("dialog", { name: "Lux connection details" });
+    expect(within(dialog).getByText(/share the Orion Globus connection/)).toBeInTheDocument();
   });
 });

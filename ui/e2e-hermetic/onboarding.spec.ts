@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { TOUR_SUB_STEPS } from "../lib/onboarding";
 import { installStub, streamOneTurn, type Stub } from "./stub";
-import { SETTINGS, INFERENCE } from "./fixtures";
+import { COLLABORATION_STATUS, SETTINGS, SKILLS, INFERENCE } from "./fixtures";
 
 /**
  * The first-boot tour, walked in a real browser against stubbed responses.
@@ -96,7 +96,7 @@ test("welcome, then the projects screen and opening the project", async ({ page 
   await install(page, null);
   await page.goto("/projects");
   await card(page, "welcome:intro", "center");
-  await expect(page.locator(".driver-popover")).toContainText("eight minutes");
+  await expect(page.locator(".driver-popover")).toContainText("nine minutes");
   await press(page, "Start the tour");
   await card(page, "welcome:sidebar");
   await press(page);
@@ -250,9 +250,9 @@ test("files: the example image and report", async ({ page }) => {
   await card(page, "hpc:resources");
 });
 
-test("hpc: open the Odo card", async ({ page }) => {
+test("hpc: open the Odo card, then skip collaboration while it is off", async ({ page }) => {
   await activeProject(page);
-  await install(page, "hpc");
+  await install(page, "hpc", { "GET /api/collaboration/status": { ...COLLABORATION_STATUS, enabled: false } });
   await page.goto("/projects");
   await card(page, "hpc:resources");
   await press(page);
@@ -274,6 +274,51 @@ test("hpc: open the Odo card", async ({ page }) => {
   await card(page, "hpc:settings");
   await press(page);
   await card(page, "first-question:send");
+});
+
+test("collaboration: the examples signed out, then the switch turned off", async ({ page }) => {
+  await activeProject(page);
+  // The fixture's status: on the default server, not signed in, so quiet. And
+  // a long skill list, which would push an example drawn before it off-screen.
+  const many = Array.from({ length: 14 }, (_, i) => ({ ...SKILLS[0], slug: `skill-${i}`, name: `skill-${i}` }));
+  const stub = await install(page, "collaboration", { "GET /api/skills": many });
+  await page.goto("/projects");
+  await card(page, "collaboration:visit");
+  await page.locator('[data-tour="collaboration:visit"]').click();
+  await card(page, "collaboration:overview", "overview");
+  await expect(page.locator(".hub-card")).toHaveCount(2);
+  await press(page);
+  await card(page, "collaboration:local", "center");
+  await press(page);
+  await card(page, "collaboration:teams");
+  await expect(page.locator('[data-tour="collaboration:teams"] option')).toHaveText(["All teams", "Public", "Example team"]);
+  await expect(page.locator(".hub-card .team-badge")).toHaveText(["Example team", "Public"]);
+  await press(page);
+  await card(page, "collaboration:hub-item");
+  await press(page);
+  // The tour takes the researcher to Skills, where the example private skill is.
+  await card(page, "collaboration:share");
+  await expect(page).toHaveURL(/\/skills$/);
+  await expect(page.locator('[data-tour="collaboration:share"]')).toContainText("csv-cleanup");
+  // Highlighted where it is seen, and still there once the page has settled.
+  await page.waitForTimeout(500);
+  await expect(page.locator('[data-tour="collaboration:share"].driver-active-element')).toBeInViewport();
+  await press(page);
+  // Then it opens Settings › Collaboration.
+  await card(page, "collaboration:sign-in");
+  await expect(page.locator(".modal-backdrop")).toHaveCount(1);
+  await expect(page.locator(".driver-popover")).toContainText("No access yet? Reach out to the VISTA team.");
+  await press(page);
+  await card(page, "collaboration:off");
+  // The switch stays usable; off, the status says so, and the step ends.
+  await stub.setRoute("GET /api/collaboration/status", { ...COLLABORATION_STATUS, enabled: false, reachable: false });
+  await page.locator('[data-tour="collaboration:off"] [role="switch"]').click();
+  await expect.poll(async () => (await stub.bodies("PUT /api/settings")).some((b) => b.collaboration_enabled === false)).toBe(true);
+  await card(page, "first-question:send");
+  await expect(page.locator(".modal-backdrop")).toHaveCount(0);
+  // Nothing about the examples reached the backend.
+  const sent = (await stub.requests()).filter((r) => /^(PUT|POST|DELETE) \/api\/(collaboration|skills)/.test(r));
+  expect(sent).toEqual([]);
 });
 
 test("first question: send the starter, see the activity, answer and finish", async ({ page }) => {

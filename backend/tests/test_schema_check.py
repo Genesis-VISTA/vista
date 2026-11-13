@@ -104,3 +104,10 @@ def test_a_database_made_before_the_update_columns_passes(conn):
 
     assert schema_problems(conn)  # a strict check still names them
     assert schema_problems(conn, assume_additive=True) == []
+
+
+def test_a_database_made_before_the_collaboration_switch_passes(conn):
+    conn.execute("ALTER TABLE local_settings DROP COLUMN collaboration_enabled")
+
+    assert schema_problems(conn)  # a strict check still names it
+    assert schema_problems(conn, assume_additive=True) == []

@@ -46,6 +46,21 @@ vi.mock("@/lib/settings-modal", () => ({
   closeSettings: closeSettingsMock,
 }));
 
+/** What `useCollaboration()` answers; on, with no status yet, unless a test says otherwise. */
+const { collab } = vi.hoisted(() => ({
+  collab: {
+    current: {
+      enabled: true,
+      default_server: false,
+      status: null as null | { signed_in: boolean; url: string | null },
+    },
+  },
+}));
+vi.mock("@/lib/collaboration", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/collaboration")>()),
+  useCollaboration: () => collab.current,
+}));
+
 function localSettings(over: Partial<LocalSettings> = {}): LocalSettings {
   return {
     install_id: "x",
@@ -144,6 +159,7 @@ beforeEach(() => {
     getConfig: () => config,
   }));
   push.mockReset();
+  collab.current = { enabled: true, default_server: false, status: null };
   openSettingsMock.mockReset();
   closeSettingsMock.mockReset();
   nav.pathname = "/";
@@ -811,6 +827,130 @@ describe("the model suggestion", () => {
     walkToPick();
     expect((lastStep().popover as unknown as { description: string }).description).toContain(
       defaultModel,
+    );
+  });
+});
+
+describe("the collaboration step", () => {
+  type Shown = { element: Element | undefined; disableActiveInteraction: boolean; popover: { title: string; description: string } };
+  const shown = () => highlightMock.mock.calls.at(-1)![0] as Shown;
+  const atCollaboration = () => setSettings({ onboarding_tour: { status: "in_progress", step: "collaboration" } });
+  const view = () => (
+    <TourProvider>
+      <Controls />
+    </TourProvider>
+  );
+
+  /** Every element the step points at, as the Skill Hub, Skills and Settings draw them. */
+  function mountAnchors() {
+    const topbar = document.body.appendChild(document.createElement("header"));
+    topbar.className = "page-topbar";
+    return {
+      topbar,
+      teams: anchor("collaboration:teams"),
+      hubItem: anchor("collaboration:hub-item"),
+      share: anchor("collaboration:share"),
+      signIn: anchor("collaboration:sign-in"),
+      off: anchor("collaboration:off"),
+      // Where the tour goes next.
+      send: anchor("first-question:send"),
+    };
+  }
+
+  /** On the Skill Hub, past the visit: at the overview. */
+  function onSkillHub() {
+    nav.pathname = "/skill-hub";
+    atCollaboration();
+    const anchors = mountAnchors();
+    const utils = render(view());
+    return { ...anchors, ...utils };
+  }
+
+  it("points at the Skill Hub's rail entry and waits for it to be opened", () => {
+    atCollaboration();
+    const entry = anchor("collaboration:visit");
+    render(view());
+    expect(shown().element).toBe(entry);
+    expect(shown().popover.title).toBe("Sharing with others");
+    openPopover();
+    expect(screen.queryByRole("button", { name: "Next" })).not.toBeInTheDocument();
+  });
+
+  it("points each coachmark at its element, and the sign-in and switch stay usable", () => {
+    const a = onSkillHub();
+    expect(shown().element).toBe(a.topbar);
+    expect(shown().popover.title).toBe("The Skill Hub");
+    pressNext();
+    expect(shown().element).toBeUndefined();
+    expect(shown().popover.title).toBe("Nothing is shared on its own");
+    pressNext();
+    expect(shown().element).toBe(a.teams);
+    expect(shown().disableActiveInteraction).toBe(true);
+    pressNext();
+    expect(shown().element).toBe(a.hubItem);
+    expect(shown().disableActiveInteraction).toBe(true);
+    pressNext();
+    expect(shown().element).toBe(a.share);
+    expect(shown().popover.title).toBe("Sharing your own");
+    expect(push).toHaveBeenCalledExactlyOnceWith("/skills");
+    pressNext();
+    expect(shown().element).toBe(a.signIn);
+    expect(shown().disableActiveInteraction).toBe(false);
+    expect(openSettingsMock).toHaveBeenCalledExactlyOnceWith("collaboration");
+    pressNext();
+    expect(shown().element).toBe(a.off);
+    expect(shown().popover.title).toBe("Working alone?");
+    expect(shown().disableActiveInteraction).toBe(false);
+    expect(closeSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("closes Settings when the step is passed with Next", () => {
+    onSkillHub();
+    for (let i = 0; i < 7; i++) pressNext();
+    expect(shown().popover.title).toBe("Ask your first question");
+    expect(closeSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["Skip this step", "Exit tutorial"])("closes Settings on %s", (button) => {
+    onSkillHub();
+    for (let i = 0; i < 5; i++) pressNext();
+    expect(shown().popover.title).toBe("Signing in");
+    openPopover();
+    act(() => screen.getAllByRole("button", { name: button }).at(-1)!.click());
+    expect(closeSettingsMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("goes on to the first question when the switch is turned off at its coachmark", () => {
+    const a = onSkillHub();
+    for (let i = 0; i < 6; i++) pressNext();
+    expect(shown().popover.title).toBe("Working alone?");
+    push.mockReset();
+    collab.current = { ...collab.current, enabled: false };
+    a.rerender(view());
+    expect(shown().popover.title).toBe("Ask your first question");
+    expect(closeSettingsMock).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledExactlyOnceWith("/");
+  });
+
+  it("is skipped while collaboration is off", () => {
+    collab.current = { ...collab.current, enabled: false };
+    atCollaboration();
+    anchor("first-question:send");
+    render(view());
+    expect(shown().popover.title).toBe("Ask your first question");
+    expect(openSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("words the sign-in for the default server, and for an installation signed in", () => {
+    collab.current = { enabled: true, default_server: true, status: { signed_in: false, url: "https://obsidian.ccs.ornl.gov/vista/api" } };
+    const a = onSkillHub();
+    for (let i = 0; i < 5; i++) pressNext();
+    expect(shown().popover.description).toContain("No access yet? Reach out to the VISTA team.");
+
+    collab.current = { ...collab.current, status: { signed_in: true, url: "https://obsidian.ccs.ornl.gov/vista/api" } };
+    a.rerender(view());
+    expect(shown().popover.description).toBe(
+      "You're signed in to obsidian.ccs.ornl.gov/vista/api. Anything you publish goes to that server. Make a team, or add people to one, with Manage teams….",
     );
   });
 });

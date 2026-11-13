@@ -10,16 +10,18 @@ import type { LocalSettings } from "@/lib/settings";
 import { DEBOUNCE_MS } from "@/lib/settings-autosave";
 import type { VersionInfo } from "@/lib/version";
 
-const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock } = vi.hoisted(() => ({
-  fetchSettingsMock: vi.fn(),
-  updateSettingsMock: vi.fn(),
-  startGlobusLoginMock: vi.fn(),
-}));
+const { fetchSettingsMock, updateSettingsMock, startGlobusLoginMock, completeGlobusLoginMock } =
+  vi.hoisted(() => ({
+    fetchSettingsMock: vi.fn(),
+    updateSettingsMock: vi.fn(),
+    startGlobusLoginMock: vi.fn(),
+    completeGlobusLoginMock: vi.fn(),
+  }));
 vi.mock("@/lib/settings", () => ({
   fetchSettings: fetchSettingsMock,
   updateSettings: updateSettingsMock,
   startGlobusLogin: startGlobusLoginMock,
-  completeGlobusLogin: vi.fn(),
+  completeGlobusLogin: completeGlobusLoginMock,
 }));
 
 const { recheckMock, refreshMock, useHpcStatusMock } = vi.hoisted(() => ({
@@ -47,10 +49,16 @@ const { useCollaborationMock, refreshCollaborationMock } = vi.hoisted(() => ({
   useCollaborationMock: vi.fn(),
   refreshCollaborationMock: vi.fn(async () => {}),
 }));
-vi.mock("@/lib/collaboration", () => ({
-  useCollaboration: useCollaborationMock,
-  refreshCollaborationStatus: refreshCollaborationMock,
-}));
+vi.mock("@/lib/collaboration", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/collaboration")>();
+  return {
+    useCollaboration: useCollaborationMock,
+    refreshCollaborationStatus: refreshCollaborationMock,
+    teamLabel: actual.teamLabel,
+    // The teams of whatever status the test's collaboration view holds.
+    useTeams: () => actual.teamsView({ status: useCollaborationMock().status, error: null }),
+  };
+});
 
 const { useVersionMock, checkNowMock, refreshVersionMock, startDownloadMock } = vi.hoisted(() => ({
   useVersionMock: vi.fn(),
@@ -97,6 +105,7 @@ function collaborationView(
     status === null
       ? null
       : {
+          enabled: true,
           configured: false,
           reachable: false,
           reason: NOT_SET,
@@ -105,17 +114,22 @@ function collaborationView(
           server_version: null,
           signed_in: Boolean(status.reachable),
           sign_in_required: false,
+          refused: false,
+          shown: Boolean(status.reachable),
+          default_server: false,
           // As the backend does: none for a server that signed in without a token.
           sign_in_url: status.url && !status.reachable ? `${status.url}/sign-in` : null,
           user: null,
           teams: [],
-          team_id: null,
           ...status,
         };
   const available = Boolean(full?.reachable && full.signed_in);
   return {
     status: full,
     checking: false,
+    enabled: full?.enabled ?? true,
+    shown: full?.shown ?? false,
+    default_server: full?.default_server ?? false,
     available,
     reason: available ? null : (full?.reason ?? "Checking the collaboration server…"),
     error,
@@ -137,9 +151,9 @@ function settingsRow(overrides: Partial<LocalSettings> = {}): LocalSettings {
     odo_remote_dir: null,
     frontier_remote_dir: null,
     lux_remote_dir: null,
-    lux_account: null,
     odo_s3m_token: null,
     frontier_s3m_token: null,
+    lux_s3m_token: null,
     nersc_iri_token: null,
     globus_token: null,
     odo_globus_token: null,
@@ -345,7 +359,107 @@ describe("UserSettingsModal navigation", () => {
 
 describe("UserSettingsModal collaboration", () => {
   const OBSIDIAN = "https://obsidian.ccs.ornl.gov/vista/api";
-  const GET_ONE = `Get a token from ${OBSIDIAN}/sign-in and paste it under Settings → Collaboration.`;
+  const GET_ONE = `Sign in to ${OBSIDIAN} to publish and import: get a token from its sign-in page and paste it under Settings → Collaboration.`;
+  const VISTA_TEAM = "No access yet? Reach out to the VISTA team.";
+  const OFF_HINT =
+    "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing buttons are hidden.";
+  const signIn = (overrides: Partial<CollaborationStatus> = {}) =>
+    collaborationView({
+      configured: true,
+      reachable: false,
+      reason: GET_ONE,
+      url: OBSIDIAN,
+      source: "config",
+      sign_in_required: true,
+      ...overrides,
+    });
+
+  it("says when the default server is in use", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Using default server - replace above to override");
+    expect(section).not.toHaveTextContent("This installation's configuration uses");
+  });
+
+  it("turns collaboration off, leaving only the switch and its hints", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    const toggle = within(section).getByRole("switch", { name: "Collaboration" });
+    expect(toggle).toBeChecked();
+    expect(within(section).getByLabelText(/^Collaboration server/)).toBeInTheDocument();
+    expect(section).not.toHaveTextContent(OFF_HINT);
+
+    await userEvent.click(toggle);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_enabled: false });
+    await waitFor(() => expect(refreshCollaborationMock).toHaveBeenCalledWith({ forget: true }));
+    expect(toggle).not.toBeChecked();
+    expect(section).toHaveTextContent(OFF_HINT);
+    expect(section).toHaveTextContent("Nothing leaves this computer until you publish it, choosing its team the first time.");
+    expect(within(section).queryByLabelText(/^Collaboration server/)).toBeNull();
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+    expect(within(section).queryByRole("button", { name: "Check again" })).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_enabled: true });
+  });
+
+  it("opens off for an install that turned it off", async () => {
+    useCollaborationMock.mockReturnValue(
+      collaborationView({ enabled: false, configured: true, url: OBSIDIAN, reason: "Collaboration is off." }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_enabled: false }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName("Collaboration, off");
+    const section = await openOn("Collaboration");
+    expect(within(section).getByRole("switch", { name: "Collaboration" })).not.toBeChecked();
+    expect(within(section).queryByLabelText(/^Collaboration server/)).toBeNull();
+  });
+
+  it.each([
+    ["off", { enabled: false }],
+    ["sign in", {}],
+    ["connected", { reachable: true, signed_in: true, sign_in_required: false, reason: null, shown: true }],
+    [
+      "no access",
+      {
+        reachable: true,
+        signed_in: false,
+        sign_in_required: false,
+        refused: true,
+        shown: true,
+        reason: `${OBSIDIAN} refused this sign-in. Signing in again won't help: reach out to the VISTA team for access.`,
+      },
+    ],
+  ] as const)("labels the section %s", async (label, overrides) => {
+    useCollaborationMock.mockReturnValue(signIn(overrides as Partial<CollaborationStatus>));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    expect(entry("Collaboration")).toHaveAccessibleName(`Collaboration, ${label}`);
+  });
+
+  it("points a not-signed-in install to the VISTA team only on the default server", async () => {
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { unmount } = render(<UserSettingsModal onClose={() => {}} />);
+    let section = await openOn("Collaboration");
+    expect(section).toHaveTextContent(GET_ONE);
+    expect(section).toHaveTextContent(VISTA_TEAM);
+    unmount();
+
+    useCollaborationMock.mockReturnValue(
+      signIn({ url: "https://collab.example.org", reason: "Sign in to https://collab.example.org to publish and import." }),
+    );
+    render(<UserSettingsModal onClose={() => {}} />);
+    section = await openOn("Collaboration");
+    expect(within(section).getByLabelText("Token")).toBeInTheDocument();
+    expect(section).not.toHaveTextContent(VISTA_TEAM);
+  });
 
   it("asks for a token when the server wants one, and saves the pasted one", async () => {
     useCollaborationMock.mockReturnValue(
@@ -502,6 +616,38 @@ describe("UserSettingsModal collaboration", () => {
     expect(section).toHaveTextContent("Connected to http://127.0.0.1:8002 (server 0.1.0).");
   });
 
+  it("lists the teams once signed in, and manages them from here", async () => {
+    const teamOf = (id: string, name: string, isPublic = false) => ({
+      id,
+      name,
+      public: isPublic,
+      created_by: "me",
+      created_by_name: "Me",
+      created_at: "2026-10-01T00:00:00Z",
+    });
+    useCollaborationMock.mockReturnValue(
+      collaborationView({
+        configured: true,
+        reachable: true,
+        reason: null,
+        url: "http://127.0.0.1:8002",
+        source: "settings",
+        server_version: "0.1.0",
+        teams: [
+          teamOf("00000000-0000-4000-8000-000000000000", "public", true),
+          teamOf("aaaaaaaa-0000-4000-8000-000000000001", "Alpha"),
+        ],
+      }),
+    );
+    fetchSettingsMock.mockResolvedValue(settingsRow({ collaboration_server_url: "http://127.0.0.1:8002" }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    await region("Research profile");
+    const section = await openOn("Collaboration");
+    expect(section).toHaveTextContent("Teams: Public, Alpha.");
+    await userEvent.click(within(section).getByRole("button", { name: "Manage teams…" }));
+    expect(await screen.findByRole("dialog", { name: "Teams" })).toBeInTheDocument();
+  });
+
   it("shows why a configured server is unreachable, and checks again on request", async () => {
     const reason = "The collaboration server at http://x:8002 is not answering (Connection refused).";
     useCollaborationMock.mockReturnValue(
@@ -533,7 +679,7 @@ describe("UserSettingsModal collaboration", () => {
     const field = within(section).getByLabelText(/^Collaboration server/);
     expect(field).toHaveValue("");
     expect(field).toHaveAttribute("placeholder", "http://127.0.0.1:8002");
-    expect(section).toHaveTextContent("This installation's configuration uses http://127.0.0.1:8002");
+    expect(section).toHaveTextContent("Using default server - replace above to override");
   });
 });
 
@@ -633,7 +779,7 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
     expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue("/frontier/proj/vista");
     expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
-    expect(within(frontier).getByText("Frontier", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
+    expect(within(frontier).getByText("Orion", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(frontier).toHaveTextContent("Ready");
 
     const perlmutter = await openOn("Perlmutter");
@@ -931,12 +1077,12 @@ describe("UserSettingsModal save marks", () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
 
-    const account = await screen.findByLabelText(/Lux account/);
-    await userEvent.type(account, "abc123");
+    const dir = await screen.findByLabelText(/Lux remote directory/);
+    await userEvent.type(dir, "/lux/vista");
     await userEvent.tab();
-    await waitFor(() => expect(markOf(account)).toBe("slow"), { timeout: 2000 });
+    await waitFor(() => expect(markOf(dir)).toBe("slow"), { timeout: 2000 });
     await act(async () => release(settingsRow()));
-    await waitFor(() => expect(markOf(account)).toBe("saved"));
+    await waitFor(() => expect(markOf(dir)).toBe("saved"));
   });
 
   it("marks a failure with a cross and the reason, keeping what was typed", async () => {
@@ -1205,32 +1351,110 @@ describe("UserSettingsModal: Globus address", () => {
 });
 
 describe("UserSettingsModal: Lux", () => {
-  it("opened from the Lux card, shows the sidebar switch, the account and the remote directory", async () => {
+  it("opened from the Lux card, shows its S3M token, remote directory and the Orion Globus connection", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ lux_remote_dir: "/lux/vista", lux_account: "abc123" }),
+      settingsRow({ lux_remote_dir: "/lux/vista", lux_s3m_token: "lux-tok" }),
     );
     render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     const lux = await region("Lux");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(lux).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    // The account and the folder are its only fields: no credential is stored for Lux.
-    const fields = lux.querySelectorAll("input:not([role=switch]), textarea, a");
-    expect(fields).toHaveLength(2);
-    expect(within(lux).getByLabelText(/Lux account/)).toHaveValue("abc123");
+    expect(within(lux).getByLabelText(/Lux S3M token/)).toHaveValue("lux-tok");
     expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
-    expect(lux).not.toHaveTextContent(/credentials/i); // it has none to keep
+    // No account any more: Lux jobs are charged to the token's project.
+    expect(within(lux).queryByLabelText(/Lux account/)).toBeNull();
+    expect(lux).toHaveTextContent(/share the Orion filesystem/);
+    expect(within(lux).getByText("Orion", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
+    expect(lux).not.toHaveTextContent(/PIN|passcode|SSH/);
   });
 
-  it("saving the Lux account sends only that field", async () => {
+  it("saving the Lux S3M token sends only that field and rechecks Lux", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
-    await userEvent.type(await screen.findByLabelText(/Lux account/), "abc123");
+    await userEvent.type(await screen.findByLabelText(/Lux S3M token/), "lux-tok");
     await userEvent.tab();
-    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_account: "abc123" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ lux_s3m_token: "lux-tok" }));
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
-    // The Lux card's settings check reads the account.
-    await waitFor(() => expect(refreshMock).toHaveBeenCalledTimes(1));
+    expect(recheckMock).toHaveBeenCalledWith("lux");
+  });
+
+  describe("one Globus connection for Frontier and Lux", () => {
+    beforeEach(() => {
+      window.sessionStorage.clear();
+      startGlobusLoginMock.mockReset();
+      startGlobusLoginMock.mockResolvedValue({ authorize_url: "https://auth.globus.org/x" });
+      completeGlobusLoginMock.mockReset();
+      completeGlobusLoginMock.mockResolvedValue({
+        cluster: "frontier",
+        connected: "frontier",
+        identity: "ada@ornl.gov",
+      });
+    });
+
+    async function connectIn(name: "Frontier" | "Lux") {
+      const section = await region(name);
+      await userEvent.click(within(section).getByRole("button", { name: "Connect" }));
+      await userEvent.type(
+        await within(section).findByPlaceholderText("Paste the code from Globus"),
+        "a-code",
+      );
+      await userEvent.click(within(section).getByRole("button", { name: "Finish" }));
+      await within(section).findByText("Connected as ada@ornl.gov");
+    }
+
+    it("connected from Lux, Frontier shows connected with nothing to set up", async () => {
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      await connectIn("Lux");
+      expect(completeGlobusLoginMock).toHaveBeenCalledWith("frontier", "a-code");
+      expect(recheckMock).toHaveBeenCalledWith("frontier");
+      expect(recheckMock).toHaveBeenCalledWith("lux");
+
+      const frontier = await openOn("Frontier");
+      expect(within(frontier).getByText("Connected as ada@ornl.gov")).toBeInTheDocument();
+      expect(within(frontier).getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+    });
+
+    it("connected from Frontier, Lux shows connected with nothing to set up", async () => {
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
+      await connectIn("Frontier");
+
+      const lux = await openOn("Lux");
+      expect(within(lux).getByText("Connected as ada@ornl.gov")).toBeInTheDocument();
+      expect(within(lux).queryByRole("button", { name: "Connect" })).toBeNull();
+    });
+
+    it("a Frontier connection saved earlier shows as connected in Lux", async () => {
+      fetchSettingsMock.mockResolvedValue(
+        settingsRow({ frontier_globus_token: "t", frontier_globus_https_token: "h" }),
+      );
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      const lux = await region("Lux");
+      expect(within(lux).getByText("Connected")).toBeInTheDocument();
+      expect(within(lux).getByRole("button", { name: "Reconnect" })).toBeInTheDocument();
+    });
+
+    it("Odo's connection is not Lux's", async () => {
+      fetchSettingsMock.mockResolvedValue(
+        settingsRow({ odo_globus_token: "t", odo_globus_https_token: "h" }),
+      );
+      render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+      const lux = await region("Lux");
+      expect(within(lux).getByText("Not connected")).toBeInTheDocument();
+    });
+  });
+
+  it("connecting Globus from Lux connects Frontier's", async () => {
+    window.sessionStorage.clear();
+    startGlobusLoginMock.mockReset();
+    startGlobusLoginMock.mockResolvedValue({ authorize_url: "https://auth.globus.org/x" });
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+    const lux = await region("Lux");
+    await userEvent.click(within(lux).getByRole("button", { name: "Connect" }));
+    expect(startGlobusLoginMock).toHaveBeenCalledWith("frontier");
   });
 
   it("clearing the Lux remote directory sends null", async () => {
@@ -1439,4 +1663,217 @@ describe("UserSettingsModal About", () => {
     await userEvent.click(await within(about).findByRole("button", { name: "Restart now" }));
     expect(within(about).getByRole("alert")).toHaveTextContent("Restarting into an update needs VISTA's window.");
   });
+});
+
+describe("UserSettingsModal: remote directory from the S3M token's project", () => {
+  const ODO_GEN150 = "/gpfs/wolf2/olcf/gen150/proj-shared/vista";
+  const announced = () => document.querySelector(".visually-hidden[role=status]")?.textContent ?? "";
+
+  /** The status view, with these clusters' tokens reporting these projects. */
+  function withProjects(projects: Partial<Record<HpcCluster, string>>): HpcStatusView {
+    const view = statusView();
+    return {
+      ...view,
+      clusters: view.clusters!.map((c) => {
+        const project = projects[c.cluster];
+        if (!project) return c;
+        const checks = { ...c.status.checks, credential: { ...c.status.checks.credential, project } };
+        return { ...c, status: { ...c.status, checks } };
+      }),
+    };
+  }
+
+  /** The recheck a saved token triggers reports these projects. */
+  function recheckReports(projects: Partial<Record<HpcCluster, string>>) {
+    recheckMock.mockImplementationOnce(async () => {
+      useHpcStatusMock.mockReturnValue(withProjects(projects));
+    });
+  }
+
+  const dirSaves = (field: string) =>
+    updateSettingsMock.mock.calls.filter(([update]) => field in (update as object));
+
+  it("saving an Odo token from a subproject fills, saves and announces its folder once", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    recheckReports({ odo: "gen150-vista" });
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await userEvent.click(await screen.findByLabelText(/Odo S3M token/));
+    await userEvent.paste("odo-tok");
+
+    const dir = screen.getByLabelText(/Odo remote directory/);
+    await waitFor(() => expect(dir).toHaveValue(ODO_GEN150));
+    await waitFor(() => expect(announced()).toBe("Odo remote directory saved."));
+    expect(dirSaves("odo_remote_dir")).toEqual([[{ odo_remote_dir: ODO_GEN150 }]]);
+    expect(
+      screen.getByText("Filled from your S3M token's project (gen150 folder inferred from gen150-vista)."),
+    ).toBeInTheDocument();
+  });
+
+  it("saving a Lux token fills Lux's directory on Orion", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    recheckReports({ lux: "stf218" });
+    render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
+
+    await userEvent.click(await screen.findByLabelText(/Lux S3M token/));
+    await userEvent.paste("lux-tok");
+
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ lux_remote_dir: "/lustre/orion/stf218/proj-shared/vista" }),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, stf218.")).toBeInTheDocument();
+  });
+
+  it("opening with a token saved before and an empty directory fills it", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ frontier: "chm243" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
+
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({
+        frontier_remote_dir: "/lustre/orion/chm243/proj-shared/vista",
+      }),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, chm243.")).toBeInTheDocument();
+  });
+
+  it("replaces VISTA's folder for another project", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "stf218" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Odo remote directory/)).toHaveValue(
+        "/gpfs/wolf2/olcf/stf218/proj-shared/vista",
+      ),
+    );
+    expect(screen.getByText("Filled from your S3M token's project, stf218.")).toBeInTheDocument();
+  });
+
+  it("never writes a directory the researcher typed, and shows no note", async () => {
+    const typed = "/gpfs/wolf2/olcf/gen150/proj-shared/sam/v2";
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "stf218" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: typed }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(typed);
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/^Filled from your S3M token's project/)).toBeNull();
+  });
+
+  it("does not overwrite an edit still being typed", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.type(dir, "/x");
+    await userEvent.clear(dir); // empty again, but not yet saved
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalledWith({ odo_remote_dir: ODO_GEN150 });
+  });
+
+  it("waits while the cursor is in the empty field, and fills as it leaves", async () => {
+    fetchSettingsMock.mockResolvedValue(settingsRow());
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.click(dir);
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+
+    await userEvent.tab();
+    await waitFor(() => expect(dir).toHaveValue(ODO_GEN150));
+    expect(dirSaves("odo_remote_dir")).toEqual([[{ odo_remote_dir: ODO_GEN150 }]]);
+  });
+
+  it("leaving a field with a typed path keeps it", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await userEvent.clear(dir);
+    await userEvent.type(dir, "/gpfs/wolf2/olcf/gen150/proj-shared/sam");
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: "/gpfs/wolf2/olcf/gen150/proj-shared/sam" }),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("/gpfs/wolf2/olcf/gen150/proj-shared/sam");
+    expect(dirSaves("odo_remote_dir")).toHaveLength(1);
+  });
+
+  it("does not fill a hidden cluster", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ hpc_hidden_clusters: ["odo"] }));
+    render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue("");
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("drops the note once the filled directory is edited, and keeps the edit", async () => {
+    const note = "Filled from your S3M token's project (gen150 folder inferred from gen150-vista).";
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150 }));
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    expect(screen.getByText(note)).toBeInTheDocument();
+    await userEvent.type(dir, "/sam");
+    expect(screen.queryByText(note)).toBeNull();
+    await userEvent.tab();
+    await waitFor(() =>
+      expect(updateSettingsMock).toHaveBeenCalledWith({ odo_remote_dir: `${ODO_GEN150}/sam` }),
+    );
+
+    // The same project reported again leaves the edit alone.
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(`${ODO_GEN150}/sam`);
+  });
+
+  it("removing the token leaves the filled directory as it is", async () => {
+    useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150, odo_s3m_token: "odo-tok" }));
+    const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+
+    const dir = await screen.findByLabelText(/Odo remote directory/);
+    useHpcStatusMock.mockReturnValue(statusView());
+    rerender(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(dir).toHaveValue(ODO_GEN150);
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["Odo", "Frontier", "Lux"] as const)(
+    "%s's hint says it fills from the token until a project is known",
+    async (title) => {
+      const cluster = title.toLowerCase() as HpcCluster;
+      fetchSettingsMock.mockResolvedValue(settingsRow());
+      const { unmount } = render(<UserSettingsModal onClose={() => {}} initialSection={cluster} />);
+      const section = await region(title);
+      expect(section).toHaveTextContent(
+        `Filled from your S3M token once you add one. Required for ${title}.`,
+      );
+      unmount();
+
+      useHpcStatusMock.mockReturnValue(withProjects({ [cluster]: "stf218" }));
+      render(<UserSettingsModal onClose={() => {}} initialSection={cluster} />);
+      const known = await region(title);
+      expect(known).not.toHaveTextContent("Filled from your S3M token once you add one.");
+    },
+  );
 });

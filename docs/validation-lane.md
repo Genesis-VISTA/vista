@@ -368,6 +368,22 @@ cd backend && uv run pytest tests/live/test_hpc_example_smoke.py -v -m hpc
 Job templates: [`hpc_jobs/example/`](../hpc_jobs/example/). Prefer a **weekly**
 GitLab schedule (or manual) rather than default nightly if the facility is flaky.
 
+### The IRI client against each facility
+
+`mcp_servers/vista_mcp_server/tests/live/test_iri_live.py` checks VISTA's IRI client
+without the backend: on each cluster it submits a job that only sleeps, reads its status
+and cancels it, so the queue wait does not matter. On Perlmutter it also uploads,
+lists, reads and downloads a text and a binary file. Each cluster is skipped unless its
+token and folder are set; the test's docstring lists the variables.
+
+```bash
+export VISTA_RUN_LIVE=1 VISTA_RUN_HPC=1
+export VISTA_LIVE_LUX_S3M_TOKEN=… VISTA_LIVE_LUX_DIR=/lustre/orion/<project>/proj-shared
+cd mcp_servers/vista_mcp_server && uv run --extra dev pytest tests/live/test_iri_live.py -v -rs
+```
+
+The OLCF folders must be writable by the project's automation user, which runs the job.
+
 ## Testing index
 
 | Doc / path | Role |

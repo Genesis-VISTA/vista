@@ -70,9 +70,7 @@ def test_parity_check_catches_a_drifted_default():
     assert set(_mismatches(drifted)) == {"odo_iri_url"}
 
 
-def test_lux_hosts_parse_like_the_mcp_server(monkeypatch):
-    """`VISTA_MCP_LUX_SSH_HOSTS` is comma-separated in the MCP server; JSON also works."""
-    monkeypatch.setenv("VISTA_MCP_LUX_SSH_HOSTS", "hub.example, login.example")
-    assert HpcClusterSettings().lux_ssh_hosts == ["hub.example", "login.example"]
-    monkeypatch.setenv("VISTA_MCP_LUX_SSH_HOSTS", '["hub.example"]')
-    assert HpcClusterSettings().lux_ssh_hosts == ["hub.example"]
+def test_lux_connects_globus_through_frontiers_collection():
+    """No collection of Lux's own: it mounts Frontier's filesystem."""
+    assert globus_auth.credential_cluster("lux") == "frontier"
+    assert "lux" not in globus_auth._DEFAULTS

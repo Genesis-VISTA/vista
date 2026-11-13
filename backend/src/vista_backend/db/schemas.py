@@ -115,10 +115,10 @@ class TeamSharing(SQLModel):
     team_id: uuid.UUID | None = None
     """
     The collaboration team it is in, on the server in effect, and publishes
-    to: the team selected when it was made (`collaboration_team_id`), its
-    project's when made for one, its item's when imported, or the one it was
-    copied to (`team_copy`). None is private: on this computer only, as
-    everything made with Private selected, or seeded or bundled by VISTA, is.
+    to: its project's when made for one, its item's when imported, or the one
+    it was first published to (`team_publish`). None is private: on this
+    computer only, as everything else made here, or seeded or bundled by
+    VISTA, is.
     Only resources of the same team are used together (`services/teams.py`).
     """
     team_server: str | None = None
@@ -363,7 +363,7 @@ class KnowledgeBaseCreate(SQLModel):
     project: str | None = None
     """
     The project it is made for, whose team it joins (so the project can use
-    it); without one, it joins the team selected here.
+    it); without one, it is private.
     """
 
 
@@ -551,9 +551,9 @@ _SETTINGS_NULLABLE_FIELDS = (
     "odo_remote_dir",
     "frontier_remote_dir",
     "lux_remote_dir",
-    "lux_account",
     "odo_s3m_token",
     "frontier_s3m_token",
+    "lux_s3m_token",
     "nersc_iri_token",
     "globus_token",
     "odo_globus_token",
@@ -594,8 +594,8 @@ class LocalSettingsUpdate(SQLModel):
     """ The researcher's name: on their Hypothesis Lab posts, and what the collaboration server will show. """
     collaboration_server_url: OptionalHttpUrl = None
     """ The collaboration server to publish to and import from; an `http(s)://` address, or blank for none (`utils.types.OptionalHttpUrl`). """
-    collaboration_team_id: uuid.UUID | None = None
-    """ The collaboration team selected here; None for Private. """
+    collaboration_enabled: bool | None = None
+    """ The Collaboration switch. Off sends nothing to any collaboration server; null is on, as never chosen. """
     email: str | None = None
     """ Where campaign notifications go. Refused unless it looks like an address (`_check_email`). """
     inference_model: str | None = None
@@ -617,9 +617,9 @@ class LocalSettingsUpdate(SQLModel):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
-    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
+    lux_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -700,7 +700,8 @@ class LocalSettingsPublic(SQLModel):
     """ This installation's identity, made once when the settings row is created. """
     display_name: str | None = None
     collaboration_server_url: str | None = None
-    collaboration_team_id: uuid.UUID | None = None
+    collaboration_enabled: bool = True
+    """ The Collaboration switch; never chosen (null on the row) reads as on. """
     email: str | None = None
     inference_model: str | None = None
     inference_base_url: str | None = None
@@ -722,9 +723,9 @@ class LocalSettingsPublic(SQLModel):
     odo_remote_dir: str | None = None
     frontier_remote_dir: str | None = None
     lux_remote_dir: str | None = None
-    lux_account: str | None = None
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
+    lux_s3m_token: str | None = None
     nersc_iri_token: str | None = None
     globus_token: str | None = None
     odo_globus_token: str | None = None
@@ -768,6 +769,11 @@ class LocalSettingsPublic(SQLModel):
     not on the row; `services/local_settings.to_public` fills it.
     """
 
+    @field_validator("collaboration_enabled", mode="before")
+    @classmethod
+    def _never_chosen_is_on(cls, v):
+        return True if v is None else v
+
     @field_validator("hpc_hidden_clusters", mode="before")
     @classmethod
     def _null_is_none_hidden(cls, v):
@@ -802,12 +808,19 @@ class LocalSettingsTable(SQLModel, table=True):
     `None` falls back to `Settings.collaboration_server_url`; with neither,
     publishing and importing are off. Not a secret.
     """
+    collaboration_enabled: bool | None = None
+    """
+    The Collaboration switch in Settings. `False` contacts no collaboration
+    server and hides every collaboration control (`services/collaboration`);
+    `None`, never chosen, is on. Nullable without a server default so the
+    schema stays additive (AGENTS.md) and "never chosen" stays visible.
+    """
     collaboration_team_id: uuid.UUID | None = None
     """
-    The collaboration team selected here, which every page shows the
-    resources of and every new project, skill and knowledge base joins; None
-    for Private, on this computer only. A team on that server, so cleared
-    when the server's address changes.
+    Unused: the collaboration team once selected here, before the team
+    selector went. Kept so the schema stays additive (AGENTS.md); nothing reads
+    or writes it, and it is in neither `LocalSettingsUpdate` nor
+    `LocalSettingsPublic`.
     """
     email: str | None = None
     """ Where campaign notifications go; nothing is sent without it. """
@@ -895,8 +908,9 @@ class LocalSettingsTable(SQLModel, table=True):
     """
     lux_account: str | None = None
     """
-    The OLCF project Lux jobs are charged to (`#SBATCH -A`). Required for Lux,
-    which has no token to take a project from. Not a secret.
+    Unused. The OLCF project Lux jobs were charged to while Lux was reached over
+    SSH; Lux jobs are now charged to the Lux S3M token's project. Kept so that
+    databases holding it keep their column (`db/schema_check.py`).
     """
     odo_s3m_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
@@ -913,6 +927,15 @@ class LocalSettingsTable(SQLModel, table=True):
     S3M bearer token for Frontier (moderate enclave), from any OLCF project
     with S3M access; that project is what Frontier jobs are charged to.
     Encrypted at rest.
+    """
+    lux_s3m_token: str | None = Field(
+        default=None, sa_column=Column(EncryptedStr, nullable=True)
+    )
+    """
+    S3M bearer token for Lux (moderate enclave, beside Frontier), from any OLCF
+    project with S3M access to Lux; that project is what Lux jobs are charged
+    to. Lux's files go through Frontier's Globus connection, so it has no Globus
+    tokens of its own. Encrypted at rest.
     """
     nersc_iri_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)

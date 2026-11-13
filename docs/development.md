@@ -27,8 +27,6 @@ backend launches one per agent over STDIO.
 - Network access to GitHub, where `uv sync` in `backend/` fetches [PALISADE](palisade.md) at a
   pinned tag. The repository is public, so no GitHub credentials are needed; its licence is
   still a placeholder (see [PALISADE](palisade.md#licence)).
-- Read access to the amsc2 GitLab group, for the private `amscrot-py` that HPC job submission
-  needs (see [below](#hpc-dependencies)).
 
 The embedding model,
 [microsoft/harrier-oss-v1-270m](https://huggingface.co/microsoft/harrier-oss-v1-270m), is
@@ -38,22 +36,11 @@ acceptance, or `HF_TOKEN` is needed.
 Globus Connect Personal is **not** a prerequisite on any platform, and VISTA does not run a
 Globus endpoint of its own; see [hpc.md](hpc.md).
 
-### HPC dependencies
+### HPC job submission
 
-The NERSC/OLCF IRI SDK (`amscrot-py`) is in the vista MCP server's optional `hpc` extra, and
-needs access to
-<https://gitlab.com/amsc2/infrastructure-and-services/infrastructure-services/resource-orchestration/amsc-isro-toolkit.git>.
-`./scripts/build.sh` already includes it; by hand:
-
-```bash
-cd mcp_servers/vista_mcp_server && uv sync --extra hpc
-```
-
-If you cloned VISTA over SSH you may need:
-
-```bash
-git config --global url."ssh://git@gitlab.com/amsc2/".insteadOf "https://gitlab.com/amsc2/"
-```
+Job submission needs no private dependency: VISTA talks to each cluster's IRI service with its
+own client (`mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/iri.py`), and researchers
+supply their tokens in Settings. See [hpc.md](hpc.md).
 
 Set `VISTA_MCP_DISABLE_SERVERS=submit_job` to skip mounting the job tools entirely.
 
@@ -135,6 +122,12 @@ caller's identity headers as sent, so it refuses to listen on anything but loopb
 never start one. How the server works, and how a deployment signs researchers in, is in
 [The collaboration server](collaboration-server.md).
 
+Without `--collab`, a dev stack uses VISTA's default server on Obsidian, like an installed
+VISTA: it checks its status whenever a page asks, a few seconds at most and never failing. To
+keep a stack off it, put `VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`, or turn
+collaboration off under Settings → Collaboration. Backend tests never reach it: `conftest.py`
+sets the configured address to none for every test.
+
 ### By hand
 
 Build once, then start each service in its own terminal:
@@ -169,8 +162,8 @@ open "dist/mac-dev/VISTA Dev.app"
 
 The first build installs only missing checkout dependencies; later builds normally package and
 ad-hoc-sign the Electron application in seconds. Pass `--refresh-dependencies` after lockfile
-changes. No Apple account, corpus, vector store, exported sandbox image, bundled runtime, or
-access to the private `amscrot-py` repository is required.
+changes. No Apple account, corpus, vector store, exported sandbox image or bundled runtime is
+required.
 
 `VISTA Dev.app` shows the same preparation window as the distributable, then starts the MCP
 server, backend, and Next.js UI directly from this checkout. It uses `~/.vista-dev`, the bundle

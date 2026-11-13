@@ -14,7 +14,7 @@ from pydantic import (
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
-from .utils.types import CommaSeparatedList, OptionalHttpUrl, ResolvedPath, LogLevel
+from .utils.types import OptionalHttpUrl, ResolvedPath, LogLevel
 from palisade.config import PalisadeSettings
 from .metrics import MetricsSettings
 
@@ -295,6 +295,14 @@ AMSC_MAG_BASE_URL = "https://mag.genesis.americansciencecloud.org/v1"
 RETIRED_I2_HOST = "api.i2-core.american-science-cloud.org"
 """ The AmSC i2-core API, deactivated on 2026-10-31. A configured URL on it is ignored. """
 
+DEFAULT_COLLABORATION_SERVER_URL = "https://obsidian.ccs.ornl.gov/vista/api"
+"""
+VISTA's default collaboration server, on the Holly testbed behind Obsidian's
+gateway (`collaboration_server/deploy/holly/`). Normalised already, as
+`utils.types.HttpUrl` would store it, so it compares equal to the address in
+effect (`services/collaboration.status`'s `default_server`).
+"""
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -404,14 +412,17 @@ class Settings(BaseSettings):
         """The configured i2-core URL that was replaced by the default, if any."""
         return self._ignored_openai_base_url
 
-    collaboration_server_url: OptionalHttpUrl = None
+    collaboration_server_url: OptionalHttpUrl = DEFAULT_COLLABORATION_SERVER_URL
     """
     The collaboration server to use when the researcher has set none in
-    Settings, which takes precedence. For development: `./launch.sh --collab`
-    sets it to the local server it starts. With neither, publishing and
-    importing are off, with the reason shown. Validated like the Settings
-    field, so a malformed address stops the backend at startup, naming it;
-    a blank one (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset.
+    Settings, which takes precedence: VISTA's default server unless the
+    installation names another. For development: `./launch.sh --collab` sets
+    it to the local server it starts. Validated like the Settings field, so a
+    malformed address stops the backend at startup, naming it; a blank one
+    (`VISTA_BACKEND_COLLABORATION_SERVER_URL=` in `.env`) is unset, and with
+    none in Settings either, publishing and importing are off, with the reason
+    shown. A dev stack opts out of contacting the default server that way, or
+    with the Collaboration switch in Settings.
     """
 
     mcp_url: str = Field(
@@ -655,33 +666,37 @@ class HpcClusterSettings(BaseSettings):
 
     odo_iri_url: str = "https://amsc-open.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, open enclave. """
-    odo_compute_resource_id: str = "70e0dde0-88e4-52e3-89f3-4849760f2e87"
-    """
-    Odo's IRI compute resource. Matched by id, not name: the open enclave lists
-    Odo beside Defiant, Wombat, and Quokka with no stable naming to match on.
-    """
+    odo_iri_api_version: Literal["v1", "v2"] = "v2"
+    odo_iri_resource_id: str = "odo"
     odo_introspect_url: str = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     odo_globus_collection_id: str = "7399956e-a57b-4560-b3d7-a035ff42cad4"
 
     frontier_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
     """ OLCF AmSC IRI API, moderate enclave. """
-    frontier_machine: str = "frontier"
-    """ Frontier's resource name in the IRI status list, compared case-insensitively. """
+    frontier_iri_api_version: Literal["v1", "v2"] = "v2"
+    frontier_iri_resource_id: str = "frontier"
     frontier_introspect_url: str = (
         "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
     )
     frontier_globus_collection_id: str = "36d521b3-c182-4071-b7d5-91db5d380d42"
 
-    nersc_iri_url: str = "https://api.iri.nersc.gov"
-    nersc_machine: str = "perlmutter"
-    """ The IRI status group Perlmutter's `compute` resource sits in. """
+    perlmutter_iri_url: A[
+        str,
+        Field(
+            validation_alias=AliasChoices(
+                "VISTA_MCP_PERLMUTTER_IRI_URL", "VISTA_MCP_NERSC_IRI_URL"
+            )
+        ),
+    ] = "https://api.iri.nersc.gov"
+    """ NERSC's IRI API. `VISTA_MCP_NERSC_IRI_URL`, its earlier name, still sets it. """
+    perlmutter_iri_api_version: Literal["v1", "v2"] = "v1"
+    perlmutter_iri_resource_id: str = "94351904-6dba-4c16-b5cd-fbd280d8615b"
+    perlmutter_iri_storage_id: str = "65b28619-c3b6-4942-8da1-044a3b3a2a9e"
 
-    lux_ssh_hosts: CommaSeparatedList[str] = ["lux.olcf.ornl.gov"]
-    """
-    The SSH hops to Lux, ending at its login node. Only the first is probed:
-    Lux has no IRI service. Lux is now reached directly, so the default is one
-    hop; a jump host can still be listed first.
-    """
+    lux_iri_url: str = "https://amsc-moderate.s3m.olcf.ornl.gov"
+    lux_iri_api_version: Literal["v1", "v2"] = "v2"
+    lux_iri_resource_id: str = "lux"
+    """ Lux's files go through Frontier's Globus collection, which it mounts. """
 
     globus_native_app_client_id: str = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
     """ The public client the users' Globus refresh tokens were minted for. """

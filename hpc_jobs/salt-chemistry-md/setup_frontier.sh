@@ -1,6 +1,7 @@
 #!/bin/bash -l
-# Frontier pre_launch validation for salt-chemistry-md. Runs ONCE on the head compute
-# node before job.frontier.slurm. Inlined into the IRI JobSpec by vista's dispatcher.
+# Frontier validation for salt-chemistry-md. Runs ONCE on the head compute node
+# before job.frontier.slurm, inside the job, after vista's prefix (submit_job_mcp.py);
+# a non-zero exit ends the job.
 # Fails fast (before the GPU allocation does any work) if its prerequisites are missing.
 #
 # Env provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:

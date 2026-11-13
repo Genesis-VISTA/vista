@@ -374,8 +374,9 @@ ProjectAgentStreamEvent = A[
 
 
 VISTA_MCP_READ_TIMEOUT = 24 * 60 * 60
-""" Seconds one VISTA MCP tool call may take. An SSH login raised inside a tool call
-(Lux job submission) waits for the researcher, who may be away for hours. """
+""" Seconds one VISTA MCP tool call may take. A prompt raised inside a tool call (a
+transfer approval, or the optional agenthpc server's SSH login) waits for the
+researcher, who may be away for hours. """
 
 
 def get_vista_mcp_server(

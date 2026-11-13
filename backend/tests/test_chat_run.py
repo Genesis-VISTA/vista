@@ -457,6 +457,9 @@ async def test_replay_shows_only_unanswered_prompts_and_a_live_view_sees_resolut
     watcher = asyncio.create_task(watch())
     await _until(lambda: len(run.pending) == 1)
     first = next(iter(run.pending))
+    # Answer only once the live view has read the prompt: a view that reads it
+    # already answered treats it as late and skips it.
+    await _until(lambda: any(e.prompt_id == first for e in live))
     assert await resolve_prompt(first, "accept", {"password": "hunter2"}) is True
     await _until(lambda: len(run.pending) == 1 and first not in run.pending)
     second = next(iter(run.pending))

@@ -1,9 +1,18 @@
 # The collaboration server
 
 The collaboration server (`collaboration_server/`) is a FastAPI service where researchers
-explicitly publish, and explicitly import, VISTA projects, skills and knowledge bases. It is
-optional: a researcher points VISTA at one under Settings → Collaboration, and without one,
-publishing and importing are off. No VISTA package starts one.
+explicitly publish, and explicitly import, VISTA projects, skills and knowledge bases. VISTA
+uses its own deployment, `https://obsidian.ccs.ornl.gov/vista/api`, unless a researcher sets
+another under Settings → Collaboration or the installation's configuration names one
+(`VISTA_BACKEND_COLLABORATION_SERVER_URL`; set but empty, none). No VISTA package starts one.
+
+Collaboration can be turned off with the switch at the top of Settings → Collaboration. Off,
+VISTA contacts no collaboration server: the status check, every publish and import, and a
+project's [hosted forum](#forums) all stop, and the Skill Hub, team badges and sharing buttons
+are hidden. On, it stays quiet until this installation has signed in: nothing about
+collaboration shows outside Settings and the Skill Hub until a token is saved or the server
+signs it in. After that every control stays, disabled with the reason when the token expires,
+the server refuses it or it is offline.
 
 It stores *items* of any kind, each created with its first version and given more, numbered
 2, 3… by the server, none ever changed; what a version holds (a JSON manifest and optionally
@@ -69,8 +78,11 @@ no session); every other route takes the token alone, as VISTA sends it.
 like any request's (never cached or framed, and running no script). In VISTA, Settings →
 Collaboration links to `<server>/sign-in`, and the researcher pastes the token into a write-only
 field, like a repository token. The backend sends it only over https (or to loopback), forgets
-it when the server's address changes, and, when the server refuses it, says to get a new one
-from that page. A `dev-headers` server needs no token.
+it when the server's address changes, and, when the server or its gateway asks for one (`401`),
+says to get one from that page. A token the server knows but refuses (`403`, an account without
+the role) is reported as no access instead: a new token would not help, so it says to ask the
+server's administrators, or on VISTA's default server to reach out to the VISTA team. A
+`dev-headers` server needs no token.
 
 A token from `/sign-in` cannot be renewed: researchers fetch a new one when it expires, after
 the realm's access token lifespan.
@@ -87,7 +99,7 @@ Everyone is in the **public** team (id `00000000-0000-4000-8000-000000000000` on
 which has no member rows and starts empty; it holds anything published for everyone, and anyone
 signed in can publish a new version of an item in it. The server holds no seeds: VISTA's seeded
 projects and knowledge bases, and its bundled skills, are private on each installation until
-copied to a team.
+published to a team.
 
 - Anyone signed in can create a team and is its first member. Names are unique in any case.
 - Any member can add anyone who has signed in to the server (`GET /users` finds them by name
@@ -106,9 +118,10 @@ others, may follow.
 
 `POST /items/{id}/copy` (`{team_id, name?}`) makes a new item in another of the caller's teams
 whose version 1 is the original's newest version, with the same manifest and blob, so nothing
-is uploaded again; `copied_from` names the original, which stays as it is. A VISTA backend runs
-it, recursively for a project, when a researcher copies something to a team. Items are copied
-between teams, never moved.
+is uploaded again; `copied_from` names the original, which stays as it is. Items are copied
+between teams, never moved. VISTA does not use it: in VISTA an item stays in the team it was
+first published to, and a private project, skill or knowledge base is published into a team as
+a new item.
 
 The server chooses every item's id; a client cannot.
 

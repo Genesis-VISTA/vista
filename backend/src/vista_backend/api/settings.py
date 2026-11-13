@@ -133,37 +133,44 @@ class GlobusLoginCode(BaseModel):
 
 
 class GlobusConnected(BaseModel):
-    cluster: globus_auth.Cluster
+    cluster: globus_auth.ConnectCluster
+    """ The cluster the researcher connected from, as asked. """
+    connected: globus_auth.Cluster
+    """ Whose connection was stored: Frontier's for Lux, which shares it. """
     identity: str
     """Which Globus account this cluster is now connected as, so a researcher
     who authorizes both enclaves can see they landed where intended."""
 
 
 @router.post("/globus/{cluster}/login")
-async def start_globus_login(cluster: globus_auth.Cluster) -> GlobusLoginStarted:
-    return GlobusLoginStarted(authorize_url=globus_auth.start_login(cluster))
+async def start_globus_login(cluster: globus_auth.ConnectCluster) -> GlobusLoginStarted:
+    owner = globus_auth.credential_cluster(cluster)
+    return GlobusLoginStarted(authorize_url=globus_auth.start_login(owner))
 
 
 @router.post("/globus/{cluster}/code")
 async def complete_globus_login(
-    cluster: globus_auth.Cluster,
+    cluster: globus_auth.ConnectCluster,
     payload: GlobusLoginCode,
     session: SessionDep,
 ) -> GlobusConnected:
-    connection = globus_auth.complete_login(cluster, payload.code)
+    owner = globus_auth.credential_cluster(cluster)
+    connection = globus_auth.complete_login(owner, payload.code)
     await local_settings.update(
         session,
         LocalSettingsUpdate.model_validate(
             {
-                globus_auth.TOKEN_FIELDS[cluster]: connection.refresh_token,
-                globus_auth.HTTPS_TOKEN_FIELDS[cluster]: connection.https_refresh_token,
+                globus_auth.TOKEN_FIELDS[owner]: connection.refresh_token,
+                globus_auth.HTTPS_TOKEN_FIELDS[owner]: connection.https_refresh_token,
             }
         ),
     )
     # When the High Assurance session started, for Slack's expiry reminders
     # (`slack/credentials.py`): refreshing a token does not extend it.
     row = await local_settings.get(session)
-    setattr(row, f"{cluster}_globus_connected_at", now_iso())
+    setattr(row, f"{owner}_globus_connected_at", now_iso())
     session.add(row)
     await session.commit()
-    return GlobusConnected(cluster=cluster, identity=connection.identity)
+    return GlobusConnected(
+        cluster=cluster, connected=owner, identity=connection.identity
+    )

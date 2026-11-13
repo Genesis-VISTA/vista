@@ -1,0 +1,50 @@
+{
+  "id": "2002",
+  "status": {
+    "state": "canceled",
+    "time": 1794022099.0,
+    "message": "None",
+    "exit_code": 0,
+    "meta_data": {
+      "scheduler": "slurm",
+      "s3m": {
+        "account": "abc123",
+        "job_id": 2002,
+        "name": "vista-probe-cancel",
+        "partition": "batch",
+        "user": "abc123_auser",
+        "group": "abc123",
+        "state": {
+          "current": [
+            "CANCELLED"
+          ],
+          "reason": "None"
+        },
+        "exit_code": {
+          "status": [
+            "SUCCESS"
+          ],
+          "return_code": {
+            "set": true,
+            "infinite": false,
+            "number": 0
+          },
+          "signal": {
+            "id": {
+              "set": false,
+              "infinite": false,
+              "number": 0
+            },
+            "name": ""
+          }
+        },
+        "nodes": "lux010",
+        "cluster": "lux",
+        "qos": "normal",
+        "working_directory": "/lustre/orion/abc123/proj-shared",
+        "stdout_expanded": "/lustre/orion/abc123/proj-shared/vista-probe-cancel-2002.out",
+        "stderr_expanded": "/lustre/orion/abc123/proj-shared/vista-probe-cancel-2002.err"
+      }
+    }
+  }
+}

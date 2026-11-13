@@ -86,13 +86,13 @@ download models and build images on the cluster.
 |---|---|---|
 | `VISTA_OUT` | all | This run's output folder, already created. Write outputs and logs here. |
 | `RUN_DIR_<Cluster>` (`RUN_DIR_Lux`, `RUN_DIR_Frontier`, `RUN_DIR_Odo`, `RUN_DIR_Perlmutter`) | all | The uploaded job folder. Read only. |
-| `VISTA_JOB_DIR` | Lux, Frontier | State shared by all runs of this job (a checkout, a build, a model). |
+| `VISTA_JOB_DIR` | all | State shared by all runs of this job (a checkout, a build, a model). |
 
 `script_args` is split like a shell command and passed as `$1 $2 ...`. Accept
 only `KEY=VALUE` pairs from an allow-list and refuse anything else (the
 template does this), so an argument nobody planned for fails at once.
 
-Write only under `$VISTA_OUT` and `$VISTA_JOB_DIR`. On Odo and Frontier the job
+Write only under `$VISTA_OUT` and `$VISTA_JOB_DIR`. On Odo, Frontier and Lux the job
 runs as the project's automation user, which can only read the uploaded
 sources: put virtual environments under `$VISTA_OUT`, and `cd "$VISTA_OUT"`
 before running tools that write to the working directory.
@@ -114,20 +114,33 @@ fields are optional:
 ```
 
 - `duration` is in seconds (default 1800; at most 4 hours).
-- Lux needs `iri.partition` and `resources.gpus_per_node`; `iri.queue_name`
-  there is the QOS.
+- Lux needs `iri.partition` (sent to IRI as the queue, which Lux takes as the
+  Slurm partition) and `resources.gpus_per_node`; without GPUs Lux gives the job
+  none.
+- `gpus_per_node` is sent as GPUs per process, so it must be a multiple of
+  `processes_per_node` (default 1). On Lux, Slurm then binds each task of an
+  `srun` step to its own GPUs, which it sees as device 0 onward. Code that picks
+  its GPU by local rank (`cuda:$LOCAL_RANK`) needs every GPU visible: export
+  `SLURM_GPU_BIND=none` before launching. A step with more tasks per node than
+  `processes_per_node` needs `--gpus-per-task=<n>`, and a step without
+  `--cpus-per-task` gets one CPU per task (`cpu_cores_per_process` does not reach
+  the job on Lux).
 - Perlmutter needs `iri.constraint` (`"gpu"` or `"cpu"`); `iri.image` and
   `iri.module` select a container and modules.
 - `iri.environment` values are strings, added to the job's environment.
 
 #### Setup scripts
 
-- `setup_lux.sh` runs on the Lux **login node** before every `sbatch`, with the
-  proxy, `RUN_DIR_Lux`, `VISTA_JOB_DIR` and `iri.environment` exported. Clone or
-  update code there, into `$VISTA_JOB_DIR`, idempotently (`flock` if two
-  submissions could race). A non-zero exit fails the submission with its output.
-- `setup_odo.sh`, `setup_frontier.sh`, `setup_perlmutter.sh` run on the compute
-  node before the job script, as part of the job.
+- `setup_<cluster>.sh` runs inside the job, on its first node, before the job
+  script: in a login shell of its own, after VISTA has set `VISTA_OUT`, `HOME`
+  and (on the OLCF clusters) the proxy, with `RUN_DIR_<Cluster>`, `VISTA_JOB_DIR`
+  and `iri.environment` exported. A non-zero exit ends the job, with
+  `VISTA: setup_<cluster>.sh failed with exit code <n>` in its stderr. Its
+  exports do not reach the job script.
+- Every run pays for it, so keep it idempotent: clone or build into
+  `$VISTA_JOB_DIR` once, under `flock` (two runs can start together), and
+  return at once when the work is already there.
+- `iri.pre_launch` is no longer used; VISTA refuses a job that sets it.
 
 #### Software environment
 
@@ -146,13 +159,14 @@ under a lock, and mark it done so later runs skip straight to activating it.
 `templates/conda-env/build_conda_env.sh` does exactly this. Copy it into the job
 folder (it is uploaded with the job's other files) and call it with
 `ENV_PARENT`, `ENV_NAME` and optionally `ENV_SPEC` set:
-`bash "$RUN_DIR_Lux/build_conda_env.sh"` from `setup_lux.sh` on Lux, or the
-same with `$RUN_DIR_Frontier` / `$RUN_DIR_Odo` from the job script. Fill in its
+`bash "$RUN_DIR_Lux/build_conda_env.sh"` from `setup_lux.sh`, or the same with
+`$RUN_DIR_Frontier` / `$RUN_DIR_Odo` from that cluster's setup or job script. Fill in its
 `TODO`s (the cluster's modules, the packages). Its steps, which any hand-written build should follow too:
 
 1. **Set the proxy first.** The OLCF clusters reach the internet only through
-   it. VISTA exports it for `setup_lux.sh`; everywhere else, export it yourself
-   before `conda` or `pip`:
+   it. VISTA exports it in every OLCF job, before the setup and job scripts;
+   anywhere else (a script you run by hand), export it yourself before `conda`
+   or `pip`:
    ```bash
    export https_proxy=http://proxy.ccs.ornl.gov:3128
    export http_proxy=http://proxy.ccs.ornl.gov:3128
@@ -267,10 +281,12 @@ keys, what it needs installed, how many nodes and GPUs and how long (from
 existing `#SBATCH` lines where there are any), and which files it writes.
 Confirm with the user; keep everything else at the code's defaults.
 
-Translate an existing batch script rather than calling it: VISTA writes the
-`#SBATCH` header itself, so move its resources into `cluster_defaults.json`
+Translate an existing batch script rather than calling it: VISTA takes the
+job's resources from `cluster_defaults.json` and sends them to IRI, and
+`#SBATCH` lines are ignored, so move its resources there
 (`-N` → `node_count`, `-t` → `duration` in seconds, `--gpus-per-node` →
-`gpus_per_node`, `-p` → `iri.partition`, `-q` → `iri.queue_name`), and drop
+`gpus_per_node`, `-p` → `iri.partition` on Lux, `-q` → `iri.queue_name`
+elsewhere; Lux takes no QOS), and drop
 its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
 `$VISTA_OUT`.
 
@@ -279,7 +295,7 @@ its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
 - **A public GitHub or GitLab repository: clone it on the cluster, pinned.** Use the
   `wrap-repo` template. The job folder holds only the wrapper; the repository
   is checked out at the recorded commit into `$VISTA_JOB_DIR/src/<commit>` by
-  `setup_lux.sh`, once, on the Lux login node.
+  `setup_lux.sh`, once, inside the first run's job (later runs find it there).
 
   ```bash
   SKILL=<skill> JOB=<job> T=/mnt/skills/hpc-skill-author/templates
@@ -294,10 +310,10 @@ its `-A`, `-o`, `-e` and `-J` lines. Replace its hard-coded output paths with
 
   Put one-time build steps (a `pip install`, a `make`) in `setup_lux.sh`, in
   the marked place, so they run once per commit. To move to a newer commit
-  later, change `REPO_COMMIT` in `cluster_defaults.json`. On Odo and Frontier,
-  where setup runs on the compute node as part of the job, clone in the job
-  script instead, into `$VISTA_JOB_DIR` on Frontier or `$VISTA_OUT` on Odo, the
-  same way (`git clone`, then `git checkout --detach "$REPO_COMMIT"`).
+  later, change `REPO_COMMIT` in `cluster_defaults.json`. For Odo or Frontier,
+  copy `setup_lux.sh` to `setup_odo.sh` or `setup_frontier.sh`, and put
+  `REPO_URL` and `REPO_COMMIT` in that cluster's `iri.environment`: setup runs
+  the same way on every cluster.
 - **A private repository** (`"private": true` in SOURCE.json): ship the files
   as for an upload, below, unless the user confirms the cluster can clone it
   with their own credentials there; the skill cannot carry any.

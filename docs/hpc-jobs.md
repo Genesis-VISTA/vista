@@ -20,10 +20,10 @@ hpc_jobs/
     ├── job.frontier.slurm     # Slurm batch script for Frontier (OLCF, moderate enclave)
     ├── job.perlmutter.slurm   # Slurm batch script for Perlmutter (NERSC)
     ├── job.lux.slurm          # Slurm batch script for Lux (OLCF)
-    ├── setup_odo.sh           # optional; pre_launch setup, inlined into the JobSpec
+    ├── setup_odo.sh           # optional; runs inside the job, before the job script
     ├── setup_frontier.sh      # optional; same, for Frontier
     ├── setup_perlmutter.sh    # optional; same, for Perlmutter
-    ├── setup_lux.sh           # optional; runs on the Lux login node before sbatch
+    ├── setup_lux.sh           # optional; same, for Lux
     └── ...                    # other supporting files and folders, uploaded to the job's src/ folder
 ```
 
@@ -43,9 +43,10 @@ are small working examples.
 
 ## job.\<cluster\>.slurm
 
-A standard Slurm batch script. On Odo, Frontier and Perlmutter it is inlined into the IRI
-JobSpec; on Lux it is sent to `sbatch` on stdin, with the job's resources as `#SBATCH`
-directives. The agent can pass arguments to the job, which the script reads as `$1`, `$2`, ...
+A standard Slurm batch script, inlined into the IRI JobSpec on every cluster. Its `#SBATCH`
+lines are ignored: the job's resources come from `cluster_defaults.json`. It runs as
+`bash -l -c`, so errexit is off unless the script turns it on. The agent can pass arguments to
+the job, which the script reads as `$1`, `$2`, ...
 
 The job's environment carries:
 
@@ -53,15 +54,20 @@ The job's environment carries:
 |---|---|---|
 | `VISTA_OUT` | all | The job's own output directory, already created. Save outputs and logs under it so VISTA can fetch them. |
 | `RUN_DIR_<Cluster>` (`RUN_DIR_Odo`, `RUN_DIR_Frontier`, `RUN_DIR_Perlmutter`, `RUN_DIR_Lux`) | all | The uploaded source folder |
-| `FORGE_MODEL_<Cluster>` | Odo, Frontier, Perlmutter | A `model` folder inside the job's shared directory |
-| `VISTA_JOB_DIR` | Frontier, Lux | State the job's runs share, such as a downloaded model |
+| `FORGE_MODEL_<Cluster>` | all | A `model` folder inside the job's shared directory |
+| `VISTA_JOB_DIR` | all | State the job's runs share, such as a downloaded model |
 
 On Odo the script also starts with its working directory set to the source folder. Where these
 folders are on each cluster is in [hpc.md](hpc.md#remote-directories).
 
-`setup_lux.sh` differs from the other setup scripts: it runs on the Lux login node before
-`sbatch`, where the network is reachable through the proxy, so it is the place to clone or
-update code. A failure there is a tool error at submit time, not a failed job later.
+## Setup scripts
+
+Optional. VISTA runs it inside the job, on its first node, before the job script, in a login
+`bash` of its own. On the OLCF clusters it already has `VISTA_OUT`, `HOME` and the OLCF proxy,
+so it can clone or update code; it also has the job's other variables and `iri.environment`. A
+non-zero exit ends the job, with `VISTA: setup_<cluster>.sh failed with exit code <n>` in its
+stderr. What it exports does not reach the job script. (`iri.pre_launch`, which once carried it,
+is refused.)
 
 ## cluster_defaults.json
 
@@ -94,9 +100,15 @@ Per-cluster submission defaults: one section per cluster the job runs on (`odo`,
 - `iri.environment` entries are merged into the job's environment and win over the variables
   above.
 - `iri.constraint` is a Slurm constraint, such as `"gpu"` on Perlmutter.
-- Lux only: `iri.partition` is required by Lux (`#SBATCH -p`), `iri.queue_name` is the QOS
-  (`-q`), and `resources.gpus_per_node` becomes `--gpus-per-node`. The IRI clusters choose the
-  partition and bind GPUs themselves.
+- `resources.gpus_per_node` is sent to IRI as GPUs per process, so it must be a multiple of
+  `processes_per_node` (default 1).
+- Lux only: `iri.partition` is required, and is sent as IRI's `queue_name`, which Lux takes as
+  the Slurm partition (there is no QOS). `resources.gpus_per_node` is required too: without it
+  the job gets no GPU. Because Lux hands GPUs out per task, a step's tasks each see only their
+  own GPUs, as device 0: code that picks its GPU by local rank needs `SLURM_GPU_BIND=none` (or
+  `srun --gpu-bind=none`), as `forge-pretrain` sets. A step with more tasks per node than
+  `processes_per_node` needs `--gpus-per-task`, and one without `--cpus-per-task` gets one CPU
+  per task (`cpu_cores_per_process` does not reach the job).
 
 ## Self-contained HPC skills
 
@@ -145,11 +157,10 @@ What to keep in mind when writing one:
   tool's config folder with a glob, as `primus-smoke` does; use subfolders when the tool reads
   a tree. Ship sources and configs only: each file is one upload on every first submission, so
   build images and download models on the cluster instead.
-- **Setup on the Lux login node.** `setup_lux.sh` runs before every `sbatch`, on the login node,
-  with the proxy, `RUN_DIR_Lux`, `VISTA_JOB_DIR` and `iri.environment` exported. Make it
-  idempotent, and keep shared state (a checkout, a build) under `VISTA_JOB_DIR`, so only the
-  first submission pays for it. Take a lock (`flock`) if two submissions could race. A non-zero
-  exit fails the submit call with the script's last 40 lines.
+- **Setup in the job.** `setup_<cluster>.sh` runs at the start of every run (see
+  [Setup scripts](#setup-scripts)). Make it idempotent, and keep shared state (a checkout, a build)
+  under `VISTA_JOB_DIR`, so only the first run pays for it. Take a lock (`flock`) there, since
+  two runs can start together. A non-zero exit ends the job with the reason in its log.
 - **`script_args` as a `KEY=VALUE` allow-list.** VISTA splits `script_args` like a shell and
   hands the words to the job script as `$@`. Accept only the keys the README lists and refuse
   anything else, so an argument the agent invents fails at once rather than being ignored:
@@ -164,7 +175,7 @@ What to keep in mind when writing one:
   ```
 
 - **Write only under `$VISTA_OUT` and `$VISTA_JOB_DIR`.** The sources folder is read-only to the
-  job on Odo and Frontier, where it runs as the project's automation user.
+  job on the OLCF clusters, where it runs as the project's automation user.
 
 To have the chat agent write one, load the bundled `hpc-skill-author` skill: it has templates
 and a validator for exactly this contract, and the result is imported from the project output in

@@ -1,15 +1,13 @@
 """The HPC availability checks behind the NavRail cards, with no network.
 
 Facility, S3M, and IRI responses are faked with `httpx.MockTransport`, shaped
-after what the live endpoints returned in the hpc-cards spike (2026-09-25);
-Globus is faked at the probe. Every scenario in the `hpc-availability` spec's
+after what the live endpoints returned in the hpc-cards spike (2026-09-25) and,
+for S3M's v2 feed, on 2026-11-07 (rows named by resource id, Lux listed before
+Frontier, an empty list for no incidents); Globus is faked at the probe. Every scenario in the `hpc-availability` spec's
 check and state requirements has a case here.
 """
 
-import asyncio
-import contextlib
 import json
-import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -28,7 +26,6 @@ from vista_backend.services.hpc_status import (
     GlobusCheckFailed,
     GlobusSessionExpired,
     HpcStatusService,
-    SshProbeError,
     globus_source,
     resolve_state,
 )
@@ -37,12 +34,15 @@ NOW = datetime(2026, 9, 25, 15, 0, tzinfo=timezone.utc)
 S = HpcClusterSettings.model_validate({})
 ODO_PROJECT = "abc123"
 FRONTIER_PROJECT = "xyz789"
+LUX_PROJECT = "lmn456"
 """ Projects no deployment is configured for: any project's token works. """
 ODO = "https://amsc-open.s3m.olcf.ornl.gov"
 FRONTIER = "https://amsc-moderate.s3m.olcf.ornl.gov"
 NERSC = "https://api.iri.nersc.gov"
 INTROSPECT = "https://s3m.olcf.ornl.gov/olcf/v1/token/ctls/introspect"
-FRONTIER_ID = "5173cdb4-d82f-5c81-8ef0-598997c12813"
+API = {ODO: "/api/v2", FRONTIER: "/api/v2", NERSC: "/api/v1"}
+""" Each facility at the version its clusters are configured for. """
+PERLMUTTER_ID = S.perlmutter_iri_resource_id
 
 
 def iso(dt: datetime) -> str:
@@ -59,7 +59,7 @@ class Facilities:
 
     def __init__(self) -> None:
         self.calls: list[httpx.Request] = []
-        self.status = {"odo": "up", "frontier": "up", "perlmutter": "up"}
+        self.status = {"odo": "up", "frontier": "up", "perlmutter": "up", "lux": "up"}
         self.incidents: dict[str, list[dict]] = {ODO: [], FRONTIER: [], NERSC: []}
         self.down: set[str] = set()
         # token -> (introspect status, project, extra claims)
@@ -71,26 +71,33 @@ class Facilities:
         if base == ODO:
             return [
                 {
-                    "id": S.odo_compute_resource_id,
+                    "id": "odo",
                     "name": "Odo",
                     "group": "olcf",
                     "current_status": self.status["odo"],
                 },
                 {
-                    "id": "d",
+                    "id": "defiant",
                     "name": "Defiant",
                     "group": "olcf",
                     "current_status": "down",
                 },
             ]
         if base == FRONTIER:
+            # Lux first, as the moderate enclave lists them.
             return [
                 {
-                    "id": FRONTIER_ID,
+                    "id": "lux",
+                    "name": "Lux",
+                    "group": "olcf",
+                    "current_status": self.status["lux"],
+                },
+                {
+                    "id": "frontier",
                     "name": "Frontier",
                     "group": "olcf",
                     "current_status": self.status["frontier"],
-                }
+                },
             ]
         return [
             {
@@ -100,7 +107,7 @@ class Facilities:
                 "current_status": "up",
             },
             {
-                "id": "pm",
+                "id": PERLMUTTER_ID,
                 "name": "compute",
                 "group": "perlmutter",
                 "current_status": self.status["perlmutter"],
@@ -133,17 +140,19 @@ class Facilities:
             )
         assert base, url
         path = request.url.path
-        if path == "/api/v1/status/resources":
+        # Any other version's path falls through to a 404.
+        api = API[base]
+        if path == f"{api}/status/resources":
             return httpx.Response(200, json=self.resources(base))
-        if path == "/api/v1/status/incidents":
+        if path == f"{api}/status/incidents":
             # Only incidents active now are asked for; unfiltered, NERSC
             # returns its oldest hundred.
             assert request.url.params.get("time") == "2026-09-25T15:00:00Z"
-            if not self.incidents[base]:
-                # What OLCF really answers when nothing is active.
+            if not self.incidents[base] and api == "/api/v1":
+                # What OLCF's v1 answered when nothing was active; v2 answers [].
                 return httpx.Response(404, json={"detail": "No incidents found"})
             return httpx.Response(200, json=self.incidents[base])
-        if path == "/api/v1/compute/resources":
+        if path == f"{api}/compute/resources":
             status = self.iri.get((base, token), 401)
             return httpx.Response(status, json=[] if status == 200 else {"code": 16})
         return httpx.Response(404)
@@ -163,20 +172,6 @@ class FakeGlobus:
             raise self.result
 
 
-class FakeLux:
-    """Stands in for the Lux login node's SSH server."""
-
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-        self.result: BaseException | None = None
-
-    async def __call__(self, host: str, *, timeout: float) -> str:
-        self.calls.append(host)
-        if self.result:
-            raise self.result
-        return "SSH-2.0-OpenSSH_8.7"
-
-
 class Clock:
     def __init__(self) -> None:
         self.t = 1000.0
@@ -191,13 +186,11 @@ def make_service(
     *,
     settings=S,
     clock: Clock | None = None,
-    lux: FakeLux | None = None,
 ) -> HpcStatusService:
     return HpcStatusService(
         settings=settings,
         transport=httpx.MockTransport(fac.handler),
         globus_probe=globus or FakeGlobus(),
-        lux_probe=lux or FakeLux(),
         now=lambda: NOW,
         monotonic=clock or Clock(),
     )
@@ -209,7 +202,6 @@ SETTINGS = dict(
     nersc_remote_dir="/pscratch/sd/r/r/.vista",
     nersc_account="m1234",
     lux_remote_dir="/lustre/orion/abc123/proj-shared/vista-lux",
-    lux_account="abc123",
 )
 """ Everything a submission needs besides credentials. `local` sets it unless a test overrides it. """
 
@@ -221,6 +213,7 @@ def local(**fields) -> LocalSettingsPublic:
 CONNECTED = dict(
     odo_s3m_token="odo-tok",
     frontier_s3m_token="fr-tok",
+    lux_s3m_token="lux-tok",
     nersc_iri_token="pm-tok",
     odo_globus_token="odo-gt",
     odo_globus_https_token="odo-gh",
@@ -234,8 +227,14 @@ def healthy() -> Facilities:
     fac.s3m = {
         "odo-tok": (200, ODO_PROJECT, {}),
         "fr-tok": (200, FRONTIER_PROJECT, {}),
+        "lux-tok": (200, LUX_PROJECT, {}),
     }
-    fac.iri = {(ODO, "odo-tok"): 200, (FRONTIER, "fr-tok"): 200, (NERSC, "pm-tok"): 200}
+    fac.iri = {
+        (ODO, "odo-tok"): 200,
+        (FRONTIER, "fr-tok"): 200,
+        (FRONTIER, "lux-tok"): 200,
+        (NERSC, "pm-tok"): 200,
+    }
     return fac
 
 
@@ -316,7 +315,12 @@ def test_missing_settings_are_not_connected(facility, credential, settings, stat
             "not_connected",
             "No NERSC account or Perlmutter remote directory is set.",
         ),
-        ("lux", {"lux_account": None}, "not_connected", "No Lux account is set."),
+        (
+            "lux",
+            {"lux_remote_dir": None},
+            "not_connected",
+            "No Lux remote directory is set.",
+        ),
         (
             "odo",
             {"odo_remote_dir": "/gpfs/wolf2/olcf/<project>/proj-shared/vista"},
@@ -325,7 +329,6 @@ def test_missing_settings_are_not_connected(facility, credential, settings, stat
         ),
         ("frontier", {"frontier_remote_dir": "vista"}, "invalid", "absolute path"),
         ("odo", {"odo_remote_dir": "/"}, "invalid", "other than /"),
-        ("lux", {"lux_account": "stf 218"}, "invalid", "isn't a project name"),
     ],
 )
 def test_settings_check_names_what_is_missing(cluster, fields, reason, says):
@@ -340,8 +343,10 @@ def test_settings_check_passes_with_everything_set():
     assert hs.settings_check("odo", u) == Check(
         ok=True, message=SETTINGS["odo_remote_dir"]
     )
-    lux = hs.settings_check("lux", u)
-    assert lux.ok and lux.project == SETTINGS["lux_account"]
+    # Lux, like Odo and Frontier, charges its token's project: no account setting.
+    assert hs.settings_check("lux", u) == Check(
+        ok=True, message=SETTINGS["lux_remote_dir"]
+    )
 
 
 @pytest.mark.anyio
@@ -396,7 +401,7 @@ async def test_resolved_incident_is_ignored():
             "start": "2026-09-15T12:00:00Z",
             "end": "2026-09-16T19:12:00Z",
             "resolution": "completed",
-            "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
+            "resource_uris": [f"{FRONTIER}/api/v2/status/resources/frontier"],
         }
     ]
     result = await statuses(make_service(fac), local(**CONNECTED))
@@ -411,7 +416,7 @@ async def test_open_incident_is_degraded():
             "name": "Lustre maintenance",
             "start": iso(NOW - timedelta(hours=1)),
             "end": iso(NOW + timedelta(hours=3)),
-            "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
+            "resource_uris": [f"{FRONTIER}/api/v2/status/resources/frontier"],
         }
     ]
     frontier = (await statuses(make_service(fac), local(**CONNECTED)))["frontier"]
@@ -427,7 +432,7 @@ async def test_future_incident_is_not_open_yet():
             "name": "Next week",
             "start": iso(NOW + timedelta(days=7)),
             "end": None,
-            "resource_uris": [f"{FRONTIER}/api/v1/status/resources/{FRONTIER_ID}"],
+            "resource_uris": [f"{FRONTIER}/api/v2/status/resources/frontier"],
         }
     ]
     assert (await statuses(make_service(fac), local(**CONNECTED)))[
@@ -457,7 +462,7 @@ async def test_unreachable_facility_is_never_ready():
 
 @pytest.mark.anyio
 async def test_other_odo_resources_do_not_stand_in_for_odo():
-    """Defiant is down on the same feed; only Odo's pinned id counts."""
+    """Defiant is down on the same feed; only Odo's configured id counts."""
     fac = healthy()
     assert (await statuses(make_service(fac), local(**CONNECTED)))[
         "odo"
@@ -483,9 +488,6 @@ async def test_facility_feed_is_shared_across_checks():
 async def test_no_token_means_not_connected_and_no_authenticated_call():
     fac = healthy()
     result = await statuses(make_service(fac), local())
-    # Lux has no credential to be missing; it is Ready once its login node answers.
-    lux = result.pop("lux")
-    assert lux.state == "ready"
     assert {s.state for s in result.values()} == {"not_connected"}
     assert not any("authorization" in r.headers for r in fac.calls)
     # The facility is still checked, so the details can say it is up.
@@ -981,226 +983,104 @@ async def test_route_passes_fresh_and_cluster_through(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Lux: an SSH probe instead of IRI, and no credential (spec: Facility check,
-# Credential check)
+# Lux: its own v2 resource and S3M token, Frontier's Globus (spec: Facility
+# status for every cluster, Credential check for every cluster, Globus check)
 # ---------------------------------------------------------------------------
 
 ONLY_LUX = dict(hpc_hidden_clusters=["frontier", "odo", "perlmutter"])
 
 
 @pytest.mark.anyio
-async def test_lux_names_the_researchers_account():
-    fac, lux = healthy(), FakeLux()
-    u = local(**ONLY_LUX, lux_account="abc123")
-    lx = (await statuses(make_service(fac, lux=lux), u))["lux"]
-    assert lx.checks.credential.project == "abc123"
-
-
-@pytest.mark.anyio
-async def test_lux_is_ready_when_its_login_node_answers_with_no_credential_at_all():
-    fac, lux = healthy(), FakeLux()
-    result = await statuses(make_service(fac, lux=lux), local(**ONLY_LUX))
-    lx = result["lux"]
-    assert lx.state == "ready"
-    assert "lux.olcf.ornl.gov" in lx.checks.facility.message
-    assert "SSH-2.0-OpenSSH_8.7" in lx.checks.facility.message
-    assert lx.checks.credential.ok
-    assert lx.checks.credential.project == SETTINGS["lux_account"]
-    assert lx.checks.credential.message == hs.LUX_SIGN_IN
-    assert lx.checks.globus is None
-    assert lux.calls == ["lux.olcf.ornl.gov"]
-    assert fac.calls == []  # no IRI, S3M, or other outbound call
-
-
-@pytest.mark.parametrize(
-    ("error", "said"),
-    [
-        (TimeoutError(), "did not answer within 5 s"),
-        (socket.gaierror(8, "nodename nor servname provided"), "could not be resolved"),
-        (ConnectionRefusedError(61, "Connection refused"), "refused the connection"),
-        (OSError(65, "No route to host"), "could not be reached (No route to host)"),
-        (
-            SshProbeError("answered, but not with an SSH greeting"),
-            "not with an SSH greeting",
-        ),
-    ],
-)
-@pytest.mark.anyio
-async def test_any_probe_failure_is_couldnt_verify_never_degraded(error, said):
-    lux = FakeLux()
-    lux.result = error
-    lx = (await statuses(make_service(healthy(), lux=lux), local(**ONLY_LUX)))["lux"]
-    assert lx.state == "unverifiable"
-    assert lx.checks.facility.reason == "unreachable"
-    assert said in lx.checks.facility.message
-    assert "lux.olcf.ornl.gov" in lx.checks.facility.message
-    assert lx.checks.credential.ok  # sign-in is still only described
-
-
-@pytest.mark.anyio
-async def test_lux_probe_is_shared_until_fresh_or_expired():
-    lux, clock = FakeLux(), Clock()
-    service = make_service(healthy(), lux=lux, clock=clock)
-    await service.status(local(**ONLY_LUX))
-    await service.status(local(**ONLY_LUX))  # again, same minute
-    assert len(lux.calls) == 1
-    clock.t += hs.LUX_PROBE_MIN_INTERVAL + 1
-    await service.status(local(**ONLY_LUX), fresh=True)
-    assert len(lux.calls) == 2
-    clock.t += hs.FACILITY_TTL + 1
-    await service.status(local(**ONLY_LUX))
-    assert len(lux.calls) == 3
-
-
-@pytest.mark.anyio
-async def test_fresh_rechecks_do_not_probe_lux_more_than_every_few_seconds():
-    lux, clock = FakeLux(), Clock()
-    service = make_service(healthy(), lux=lux, clock=clock)
-    u = local(**ONLY_LUX)
-    for _ in range(5):  # a researcher mashing Recheck
-        await service.status(u, fresh=True, cluster="lux")
-    assert len(lux.calls) == 1
-    clock.t += hs.LUX_PROBE_MIN_INTERVAL + 1
-    await service.status(u, fresh=True, cluster="lux")
-    assert len(lux.calls) == 2
-
-
-@pytest.mark.anyio
-async def test_concurrent_requests_share_one_probe():
-    release = asyncio.Event()
-
-    class SlowLux(FakeLux):
-        async def __call__(self, host: str, *, timeout: float) -> str:
-            self.calls.append(host)
-            await release.wait()
-            return "SSH-2.0-OpenSSH_8.7"
-
-    lux = SlowLux()
-    service = make_service(healthy(), lux=lux)
-    pending = asyncio.gather(
-        *(service.status(local(**ONLY_LUX), fresh=True) for _ in range(4))
-    )
-    await asyncio.sleep(0)
-    release.set()
-    results = await pending
-    assert len(lux.calls) == 1
-    assert {r.clusters[0].state for r in results} == {"ready"}
-
-
-@pytest.mark.anyio
-async def test_a_failed_probe_is_retried_after_a_few_seconds_not_a_minute():
-    lux, clock = FakeLux(), Clock()
-    lux.result = TimeoutError()
-    service = make_service(healthy(), lux=lux, clock=clock)
-    u = local(**ONLY_LUX)
-    assert (await statuses(service, u))["lux"].state == "unverifiable"
-    lux.result = None
-    clock.t += hs.LUX_PROBE_FAILURE_TTL + 1  # well inside FACILITY_TTL and RESULT_TTL
-    assert (await statuses(service, u))["lux"].state == "ready"
-    assert len(lux.calls) == 2
-
-
-@pytest.mark.anyio
-async def test_no_configured_lux_host_is_couldnt_verify_and_the_other_clusters_still_answer():
-    lux = FakeLux()
-    settings = HpcClusterSettings.model_validate({"lux_ssh_hosts": []})
-    result = await statuses(
-        make_service(healthy(), lux=lux, settings=settings), local(**CONNECTED)
-    )
-    assert result["lux"].state == "unverifiable"
-    assert "VISTA_MCP_LUX_SSH_HOSTS" in result["lux"].checks.facility.message
+async def test_lux_and_frontier_are_each_their_own_row_on_one_feed():
+    """The moderate enclave lists Lux first; neither card reads the other's row."""
+    fac = healthy()
+    fac.status["lux"] = "down"
+    result = await statuses(make_service(fac), local(**CONNECTED))
+    assert result["lux"].state == "degraded"
+    assert "Lux as down" in result["lux"].checks.facility.message
     assert result["frontier"].state == "ready"
-    assert lux.calls == []
+
+    fac = healthy()
+    fac.status["frontier"] = "down"
+    result = await statuses(make_service(fac), local(**CONNECTED))
+    assert (result["frontier"].state, result["lux"].state) == ("degraded", "ready")
 
 
 @pytest.mark.anyio
-async def test_an_unexpected_probe_error_is_couldnt_verify_not_a_500():
-    lux = FakeLux()
-    lux.result = UnicodeError(
-        "label empty or too long"
-    )  # a host name IDNA can't encode
-    result = await statuses(make_service(healthy(), lux=lux), local(**CONNECTED))
-    assert result["lux"].state == "unverifiable"
-    assert "UnicodeError" in result["lux"].checks.facility.message
-    assert result["odo"].state == "ready"
+async def test_lux_uses_its_own_token_and_frontiers_globus():
+    fac, globus = healthy(), FakeGlobus()
+    lux = (await statuses(make_service(fac, globus), local(**CONNECTED, **ONLY_LUX)))[
+        "lux"
+    ]
+    assert lux.state == "ready"
+    assert lux.checks.credential.project == LUX_PROJECT
+    [probe] = globus.calls
+    assert (probe["transfer"], probe["https"]) == ("fr-gt", "fr-gh")
+    assert probe["collection_id"] == S.frontier_globus_collection_id
+    assert probe["title"] == "Lux"
+    authed = [r for r in fac.calls if "authorization" in r.headers]
+    assert {
+        str(r.url) for r in authed if r.url.path.endswith("/compute/resources")
+    } == {f"{FRONTIER}/api/v2/compute/resources"}
+    assert {r.headers["authorization"] for r in authed} == {"Bearer lux-tok"}
 
 
 @pytest.mark.anyio
-async def test_hidden_lux_is_not_probed():
-    lux = FakeLux()
-    u = local(**CONNECTED, hpc_hidden_clusters=["lux"])
-    result = await statuses(make_service(healthy(), lux=lux), u)
-    assert "lux" not in result
-    assert lux.calls == []
+async def test_a_frontier_token_does_not_connect_lux():
+    u = local(**{**CONNECTED, "lux_s3m_token": None}, **ONLY_LUX)
+    lux = (await statuses(make_service(healthy()), u))["lux"]
+    assert lux.state == "not_connected"
+    assert lux.checks.credential.message == "No S3M token is saved for Lux."
 
 
 @pytest.mark.anyio
-async def test_probe_uses_the_first_configured_host():
-    lux = FakeLux()
-    settings = HpcClusterSettings.model_validate(
-        {"lux_ssh_hosts": ["hub.example", "login.example"]}
+async def test_lux_without_frontiers_globus_says_whose_connection_it_needs():
+    u = local(
+        **{
+            **CONNECTED,
+            "frontier_globus_token": None,
+            "frontier_globus_https_token": None,
+        },
+        **ONLY_LUX,
     )
-    await make_service(healthy(), lux=lux, settings=settings).status(local(**ONLY_LUX))
-    assert lux.calls == ["hub.example"]
-
-
-# --- the real probe, against local servers (hermetic: 127.0.0.1 only) --------
-
-
-@contextlib.asynccontextmanager
-async def local_server(first_line: bytes | None):
-    """A TCP server on 127.0.0.1 that sends `first_line` (or nothing) and records the reply."""
-    received = bytearray()
-
-    async def handle(reader, writer):
-        if first_line is not None:
-            writer.write(first_line)
-            await writer.drain()
-        with contextlib.suppress(TimeoutError, ConnectionError):
-            received.extend(await asyncio.wait_for(reader.read(200), 1.0))
-        writer.close()
-
-    server = await asyncio.start_server(handle, "127.0.0.1", 0)
-    async with server:
-        yield server.sockets[0].getsockname()[1], received
+    lux = (await statuses(make_service(healthy()), u))["lux"]
+    assert lux.state == "globus_not_connected"
+    assert lux.checks.globus.message == (
+        "Globus file transfer is not connected for Lux (Lux uses Frontier's connection)."
+    )
 
 
 @pytest.mark.anyio
-async def test_probe_reads_the_greeting_and_names_itself():
-    async with local_server(b"SSH-2.0-OpenSSH_8.7\r\n") as (port, received):
-        greeting = await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
-        await asyncio.sleep(0.05)  # let the server read the reply
-    assert greeting == "SSH-2.0-OpenSSH_8.7"
-    assert bytes(received) == hs.PROBE_IDENTIFICATION
+async def test_connecting_frontiers_globus_rechecks_lux():
+    """Lux's result is cached by the credentials it uses, Frontier's Globus pair among them."""
+    fac, globus = healthy(), FakeGlobus()
+    service = make_service(fac, globus)
+    u = local(**{**CONNECTED, "frontier_globus_token": None}, **ONLY_LUX)
+    assert (await statuses(service, u))["lux"].state == "globus_not_connected"
+    connected = u.model_copy(update={"frontier_globus_token": "fr-gt"})
+    assert (await statuses(service, connected))["lux"].state == "ready"
 
 
 @pytest.mark.anyio
-async def test_probe_refuses_a_server_that_is_not_ssh():
-    async with local_server(b"HTTP/1.1 400 Bad Request\r\n") as (port, received):
-        with pytest.raises(SshProbeError, match="not with an SSH greeting"):
-            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
-    assert bytes(received) == b""  # nothing sent to a non-SSH server
+async def test_each_facility_is_asked_at_its_clusters_version():
+    fac = healthy()
+    await statuses(make_service(fac), local(**CONNECTED))
+    paths = {
+        (str(r.url).split("/api/")[0], r.url.path.split("/")[2])
+        for r in fac.calls
+        if "/api/" in str(r.url)
+    }
+    assert paths == {(ODO, "v2"), (FRONTIER, "v2"), (NERSC, "v1")}
 
 
 @pytest.mark.anyio
-async def test_probe_refuses_an_overlong_first_line():
-    async with local_server(b"SSH-" + b"x" * 400 + b"\r\n") as (port, _):
-        with pytest.raises(SshProbeError, match="too long"):
-            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=2.0)
-
-
-@pytest.mark.anyio
-async def test_probe_times_out_on_a_silent_server():
-    async with local_server(None) as (port, _):
-        with pytest.raises(TimeoutError):
-            await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=0.2)
-
-
-@pytest.mark.anyio
-async def test_probe_reports_a_refused_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]  # closed again on exit: nothing listens there
-    # A generous timeout: Windows retries the SYN and refuses only after ~2 s.
-    with pytest.raises(ConnectionRefusedError):
-        await hs.probe_ssh_greeting("127.0.0.1", port=port, timeout=10.0)
+async def test_a_resource_id_the_feed_does_not_list_is_unverifiable():
+    settings = HpcClusterSettings.model_validate({"lux_iri_resource_id": "lux-renamed"})
+    result = await statuses(
+        make_service(healthy(), settings=settings), local(**CONNECTED, **ONLY_LUX)
+    )
+    assert result["lux"].state == "unverifiable"
+    assert (
+        result["lux"].checks.facility.message
+        == "The facility status feed does not list Lux."
+    )

@@ -29,6 +29,12 @@
 #   VISTA_UI_PORT       default 3000
 #   VISTA_MCP_PORT      default 8000
 #   VISTA_BACKEND_PORT  default 8001
+#
+#   VISTA_BACKEND_FORUM__ENABLED
+#                       The Hypothesis Lab (default: true). A project's lab
+#                       still needs its own repository, set in the project's
+#                       settings, and git 2.34 or later on PATH. Set false to
+#                       turn the lab off for every project.
 
 $ErrorActionPreference = 'Stop'
 
@@ -307,6 +313,11 @@ $env:MSB_HOME = $MSB_STORE
 # back to its bundled Dockerfile. It reads a blank value as "no Dockerfile".
 $env:VISTA_DEV_MCP_DOCKERFILE = ' '
 $env:VISTA_DEV_MCP_IMAGE = 'vista-sandbox:latest'
+# The backend keeps the Hypothesis Lab off unless told otherwise, and a
+# development checkout turns it on in `.env`, which a package never reads.
+# On here, because each project is still gated on its own repository and a
+# usable git; the caller's own value wins.
+if (-not $env:VISTA_BACKEND_FORUM__ENABLED) { $env:VISTA_BACKEND_FORUM__ENABLED = 'true' }
 $LOGS = "$STATE\logs"
 
 # --- window ------------------------------------------------------------------

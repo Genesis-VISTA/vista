@@ -27,10 +27,10 @@ export interface ProjectSharing {
   /** Changed here since `remoteVersion` (always true for one never published). */
   modified: boolean;
   /**
-   * Its collaboration team; null when private (on this computer only). Set
-   * when it is made (the team selected then), imported (its item's) or copied
-   * to a team, never by a save. It uses only skills and knowledge bases of
-   * exactly this team.
+   * Its collaboration team; null when private (on this computer only), as a
+   * new one is. Set when it is imported (its item's) or first published (the
+   * team picked then), never by a save. It uses only skills and knowledge
+   * bases of exactly this team.
    */
   teamId?: string | null;
 }

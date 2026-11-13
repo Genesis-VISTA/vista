@@ -1,0 +1,22 @@
+{
+  "id": "00000000-0000-4000-8000-000000000005",
+  "status": "completed",
+  "result": {
+    "output": {
+      "content": "hello from VISTA\nline 2\n",
+      "content_type": "lines",
+      "start_position": 0,
+      "end_position": 2
+    }
+  },
+  "command": {
+    "router": "filesystem",
+    "command": "head",
+    "args": {
+      "path": "/global/homes/r/researcher/vista-probe/hello.txt",
+      "file_bytes": null,
+      "lines": 2,
+      "skip_trailing": false
+    }
+  }
+}

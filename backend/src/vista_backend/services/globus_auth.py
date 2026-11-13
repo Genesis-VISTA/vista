@@ -26,6 +26,20 @@ from fastapi import HTTPException
 from globus_sdk.exc import GlobusAPIError
 
 Cluster = Literal["odo", "frontier"]
+""" The clusters that hold a Globus connection of their own. """
+
+ConnectCluster = Literal["odo", "frontier", "lux"]
+""" The clusters a researcher can connect Globus from: Lux shares Frontier's. """
+
+
+def credential_cluster(cluster: ConnectCluster) -> Cluster:
+    """
+    Whose Globus connection `cluster` uses. Lux mounts Frontier's filesystem and
+    is reached through Frontier's collection, so connecting from Lux connects
+    Frontier, and there are no `lux_globus_*` fields to keep in step.
+    """
+    return "frontier" if cluster == "lux" else cluster
+
 
 CLIENT_ID = "fae5c579-490a-4d76-b6eb-d78f65caeb63"
 """The same native-app client `scripts/get_globus_token.py` uses, so a

@@ -146,6 +146,15 @@ BROKEN = {
             {"odo": {"iri": {"environment": {"N": 3}}}}
         ),
     },
+    # Setup belongs in setup_<cluster>.sh, which runs in the job; a stale
+    # pre_launch would otherwise be dropped without a word.
+    "pre-launch": {
+        "README.md": "# pre-launch\n",
+        "job.odo.slurm": SCRIPT,
+        "cluster_defaults.json": json.dumps(
+            {"odo": {"iri": {"pre_launch": "module load x"}}}
+        ),
+    },
 }
 
 
@@ -179,6 +188,21 @@ def test_what_load_job_refuses_the_validator_refuses(tmp_path, name):
                 "cluster_defaults.json": '{"lux": {}}',
             },
             "lux.iri.partition is required",
+        ),
+        (
+            {
+                "README.md": "# j\n",
+                "job.lux.slurm": SCRIPT,
+                "cluster_defaults.json": json.dumps(
+                    {
+                        "lux": {
+                            "resources": {"gpus_per_node": 8, "processes_per_node": 3},
+                            "iri": {"partition": "batch"},
+                        }
+                    }
+                ),
+            },
+            "must be a multiple of processes_per_node",
         ),
     ],
 )

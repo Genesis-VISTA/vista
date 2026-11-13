@@ -12,10 +12,7 @@ import pytest
 from fastmcp.exceptions import ToolError
 
 from vista_mcp_server.lib import globus as g
-from vista_mcp_server.lib import slurm_ssh
 from vista_mcp_server.lib.types import GlobusTokens
-from vista_mcp_server.lib.user_config import UserConfig
-from fakes import FakeSshConn
 
 pytestmark = [pytest.mark.unit, pytest.mark.anyio]
 
@@ -63,17 +60,3 @@ async def test_no_owner_reported_is_an_error_not_a_guess(monkeypatch):
     c, _ = _client(monkeypatch, {"name": "~", "type": "dir", "user": None})
     with pytest.raises(ToolError, match="sources folder"):
         await c.home_owner(collection_id="odo-coll")
-
-
-async def test_lux_takes_the_ssh_login(tmp_path):
-    conn = FakeSshConn(tmp_path)
-    conn.username = "hinesjr"
-    assert await slurm_ssh.username(conn) == "hinesjr"
-
-
-def test_the_lux_account_is_required_and_a_plain_project_name():
-    with pytest.raises(ToolError, match="No Lux account"):
-        UserConfig().require_lux_account()
-    with pytest.raises(ToolError, match="not a project name"):
-        UserConfig(lux_account="stf218 -x").require_lux_account()
-    assert UserConfig(lux_account="stf218").require_lux_account() == "stf218"

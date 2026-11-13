@@ -129,3 +129,25 @@ def test_nothing_configured_names_where_to_connect(cluster):
     message = str(refusal.value)
     assert cluster.title() in message
     assert "settings" in message.lower()
+
+
+def test_lux_uses_frontiers_pair():
+    """Lux mounts Frontier's filesystem and is reached through its collection."""
+    cfg = UserConfig(
+        frontier_globus_token="mine-frontier",
+        frontier_globus_https_token="mine-frontier-https",
+    )
+    assert cfg.require_globus_token("lux") == mine("frontier")
+
+
+def test_lux_never_uses_odos_pair():
+    cfg = UserConfig(odo_globus_token="o", odo_globus_https_token="oh")
+    with pytest.raises(
+        ToolError, match=r"not connected for Lux \(Lux uses Frontier's connection\)"
+    ):
+        cfg.require_globus_token("lux")
+
+
+def test_lux_falls_back_to_the_shared_pair():
+    cfg = UserConfig(globus_token="mine-shared", globus_https_token="mine-shared-https")
+    assert cfg.require_globus_token("lux") == mine("shared")

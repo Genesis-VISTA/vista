@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -34,7 +35,9 @@ import {
 import { useTheme, type ThemeChoice } from "@/lib/theme";
 import {
   refreshCollaborationStatus,
+  teamLabel,
   useCollaboration,
+  useTeams,
   type CollaborationView,
 } from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
@@ -42,8 +45,10 @@ import { FieldError, SaveMark, SectionHeader, fieldId } from "./SettingsParts";
 import { SlackSection } from "./SlackSection";
 import { fetchSlackConfig, slackNote, type SlackConfig } from "@/lib/slack";
 import { CopyableLine } from "./CopyableLine";
+import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
+import { filledNote, remoteDirFill } from "@/lib/remote-dir";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
 export type SettingsSection =
@@ -83,9 +88,9 @@ const TEXT_FIELDS = [
   "odo_remote_dir",
   "frontier_remote_dir",
   "lux_remote_dir",
-  "lux_account",
   "odo_s3m_token",
   "frontier_s3m_token",
+  "lux_s3m_token",
   "nersc_iri_token",
 ] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
@@ -108,6 +113,7 @@ type Draft = {
   personalizeResponses: boolean;
   updateChecks: boolean;
   updatePrereleases: boolean;
+  collaborationEnabled: boolean;
   hidden: Set<HpcCluster>;
 };
 
@@ -125,6 +131,7 @@ function draftFrom(user: LocalSettings): Draft {
     personalizeResponses: user.personalize_responses ?? true,
     updateChecks: user.update_checks ?? true,
     updatePrereleases: user.update_prereleases ?? false,
+    collaborationEnabled: user.collaboration_enabled ?? true,
     hidden: new Set((user.hpc_hidden_clusters ?? []).filter((c): c is HpcCluster => HPC_CLUSTERS.includes(c as HpcCluster))),
   };
 }
@@ -143,8 +150,8 @@ const AGENT_FIELDS: Array<keyof LocalSettingsUpdate> = [
 const CREDENTIAL_CLUSTER: Partial<Record<string, HpcCluster>> = {
   odo_s3m_token: "odo",
   frontier_s3m_token: "frontier",
+  lux_s3m_token: "lux",
   nersc_iri_token: "perlmutter",
-  // Lux has none: a researcher signs in from a chat.
 };
 
 /**
@@ -158,7 +165,6 @@ const SETTING_FIELDS = new Set([
   "frontier_remote_dir",
   "nersc_account",
   "nersc_remote_dir",
-  "lux_account",
   "lux_remote_dir",
 ]);
 
@@ -204,6 +210,7 @@ const FIELD_LABELS: Record<string, string> = {
   display_name: "Name",
   email: "Email",
   collaboration_server_url: "Collaboration server",
+  collaboration_enabled: "Collaboration",
   research_role: "Research role",
   research_institution: "Institution or laboratory",
   research_interests: "Research interests",
@@ -220,7 +227,7 @@ const FIELD_LABELS: Record<string, string> = {
   odo_s3m_token: "Odo S3M token",
   frontier_remote_dir: "Frontier remote directory",
   frontier_s3m_token: "Frontier S3M token",
-  lux_account: "Lux account",
+  lux_s3m_token: "Lux S3M token",
   lux_remote_dir: "Lux remote directory",
   github_token: "GitHub token",
   gitlab_token: "gitlab.com token",
@@ -283,6 +290,14 @@ export function UserSettingsModal({
   const lastToggled = useRef<HpcCluster | null>(null);
   /** Secret fields a paste just went into, so the change that follows saves at once. */
   const pasted = useRef(new Set<string>());
+  /**
+   * Globus connections made while the modal is open, by whose connection was
+   * stored (Frontier's for Lux), with the identity Globus reported. Shared by
+   * every section showing that connection, so connecting it from Frontier's or
+   * Lux's shows it connected in both. The loaded settings are not re-fetched,
+   * which would rebuild the draft under fields still being edited.
+   */
+  const [globusMade, setGlobusMade] = useState<Partial<Record<GlobusCluster, string>>>({});
 
   async function saveField(field: string, value: unknown) {
     await updateSettings({ [field]: value } as LocalSettingsUpdate);
@@ -300,6 +315,8 @@ export function UserSettingsModal({
     // (which it decides) in place.
     if (field === "collaboration_server_url") void refreshCollaborationStatus({ forget: true });
     if (field === "collaboration_token") void refreshCollaborationStatus();
+    // Off or on again: the answer about the other state says nothing now.
+    if (field === "collaboration_enabled") void refreshCollaborationStatus({ forget: true });
     // About and the settings marker follow the update switches: turning checks
     // on, or changing which releases count, asks GitHub again.
     if (field === "update_checks") void (value ? checkNow() : refreshVersion());
@@ -331,6 +348,28 @@ export function UserSettingsModal({
   }
 
   const autosave = useSettingsAutosave({ save: saveField, onSettled: announce });
+  const { edit: autosaveEdit, pending: autosavePending } = autosave;
+
+  /**
+   * Fill a cluster's remote directory from its S3M token's project, saved like
+   * a typed change. Never while the field holds an unsaved edit or has focus:
+   * a project arriving mid-typing must not overwrite the typing. A field left
+   * without typing is tried again as it loses focus (`blurred`), when focus is
+   * already on its way out.
+   */
+  const fillRemoteDir: FillRemoteDir = useCallback(
+    (cluster, field, project, blurred = false) => {
+      const d = draftRef.current;
+      if (!d || !project || d.hidden.has(cluster)) return;
+      if (autosavePending(field)) return;
+      if (!blurred && document.activeElement?.id === fieldId(field)) return;
+      const next = remoteDirFill(cluster, project, d.text[field]);
+      if (next === null) return;
+      setDraft((prev) => (prev ? { ...prev, text: { ...prev.text, [field]: next } } : prev));
+      autosaveEdit(field, next, "now");
+    },
+    [autosaveEdit, autosavePending],
+  );
 
   async function load() {
     setLoading(true);
@@ -349,6 +388,7 @@ export function UserSettingsModal({
       seeded.personalize_responses = next.personalizeResponses;
       seeded.update_checks = next.updateChecks;
       seeded.update_prereleases = next.updatePrereleases;
+      seeded.collaboration_enabled = next.collaborationEnabled;
       seeded[HIDDEN_FIELD] = HPC_CLUSTERS.filter((c) => next.hidden.has(c));
       autosave.seed(seeded);
       setUser(loaded);
@@ -388,7 +428,8 @@ export function UserSettingsModal({
   closeRef.current = close;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") closeRef.current();
+      // Not one a dialog opened over Settings (Teams) handled for itself.
+      if (e.key === "Escape" && !e.defaultPrevented) closeRef.current();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -498,6 +539,11 @@ export function UserSettingsModal({
     autosave.edit("personalize_responses", personalizeResponses, "now");
   }
 
+  function setCollaborationEnabled(collaborationEnabled: boolean) {
+    setDraft((d) => (d ? { ...d, collaborationEnabled } : d));
+    autosave.edit("collaboration_enabled", collaborationEnabled, "now");
+  }
+
   function setUpdateSwitch(field: "update_checks" | "update_prereleases", on: boolean) {
     const key = field === "update_checks" ? "updateChecks" : "updatePrereleases";
     setDraft((d) => (d ? { ...d, [key]: on } : d));
@@ -561,6 +607,10 @@ export function UserSettingsModal({
         user={user}
         bindToken={bindToken}
         onRemove={() => removeToken("collaboration_token")}
+        enabled={draft.collaborationEnabled}
+        onToggle={setCollaborationEnabled}
+        mark={autosave.marks.collaboration_enabled}
+        error={autosave.errors.collaboration_enabled}
       />
     );
   } else if (section === "about") {
@@ -591,7 +641,20 @@ export function UserSettingsModal({
         switchError={lastToggled.current === section ? autosave.errors[HIDDEN_FIELD] : undefined}
         onBack={() => choose("compute")}
       >
-        <ClusterFields cluster={section} user={user} bind={bind} />
+        <ClusterFields
+          cluster={section}
+          bind={bind}
+          fill={fillRemoteDir}
+          globus={(owner) => ({
+            connected: globusConnected(user, owner) || owner in globusMade,
+            identity: globusMade[owner] ?? null,
+            onConnected: (identity: string) => {
+              setGlobusMade((made) => ({ ...made, [owner]: identity }));
+              if (owner === "frontier") recheckFrontierAndLux();
+              else void recheckHpcStatus(owner);
+            },
+          })}
+        />
       </ClusterSection>
     );
   }
@@ -935,21 +998,24 @@ function UpdateSwitch({
   onChange,
   mark,
   error,
+  tour,
 }: {
   field: string;
   label: string;
-  hint: string;
+  hint?: string;
   on: boolean;
   disabled?: boolean;
   onChange: (on: boolean) => void;
   mark?: FieldMark;
   error?: string;
+  /** The tour's `data-tour` anchor on the switch's row. */
+  tour?: string;
 }) {
   return (
-    <div className="settings-profile-switch">
+    <div className="settings-profile-switch" data-tour={tour}>
       <span className="user-settings-switch-text">
         <span className="user-settings-switch-label">{label}</span>
-        <span className="user-settings-hint">{hint}</span>
+        {hint && <span className="user-settings-hint">{hint}</span>}
         <FieldError field={field} error={error} />
       </span>
       <SaveMark mark={mark} />
@@ -1671,112 +1737,176 @@ function TokenField({
 /** The collaboration server's state in a word or two, for the navigation. */
 function collaborationLabel(view: CollaborationView): string {
   if (!view.status) return view.checking ? "Checking" : "Unknown";
+  if (!view.status.enabled) return "Off";
   if (!view.status.configured) return "Not set";
   if (view.available) return "Connected";
+  if (view.status.refused) return "No access";
   if (view.status.sign_in_required) return "Sign in";
   return view.status.reachable ? "Refused" : "Unreachable";
 }
 
 /**
- * Where to publish to and import from: the server's address, and whether it
- * answers. The status line is the same answer every Publish and Import control
- * reads (`useCollaboration`), so the reason a control is off is visible here.
+ * Collaboration on or off, and while on, where to publish to and import from:
+ * the server's address, and whether it answers. The status line is the same
+ * answer every Publish and Import control reads (`useCollaboration`), so the
+ * reason a control is off is visible here. Once signed in, the researcher's
+ * teams are made and managed here too. Off, only the switch and its hints.
  */
 function CollaborationSection({
   bind,
   user,
   bindToken,
   onRemove,
+  enabled,
+  onToggle,
+  mark,
+  error: switchError,
 }: {
   bind: Bind;
   user: LocalSettings;
   bindToken: (field: TokenField) => FieldBinding;
   onRemove: () => void;
+  /** The switch as saved here; drives the layout at once, before the status follows. */
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  mark?: FieldMark;
+  error?: string;
 }) {
   const view = useCollaboration();
   const { status, checking, available, reason, error, refresh } = view;
   const binding = bind("collaboration_server_url", "on-blur");
   const fromConfig = status?.source === "config" && !binding.inputProps.value;
   const dot = checking ? "checking" : available ? "ready" : "not_connected";
+  const teams = useTeams();
+  const [managingTeams, setManagingTeams] = useState(false);
   return (
     <section className="settings-section" aria-label="Collaboration">
       <SectionHeader title="Collaboration">
         <span className="user-settings-hint">
-          Publish projects, skills and knowledge bases to a collaboration server, and import what
-          others have published. Nothing leaves this computer until you publish it.
+          Publish projects, skills and knowledge bases to a team on a collaboration server, and
+          import what others have published. Nothing leaves this computer until you publish it,
+          choosing its team the first time.
         </span>
       </SectionHeader>
       <div className="settings-section-body">
-        <SavedField
-          label="Collaboration server"
-          field="collaboration_server_url"
-          binding={binding}
-          placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
+        <UpdateSwitch
+          field="collaboration_enabled"
+          label="Collaboration"
           hint={
-            fromConfig ? (
-              <>
-                This installation&apos;s configuration uses <code>{status?.url}</code>. An address
-                here takes its place.
-              </>
-            ) : (
-              <>The server&apos;s address.</>
-            )
+            enabled
+              ? undefined
+              : "Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing buttons are hidden."
           }
+          on={enabled}
+          onChange={onToggle}
+          mark={mark}
+          error={switchError}
+          tour="collaboration:off"
         />
-        <div className="settings-collab-status">
-          <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
-          <span aria-live="polite">
-            {available && status
-              ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
-              : reason}
-            {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
-          </span>
-          <button
-            type="button"
-            className="button ghost button-xs"
-            onClick={() => void refresh()}
-            disabled={checking}
-          >
-            Check again
-          </button>
-        </div>
-        {/* The backend offers the sign-in page only where a token would be sent and is
-            wanted, whatever the server answered: a gateway's redirect to its login or
-            an error can be the token's absence too. */}
-        {(status?.sign_in_url || user.has_collaboration_token) && (
-          <TokenField
-            label="Token"
-            field="collaboration_token"
-            saved={Boolean(user.has_collaboration_token)}
-            binding={bindToken("collaboration_token")}
-            onRemove={onRemove}
-            hint={
-              status?.sign_in_url ? (
-                <>
-                  <a href={status.sign_in_url} target="_blank" rel="noreferrer">
-                    Open the server&apos;s sign-in page
-                  </a>
-                  , log in, and paste the token it shows. When it expires, get a new one there.
-                </>
-              ) : (
-                <>The token from the server&apos;s sign-in page.</>
-              )
-            }
-          />
+        {enabled && (
+          <>
+            <SavedField
+              label="Collaboration server"
+              field="collaboration_server_url"
+              binding={binding}
+              placeholder={fromConfig && status?.url ? status.url : "https://obsidian.ccs.ornl.gov/vista/api"}
+              hint={
+                // The configuration's address is the default here, already shown in
+                // the field's placeholder and the status line.
+                fromConfig ? (
+                  <>Using default server - replace above to override</>
+                ) : (
+                  <>The server&apos;s address.</>
+                )
+              }
+            />
+            {/* Where the tour's sign-in coachmark points: the status, the token and,
+                signed in, the teams. Always drawn while on, for a server with no token. */}
+            <div className="settings-collab-signin" data-tour="collaboration:sign-in">
+            <div className="settings-collab-status">
+              <span className={`hpc-dot hpc-dot--${dot}`} aria-hidden="true" />
+              <span aria-live="polite">
+                {available && status
+                  ? `Connected to ${status.url}${status.server_version ? ` (server ${status.server_version})` : ""}.`
+                  : reason}
+                {error && status && ` Couldn't check again: ${error}; this is the last answer.`}
+              </span>
+              <button
+                type="button"
+                className="button ghost button-xs"
+                onClick={() => void refresh()}
+                disabled={checking}
+              >
+                Check again
+              </button>
+            </div>
+            {/* The backend offers the sign-in page only where a token would be sent and is
+                wanted, whatever the server answered: a gateway's redirect to its login or
+                an error can be the token's absence too. */}
+            {(status?.sign_in_url || user.has_collaboration_token) && (
+              <TokenField
+                label="Token"
+                field="collaboration_token"
+                saved={Boolean(user.has_collaboration_token)}
+                binding={bindToken("collaboration_token")}
+                onRemove={onRemove}
+                hint={
+                  status?.sign_in_url ? (
+                    <>
+                      <a href={status.sign_in_url} target="_blank" rel="noreferrer">
+                        Open the server&apos;s sign-in page
+                      </a>
+                      , log in, and paste the token it shows. When it expires, get a new one there.
+                      {status.default_server && " No access yet? Reach out to the VISTA team."}
+                    </>
+                  ) : (
+                    <>The token from the server&apos;s sign-in page.</>
+                  )
+                }
+              />
+            )}
+            {teams.shown && (
+              <div className="settings-collab-status">
+                <span>
+                  Teams:{" "}
+                  {teams.teams.map((t) => teamLabel(t)).join(", ")}. Publishing something for the
+                  first time puts it in one of them, where it stays.
+                </span>
+                <button
+                  type="button"
+                  className="button ghost button-xs"
+                  onClick={() => setManagingTeams(true)}
+                >
+                  Manage teams…
+                </button>
+              </div>
+            )}
+            </div>
+          </>
         )}
       </div>
+      {managingTeams && <TeamsModal onClose={() => setManagingTeams(false)} />}
     </section>
   );
 }
 
+/** One Globus connection's state, as every section showing it reads it. */
+type GlobusState = {
+  connected: boolean;
+  identity: string | null;
+  onConnected: (identity: string) => void;
+};
+
 function ClusterFields({
   cluster,
-  user,
   bind,
+  fill,
+  globus,
 }: {
   cluster: HpcCluster;
-  user: LocalSettings;
   bind: Bind;
+  fill: FillRemoteDir;
+  globus: (owner: GlobusCluster) => GlobusState;
 }) {
   switch (cluster) {
     case "odo":
@@ -1788,19 +1918,15 @@ function ClusterFields({
             binding={bind("odo_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="odo"
             label="Odo remote directory"
             field="odo_remote_dir"
-            binding={bind("odo_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/gpfs/wolf2/olcf/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Odo" />}
           />
-          <GlobusConnect
-            cluster="odo"
-            label="Odo"
-            initiallyConnected={globusConnected(user, "odo")}
-            onConnected={() => void recheckHpcStatus("odo")}
-          />
+          <GlobusConnect cluster="odo" label="Odo" {...globus("odo")} />
         </>
       );
     case "frontier":
@@ -1812,19 +1938,19 @@ function ClusterFields({
             binding={bind("frontier_s3m_token", "on-blur")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="frontier"
             label="Frontier remote directory"
             field="frontier_remote_dir"
-            binding={bind("frontier_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Frontier" />}
           />
-          <GlobusConnect
-            cluster="frontier"
-            label="Frontier"
-            initiallyConnected={globusConnected(user, "frontier")}
-            onConnected={() => void recheckHpcStatus("frontier")}
-          />
+          <p className="user-settings-hint">
+            Frontier and Lux share the Orion filesystem, so one Globus connection serves
+            both: connecting here connects Lux too.
+          </p>
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
     case "perlmutter":
@@ -1862,31 +1988,109 @@ function ClusterFields({
     case "lux":
       return (
         <>
-          <SavedField
-            label="Lux account"
-            field="lux_account"
-            binding={bind("lux_account", "debounce")}
-            placeholder="e.g. abc123"
-            hint="Required for Lux. The OLCF project Lux jobs are charged to."
+          <S3mTokenField
+            label="Lux S3M token"
+            field="lux_s3m_token"
+            binding={bind("lux_s3m_token", "on-blur")}
+            hint="From any OLCF project with S3M access to Lux, and separate from Frontier's token. Lux jobs are charged to that project."
           />
-          <SavedField
+          <RemoteDirField
+            cluster="lux"
             label="Lux remote directory"
             field="lux_remote_dir"
-            binding={bind("lux_remote_dir", "debounce")}
+            bind={bind}
+            fill={fill}
             placeholder="/lustre/orion/<project>/proj-shared/vista"
-            hint={<GroupWritableHint cluster="Lux" runsAs="you" />}
           />
+          <p className="user-settings-hint">
+            Lux and Frontier share the Orion filesystem, so one Globus connection serves
+            both. Connecting here connects Frontier too, and if Frontier is already
+            connected there is nothing to do.
+          </p>
+          <GlobusConnect cluster="frontier" label="Orion" {...globus("frontier")} />
         </>
       );
   }
 }
 
+/** The remote directory fields VISTA fills from a cluster's S3M token. */
+type RemoteDirTextField = "odo_remote_dir" | "frontier_remote_dir" | "lux_remote_dir";
+
+type FillRemoteDir = (
+  cluster: HpcCluster,
+  field: RemoteDirTextField,
+  project: string | null,
+  /** Called as the field loses focus, so its focus no longer counts. */
+  blurred?: boolean,
+) => void;
+
+/** The project a cluster's S3M token belongs to, as its credential check reports it. */
+function useClusterProject(cluster: HpcCluster): string | null {
+  const view = useHpcStatus();
+  const entry = view.clusters?.find((c) => c.cluster === cluster);
+  return entry?.status.checks.credential.project ?? null;
+}
+
+/**
+ * An OLCF cluster's remote directory. Once the cluster's S3M token reports its
+ * project, an empty field (or VISTA's folder for a different project) is filled
+ * with that project's `proj-shared/vista` folder, when the section opens, the
+ * project changes or the field loses focus; a note says so while the field
+ * still holds it. See
+ * `lib/remote-dir.ts` for the rule.
+ */
+function RemoteDirField({
+  cluster,
+  label,
+  field,
+  bind,
+  fill,
+  placeholder,
+}: {
+  cluster: HpcCluster;
+  label: string;
+  field: RemoteDirTextField;
+  bind: Bind;
+  fill: FillRemoteDir;
+  placeholder: string;
+}) {
+  const project = useClusterProject(cluster);
+  useEffect(() => fill(cluster, field, project), [cluster, field, project, fill]);
+  const bound = bind(field, "debounce");
+  // Leaving the field sends what was typed first, so a fill then sees no
+  // unsaved edit, and fills only a field still empty or VISTA's.
+  const binding: FieldBinding = {
+    ...bound,
+    inputProps: {
+      ...bound.inputProps,
+      onBlur: (e) => {
+        bound.inputProps.onBlur?.(e);
+        fill(cluster, field, project, true);
+      },
+    },
+  };
+  const note = filledNote(cluster, project, String(binding.inputProps.value ?? ""));
+  return (
+    <SavedField
+      label={label}
+      field={field}
+      binding={binding}
+      placeholder={placeholder}
+      note={note}
+      hint={
+        <>
+          {project ? null : "Filled from your S3M token once you add one. "}
+          <GroupWritableHint cluster={HPC_CLUSTER_TITLES[cluster]} />
+        </>
+      }
+    />
+  );
+}
+
 /**
  * One saved text field: its label, input, why its last save failed (keeping
- * what was entered), and its hint. A secret is a password input with nothing
- * remembered by the browser. A remote directory has no default: where a
- * project keeps its files is specific to the project and the filesystem, so
- * VISTA does not guess.
+ * what was entered), a note on where its value came from, and its hint. A
+ * secret is a password input with nothing remembered by the browser.
  */
 function SavedField({
   label,
@@ -1895,6 +2099,7 @@ function SavedField({
   secret = false,
   type,
   placeholder,
+  note,
   hint,
 }: {
   label: string;
@@ -1904,6 +2109,8 @@ function SavedField({
   /** The input's type, for a field that is not plain text; `secret` wins over it. */
   type?: "email";
   placeholder: string;
+  /** Where the value came from, while it is still the one VISTA put there. */
+  note?: string | null;
   hint: ReactNode;
 }) {
   return (
@@ -1921,6 +2128,7 @@ function SavedField({
         <SaveMark mark={binding.mark} />
       </span>
       <FieldError field={field} error={binding.error} />
+      {note && <span className="settings-filled-note">{note}</span>}
       <span className="user-settings-hint">{hint}</span>
     </label>
   );
@@ -1933,6 +2141,12 @@ function SavedField({
  * which creates `<dir>.out`, so the folder holding them must be writable by the
  * project's group. Temporary, until S3M tokens can use the IRI filesystem API.
  */
+/** Frontier's Globus connection is Lux's too, so connecting it rechecks both cards. */
+function recheckFrontierAndLux() {
+  void recheckHpcStatus("frontier");
+  void recheckHpcStatus("lux");
+}
+
 function GroupWritableHint({
   cluster,
   runsAs = "your project's IRI automation user",
@@ -2102,24 +2316,20 @@ function globusConnected(
  * single-use, and the backend stores the result itself, so there is nothing
  * for a field save to carry, and it takes effect at once.
  *
- * `initiallyConnected` seeds the display from the loaded settings and is not read
- * again. Re-fetching after a connection would rebuild the modal's draft under
- * fields still being edited.
+ * Whether it is connected, and as whom, is the modal's (`GlobusState`): the
+ * same connection is shown in more than one section (Frontier's, in Lux's), and
+ * connecting it in one must show it connected in the other.
  */
 function GlobusConnect({
   cluster,
   label,
-  initiallyConnected,
+  connected,
+  identity,
   onConnected,
 }: {
   cluster: GlobusCluster;
   label: string;
-  initiallyConnected: boolean;
-  /** After a connection completes, e.g. to recheck the cluster's card. */
-  onConnected?: () => void;
-}) {
-  const [connected, setConnected] = useState(initiallyConnected);
-  const [identity, setIdentity] = useState<string | null>(null);
+} & GlobusState) {
   const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState<"starting" | "finishing" | null>(null);
@@ -2178,10 +2388,8 @@ function GlobusConnect({
     setError(null);
     try {
       const result = await completeGlobusLogin(cluster, code);
-      setConnected(true);
-      setIdentity(result.identity);
       forget();
-      onConnected?.();
+      onConnected(result.identity);
     } catch (e) {
       // The address stays on screen. A rejected code is usually a mistyped or
       // half-copied one, and making the researcher start the login again to

@@ -59,8 +59,12 @@ IRI_FIELDS = {
     "partition": (STR, True),
     "image": (STR, True),
     "module": (STR, True),
-    "pre_launch": (STR, True),
     "environment": ("env", False),
+}
+# Fields VISTA refuses outright, with what to do instead.
+REFUSED_FIELDS = {
+    "pre_launch": "is no longer used and VISTA refuses it: put those commands in "
+                  "setup_<cluster>.sh, which runs inside the job before the job script",
 }
 
 
@@ -106,6 +110,9 @@ _KIND_NAMES = {INT: "an integer", BOOL: "true or false", STR: "a string",
 
 def _check_fields(obj: dict, fields: dict, where: str, path: Path, rep: Report) -> None:
     for key, value in obj.items():
+        if key in REFUSED_FIELDS and fields is IRI_FIELDS:
+            rep.error(path, f"{where}.{key} {REFUSED_FIELDS[key]}")
+            continue
         if key not in fields:
             rep.warn(path, f"{where}.{key} is not a field VISTA knows; it is ignored")
             continue
@@ -180,7 +187,7 @@ def check_script(path: Path, rep: Report) -> None:
                        "(export CONDA_PKGS_DIRS and TMPDIR under /tmp first; see templates/conda-env/"
                        "build_conda_env.sh)")
     if _RUN_DIR_WRITE.search(code):
-        rep.warn(path, "writes into $RUN_DIR_<Cluster>; it is read-only on Odo and Frontier, "
+        rep.warn(path, "writes into $RUN_DIR_<Cluster>; it is read-only to the job on the OLCF clusters, "
                        "write under $VISTA_OUT or $VISTA_JOB_DIR")
 
 
@@ -226,6 +233,14 @@ def check_job(job_dir: Path, rep: Report, *, skill: str | None = None) -> None:
         if not (isinstance(res, dict) and res.get("gpus_per_node")):
             rep.error(defaults, "lux.resources.gpus_per_node is required; Lux refuses a job "
                                 "that selects no GPUs")
+    for cluster, section in sections.items():
+        res = section.get("resources")
+        if not isinstance(res, dict):
+            continue
+        gpus, per_node = res.get("gpus_per_node"), res.get("processes_per_node") or 1
+        if isinstance(gpus, int) and isinstance(per_node, int) and per_node > 0 and gpus % per_node:
+            rep.error(defaults, f"{cluster}.resources.gpus_per_node ({gpus}) must be a multiple of "
+                                f"processes_per_node ({per_node}); IRI asks for GPUs per process")
     pm = sections.get("perlmutter")
     if pm is not None and not (isinstance(pm.get("iri"), dict) and pm["iri"].get("constraint")):
         rep.warn(defaults, 'perlmutter.iri.constraint is unset; Perlmutter needs "gpu" or "cpu"')

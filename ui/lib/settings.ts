@@ -28,12 +28,8 @@ export type LocalSettings = {
    * name one: see `lib/collaboration.ts`).
    */
   collaboration_server_url: string | null;
-  /**
-   * The collaboration team selected here, which new projects, skills and
-   * knowledge bases join; null for Private. Cleared by the backend
-   * when the server's address changes.
-   */
-  collaboration_team_id?: string | null;
+  /** The Collaboration switch; never chosen reads as on. Off contacts no collaboration server. */
+  collaboration_enabled?: boolean;
   /** Where campaign notifications go. */
   email: string | null;
   /** Clusters left out of the NavRail's HPC section. `[]` shows them all. */
@@ -73,14 +69,13 @@ export type LocalSettings = {
   odo_remote_dir: string | null;
   frontier_remote_dir: string | null;
   lux_remote_dir: string | null;
-  /** The OLCF project Lux jobs are charged to; Lux has no token to take one from. */
-  lux_account: string | null;
   /**
    * One S3M token per OLCF cluster: a token is scoped to a single project,
-   * so one field could only ever authorize one of Odo and Frontier.
+   * so one field could only ever authorize one of Odo, Frontier and Lux.
    */
   odo_s3m_token: string | null;
   frontier_s3m_token: string | null;
+  lux_s3m_token: string | null;
   nersc_iri_token: string | null;
   /**
    * File-transfer credentials, read only to tell whether a cluster is
@@ -118,8 +113,7 @@ export type LocalSettingsUpdate = {
   display_name?: string | null;
   /** An `http(s)://` address; `null` or `""` clears it. */
   collaboration_server_url?: string | null;
-  /** Select a team (`lib/collaboration.ts:selectTeam`); null for Private. */
-  collaboration_team_id?: string | null;
+  collaboration_enabled?: boolean;
   email?: string | null;
   inference_model?: string | null;
   inference_base_url?: string | null;
@@ -143,9 +137,9 @@ export type LocalSettingsUpdate = {
   odo_remote_dir?: string | null;
   frontier_remote_dir?: string | null;
   lux_remote_dir?: string | null;
-  lux_account?: string | null;
   odo_s3m_token?: string | null;
   frontier_s3m_token?: string | null;
+  lux_s3m_token?: string | null;
   nersc_iri_token?: string | null;
   /** Clusters to leave out of the NavRail. `[]` shows them all. */
   hpc_hidden_clusters?: string[] | null;
@@ -295,7 +289,8 @@ export async function updateSettings(
 /**
  * The OLCF enclaves VISTA transfers files to. Each is authorized on its own:
  * they sit behind different identity providers, and a researcher may have an
- * account on one and not the other.
+ * account on one and not the other. Lux has no connection of its own: it
+ * mounts Frontier's filesystem and uses Frontier's.
  */
 export type GlobusCluster = "odo" | "frontier";
 
@@ -312,7 +307,10 @@ export type GlobusLoginStarted = {
 
 /** Backend `GlobusConnected`. */
 export type GlobusConnected = {
-  cluster: GlobusCluster;
+  /** The cluster connected from; the backend also accepts "lux". */
+  cluster: GlobusCluster | "lux";
+  /** Whose connection was stored: Frontier's, for Lux. */
+  connected: GlobusCluster;
   identity: string;
 };
 

@@ -1,6 +1,7 @@
 #!/bin/bash -l
-# Odo pre_launch validation for salt-neutronics-tbr. Runs ONCE on the head compute node
-# before job.odo.slurm (inlined into the IRI JobSpec pre_launch by vista's dispatcher).
+# Odo validation for salt-neutronics-tbr. Runs ONCE on the head compute node before
+# job.odo.slurm, inside the job, after vista's prefix (submit_job_mcp.py); a non-zero
+# exit ends the job.
 # Fails fast — before the allocation does any work — if its prerequisite is missing.
 #
 # Env provided by vista's IRI dispatcher (submit_job_mcp.py) + cluster_defaults.json:

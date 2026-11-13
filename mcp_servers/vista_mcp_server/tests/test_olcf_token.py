@@ -89,8 +89,6 @@ class TestDefaultCluster:
 
     @pytest.fixture
     def patched(self):
-        # amscrot is lazy-imported inside IriClient; importing submit_job_mcp
-        # no longer requires the private SDK (hermetic CI installs without `hpc`).
         from vista_mcp_server import submit_job_mcp
         from vista_mcp_server.lib.user_config import UserConfig
 

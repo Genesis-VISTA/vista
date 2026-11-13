@@ -1,0 +1,656 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Approved storyboard, version 6 (2026-11-10): https://claude.ai/artifact/RR2FxaXaoPvULbMxY6DNDG -->
+<title>Collaboration Storyboard</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a review sheet. Each frame is a VISTA screen mockup beside its coachmark spec, numbered because the tour is a real sequence. Colours are VISTA's own tokens (ui/app/globals.css). */
+:root {
+  --bg: #f4f4f2; --surface: #ffffff; --surface-sunken: #fbfbfa; --surface-active: #ececea;
+  --line: #e2e2de; --line-soft: #f0f0ec; --line-strong: #d8d8d2;
+  --ink: #1c1c1a; --muted: #767671;
+  --brand: #004573; --brand-tint: #f2f6fa; --brand-line: #dce6ef; --brand-fill: #004573; --on-brand: #ffffff;
+  --accent: #4a7fb5;
+  --success: #0b730b; --success-tint: #f0f6f1;
+  --warning-ink: #a06a00; --warning-tint: #fff6e5; --warning-mark: #d8a400;
+  --danger-ink: #b01000; --danger-tint: #fdecea;
+  --example: #6b4fa0; --example-tint: #f3effa;
+  --scrim: rgba(28, 26, 23, 0.32);
+  --shadow-popover: 0 12px 32px rgba(17, 42, 77, 0.18);
+  --font-display: "Figtree", system-ui, sans-serif;
+  --font-body: "Roboto", system-ui, -apple-system, sans-serif;
+  --font-mono: "Roboto Mono", ui-monospace, Menlo, monospace;
+  --r-card: 10px; --r-control: 8px; --r-pill: 999px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0a1524; --surface: #112235; --surface-sunken: #0e1c2d; --surface-active: #1b3049;
+  --line: #213852; --line-soft: #1a2e45; --line-strong: #2a4566;
+  --ink: #e8eef5; --muted: #97aabf;
+  --brand: #92c6f2; --brand-tint: #173352; --brand-line: #28496d; --brand-fill: #3577b0; --on-brand: #ffffff;
+  --accent: #6fa3d6;
+  --success: #78cc8f; --success-tint: #132c25;
+  --warning-ink: #e8c15a; --warning-tint: #2a2a1e; --warning-mark: #e8c15a;
+  --danger-ink: #ff8a7a; --danger-tint: #2f1d24;
+  --example: #c3a8f0; --example-tint: #261d3d;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0a1524; --surface: #112235; --surface-sunken: #0e1c2d; --surface-active: #1b3049;
+  --line: #213852; --line-soft: #1a2e45; --line-strong: #2a4566;
+  --ink: #e8eef5; --muted: #97aabf;
+  --brand: #92c6f2; --brand-tint: #173352; --brand-line: #28496d; --brand-fill: #3577b0; --on-brand: #ffffff;
+  --accent: #6fa3d6;
+  --success: #78cc8f; --success-tint: #132c25;
+  --warning-ink: #e8c15a; --warning-tint: #2a2a1e; --warning-mark: #e8c15a;
+  --danger-ink: #ff8a7a; --danger-tint: #2f1d24;
+  --example: #c3a8f0; --example-tint: #261d3d;
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-popover: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.55; }
+.page { max-width: 1180px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 48px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; }
+h1 { font-size: 34px; font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 700; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+a { color: var(--brand); }
+.eyebrow { font-family: var(--font-display); font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header.intro { display: grid; gap: 14px; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: var(--r-pill); border: 1px solid var(--line); background: var(--surface); font-size: 12.5px; color: var(--muted); }
+.chip b { color: var(--ink); font-weight: 500; }
+section.part { display: grid; gap: 22px; }
+.part-head { display: grid; gap: 8px; border-top: 2px solid var(--ink); padding-top: 14px; }
+.legend { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+
+/* step table */
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font-family: var(--font-display); font-weight: 600; color: var(--muted); font-size: 12px; letter-spacing: 0.05em; text-transform: uppercase; }
+tr.new td { background: var(--brand-tint); }
+tr:last-child td { border-bottom: 0; }
+
+/* frame = mockup + spec */
+.frame { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 860px) { .frame { grid-template-columns: minmax(0, 1fr); } }
+.spec { display: grid; gap: 12px; min-width: 0; }
+.spec .num { font-family: var(--font-display); font-weight: 700; font-size: 13px; color: var(--brand); }
+.spec dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 14px; margin: 0; font-size: 13px; }
+.spec dt { color: var(--muted); }
+.spec dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.copy { border-left: 3px solid var(--brand); padding: 6px 0 6px 14px; display: grid; gap: 4px; }
+.copy .t { font-family: var(--font-display); font-weight: 600; font-size: 16px; }
+.copy .variant { font-size: 13px; color: var(--muted); }
+.type { display: inline-block; padding: 1px 8px; border-radius: var(--r-pill); font-size: 12px; font-weight: 500; }
+.type.next { background: var(--brand-tint); color: var(--brand); border: 1px solid var(--brand-line); }
+.type.action { background: var(--warning-tint); color: var(--warning-ink); border: 1px solid var(--warning-mark); }
+.note { font-size: 13px; color: var(--muted); }
+
+/* the mock screen */
+.screen { position: relative; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; background: var(--bg); display: grid; grid-template-columns: 150px minmax(0, 1fr); min-height: 330px; font-size: 12.5px; line-height: 1.45; }
+.screen.no-rail { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 520px) { .screen { grid-template-columns: 112px minmax(0, 1fr); font-size: 11.5px; } }
+.rail { background: var(--surface); border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rail .brandmark { font-family: var(--font-display); font-weight: 700; color: var(--brand); padding: 2px 8px 8px; letter-spacing: 0.04em; }
+.rail .grp { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); padding: 8px 8px 2px; }
+.rail .it { padding: 5px 8px; border-radius: 6px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail .it.on { background: var(--surface-active); font-weight: 500; }
+.rail .spacer { flex: 1; }
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { background: var(--surface); border-bottom: 1px solid var(--line); padding: 9px 14px; font-family: var(--font-display); font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.content { padding: 12px 14px; display: grid; gap: 10px; align-content: start; }
+.lede { color: var(--muted); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 10px 12px; display: grid; gap: 4px; min-width: 0; }
+.card .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.card .name { font-weight: 500; }
+.card .sub { color: var(--muted); font-size: 11.5px; }
+.btn { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: var(--r-control); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 11.5px; white-space: nowrap; }
+.btn.primary { background: var(--brand-fill); border-color: var(--brand-fill); color: var(--on-brand); }
+.btn.dis { opacity: 0.45; }
+.badge { display: inline-flex; align-items: center; padding: 0 7px; border-radius: var(--r-pill); border: 1px solid var(--brand-line); background: var(--brand-tint); color: var(--brand); font-size: 10.5px; font-weight: 500; }
+.ex { display: inline-flex; align-items: center; padding: 0 6px; border-radius: 4px; background: var(--example-tint); color: var(--example); border: 1px dashed var(--example); font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.box { border: 1px solid var(--line); background: var(--surface-sunken); border-radius: var(--r-card); padding: 12px; display: grid; gap: 6px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.dot.amber { background: var(--warning-mark); } .dot.green { background: var(--success); } .dot.red { background: var(--danger-ink); } .dot.grey { background: var(--line-strong); }
+.hl { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; position: relative; z-index: 3; background: inherit; }
+.dim::after { content: ""; position: absolute; inset: 0; background: var(--scrim); z-index: 2; pointer-events: none; }
+.screen.dim .hl { box-shadow: 0 0 0 4px var(--surface); }
+.coach { position: absolute; z-index: 4; width: min(250px, 62%); background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-popover); padding: 10px 12px; display: grid; gap: 5px; font-size: 11.5px; }
+.coach .ct { font-family: var(--font-display); font-weight: 600; font-size: 13px; }
+.coach .cb { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); font-size: 10.5px; flex-wrap: wrap; }
+.coach .cb .btn { font-size: 10.5px; padding: 2px 8px; }
+.coach.center { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(300px, 80%); }
+.menu { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-popover); padding: 4px; display: grid; gap: 1px; margin-top: 4px; }
+.menu .mi { padding: 4px 8px; border-radius: 5px; display: flex; justify-content: space-between; gap: 6px; }
+.menu .mi.on { background: var(--brand-tint); color: var(--brand); font-weight: 500; }
+.menu .sep { height: 1px; background: var(--line-soft); margin: 3px 4px; }
+.teamsw { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; display: grid; gap: 1px; background: var(--surface); }
+.teamsw .k { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.tools { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.sel { border: 1px solid var(--line-strong); border-radius: var(--r-control); padding: 3px 8px; background: var(--surface); font-size: 11.5px; white-space: nowrap; }
+.v6 { display: inline-block; padding: 0 7px; border-radius: var(--r-pill); background: var(--warning-tint); color: var(--warning-ink); border: 1px solid var(--warning-mark); font-size: 11px; font-weight: 600; margin-left: 6px; vertical-align: 1px; }
+.changes { background: var(--surface); border: 1px solid var(--warning-mark); border-radius: var(--r-card); padding: 14px 16px; display: grid; gap: 8px; }
+.changes ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; }
+
+/* settings modal */
+.modal { display: grid; grid-template-columns: 140px minmax(0, 1fr); background: var(--surface); min-height: 330px; }
+@media (max-width: 520px) { .modal { grid-template-columns: 100px minmax(0, 1fr); } }
+.snav { border-right: 1px solid var(--line); padding: 10px 6px; display: grid; gap: 2px; align-content: start; background: var(--surface-sunken); }
+.snav .si { padding: 5px 8px; border-radius: 6px; display: grid; gap: 0; }
+.snav .si small { color: var(--muted); font-size: 10.5px; }
+.snav .si.on { background: var(--surface-active); font-weight: 500; }
+.sbody { padding: 14px 16px; display: grid; gap: 12px; align-content: start; min-width: 0; }
+.sbody h4 { margin: 0; font-family: var(--font-display); font-size: 15px; font-weight: 600; }
+.hint { color: var(--muted); font-size: 11.5px; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field label { font-weight: 500; }
+.input { border: 1px solid var(--line-strong); border-radius: var(--r-control); padding: 5px 8px; background: var(--surface); font-family: var(--font-mono); font-size: 11px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; justify-content: space-between; gap: 6px; }
+.input.ph { color: var(--muted); }
+.input .ok { color: var(--success); font-family: var(--font-body); }
+.filled { display: flex; gap: 6px; align-items: baseline; background: var(--success-tint); border-radius: 6px; padding: 5px 8px; font-size: 11.5px; }
+.status { display: flex; gap: 8px; align-items: flex-start; font-size: 11.5px; }
+.status .btn { margin-left: auto; }
+.toggle { display: flex; align-items: center; gap: 10px; }
+.sw { width: 32px; height: 18px; border-radius: 9px; background: var(--line-strong); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); }
+.sw.on { background: var(--brand-fill); }
+.sw.on::after { left: 16px; }
+
+/* decision list */
+.open { display: grid; gap: 12px; }
+.q { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 14px 16px; display: grid; gap: 6px; }
+.q .lab { font-size: 12px; font-weight: 600; color: var(--warning-ink); text-transform: uppercase; letter-spacing: 0.06em; }
+.pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .pair { grid-template-columns: minmax(0, 1fr); } }
+.cap { font-size: 13px; color: var(--muted); margin-top: 6px; }
+@media (prefers-reduced-motion: no-preference) { .hl { transition: outline-color .2s; } }
+</style>
+
+<div class="page">
+
+<header class="intro">
+  <span class="eyebrow">Storyboard for review · v6 · 2026-11-10</span>
+  <h1>Collaboration in the tour, and smarter Settings defaults</h1>
+  <p>Every new screen and string from the grilling session, before any code. Part 1 is the tour's new collaboration step, coachmark by coachmark. Part 2 is Settings › Collaboration in each state, Part 3 the pages before sign-in, and Part 4 the Odo, Frontier and Lux remote directory filled in from the token. Wording here becomes <code>onboarding-copy.ts</code> and the Settings strings once approved. Comment on anything; the open questions at the end need an answer.</p>
+  <div class="meta-row">
+    <span class="chip">Change 1 <b>settings-remote-dir-autofill</b> · Part 4</span>
+    <span class="chip">Change 2 <b>collaboration-default-on</b> · Parts 2–3</span>
+    <span class="chip">Change 3 <b>onboarding-tour-collaboration</b> · Part 1</span>
+  </div>
+  <div class="legend">
+    <span><span class="type next">Next</span> look-only, passed with Next</span>
+    <span><span class="type action">Action</span> waits for the researcher; only Skip this step or Exit get past</span>
+    <span><span class="ex">Example</span> tour-only data shown in real components, never sent anywhere</span>
+    <span><span class="v6">v6</span> changed since the approved v5</span>
+  </div>
+  <div class="changes">
+    <b>What changed in v6: main's “Collaboration simplification” (272afd46) and “Iri update” (1b7d65dc)</b>
+    <ul>
+      <li><b>No team menu any more.</b> Every page lists all your items together, each with its team badge, and a <i>Team</i> filter (“All teams”, shown with two or more teams) narrows the Skill Hub. Coachmark 4 now points at that filter.</li>
+      <li><b>No Copy to team.</b> Everything new is private; its first <i>Publish…</i> asks which team, and it stays in that team: <i>Publish changes</i> sends each new version there. Coachmark 6 now teaches that.</li>
+      <li><b>Teams are managed in Settings.</b> Signed in, Settings › Collaboration lists your teams with <i>Manage teams…</i>. Coachmark 7's signed-in variant and frame C show it.</li>
+      <li><b>“Team menu” → “team badges”</b> wherever the off state says what's hidden (coachmark 8, frame A).</li>
+      <li><b>Lux has its own S3M token now</b>, and no Lux account. Its remote directory fills from the token's project like Frontier's (Part 4).</li>
+    </ul>
+  </div>
+</header>
+
+<section class="part" id="tour">
+  <div class="part-head">
+    <span class="eyebrow">Part 1 · Change 3</span>
+    <h2>The tour's collaboration step</h2>
+    <p>A new step between <code>hpc</code> and <code>first-question</code>, eight coachmarks, about a minute. It teaches that nothing is shared on its own, what Private, a team and Public mean, how to share your own work, where to sign in, and how to turn collaboration off. The same examples show for everyone, signed in or not.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Sub-steps (action ones in bold)</th><th>Skipped when</th></tr></thead>
+      <tbody>
+        <tr><td>…</td><td>welcome, project, model, knowledge-bases, skills, files unchanged</td><td></td></tr>
+        <tr><td>hpc</td><td>resources, <b>open-card</b>, card, check, settings</td><td></td></tr>
+        <tr class="new"><td><b>collaboration</b></td><td><b>visit</b>, overview, local, teams, hub-item, share, sign-in, off</td><td>collaboration is turned off</td></tr>
+        <tr><td>first-question</td><td><b>send</b>, <b>activity</b>, answer, finish</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 1 visit -->
+  <div class="frame">
+    <div class="screen dim">
+      <nav class="rail">
+        <div class="brandmark">VISTA</div>
+        <div class="it">Projects</div>
+        <div class="it hl">Skill Hub</div>
+        <div class="it">Knowledge Bases</div>
+        <div class="grp">Opened project</div>
+        <div class="it">Chat</div><div class="it">Skills</div><div class="it">Files</div>
+        <div class="grp">Resources</div>
+        <div class="it">Odo</div><div class="it">Frontier</div>
+        <div class="spacer"></div><div class="it">Settings</div>
+      </nav>
+      <div class="main"><div class="topbar">Resources</div><div class="content"><div class="card"><span class="name">Odo</span><span class="sub">Ready</span></div></div></div>
+      <div class="coach" style="left:160px; top:40px;">
+        <span class="ct">Sharing with others</span>
+        <span>Open Skill Hub in the sidebar.</span>
+        <div class="cb"><span>Skip this step · Exit</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">1 · collaboration:visit</span>
+      <div class="copy"><span class="t">Sharing with others</span><span>Open Skill Hub in the sidebar.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type action">Action</span></dd>
+        <dt>Anchor</dt><dd>The Skill Hub entry in the rail (<code>data-tour="collaboration:visit"</code>)</dd>
+        <dt>Done when</dt><dd>The page is <code>/skill-hub</code>, as the other <code>visit</code> sub-steps do.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 2 overview -->
+  <div class="frame">
+    <div class="screen">
+      <nav class="rail">
+        <div class="brandmark">VISTA</div>
+        <div class="it">Projects</div><div class="it on">Skill Hub</div><div class="it">Knowledge Bases</div>
+        <div class="grp">Opened project</div><div class="it">Chat</div><div class="it">Skills</div>
+        <div class="spacer"></div><div class="it">Settings</div>
+      </nav>
+      <div class="main">
+        <div class="topbar hl">Skill Hub</div>
+        <div class="content">
+          <span class="lede">Skills published to the collaboration server at obsidian.ccs.ornl.gov/vista/api. Importing one is your decision to trust it.</span>
+          <div class="tools"><span class="sel">Search skills</span><span class="sel">All teams ▾</span><span class="sel">Newest ▾</span></div>
+          <div class="card"><div class="row"><span class="name">plot-results</span><span><span class="badge">Public</span> <span class="ex">Example</span></span></div><span class="sub">Plots a results table as labelled figures.</span></div>
+          <div class="card"><div class="row"><span class="name">batch-job-submit</span><span><span class="badge">Example team</span> <span class="ex">Example</span></span></div><span class="sub">Submits a parameter sweep as Slurm jobs on Frontier.</span></div>
+        </div>
+      </div>
+      <div class="coach" style="left:170px; top:48px;">
+        <span class="ct">The Skill Hub</span>
+        <span>Skills other researchers have published to the collaboration server, ready to import. Projects and knowledge bases are shared the same way, from their own pages.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">2 · collaboration:overview</span>
+      <div class="copy"><span class="t">The Skill Hub</span><span>Skills other researchers have published to the collaboration server, ready to import. Projects and knowledge bases are shared the same way, from their own pages.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>, undimmed, on the top bar like every overview</dd>
+        <dt>Shows</dt><dd>The hub's real list replaced by example cards for the whole step, even before sign-in (today the page shows only a sign-in box then), with the <i>Team</i> filter listing the example teams. <span class="v6">v6</span></dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 3 local -->
+  <div class="frame">
+    <div class="screen dim">
+      <nav class="rail">
+        <div class="brandmark">VISTA</div>
+        <div class="it">Projects</div><div class="it on">Skill Hub</div><div class="it">Knowledge Bases</div>
+        <div class="spacer"></div><div class="it">Settings</div>
+      </nav>
+      <div class="main"><div class="topbar">Skill Hub</div><div class="content"><div class="card"><span class="name">plot-results</span></div><div class="card"><span class="name">batch-job-submit</span></div></div></div>
+      <div class="coach center">
+        <span class="ct">Nothing is shared on its own</span>
+        <span>Your projects, skills and knowledge bases stay on this computer. One reaches the server only when you publish it, and someone else's reaches you only when you import it.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">3 · collaboration:local</span>
+      <div class="copy"><span class="t">Nothing is shared on its own</span><span>Your projects, skills and knowledge bases stay on this computer. One reaches the server only when you publish it, and someone else's reaches you only when you import it.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>, centred</dd>
+        <dt>Why here</dt><dd>The one thing you said isn't intuitive, stated before any control is shown. Settings' hint says the same (Part 2).</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 4 teams -->
+  <div class="frame">
+    <div class="screen dim">
+      <nav class="rail">
+        <div class="brandmark">VISTA</div>
+        <div class="it">Projects</div><div class="it on">Skill Hub</div><div class="it">Knowledge Bases</div>
+        <div class="spacer"></div><div class="it">Settings</div>
+      </nav>
+      <div class="main"><div class="topbar">Skill Hub</div>
+        <div class="content">
+          <div class="tools"><span class="sel">Search skills</span><span class="sel hl">All teams ▾ <span class="ex">Example</span></span><span class="sel">Newest ▾</span></div>
+          <div class="card"><div class="row"><span class="name">plot-results</span><span class="badge">Public</span></div></div>
+          <div class="card"><div class="row"><span class="name">batch-job-submit</span><span class="badge">Example team</span></div></div>
+        </div>
+      </div>
+      <div class="coach" style="left:170px; top:84px;">
+        <span class="ct">Private, a team, or Public</span>
+        <span>Everything you make starts Private, on this computer only. Published, it goes to one team and stays there: a team is its members, and Public is everyone who signs in to the server. Each item shows its team; this narrows the list to one.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">4 · collaboration:teams <span class="v6">v6</span></span>
+      <div class="copy"><span class="t">Private, a team, or Public</span><span>Everything you make starts Private, on this computer only. Published, it goes to one team and stays there: a team is its members, and Public is everyone who signs in to the server. Each item shows its team; this narrows the list to one.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>, look-only</dd>
+        <dt>Shows</dt><dd>The Skill Hub's real <code>TeamFilter</code>, listing example teams (All teams, Public, <i>Example team</i>), beside the example cards' <code>TeamBadge</code>s. The filter is normally hidden below two teams, so the tour shows it for everyone during the step. Nothing has to be opened: the v5 team menu this replaces is gone from main.</dd>
+        <dt>Anchor</dt><dd>The team filter (<code>data-tour="collaboration:teams"</code>)</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 5 hub item -->
+  <div class="frame">
+    <div class="screen dim">
+      <nav class="rail"><div class="brandmark">VISTA</div><div class="it">Projects</div><div class="it on">Skill Hub</div><div class="spacer"></div><div class="it">Settings</div></nav>
+      <div class="main"><div class="topbar">Skill Hub</div>
+        <div class="content">
+          <div class="card hl"><div class="row"><span class="name">batch-job-submit</span><span><span class="badge">Example team</span> <span class="ex">Example</span></span></div><span class="sub">Submits a parameter sweep as Slurm jobs on Frontier. Version 3.</span><div class="row"><span></span><span class="btn">Import</span></div></div>
+          <div class="card"><span class="name">plot-results</span></div>
+        </div>
+      </div>
+      <div class="coach" style="right:12px; bottom:12px;">
+        <span class="ct">A shared skill</span>
+        <span>Each one shows its team. Import copies it to this computer; review what it does before you load it. These are examples.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">5 · collaboration:hub-item</span>
+      <div class="copy"><span class="t">A shared skill</span><span>Each one shows its team. Import copies it to this computer; review what it does before you load it. These are examples.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>, look-only</dd>
+        <dt>Anchor</dt><dd>The first example card, with its real <code>TeamBadge</code> and Import button</dd>
+        <dt>Safety</dt><dd>Example cards' Import does nothing, even if clicked outside the coachmark; they never reach the backend.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 6 share -->
+  <div class="frame">
+    <div class="screen dim">
+      <nav class="rail"><div class="brandmark">VISTA</div><div class="it">Projects</div><div class="it">Skill Hub</div><div class="grp">Opened project</div><div class="it">Chat</div><div class="it on">Skills</div><div class="spacer"></div><div class="it">Settings</div></nav>
+      <div class="main"><div class="topbar">Skills</div>
+        <div class="content">
+          <div class="card hl"><div class="row"><span class="name">csv-cleanup</span><span class="ex">Example</span></div><span class="sub">Not published · on this computer only</span><div class="row"><span></span><span class="btn">Publish…</span></div></div>
+          <div class="card"><div class="row"><span class="name">run-summary</span><span><span class="badge">Example team</span> <span class="ex">Example</span></span></div><span class="sub">Changed here since version 2</span><div class="row"><span></span><span class="btn">Publish changes</span></div></div>
+        </div>
+      </div>
+      <div class="coach" style="right:12px; bottom:12px;">
+        <span class="ct">Sharing your own</span>
+        <span>Publish… shares something private: you pick its team the first time, and it stays in that team. After that, Publish changes sends each new version there.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">6 · collaboration:share <span class="v6">v6</span></span>
+      <div class="copy"><span class="t">Sharing your own</span><span>Publish… shares something private: you pick its team the first time, and it stays in that team. After that, Publish changes sends each new version there.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>, look-only</dd>
+        <dt>Navigation</dt><dd>The tour moves to <code>/skills</code> (the way it moves to chat for the first question). Two example cards are added to the real skill list: one private with <i>Publish…</i> (which normally opens the team picker, <code>PublishToTeamModal</code>), one in a team with <i>Publish changes</i>. Neither does anything.</dd>
+        <dt>Anchor</dt><dd>The private example card</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 7 sign-in -->
+  <div class="frame">
+    <div class="screen no-rail dim">
+      <div class="modal">
+        <div class="snav">
+          <div class="si">Appearance</div><div class="si">Research profile</div><div class="si">Model provider</div><div class="si">Repositories</div>
+          <div class="si on">Collaboration<small>Sign in</small></div><div class="si">Compute</div>
+        </div>
+        <div class="sbody">
+          <h4>Collaboration</h4>
+          <div class="toggle"><span class="sw on"></span><span>Collaboration</span></div>
+          <div class="field"><label>Collaboration server</label><div class="input ph">https://obsidian.ccs.ornl.gov/vista/api</div></div>
+          <div class="status"><span class="dot amber"></span><span>Sign in to publish and import.</span></div>
+          <div class="field hl"><label>Token</label><div class="input ph">Paste the token</div><span class="hint"><a>Open the server's sign-in page</a>, log in, and paste the token it shows. No access yet? Reach out to the VISTA team.</span></div>
+        </div>
+      </div>
+      <div class="coach" style="left:12px; bottom:12px;">
+        <span class="ct">Signing in</span>
+        <span>Sign in here once you have access: open the server's sign-in page, log in, and paste the token it shows. No access yet? Reach out to the VISTA team.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">7 · collaboration:sign-in</span>
+      <div class="copy"><span class="t">Signing in</span><span>Sign in here once you have access: open the server's sign-in page, log in, and paste the token it shows. No access yet? Reach out to the VISTA team.</span>
+        <span class="variant">Signed in already: “You're signed in to obsidian.ccs.ornl.gov/vista/api. Anything you publish goes to that server. Make a team, or add people to one, with Manage teams….” <span class="v6">v6</span></span>
+        <span class="variant">On a server other than the default: the last sentence is left out.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>; the token field stays usable, as the model step's key field does</dd>
+        <dt>Navigation</dt><dd>The tour opens Settings › Collaboration (<code>openSettings("collaboration")</code>).</dd>
+        <dt>Anchor</dt><dd>The status line and Token field; signed in, the Teams line with <i>Manage teams…</i> too (frame C)</dd>
+      </dl>
+    </div>
+  </div>
+
+  <!-- 8 off -->
+  <div class="frame">
+    <div class="screen no-rail dim">
+      <div class="modal">
+        <div class="snav">
+          <div class="si">Appearance</div><div class="si">Research profile</div><div class="si">Model provider</div><div class="si">Repositories</div>
+          <div class="si on">Collaboration<small>Sign in</small></div><div class="si">Compute</div>
+        </div>
+        <div class="sbody">
+          <h4>Collaboration</h4>
+          <div class="toggle hl"><span class="sw on"></span><span>Collaboration</span></div>
+          <div class="field"><label>Collaboration server</label><div class="input ph">https://obsidian.ccs.ornl.gov/vista/api</div></div>
+          <div class="status"><span class="dot amber"></span><span>Sign in to publish and import.</span></div>
+        </div>
+      </div>
+      <div class="coach" style="right:12px; bottom:12px;">
+        <span class="ct">Working alone?</span>
+        <span>Turn collaboration off and VISTA stops contacting the server and hides the Skill Hub, team badges and sharing buttons. Turn it on again here any time.</span>
+        <div class="cb"><span>Skip this step · Exit</span><span class="btn primary">Next</span></div>
+      </div>
+    </div>
+    <div class="spec">
+      <span class="num">8 · collaboration:off</span>
+      <div class="copy"><span class="t">Working alone?</span><span>Turn collaboration off and VISTA stops contacting the server and hides the Skill Hub, team badges and sharing buttons. Turn it on again here any time.</span></div>
+      <dl>
+        <dt>Type</dt><dd><span class="type next">Next</span>; the switch stays usable. Turning it off here ends the step, and the tour goes on to the first question.</dd>
+        <dt>Then</dt><dd>The tour closes Settings and opens chat for <code>first-question:send</code>.</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Existing coachmark</th><th>Today</th><th>Becomes</th></tr></thead>
+      <tbody>
+        <tr><td><code>welcome:intro</code></td><td>…This tour takes about eight minutes.</td><td>…This tour takes about nine minutes.</td></tr>
+        <tr><td><code>first-question:finish</code></td><td>You opened a project, connected a model, and saw knowledge bases, skills, files and clusters. Replay this tour any time from Settings, Research profile.</td><td>You opened a project, connected a model, saw knowledge bases, skills, files and clusters, and learned how sharing works. Replay this tour any time from Settings, Research profile.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="part" id="settings">
+  <div class="part-head">
+    <span class="eyebrow">Part 2 · Change 2</span>
+    <h2>Settings › Collaboration</h2>
+    <p>New installs start on, pointed at the default server from <code>config.py</code>. A switch turns collaboration off: no status checks, and nothing about it outside this section. The label under “Collaboration” in the settings list says the state in a word.</p>
+  </div>
+
+  <div class="pair">
+    <div>
+      <div class="screen no-rail" style="min-height:250px">
+        <div class="modal" style="min-height:250px">
+          <div class="snav"><div class="si">Model provider</div><div class="si on">Collaboration<small>Off</small></div><div class="si">Compute</div></div>
+          <div class="sbody">
+            <h4>Collaboration</h4>
+            <div class="toggle"><span class="sw"></span><span>Collaboration</span></div>
+            <span class="hint">Publish projects, skills and knowledge bases to a team on a collaboration server, and import what others have published. Nothing leaves this computer until you publish it, choosing its team the first time.</span>
+            <span class="hint">Off: VISTA doesn't contact a collaboration server, and the Skill Hub, team badges and sharing buttons are hidden.</span>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>A · Off.</b> Only the switch and the hints. The first is main's new hint as it is; the second is this change's. <span class="v6">v6</span></p>
+    </div>
+    <div>
+      <div class="screen no-rail" style="min-height:250px">
+        <div class="modal" style="min-height:250px">
+          <div class="snav"><div class="si">Model provider</div><div class="si on">Collaboration<small>Sign in</small></div><div class="si">Compute</div></div>
+          <div class="sbody">
+            <h4>Collaboration</h4>
+            <div class="toggle"><span class="sw on"></span><span>Collaboration</span></div>
+            <div class="field"><label>Collaboration server</label><div class="input ph">https://obsidian.ccs.ornl.gov/vista/api</div><span class="hint">This installation's configuration uses <code>https://obsidian.ccs.ornl.gov/vista/api</code>. An address here takes its place.</span></div>
+            <div class="status"><span class="dot amber"></span><span>Sign in to https://obsidian.ccs.ornl.gov/vista/api to publish and import: get a token from its sign-in page and paste it below.</span><span class="btn">Check again</span></div>
+            <div class="field"><label>Token</label><div class="input ph">Paste the token</div><span class="hint"><a>Open the server's sign-in page</a>, log in, and paste the token it shows. When it expires, get a new one there. No access yet? Reach out to the VISTA team.</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>B · On, not signed in</b> (every new install). The status sentence replaces today's “Unauthorized Get a token from…”. “No access yet?” shows only on the default server.</p>
+    </div>
+    <div>
+      <div class="screen no-rail" style="min-height:220px">
+        <div class="modal" style="min-height:220px">
+          <div class="snav"><div class="si">Model provider</div><div class="si on">Collaboration<small>Connected</small></div><div class="si">Compute</div></div>
+          <div class="sbody">
+            <h4>Collaboration</h4>
+            <div class="toggle"><span class="sw on"></span><span>Collaboration</span></div>
+            <div class="field"><label>Collaboration server</label><div class="input ph">https://obsidian.ccs.ornl.gov/vista/api</div></div>
+            <div class="status"><span class="dot green"></span><span>Connected to https://obsidian.ccs.ornl.gov/vista/api.</span><span class="btn">Check again</span></div>
+            <div class="field"><label>Token</label><div class="input">•••• saved <span class="btn">Remove</span></div></div>
+            <div class="status"><span>Teams: Public, Materials group. Publishing something for the first time puts it in one of them, where it stays.</span><span class="btn">Manage teams…</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>C · On, signed in.</b> Unchanged from main apart from the switch. The Teams line and <i>Manage teams…</i> are new on main. <span class="v6">v6</span></p>
+    </div>
+    <div>
+      <div class="screen no-rail" style="min-height:220px">
+        <div class="modal" style="min-height:220px">
+          <div class="snav"><div class="si">Model provider</div><div class="si on">Collaboration<small>No access</small></div><div class="si">Compute</div></div>
+          <div class="sbody">
+            <h4>Collaboration</h4>
+            <div class="toggle"><span class="sw on"></span><span>Collaboration</span></div>
+            <div class="status"><span class="dot red"></span><span>https://obsidian.ccs.ornl.gov/vista/api refused this sign-in. Signing in again won't help: reach out to the VISTA team for access.</span><span class="btn">Check again</span></div>
+            <div class="field"><label>Token</label><div class="input">•••• saved <span class="btn">Remove</span></div></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>D · Signed in, not allowed (403).</b> Labelled “No access”, not today's “Unreachable”. On another server the sentence ends “ask the administrators of &lt;address&gt; for access”, as it does today.</p>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="quiet">
+  <div class="part-head">
+    <span class="eyebrow">Part 3 · Change 2</span>
+    <h2>Before sign-in: quiet</h2>
+    <p>With collaboration on, nothing about it shows outside Settings and the Skill Hub until a token is saved or the server says this install is signed in. After that everything shows, and stays shown: an expired token, a refusal or an offline server leaves the controls drawn but disabled, with the reason.</p>
+  </div>
+  <div class="pair">
+    <div>
+      <div class="screen" style="min-height:260px">
+        <nav class="rail"><div class="brandmark">VISTA</div><div class="it">Projects</div><div class="it on">Skill Hub</div><div class="it">Knowledge Bases</div><div class="spacer"></div><div class="it">Settings</div></nav>
+        <div class="main"><div class="topbar">Skill Hub</div>
+          <div class="content">
+            <span class="lede">Skills published to the collaboration server at https://obsidian.ccs.ornl.gov/vista/api.</span>
+            <div class="box"><span><b>Sign in to see what others share.</b> Your own work stays on this computer until you publish it.</span><span class="hint">No access yet? Reach out to the VISTA team.</span><span><span class="btn primary">Open Settings</span></span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>E · Skill Hub before sign-in.</b> Replaces today's box, which shows the raw reason. The button opens Settings › Collaboration.</p>
+    </div>
+    <div>
+      <div class="screen" style="min-height:260px">
+        <nav class="rail"><div class="brandmark">VISTA</div><div class="it on">Projects</div><div class="it">Skill Hub</div><div class="it">Knowledge Bases</div><div class="spacer"></div><div class="it">Settings</div></nav>
+        <div class="main"><div class="topbar">Projects <span class="btn">New project</span></div>
+          <div class="content">
+            <div class="card"><div class="row"><span class="name">Hello OLCF</span></div><span class="sub">3 conversations · 2 skills · 1 knowledge base</span></div>
+            <div class="card"><div class="row"><span class="name">Scaling study</span></div><span class="sub">5 conversations · 4 skills</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>F · Projects before sign-in.</b> No “Import from the collaboration server”, no “Not published” line, no team badge. The Skills and Knowledge Bases pages do the same. Today these show disabled Import buttons with the sign-in reason.</p>
+    </div>
+  </div>
+</section>
+
+<section class="part" id="remote-dir">
+  <div class="part-head">
+    <span class="eyebrow">Part 4 · Change 1</span>
+    <h2>Remote directory filled in from the token</h2>
+    <p>When Settings knows a cluster's project, from its S3M token's claim (Odo, Frontier, and now Lux, which main gave its own token in place of the Lux account), it fills the remote directory, if the field is empty or still holds VISTA's path for a different project. A path you typed is never changed. The directory's project is the claim lowercased and cut at the first dash, since no project folder on orion or wolf2 has one.</p>
+  </div>
+  <div class="pair">
+    <div>
+      <div class="screen no-rail" style="min-height:230px">
+        <div class="modal" style="min-height:230px">
+          <div class="snav"><div class="si">Compute</div><div class="si on">Odo<small>Not connected</small></div><div class="si">Frontier</div></div>
+          <div class="sbody">
+            <h4>Odo</h4>
+            <div class="field"><label>Odo S3M token</label><div class="input ph">Bearer token</div><span class="hint">From any OLCF project with S3M access. Odo jobs are charged to that project.</span></div>
+            <div class="field"><label>Odo remote directory</label><div class="input ph">/gpfs/wolf2/olcf/&lt;project&gt;/proj-shared/vista</div><span class="hint">Filled from your S3M token once you add one. Required for Odo…</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>G · No token yet.</b> The placeholder stays as today; the hint gains its first sentence. Frontier and Lux read the same, so v5's “Filled from your Lux account once you add one.” is gone with the Lux account. <span class="v6">v6</span></p>
+    </div>
+    <div>
+      <div class="screen no-rail" style="min-height:230px">
+        <div class="modal" style="min-height:230px">
+          <div class="snav"><div class="si">Compute</div><div class="si on">Odo<small>Ready</small></div><div class="si">Frontier</div></div>
+          <div class="sbody">
+            <h4>Odo</h4>
+            <div class="field"><label>Odo S3M token</label><div class="input">•••• saved</div></div>
+            <div class="field"><label>Odo remote directory</label><div class="input">/gpfs/wolf2/olcf/gen150/proj-shared/vista <span class="ok">✓ Saved</span></div>
+              <div class="filled"><span>Filled from your S3M token's project (<b>gen150</b> folder inferred from <b>gen150-vista</b>).</span></div>
+              <span class="hint">Required for Odo. VISTA keeps &lt;dir&gt;.&lt;user&gt;.jobs and &lt;dir&gt;.out beside this directory…</span></div>
+          </div>
+        </div>
+      </div>
+      <p class="cap"><b>H · Token saved.</b> Filled and saved at once, announced like any save (“Odo remote directory saved.”). The green note shows while the value is still the one filled in; edit it and the note goes.</p>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Situation</th><th>Field before</th><th>Field after</th><th>Note shown</th></tr></thead>
+      <tbody>
+        <tr><td>Odo token from <code>gen150-vista</code></td><td>empty</td><td class="mono">/gpfs/wolf2/olcf/gen150/proj-shared/vista</td><td>Filled from your S3M token's project (gen150 folder inferred from gen150-vista).</td></tr>
+        <tr><td>Frontier token from <code>chm243</code></td><td>empty</td><td class="mono">/lustre/orion/chm243/proj-shared/vista</td><td>Filled from your S3M token's project, chm243.</td></tr>
+        <tr><td>Odo token replaced by one from <code>stf218</code></td><td class="mono">…/olcf/gen150/proj-shared/vista</td><td class="mono">/gpfs/wolf2/olcf/stf218/proj-shared/vista</td><td>Filled from your S3M token's project, stf218.</td></tr>
+        <tr><td>Any token, a path you typed</td><td class="mono">/gpfs/wolf2/olcf/gen150/proj-shared/sam/v2</td><td>unchanged</td><td>none</td></tr>
+        <tr><td>Lux token from <code>stf218</code> <span class="v6">v6</span></td><td>empty</td><td class="mono">/lustre/orion/stf218/proj-shared/vista</td><td>Filled from your S3M token's project, stf218.</td></tr>
+        <tr><td>Token removed</td><td class="mono">…/gen150/proj-shared/vista</td><td>unchanged</td><td>none</td></tr>
+        <tr><td>Settings opened, token saved before this change, directory empty</td><td>empty</td><td>filled as above</td><td>as above</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="part" id="open">
+  <div class="part-head">
+    <span class="eyebrow">For your answer</span>
+    <h2>Storyboard decisions</h2>
+    <p>Settled in review on 2026-11-06, after the grilling. The last three are new in v6, after main's collaboration simplification, and need your yes.</p>
+  </div>
+  <div class="open">
+    <div class="q"><span class="lab" style="color:var(--success)">Tour · decided: yes</span><b>The collaboration step is skipped when collaboration is turned off.</b><p>Someone who turned it off before reaching the step (or on a replay) has chosen to work alone, and the Skill Hub entry the step starts from is hidden. Proposed: yes, skip it, as the project step skips when a project is open.</p></div>
+    <div class="q"><span class="lab" style="color:var(--success)">Tour · decided: yes</span><b>Turning collaboration off at coachmark 8 ends the step.</b><p>Proposed: yes. The switch stays usable there, and the tour goes on to the first question.</p></div>
+    <div class="q"><span class="lab" style="color:var(--success)">Tour · decided: generic names</span><b>The example team is called “Example team”, and the example skills are plot-results, batch-job-submit, csv-cleanup and run-summary.</b><p>Generic for any field, since the tour is for every researcher, and clearly not real items. Rename freely.</p></div>
+    <div class="q"><span class="lab" style="color:var(--success)">Settings · decided</span><b>The switch reads “Collaboration”.</b><p>Its state word in the settings list is “Off” when off.</p></div>
+    <div class="q"><span class="lab" style="color:var(--success)">Remote directory · decided: out of scope</span><b>No warning when your own path isn't under the token's project.</b><p>A path you typed under gen150 with a token from chm243 would fail at use time, and the cluster card's checks report it then. Proposed: out of scope for change 1.</p></div>
+    <div class="q"><span class="lab">Tour · v6 · to confirm</span><b>Coachmark 4 points at the Skill Hub's team filter, shown during the step with the example teams.</b><p>The team menu it pointed at is gone from main. The filter is the one place teams still appear as a list on a page, and the cards beside it carry their badges, so one coachmark still covers Private, a team and Public. The alternative is to drop coachmark 4 and fold one sentence about teams into coachmark 5 (seven coachmarks).</p></div>
+    <div class="q"><span class="lab">Tour · v6 · to confirm</span><b>Coachmark 6 doesn't open the team picker.</b><p>The example's <i>Publish…</i> does nothing, and the copy says you pick the team the first time. Showing <code>PublishToTeamModal</code> with example teams would need one more gate bypass for one coachmark.</p></div>
+    <div class="q"><span class="lab">Tour · v6 · to confirm</span><b>Signed in, coachmark 7 also names <i>Manage teams…</i>.</b><p>Teams are now made and joined only from Settings › Collaboration, so the tour is where a new researcher learns where.</p></div>
+
+  </div>
+</section>
+
+</div>

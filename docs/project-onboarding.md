@@ -209,15 +209,24 @@ If you delete the active project, the pointer is cleared and you land back at
 
 Projects are shared the way skills are (see the
 [skill onboarding doc](skill-onboarding.md#publishing-and-importing-through-a-collaboration-server)):
-explicitly, through the collaboration server set in **Settings → Collaboration**.
-Without one that answers, Publish and Import say why and do nothing.
+explicitly, through the collaboration server in **Settings → Collaboration**,
+VISTA's own unless you set another. Until you sign in there, `/projects` shows no
+Import, Publish or sharing line; once signed in they stay, and when the server
+cannot be used they say why and do nothing. With the **Collaboration** switch
+off they are hidden, and VISTA contacts no server.
 
 **Publishing.** Each card on `/projects` says where the project stands (*Not
 published*, *Version 2*, *Differs here from version 2*, *Version 3
-available*), and **Publish** sends it. The skills it loads go first: each one
-that is not on the server, or has changed since its version, is published, and
-the project's version names them by item and version. Skills bundled with
-VISTA are named as bundled and never published. The knowledge bases it
+available*), and **Publish** sends it. A new project is private; the first
+time, **Publish…** asks which team to publish it to, and brings its skills and
+knowledge bases into that team with it (your other private projects can go on
+using them; a skill bundled with VISTA stays as it is, and the team's copy is
+imported beside it for this project). A private project can use another team's
+skills and knowledge bases, but can then be published only into that team.
+After that it stays in its team, and **Publish**
+sends new versions there. The skills it loads go first: each one that is not on
+the server, or has changed since its version, is published, and the project's
+version names them by item and version. The knowledge bases it
 searches go next, the same way, each with its PDFs and its index (see
 [Knowledge bases](#knowledge-bases-on-the-collaboration-server) below). A
 project that loads a skill or searches a knowledge base not on this computer is
@@ -313,9 +322,11 @@ the Next.js proxies in [ui/app/api/projects/](../ui/app/api/projects).
 | `PUT`    | `/projects/{name}`            | Full overwrite. 409 if the new name collides with another row.   |
 | `DELETE` | `/projects/{name}`            | Hard delete. 204 on success.                                     |
 | `POST`   | `/projects/{name}/publish`    | Publish to the collaboration server (`{on_top_of?, as_new?}`), its skills and knowledge bases first. |
+| `POST`   | `/projects/{name}/publish-to-team` | First publish of a private project into a team (`{team_id}`), with its skills and knowledge bases. |
 | `GET`    | `/collaboration/projects`     | The server's projects, with any copy here.                       |
 | `POST`   | `/collaboration/projects/{id}/import` | Import with its skills and knowledge bases (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/knowledge-bases/{slug}/publish` | Publish a knowledge base's PDFs and index (`{on_top_of?, as_new?}`). |
+| `POST`   | `/knowledge-bases/{slug}/publish-to-team` | First publish of a private knowledge base into a team (`{team_id}`). |
 | `GET`    | `/collaboration/knowledge-bases` | The server's knowledge bases, with any copy here.            |
 | `POST`   | `/collaboration/knowledge-bases/{id}/import` | Import one (`{version?, rename_to?, replace_modified?}`). |
 | `POST`   | `/projects/{name}/agent/run`  | Run one agent turn (stateless; pass `message_history`).           |

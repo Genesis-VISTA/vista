@@ -42,24 +42,9 @@ if [[ ! -f "$TAR_FILE" || ! -f "$DIGEST_FILE" || "$(cat "$DIGEST_FILE")" != "$bu
 fi
 
 # Build the server image
-# The private amscrot-py GitLab dependency is private, pass the Gitlab PAT to Docker build
-if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  # Read from .git-credentials
-  GITLAB_TOKEN="$(printf 'protocol=https\nhost=gitlab.com\n\n' \
-    | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null \
-    | sed -n 's/^password=//p')" || true
-fi
-
-if [[ -z "${GITLAB_TOKEN:-}" ]]; then
-  echo "error: GITLAB_TOKEN is not set and no stored gitlab.com credential was found for 'gitlab.com/amsc2'" >&2
-  exit 1
-fi
-export GITLAB_TOKEN
-
 echo "==> Building server image $SERVER_IMAGE"
 "$RUNTIME" build \
   -f "$REPO_ROOT/aws/Dockerfile.server" \
-  --secret "id=gitlab_token,env=GITLAB_TOKEN" \
   -t "$SERVER_IMAGE" \
   "$REPO_ROOT"
 

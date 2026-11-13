@@ -15,6 +15,7 @@ export const TOUR_STEPS = [
   "skills",
   "files",
   "hpc",
+  "collaboration",
   "first-question",
 ] as const;
 
@@ -32,6 +33,7 @@ export const TOUR_SUB_STEPS = {
   skills: ["visit", "overview", "loaded", "available", "open-skill", "detail", "load", "import"],
   files: ["visit", "overview", "outputs", "uploads", "open-chart", "chart-preview", "open-report", "review"],
   hpc: ["resources", "open-card", "card", "check", "settings"],
+  collaboration: ["visit", "overview", "local", "teams", "hub-item", "share", "sign-in", "off"],
   "first-question": ["send", "activity", "answer", "finish"],
 } as const satisfies Record<TourStepId, readonly string[]>;
 
@@ -78,6 +80,11 @@ export type TourInput = {
   };
   /** The active project's name, or null. */
   activeProject: string | null;
+  /**
+   * From `useCollaboration()`. While it is off the collaboration step is
+   * skipped; before the first status arrives it counts as on.
+   */
+  collaboration: { enabled: boolean };
   /** Actions seen this session. */
   events: ReadonlySet<TourEvent>;
   /** Steps passed with Skip this step. */
@@ -93,6 +100,7 @@ const STEP_PAGES: Partial<Record<TourStepId, string>> = {
   "knowledge-bases": "/knowledge-bases",
   skills: "/skills",
   files: "/files",
+  collaboration: "/skill-hub",
 };
 
 /** Whether one coachmark is done: by app state, by an event, or by Next. */
@@ -121,6 +129,10 @@ function isSubStepDone(step: TourStepId, sub: string, input: TourInput): boolean
     case "skills:visit":
     case "files:visit":
       return input.pathname === STEP_PAGES[step];
+    case "collaboration:visit":
+      // The step goes on to Skills and Settings, so once the Skill Hub has been
+      // explained, leaving it doesn't send the researcher back.
+      return input.pathname === STEP_PAGES[step] || input.acknowledged.has("collaboration:overview");
     case "knowledge-bases:open-kb":
       return input.events.has("kb-opened");
     case "skills:open-skill":
@@ -161,6 +173,9 @@ export function nextTourStep(input: TourInput): TourPosition | null {
     let j = 0;
     const curStep = restSteps[i];
     if (input.skipped.has(curStep)) continue;
+    // Off, the step is skipped whenever it is reached; turned off during it,
+    // it ends there.
+    if (curStep === "collaboration" && !input.collaboration.enabled) continue;
     const curSubSteps = TOUR_SUB_STEPS[curStep];
     while (j < curSubSteps.length && isSubStepDone(curStep, curSubSteps[j], input)) j++;
     if (j !== curSubSteps.length) return { step: curStep, subStep: curSubSteps[j] };
@@ -183,6 +198,7 @@ const ACTION_SUB_STEPS: ReadonlySet<string> = new Set([
   "files:open-chart",
   "files:open-report",
   "hpc:open-card",
+  "collaboration:visit",
   "first-question:send",
   "first-question:activity",
 ]);

@@ -320,9 +320,24 @@ async def test_an_answered_prompt_is_not_shown_again_on_reattach(session):
             prompt_id = next(iter(run.pending))
             url = EVENTS.format(name=project.name, id=conversation)
 
+            # Views opened from here on read through this, which says when one
+            # has been handed the prompt: the answer must wait for that, not
+            # for a fixed sleep, or a slow runner answers before the view reads.
+            prompt_shown = asyncio.Event()
+            subscribe = run.subscribe
+
+            async def watched(after: int = 0):
+                async for event in subscribe(after):
+                    if event.kind == "mcp_form_elicitation":
+                        prompt_shown.set()
+                    yield event
+
+            run.subscribe = watched
+
             # A second view is open while the prompt is still unanswered.
             other_view = asyncio.create_task(client.get(url))
-            await asyncio.sleep(0.05)
+            async with asyncio.timeout(10):
+                await prompt_shown.wait()
 
             answered = await client.post(
                 ELICITATION.format(name=project.name),

@@ -147,26 +147,38 @@ empty; the server holds no seeds. The server chooses every item's id, and copies
 another team as a new one sharing its blob (`POST /items/{id}/copy`). Every item query filters
 through `teams.visible_teams`, as a condition rather than a set read first, so a publish
 checks it in its compare-and-set. On the backend every project, skill and knowledge base has a
-`team_id`, None being private (this computer only: everything made with Private selected, and
-everything VISTA seeds or bundles; `services/teams.py` there). A new one joins the selected
-team (`collaboration_team_id`), or its project's when made for one; an import joins its item's;
-a project uses only its own team's; a private one is not published but copied to a team
-(`services/team_copy.py`, recursively for a project). A row records its team's server too
-(`team_server`): on another server it is private, until that one is in effect again.
+`team_id`, None being private (this computer only: everything made here outside a team's
+project, and everything VISTA seeds or bundles; `services/teams.py` there). There is no team
+selector: a new one is private, or its project's team when made for one; an import joins its
+item's; a team's project uses only its own team's, a private one any team's. A private one joins a team when it is first
+published, into a team the researcher picks (`POST /…/publish-to-team`,
+`services/team_publish.py`, recursively for a project), and stays in it: Publish sends its new
+versions there. One in a team the researcher has left counts as private for that. A row
+records its team's server too (`team_server`): on another server it is private, until that one
+is in effect again. The server's `POST /items/{id}/copy` is unused by VISTA.
 ```bash
 ./launch.sh logs --collab      # also start a dev-headers one on :8002, and point the backend at it
 cd collaboration_server && uv run vista-collaboration-server
 ```
 No package, package launcher or Electron startup starts one. The backend reads its address
-from Settings, falling back to `VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets);
-with neither, publishing and importing are off and `GET /collaboration/status` says why. An
-unreachable server is never fatal. To sign in, the researcher opens the server's `/sign-in`
+from Settings, falling back to `Settings.collaboration_server_url`, which defaults to
+`DEFAULT_COLLABORATION_SERVER_URL` (Obsidian's, in `config.py`) and is overridden by
+`VISTA_BACKEND_COLLABORATION_SERVER_URL` (what `--collab` sets; blank means none, the way to
+keep a dev stack off Obsidian). Backend tests set it to none in `conftest.py`, so one that
+wants a server sets it. An unreachable server is never fatal. The Collaboration switch
+(`LocalSettings.collaboration_enabled`, None is on) turns it all off: `status()` returns
+early, `client_for`/`required_url` refuse with `OFF_REASON`, and a forum hosted on the server
+has no lab (`project_forum.hosted_while_off`), so nothing reaches the server; keep any new
+traffic to it behind those. On, the UI stays quiet until signed in: the status's `shown`
+(a token saved, or the server signed this install in) gates every collaboration control
+outside Settings and the Skill Hub, and once shown they stay, disabled with the reason. To sign in, the researcher opens the server's `/sign-in`
 page (a login gateway in front of the server logs them in; Obsidian's APISIX on the deployment)
 and pastes the token it shows into Settings: `collaboration_token`, write-only like
 `github_token`. The backend sends it only over https (or loopback), forgets it when the server
 address changes, and keeps it out of every settings dump. Nothing in VISTA knows which login is
 behind the gateway, so a self-hosted server can use any. The UI's Publish and Import controls read `useCollaboration()`
-(`ui/lib/collaboration.ts`), which needs `reachable` and `signed_in`.
+(`ui/lib/collaboration.ts`): drawn while `shown`, enabled when `available` (`reachable` and
+`signed_in`); the Skill Hub's sidebar entry follows `enabled`.
 Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
 a tar.gz plus a manifest from its SKILL.md, unpacked on import through the folder-upload path.
 The Skill Hub (`/skill-hub`) lists the server's skills; `/skills` publishes and holds the local
@@ -249,7 +261,7 @@ tool that reads `get_vista_meta(ctx).user` must be added there too: otherwise ev
 as "not connected", and no test catches it, because the MCP tests hand tools their config
 directly.
 
-Odo and Frontier file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
+Odo, Frontier and Lux file operations go through Globus, from the job tools (`submit_job_mcp.py`) and
 the transfer tools (`transfer_mcp.py`, which list, download and upload outside a job), split across
 two of its surfaces
 ([`lib/globus.py`](mcp_servers/vista_mcp_server/src/vista_mcp_server/lib/globus.py)). **File
@@ -276,11 +288,13 @@ exactly that reason; branch on them rather than on a message.
 
 The credential is per-cluster and per-user, and is a *pair* of refresh tokens — Globus issues one
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
-falling back to one pair they connected for both. There is no deployment-wide Globus login: every
+falling back to one pair they connected for both. Lux has no collection of its own: it mounts
+Frontier's filesystem, so it uses Frontier's collection and pair (`require_globus_token("lux")`),
+and the settings modal shows one connection in both sections. There is no deployment-wide Globus login: every
 file operation acts as the researcher's own identity, so the facility decides what they may read
 and write. Each source counts only when it has both halves: one alone lists a directory it
 cannot read.
-Absent Globus is never fatal; it costs only Odo and Frontier's file operations, nothing else.
+Absent Globus is never fatal; it costs only the OLCF clusters' file operations, nothing else.
 
 ## Hypothesis Lab forum
 

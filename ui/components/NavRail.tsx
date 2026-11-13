@@ -8,6 +8,7 @@ import {
   writeActiveChatSessionId,
 } from "@/lib/chat-session";
 import { useChatRunStatus } from "@/lib/chat-run-status";
+import { useCollaboration } from "@/lib/collaboration";
 import { useActiveProject } from "@/lib/projects";
 import { HPC_CLUSTERS, type HpcCluster } from "@/lib/hpc-status";
 import { useSettings } from "@/lib/settings";
@@ -16,7 +17,6 @@ import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
 import { updateAvailable, useVersion } from "@/lib/version";
 import { UserSettingsModal } from "./UserSettingsModal";
-import { TeamSwitcher } from "./TeamSwitcher";
 import { useTour } from "./TourProvider";
 
 const RAIL_COLLAPSED_KEY = "vista.navRail.collapsed.v1";
@@ -121,6 +121,7 @@ const TOUR_ENTRY_ANCHORS: Record<string, string> = {
   "/knowledge-bases": "knowledge-bases:visit",
   "/skills": "skills:visit",
   "/files": "files:visit",
+  "/skill-hub": "collaboration:visit",
 };
 
 const PROJECT_LOCAL_ENTRIES: NavEntry[] = [
@@ -181,6 +182,11 @@ export function NavRail() {
   const { summary: runSummary } = useChatRunStatus(activeProject?.name ?? null);
   const settingsModal = useSettingsModal();
   const updateReady = updateAvailable(useVersion().info);
+  // The Skill Hub is the server's, so it leaves the rail while collaboration is off.
+  const collaborationOn = useCollaboration().enabled;
+  const globalEntries = collaborationOn
+    ? GLOBAL_ENTRIES
+    : GLOBAL_ENTRIES.filter((entry) => entry.href !== "/skill-hub");
   const [tip, setTip] = useState<{ label: string; top: number } | null>(null);
   const storedCollapsed = useSyncExternalStore(
     railSubscribe,
@@ -364,10 +370,6 @@ export function NavRail() {
         </button>
       </div>
 
-      {/* Above New project because a new project joins the team chosen here.
-          It draws nothing without a collaboration server that signed in. */}
-      <TeamSwitcher collapsed={collapsed} tipProps={tipProps} />
-
       <Link
         href="/projects?new=1"
         className="nav-rail-new"
@@ -382,7 +384,7 @@ export function NavRail() {
 
       <nav className="nav-rail-list">
         {!collapsed && <div className="nav-rail-section-label">Global</div>}
-        {GLOBAL_ENTRIES.map((entry) => renderEntry(entry))}
+        {globalEntries.map((entry) => renderEntry(entry))}
 
         {!collapsed && <div className="nav-rail-section-label">Opened Project</div>}
         {!collapsed && (
