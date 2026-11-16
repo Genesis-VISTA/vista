@@ -230,8 +230,24 @@ describe("POST /api/chat", () => {
       post("/api/chat", { project_name: "p", user_prompt: "hi", chat_session_id: "c" }),
     );
 
+  it("passes a queued send's 202 through as JSON", async () => {
+    const body = { started: false, item: { id: 4, kind: "message", text: "hi", state: "queued" } };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(body), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(202);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual(body);
+  });
+
   it("passes a JSON error body through with its status", async () => {
-    const body = { detail: "A run is already active.", code: "run_busy" };
+    const body = { detail: "No inference API key is configured.", code: "inference_not_configured" };
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify(body), {
         status: 409,

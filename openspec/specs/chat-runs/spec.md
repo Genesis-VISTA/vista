@@ -43,40 +43,6 @@ Several clients MAY watch the same run at once and SHALL each receive every even
 - **WHEN** the VISTA window and a browser tab both show the same running conversation
 - **THEN** both receive the run's events
 
-### Requirement: One active run per conversation
-
-A conversation SHALL have at most one active run. Starting a turn in a conversation that
-already has an active run SHALL be refused without affecting the running turn, and the refusal
-SHALL identify itself as a busy conversation, distinct from any other refusal of the same
-request. Different conversations SHALL be able to run at the same time.
-
-#### Scenario: Send while busy
-
-- **WHEN** a client starts a turn in a conversation whose run is still active
-- **THEN** the request is refused with a conflict error identified as a busy conversation
-- **AND** the running turn and its eventual saved result are unchanged
-
-#### Scenario: Busy refusal shows the running turn
-
-- **WHEN** the chat page's send is refused because the conversation is busy
-- **THEN** the page shows the running turn and puts the unsent text back in the input
-
-#### Scenario: Other refusals are not mistaken for busy
-
-- **WHEN** the chat page's send is refused for any reason other than a busy conversation
-- **THEN** the page shows the refusal's message in the conversation and puts the unsent text
-  back in the input, and does not try to show a running turn
-
-#### Scenario: Busy conversation disables input
-
-- **WHEN** the open conversation has an active run
-- **THEN** the message input is disabled and a Stop control is shown
-
-#### Scenario: Parallel conversations
-
-- **WHEN** a researcher starts a turn in conversation B while conversation A is running
-- **THEN** both turns run and each is saved to its own conversation
-
 ### Requirement: Stop keeps what happened
 
 Only an explicit Stop SHALL cancel a running turn. A stopped turn SHALL remain in the
@@ -220,3 +186,33 @@ answering SHALL dismiss it, as it does any prompt. Any other elicitation SHALL b
 
 - **WHEN** a Lux submission asks for an SSH login
 - **THEN** the prompt shows its fields with Submit, Decline and Cancel, as before
+
+### Requirement: At most one run per conversation
+
+A conversation SHALL have at most one active run. A message sent to a conversation that
+already has an active run SHALL NOT start a second run and SHALL NOT be refused: it SHALL be
+queued for the running turn as the conversation-inbox capability defines, without otherwise
+affecting that turn. Any refusal of a send SHALL be reported with its own reason. Different
+conversations SHALL be able to run at the same time.
+
+#### Scenario: Send while busy
+
+- **WHEN** a client sends a message to a conversation whose run is still active
+- **THEN** the request is accepted and the message is queued
+- **AND** no second run starts
+
+#### Scenario: Refusals are shown
+
+- **WHEN** the chat page's send is refused for any reason
+- **THEN** the page shows the refusal's message in the conversation and puts the unsent text
+  back in the input
+
+#### Scenario: Busy conversation keeps its input
+
+- **WHEN** the open conversation has an active run
+- **THEN** the message input stays enabled and a Stop control is shown
+
+#### Scenario: Parallel conversations
+
+- **WHEN** a researcher starts a turn in conversation B while conversation A is running
+- **THEN** both turns run and each is saved to its own conversation

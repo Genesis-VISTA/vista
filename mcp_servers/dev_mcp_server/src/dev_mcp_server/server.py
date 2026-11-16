@@ -15,6 +15,10 @@ from .lib.sandbox import Sandbox
 from .lib.container_sandbox import ContainerSandbox
 from .lib.microsandbox_sandbox import MicrosandboxSandbox
 from .lib.view import view_path
+from .lib import tasks
+
+WAIT_TASK_MAX = 25 * 60
+"""Default `wait_task` hold, under the backend's 1860 s per-request read timeout."""
 
 SANDBOX_SPAWN_FUNCS: dict[str, Callable[..., Awaitable[Sandbox]]] = {
     "microsandbox": lambda volumes=None, env=None: MicrosandboxSandbox.spawn(
@@ -94,6 +98,18 @@ mcp = FastMCP(name="Dev MCP Server", lifespan=app_lifespan)
 async def run_bash(
     command: A[str, "Bash command to run"],
     ctx: Context,
+    background: A[
+        bool,
+        "Start the command and return at once; its combined output goes to a log file",
+    ] = False,
+    timeout: A[
+        int | None,
+        "Seconds a background command may run before it is stopped (default 3600, at most 86400)",
+    ] = None,
+    task_id: A[
+        str | None, "Id of the background task (required with background)"
+    ] = None,
+    log_path: A[str | None, "Log file for a background task"] = None,
 ) -> str:
     """
     Run a bash command inside the sandbox.
@@ -105,7 +121,30 @@ async def run_bash(
     `display_file` with its path. Saving a file does not display it.
     Always set MPLBACKEND=Agg before running matplotlib.
     Avoid commands that produce a large amount of output — pipe to files instead.
+
+    For a command that will take more than about a minute, pass background=true:
+    the call returns at once with a task id (bg-N) and a log under
+    /mnt/data/tasks/, the command keeps running after your turn ends, and its
+    result (exit status, runtime, the log's last lines) is sent to this
+    conversation when it ends. timeout is the most seconds it may run (default
+    3600, at most 86400). At most 4 run at once in a conversation. Read the log
+    with `view` while it runs; list_tasks and stop_task show and end them.
     """
+    # `timeout` is enforced by the caller that waits on the task (VISTA's backend),
+    # which stops it with `signal_task`; the sandbox itself only starts it.
+    if background:
+        if not task_id:
+            raise ValueError("A background command needs a task_id")
+        log_path = log_path or tasks.default_log_path(settings.tasks_dir, task_id)
+        await tasks.start(
+            sandbox,
+            task_id,
+            command,
+            log_path,
+            settings.tasks_dir,
+            settings.task_log_cap,
+        )
+        return f"Started background task {task_id}. Its output goes to {log_path}."
     proc = await sandbox.exec("bash", args=["-c", command], combine_streams=True)
     # A command that reads stdin would otherwise wait on it forever.
     if proc.stdin and not proc.stdin.is_closing():
@@ -120,6 +159,36 @@ async def run_bash(
         await ctx.info(line.rstrip("\n"))
     await proc.wait()
     return "".join(lines)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, openWorldHint=False
+    )
+)
+async def wait_task(
+    id: A[str, "Background task id"],
+    max_wait: A[int, "Seconds to wait at most"] = WAIT_TASK_MAX,
+) -> tasks.WaitResult:
+    """
+    Wait for a background task to end. Returns `exited` with the command's exit status,
+    `gone` if it ended without one (it was signalled), `running` once `max_wait` has passed,
+    or `unknown` if no such task was started. For VISTA's backend, not the agent.
+    """
+    return await tasks.wait(sandbox, id, settings.tasks_dir, max_wait)
+
+
+@mcp.tool(
+    annotations=ToolAnnotations(
+        readOnlyHint=False, destructiveHint=True, openWorldHint=False
+    )
+)
+async def signal_task(id: A[str, "Background task id"]) -> tasks.SignalResult:
+    """
+    End a background task and every process it started: TERM, then KILL if it is still
+    running after a few seconds. For VISTA's backend, not the agent.
+    """
+    return await tasks.signal(sandbox, id, settings.tasks_dir, settings.task_kill_grace)
 
 
 @mcp.tool(

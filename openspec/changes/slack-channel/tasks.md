@@ -5,7 +5,7 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 1. Onto main
 
-- [ ] 1.1 Merge `origin/main` into `slack-on-inbox` and resolve the conflicts in `agents/agents.py`, `api/agent.py`, `services/chat_run.py`, `submit_job_mcp.py`, `docs/site.toml` and `scripts/docs_site/test_sync_docs.py`, keeping main's inbox path in `api/agent.py`; backend, MCP and Slack tests pass (`./scripts/ci-local.sh backend mcp test`)
+- [x] 1.1 Merge `origin/main` into `slack-on-inbox` and resolve the conflicts in `agents/agents.py`, `api/agent.py`, `services/chat_run.py`, `submit_job_mcp.py`, `docs/site.toml` and `scripts/docs_site/test_sync_docs.py`, keeping main's inbox path in `api/agent.py`; backend, MCP and Slack tests pass (`./scripts/ci-local.sh backend mcp test`)
 
 ## 2. Laptop extras out
 

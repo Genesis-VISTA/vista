@@ -79,6 +79,11 @@ export type ChatMessage = {
    * can find the step. Bubbles from before this was recorded lack it.
    */
   tool_call_id?: string;
+  /**
+   * On the row drawn for a background task's result: its one line and the full
+   * text the agent received, shown when the row is expanded.
+   */
+  event?: { summary: string; text: string };
 };
 
 /* ---------------------------------------------------------------------- */

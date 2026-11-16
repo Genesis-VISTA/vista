@@ -47,8 +47,11 @@ export type Stub = {
   end(name?: StreamName): Promise<void>;
   /** Makes the next `GET /api/chat/run/events` open a stream instead of answering 204. */
   armAttach(): Promise<void>;
-  /** Makes the next `POST /api/chat` answer 409, as if another view had a run going. */
-  armConflict(): Promise<void>;
+  /**
+   * Makes the next `POST /api/chat` answer 202 with `item` queued, as the backend
+   * does for a send to a conversation whose turn is still running.
+   */
+  armQueued(item: Record<string, unknown>): Promise<void>;
   /** Changes what a route answers from now on. */
   setRoute(key: string, value: unknown): Promise<void>;
 };
@@ -71,7 +74,7 @@ declare global {
       aborted: string[];
       routes: Record<string, unknown>;
       attachArmed: boolean;
-      conflictArmed: boolean;
+      queuedArmed: Record<string, unknown> | null;
       streamOpen: boolean;
       isOpen: (name: string) => boolean;
       write: (name: string, chunk: string) => void;
@@ -97,7 +100,7 @@ export async function installStub(
         aborted: [],
         routes,
         attachArmed: false,
-        conflictArmed: false,
+        queuedArmed: null,
         get streamOpen() {
           return (streams.send ?? null) !== null;
         },
@@ -165,16 +168,14 @@ export async function installStub(
         const signal = init?.signal ?? (input instanceof Request ? input.signal : null);
 
         if (method === "POST" && url.pathname === streamPath) {
-          if (window.__vista.conflictArmed) {
-            window.__vista.conflictArmed = false;
-            // The backend's busy refusal, which the proxy passes through as is.
-            return new Response(
-              JSON.stringify({
-                detail: "This conversation already has a turn running.",
-                code: "run_busy",
-              }),
-              { status: 409, headers: { "content-type": "application/json" } },
-            );
+          const queued = window.__vista.queuedArmed;
+          if (queued) {
+            window.__vista.queuedArmed = null;
+            // The backend queued the message for the running turn; the proxy passes it through.
+            return new Response(JSON.stringify({ started: false, item: queued }), {
+              status: 202,
+              headers: { "content-type": "application/json" },
+            });
           }
           return openStream("send", signal);
         }
@@ -242,10 +243,10 @@ export async function installStub(
         window.__vista.attachArmed = true;
       });
     },
-    armConflict: async () => {
-      await page.evaluate(() => {
-        window.__vista.conflictArmed = true;
-      });
+    armQueued: async (item) => {
+      await page.evaluate((queued) => {
+        window.__vista.queuedArmed = queued;
+      }, item);
     },
     setRoute: async (key, value) => {
       await page.evaluate(([k, v]) => {

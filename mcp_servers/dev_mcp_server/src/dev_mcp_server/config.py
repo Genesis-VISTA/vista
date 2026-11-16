@@ -36,6 +36,15 @@ class AppSettings(BaseSettings):
     List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
     """
 
+    tasks_dir: PurePosixPath = PurePosixPath("/mnt/data/tasks")
+    """Where a background command's `.pid`, `.exit` and default log go, inside the sandbox."""
+
+    task_log_cap: int = 10 * 1024 * 1024
+    """Bytes a background command's log may hold before it stops growing."""
+
+    task_kill_grace: int = 5
+    """Seconds `signal_task` waits after TERM before sending KILL."""
+
 
 settings = AppSettings()
 

@@ -1,3 +1,4 @@
+import contextlib
 import uuid
 from typing import AsyncGenerator
 
@@ -9,10 +10,11 @@ from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
 from ..agents.agents import ProjectAgentResult
 from ..db.db import SessionDep
-from ..db.schemas import ProjectPublic
+from ..db.schemas import InboxItemPublic, ProjectPublic
+from ..services import chat_session as chat_session_service
 from ..services import project as project_service
-from ..services.chat_run import RunBusy
-from ..services.conversation import start_turn
+from ..services import inbox as inbox_service
+from ..services.chat_run import chat_run_registry
 from ..services.project_agent import ProjectAgentKey, project_agent_pool
 from ..agents.inference import require_inference_credential
 from ..services.local_settings import LocalSettingsDep
@@ -69,8 +71,12 @@ async def agent_run(
     A turn with a `chat_session_id` is owned by the backend (`services/chat_run.py`): the stream is
     only a watcher. If the client disconnects the turn keeps running and saves its own result; watch it
     again with GET /projects/{project_name}/chat-sessions/{id}/run/events, or cancel it with POST .../run/stop.
-    Each stream starts with a `run_started` event and ends with `run_finished {state}`. A second turn in a
-    conversation that is still running is refused with 409.
+    Each stream starts with a `run_started` event and ends with `run_finished {state}`.
+
+    A send goes through the conversation's inbox (`services/inbox.py`). To an idle conversation it starts
+    a turn with the message, and any task results waiting there ahead of it. To a conversation whose turn
+    is still running it is queued for that turn, which takes it at its next step: the answer is then 202
+    `{"started": false, "item": {...}}`, and the item can be edited or deleted until it is taken.
 
     Supports MCP elicitation in streaming mode. Elicitation requests arrive as an extra SSE event
     interleaved with the agent events:
@@ -81,35 +87,68 @@ async def agent_run(
     """
     project_row = await project_service.get_project_by_name(session, project_name)
     project = ProjectPublic.model_validate(project_row)
-    if body.chat_session_id is None:
-        # Checked before anything runs. With a conversation, `start_turn` makes
-        # the same check from the chat's one lookup (its own model counts, so
-        # it can send on a provider with no default), and a chat not in this
-        # project is a 404, all before the stream's status is committed.
-        require_inference_credential(local, None)
-        if body.stream:
-            raise HTTPException(
-                status_code=400, detail="chat_session_id is required to stream a turn"
-            )
+    # One lookup gives the chat's model and its pooled agent's key; an id that
+    # is not a chat in this project is a 404 before anything else.
+    chat_row = (
+        await chat_session_service.get_chat_session(
+            session,
+            project_id=project.id,
+            chat_session_id=body.chat_session_id,
+        )
+        if body.chat_session_id
+        else None
+    )
+    # Checked before either branch: in the streaming case the response status
+    # is committed the moment `EventSourceResponse` is returned, so a raise
+    # from inside the generator could only surface as a truncated stream.
+    # The chat's own model counts, so it can send on a provider with no default.
+    require_inference_credential(local, chat_row.inference_model if chat_row else None)
+    agent_key: ProjectAgentKey = (
+        chat_row.id if chat_row else None,
+        project.id,
+    )
+    effective_history = await chat_session_service.get_effective_message_history(
+        session,
+        project_id=project.id,
+        fallback_history=body.message_history,
+        chat_session_id=body.chat_session_id,
+    )
+
+    if body.stream and body.chat_session_id is None:
+        raise HTTPException(
+            status_code=400, detail="chat_session_id is required to stream a turn"
+        )
 
     if body.chat_session_id is not None:
+        # The run writes through its own session, so end this request's
+        # transaction first rather than hold a lock it could wait on.
+        await session.commit()
+        # Queued without telling the registry, so the turn is started here and
+        # a failure to start it reaches this request rather than a log.
+        item = await inbox_service.put(
+            session,
+            body.chat_session_id,
+            kind="message",
+            text=body.user_prompt,
+            notify=False,
+        )
         try:
-            run = await start_turn(
-                session,
-                local=local,
-                project=project,
-                chat_session_id=body.chat_session_id,
-                user_prompt=body.user_prompt,
-                fallback_history=body.message_history,
-            )
-        except RunBusy:
-            # HTTPException can't carry a sibling field without making `detail`
-            # an object, so the machine-readable code goes in a plain response.
+            run = await chat_run_registry.wake(body.chat_session_id)
+        except BaseException:
+            with contextlib.suppress(inbox_service.ItemTaken):
+                assert item.id is not None  # a committed row has its id
+                await inbox_service.withdraw(session, body.chat_session_id, item.id)
+            raise
+        if run is None or not any(i.id == item.id for i in run.items):
+            # The conversation's turn is still running and takes it at its next step.
+            await chat_run_registry.announce_inbox(body.chat_session_id)
             return JSONResponse(
-                status_code=409,
+                status_code=202,
                 content={
-                    "detail": "This conversation already has a turn running.",
-                    "code": "run_busy",
+                    "started": False,
+                    "item": InboxItemPublic.model_validate(
+                        item, from_attributes=True
+                    ).model_dump(),
                 },
             )
 
@@ -128,9 +167,8 @@ async def agent_run(
             raise HTTPException(status_code=500, detail=f"Turn {run.state}.")
         return run.result
 
-    agent_key: ProjectAgentKey = (None, project.id)
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.run(
             user_prompt=body.user_prompt,
-            message_history=body.message_history,
+            message_history=effective_history,
         )

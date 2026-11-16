@@ -120,6 +120,8 @@ export async function DELETE(request: Request) {
       backendUrl(`/projects/${encodeURIComponent(projectName)}/chat-session`)
     );
     upstreamUrl.searchParams.set("chat_session_id", chatSessionId);
+    // A conversation with background tasks running is deleted only when confirmed.
+    if (url.searchParams.get("confirm") === "true") upstreamUrl.searchParams.set("confirm", "true");
     upstream = await fetch(
       upstreamUrl,
       {
@@ -135,5 +137,10 @@ export async function DELETE(request: Request) {
     );
   }
 
-  return new NextResponse(null, { status: upstream.status });
+  if (upstream.status === 204) return new NextResponse(null, { status: 204 });
+  // A refusal keeps its body: a 409 `live_tasks` names what is still running.
+  return new NextResponse(await upstream.text(), {
+    status: upstream.status,
+    headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },
+  });
 }
