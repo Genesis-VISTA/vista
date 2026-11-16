@@ -6,7 +6,6 @@ import { useProjects } from "@/lib/projects";
 import {
   fetchSlackLinks,
   linkSlack,
-  takeOverSlack,
   unlinkSlack,
   updateSlackConfig,
   updateSlackLink,
@@ -17,9 +16,8 @@ import {
 import { FieldError, SaveMark, SectionHeader, fieldId } from "./SettingsParts";
 
 const CONNECTION_WORDS: Record<SlackConfig["connection"], string> = {
-  off: "Not running here",
+  off: "Not running",
   connected: "Connected",
-  standby: "Standing by",
   error: "Can't connect",
 };
 
@@ -81,7 +79,7 @@ export function SlackSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body">
-        <ConnectionStatus config={config} onChange={onChange} />
+        <ConnectionStatus config={config} />
 
         {!config.secret_store_available && (
           <div className="error settings-field-error">
@@ -93,18 +91,10 @@ export function SlackSection({
         <Switch
           name="enabled"
           label="Slack"
-          hint="Off by default. Needs both tokens and at least one allowed workspace."
+          hint="Off by default. Needs both tokens and at least one allowed workspace. Turn it on on one machine only."
           checked={config.enabled}
           onToggle={(on) => save("enabled", { enabled: on })}
           {...field("enabled")}
-        />
-        <Switch
-          name="handle_here"
-          label="Handle Slack on this machine"
-          hint="Only one machine answers. Turn this off on machines that shouldn't."
-          checked={config.handle_here}
-          onToggle={(on) => save("handle_here", { handle_here: on })}
-          {...field("handle_here")}
         />
 
         <Group title="App tokens">
@@ -204,7 +194,7 @@ export function SlackSection({
           />
         </Group>
 
-        <Group title="Notifications and power">
+        <Group title="Notifications">
           <Switch
             name="notify_desktop_jobs"
             label="Tell me in Slack about jobs started here"
@@ -212,26 +202,6 @@ export function SlackSection({
             checked={config.notify_desktop_jobs}
             onToggle={(on) => save("notify_desktop_jobs", { notify_desktop_jobs: on })}
             {...field("notify_desktop_jobs")}
-          />
-          <Switch
-            name="prevent_sleep"
-            label="Keep this machine awake"
-            hint="While Slack is connected. Closing a laptop's lid still sleeps it; VISTA says so in Slack first."
-            checked={config.prevent_sleep}
-            onToggle={(on) => save("prevent_sleep", { prevent_sleep: on })}
-            {...field("prevent_sleep")}
-          />
-          <Switch
-            name="background_mode"
-            label="Run VISTA in the background"
-            hint={
-              config.background_problem ??
-              "Start VISTA at login with no window, and keep it running after you close the window, so Slack can reach it while you are away. Takes effect at your next login; open VISTA as usual to see it."
-            }
-            checked={config.background_mode}
-            disabled={config.background_problem !== null && !config.background_mode}
-            onToggle={(on) => save("background_mode", { background_mode: on })}
-            {...field("background_mode")}
           />
         </Group>
       </div>
@@ -246,39 +216,12 @@ function lockedBy(who: string): string {
   return `by ${who}`;
 }
 
-function ConnectionStatus({
-  config,
-  onChange,
-}: {
-  config: SlackConfig;
-  onChange: (config: SlackConfig) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+function ConnectionStatus({ config }: { config: SlackConfig }) {
   const tone = config.connection === "connected" ? "" : config.connection === "error" ? " hpc-word--warn" : " slack-status-word--quiet";
-
-  async function takeOver() {
-    setBusy(true);
-    setError(null);
-    try {
-      onChange(await takeOverSlack());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't take over.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <div className="slack-status" role="status">
       <span className={`slack-status-word${tone}`}>{CONNECTION_WORDS[config.connection]}</span>
       {config.connection_detail && <span className="user-settings-hint">{config.connection_detail}</span>}
-      {config.connection === "standby" && (
-        <button type="button" className="button ghost button-xs" disabled={busy} onClick={() => void takeOver()}>
-          Handle Slack here instead
-        </button>
-      )}
-      {error && <span className="error settings-field-error">{error}</span>}
     </div>
   );
 }

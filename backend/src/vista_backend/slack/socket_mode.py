@@ -22,7 +22,7 @@ from slack_sdk.http_retry.builtin_async_handlers import (
 from slack_sdk.web.async_client import AsyncWebClient
 
 from .events import Action, Event, HomeOpened, Message
-from .transport import Handler, Identity, PinnedMessage, SlackCallError, SlackTransport
+from .transport import Handler, Identity, SlackCallError, SlackTransport
 
 log = logging.getLogger("vista.slack")
 
@@ -170,29 +170,25 @@ class SocketModeTransport(SlackTransport):
         except SlackApiError as exc:
             raise SlackCallError(method, str(exc.response.get("error", exc))) from exc
 
-    async def post(
-        self, channel, text, *, blocks=None, thread_ts=None, metadata=None
-    ) -> str:
+    async def post(self, channel, text, *, blocks=None, thread_ts=None) -> str:
         response = await self._call(
             "chat_postMessage",
             channel=channel,
             text=text,
             blocks=blocks,
             thread_ts=thread_ts,
-            metadata=metadata,
             unfurl_links=False,
             unfurl_media=False,
         )
         return response["ts"]
 
-    async def update(self, channel, ts, text, *, blocks=None, metadata=None) -> None:
+    async def update(self, channel, ts, text, *, blocks=None) -> None:
         await self._call(
             "chat_update",
             channel=channel,
             ts=ts,
             text=text,
             blocks=blocks or [],
-            metadata=metadata,
         )
 
     async def ephemeral(self, channel, user, text, *, thread_ts=None) -> None:
@@ -222,38 +218,3 @@ class SocketModeTransport(SlackTransport):
 
     async def publish_home(self, user, view) -> None:
         await self._call("views_publish", user_id=user, view=view)
-
-    async def pin(self, channel, ts) -> None:
-        try:
-            await self._call("pins_add", channel=channel, timestamp=ts)
-        except SlackCallError as exc:
-            if exc.error != "already_pinned":
-                raise
-
-    async def pinned(self, channel) -> list[PinnedMessage]:
-        bot = (await self.identity()).bot_user_id
-        listing = await self._call("pins_list", channel=channel)
-        out: list[PinnedMessage] = []
-        for item in listing.get("items") or []:
-            message = item.get("message") or {}
-            if message.get("user") != bot:
-                continue
-            # `pins.list` leaves metadata out; the message itself carries it.
-            history = await self._call(
-                "conversations_history",
-                channel=channel,
-                latest=message["ts"],
-                oldest=message["ts"],
-                inclusive=True,
-                limit=1,
-                include_all_metadata=True,
-            )
-            found = (history.get("messages") or [message])[0]
-            out.append(
-                PinnedMessage(
-                    ts=found["ts"],
-                    text=found.get("text", ""),
-                    metadata=found.get("metadata"),
-                )
-            )
-        return out

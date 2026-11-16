@@ -23,7 +23,6 @@ import { parseArgs } from './args.js';
 import { allowPermission } from './permissions.js';
 import { classify, isPdfViewerFrame, originOf } from './routing.js';
 import { windowBackground } from './appearance.js';
-import { findRunningService } from './background-service.js';
 import { acquireSingleInstanceLock, EXIT_ALREADY_OPEN, focusWindow } from './lifecycle.js';
 import { LauncherController } from './launcher-controller.js';
 import { writeLogArchive } from './log-archive.js';
@@ -689,7 +688,7 @@ for (const signal of /** @type {const} */ (['SIGTERM', 'SIGINT', 'SIGHUP'])) {
   process.on(signal, () => { void requestQuit(); });
 }
 
-app.whenReady().then(async () => {
+app.whenReady().then(() => {
   if (args.updateStatus) {
     runUpdateStatusWindow(path.resolve(args.updateStatus));
     return;
@@ -741,15 +740,6 @@ app.whenReady().then(async () => {
     }
     holdMainWindow = Boolean(updateNotice);
     if (updateNotice) console.log(`vista-window: ${updateNotice.title}`);
-    // Background mode: VISTA is already running from the login item, so this
-    // is only a window onto it, and closing it leaves the service running.
-    const serviceUrl = await findRunningService(stateDirectory);
-    if (serviceUrl) {
-      console.log(`vista-window: opening the background service at ${serviceUrl}`);
-      origin = originOf(serviceUrl);
-      mainWindow = createMainWindow(serviceUrl);
-      return;
-    }
     startupWindow = createStartupWindow();
     const logsDirectory = path.join(stateDirectory, 'logs');
     launcherController = new LauncherController({

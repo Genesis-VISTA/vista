@@ -69,14 +69,8 @@ class SlackSettings(BaseModel):
     progress_edit_interval: float = 1.5
     """ Least seconds between edits of a reply's progress message. """
 
-    lease_heartbeat: float = 60.0
-    """ Seconds between renewals of this machine's claim on Slack. """
-
-    lease_stale_after: float = 180.0
-    """ Seconds after which another machine's claim is treated as abandoned. """
-
-    online_notice_debounce: float = 120.0
-    """ A reconnect this soon after the last back-online notice sends none. """
+    reconnect_interval: float = 60.0
+    """ Seconds between attempts to connect again while the connection is down. """
 
     job_poll_interval: float = 120.0
     """ Seconds between checks of jobs VISTA submitted that have not finished. """
@@ -94,7 +88,7 @@ class SlackSettings(BaseModel):
 class SecretSettings(BaseModel):
     """
     Where secrets kept out of the database live (`utils/secret_store.py`): Slack's
-    tokens and the database's own key. Override via `VISTA_BACKEND_SECRETS__BACKEND=...`.
+    tokens. Override via `VISTA_BACKEND_SECRETS__BACKEND=...`.
     """
 
     backend: Literal["auto", "os", "directory"] = "auto"
@@ -324,7 +318,7 @@ class Settings(BaseSettings):
     Where this VISTA runs. `desktop`: a researcher's own computer, the only kind
     packaged today. `hosted`: a headless instance serving one researcher on a
     facility service (a container), which keeps secrets in a directory rather
-    than an OS store and has no sleep, login item or window. Override via
+    than an OS store and has no window. Override via
     `VISTA_BACKEND_DEPLOYMENT=hosted`.
     """
 
@@ -513,13 +507,6 @@ class Settings(BaseSettings):
 
     Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     Required in prod, defaults to a dummy key in dev.
-    """
-
-    encryption_key_in_secret_store: bool = False
-    """
-    When no `encryption_key` is set, encrypt with a key of this install's own,
-    created in the OS secret store, instead of the public development key. The
-    packaged launcher turns this on; existing values are re-encrypted at startup.
     """
 
     vista_data_token: A[str | None, Field(validation_alias="VISTA_DATA_TOKEN")] = None

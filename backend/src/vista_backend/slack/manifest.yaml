@@ -20,14 +20,11 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read # @VISTA in a channel
-      - chat:write # replies, the "working" message, confirmations, notices
-      - im:history # DMs to VISTA, and reading the status (lease) message back
+      - chat:write # replies, the "working" message, confirmations, job notices
+      - im:history # DMs to VISTA
       - im:read
       - im:write # opening a DM for job notices and reminders
       - files:write # logs posted on request
-      - pins:read # finding the pinned status message
-      - pins:write
-      - metadata.message:read # the status message's holder and heartbeat
 settings:
   event_subscriptions:
     bot_events:

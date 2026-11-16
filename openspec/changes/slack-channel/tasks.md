@@ -9,9 +9,9 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 2. Laptop extras out
 
-- [ ] 2.1 Remove the lease (`slack/lease.py`), offline/online notices (`slack/notices.Notices`, keeping `CredentialReminder`), sleep (`slack/power.py`) and their settings, API fields, UI controls and tests; Slack still connects and answers in `test_service.py`
-- [ ] 2.2 Remove background mode: `services/background_service.py`, the launchers' `--service` and `service.json`, `electron/src/background-service.js` and its use in `main.js`, the installers' service stop/start, their tests and the Settings toggle; `./scripts/ci-local.sh electron install launcher` pass
-- [ ] 2.3 Remove the per-install database key (`encryption_key_in_secret_store`, `reencrypt_legacy_values`, the launchers' export) and `test_encryption_key.py`; `secret_store` keeps only the Slack tokens
+- [x] 2.1 Remove the lease (`slack/lease.py`), offline/online notices (`slack/notices.Notices`, keeping `CredentialReminder`), sleep (`slack/power.py`) and their settings, API fields, UI controls and tests; Slack still connects and answers in `test_service.py`
+- [x] 2.2 Remove background mode: `services/background_service.py`, the launchers' `--service` and `service.json`, `electron/src/background-service.js` and its use in `main.js`, the installers' service stop/start, their tests and the Settings toggle; `./scripts/ci-local.sh electron install launcher` pass
+- [x] 2.3 Remove the per-install database key (`encryption_key_in_secret_store`, `reencrypt_legacy_values`, the launchers' export) and `test_encryption_key.py`; `secret_store` keeps only the Slack tokens
 
 ## 3. Turns through the inbox
 

@@ -37,14 +37,6 @@ class Identity:
     bot_user_id: str
 
 
-@dataclass(frozen=True)
-class PinnedMessage:
-    ts: str
-    text: str
-    metadata: dict[str, Any] | None
-    """ Slack message metadata: `{"event_type": ..., "event_payload": {...}}`. """
-
-
 class SlackTransport(ABC):
     @abstractmethod
     async def identity(self) -> Identity:
@@ -70,7 +62,6 @@ class SlackTransport(ABC):
         *,
         blocks: list[dict[str, Any]] | None = None,
         thread_ts: str | None = None,
-        metadata: dict[str, Any] | None = None,
     ) -> str:
         """Post a message and return its `ts`."""
 
@@ -82,7 +73,6 @@ class SlackTransport(ABC):
         text: str,
         *,
         blocks: list[dict[str, Any]] | None = None,
-        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Replace a message the bot posted. Sends no notification."""
 
@@ -111,10 +101,3 @@ class SlackTransport(ABC):
     @abstractmethod
     async def publish_home(self, user: str, view: dict[str, Any]) -> None:
         """Replace `user`'s App Home tab."""
-
-    @abstractmethod
-    async def pin(self, channel: str, ts: str) -> None: ...
-
-    @abstractmethod
-    async def pinned(self, channel: str) -> list[PinnedMessage]:
-        """The bot's pinned messages in `channel`, with their metadata."""

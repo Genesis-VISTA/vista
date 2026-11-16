@@ -6,7 +6,6 @@ import { extractError } from "./settings";
  */
 export type SlackConfig = {
   enabled: boolean;
-  handle_here: boolean;
   has_bot_token: boolean;
   has_app_token: boolean;
   secret_store_available: boolean;
@@ -19,17 +18,11 @@ export type SlackConfig = {
   locked: boolean;
   locked_at: string | null;
   locked_by: string | null;
-  prevent_sleep: boolean;
   notify_desktop_jobs: boolean;
-  /** This machine's connection: off, connected, standby (another machine has Slack) or error. */
-  connection: "off" | "connected" | "standby" | "error";
-  /** Why it is off, which machine has Slack, or what went wrong. */
+  /** The connection to Slack: off, connected or error. */
+  connection: "off" | "connected" | "error";
+  /** Why it is off, or what went wrong. */
   connection_detail: string | null;
-  lease_status: Record<string, unknown> | null;
-  /** VISTA starts at login with no window, so Slack reaches it while you are away. */
-  background_mode: boolean;
-  /** Why background mode can't be used here (a development checkout, no systemd), or null. */
-  background_problem: string | null;
 };
 
 export type SlackConfigUpdate = Partial<
@@ -43,8 +36,6 @@ export type SlackConfigUpdate = Partial<
     | "locked_by"
     | "connection"
     | "connection_detail"
-    | "lease_status"
-    | "background_problem"
   >
 > & { bot_token?: string; app_token?: string };
 
@@ -76,7 +67,6 @@ async function call<T>(path: string, method = "GET", body?: unknown): Promise<T>
 export const fetchSlackConfig = () => call<SlackConfig>("config");
 export const updateSlackConfig = (updates: SlackConfigUpdate) =>
   call<SlackConfig>("config", "PUT", updates);
-export const takeOverSlack = () => call<SlackConfig>("take-over", "POST");
 export const fetchSlackLinks = () => call<SlackLink[]>("links");
 export const linkSlack = (code: string) => call<SlackLink>("links", "POST", { code });
 export const updateSlackLink = (
@@ -94,11 +84,9 @@ export function slackNote(config: SlackConfig | null): string | null {
   switch (config.connection) {
     case "connected":
       return "Connected";
-    case "standby":
-      return "Other machine";
     case "error":
       return "Problem";
     default:
-      return "Not here";
+      return "Not running";
   }
 }

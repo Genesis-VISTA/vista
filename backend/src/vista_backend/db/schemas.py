@@ -1968,8 +1968,6 @@ class SlackConfigTable(SQLModel, table=True):
 
     id: int = Field(default=1, primary_key=True)
     enabled: bool = False
-    handle_here: bool = False
-    """ "Handle Slack on this machine." """
     allowed_team_ids: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
     allowed_channel_ids: A[
         list[str], Field(default_factory=list, sa_column=Column(JSON))
@@ -1981,15 +1979,9 @@ class SlackConfigTable(SQLModel, table=True):
     locked: bool = False
     locked_at: str | None = None
     locked_by: str | None = None
-    prevent_sleep: bool = False
     notify_desktop_jobs: bool = False
-    instance_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    """ This install's identity in the Slack lease. """
-    offline_notice_sent_at: str | None = None
-    last_online_notice_at: str | None = None
     online_since: str | None = None
-    lease_status: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON))]
-    """ The last lease seen: who holds Slack and when they last heartbeat. """
+    """ When Slack last connected, for the App Home. """
 
 
 class SlackLinkTable(SQLModel, table=True):

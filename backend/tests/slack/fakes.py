@@ -12,7 +12,6 @@ from vista_backend.slack.events import Event
 from vista_backend.slack.transport import (
     Handler,
     Identity,
-    PinnedMessage,
     SlackCallError,
     SlackTransport,
 )
@@ -25,7 +24,6 @@ class Posted:
     text: str
     blocks: list[dict[str, Any]] | None = None
     thread_ts: str | None = None
-    metadata: dict[str, Any] | None = None
     edits: list[str] = field(default_factory=list)
     """ Each text this message was updated to, in order. """
 
@@ -40,7 +38,6 @@ class FakeTransport(SlackTransport):
         """ (channel, user, text). """
         self.uploads: list[dict[str, Any]] = []
         self.homes: dict[str, dict[str, Any]] = {}
-        self.pins: dict[str, list[str]] = {}
         self.fail_next: dict[str, str] = {}
         """ method → Slack error code, raised once by the next such call. """
         self.connects = 0
@@ -62,6 +59,7 @@ class FakeTransport(SlackTransport):
         return self._identity
 
     async def connect(self, handler: Handler) -> None:
+        self._maybe_fail("connect")
         self._handler = handler
         self.connects += 1
 
@@ -81,21 +79,17 @@ class FakeTransport(SlackTransport):
     def in_channel(self, channel: str) -> list[Posted]:
         return [m for m in self.messages if m.channel == channel]
 
-    async def post(
-        self, channel, text, *, blocks=None, thread_ts=None, metadata=None
-    ) -> str:
+    async def post(self, channel, text, *, blocks=None, thread_ts=None) -> str:
         self._maybe_fail("post")
         ts = f"{next(self._ts)}.000"
-        self.messages.append(Posted(channel, ts, text, blocks, thread_ts, metadata))
+        self.messages.append(Posted(channel, ts, text, blocks, thread_ts))
         return ts
 
-    async def update(self, channel, ts, text, *, blocks=None, metadata=None) -> None:
+    async def update(self, channel, ts, text, *, blocks=None) -> None:
         self._maybe_fail("update")
         message = self.find(ts)
         message.text = text
         message.blocks = blocks
-        if metadata is not None:
-            message.metadata = metadata
         message.edits.append(text)
 
     async def ephemeral(self, channel, user, text, *, thread_ts=None) -> None:
@@ -122,15 +116,3 @@ class FakeTransport(SlackTransport):
     async def publish_home(self, user, view) -> None:
         self._maybe_fail("publish_home")
         self.homes[user] = view
-
-    async def pin(self, channel, ts) -> None:
-        self.pins.setdefault(channel, [])
-        if ts not in self.pins[channel]:
-            self.pins[channel].append(ts)
-
-    async def pinned(self, channel) -> list[PinnedMessage]:
-        return [
-            PinnedMessage(ts=m.ts, text=m.text, metadata=m.metadata)
-            for ts in self.pins.get(channel, [])
-            for m in [self.find(ts)]
-        ]

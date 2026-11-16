@@ -220,7 +220,6 @@ export const INFERENCE = {
 /** Slack as a fresh install has it: off, no tokens, the default limits. */
 export const SLACK_CONFIG = {
   enabled: false,
-  handle_here: false,
   has_bot_token: false,
   has_app_token: false,
   secret_store_available: true,
@@ -233,13 +232,9 @@ export const SLACK_CONFIG = {
   locked: false,
   locked_at: null,
   locked_by: null,
-  prevent_sleep: false,
   notify_desktop_jobs: false,
   connection: "off",
   connection_detail: null,
-  lease_status: null,
-  background_mode: false,
-  background_problem: "a development checkout",
 };
 
 /**

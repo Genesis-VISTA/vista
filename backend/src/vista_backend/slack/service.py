@@ -1,12 +1,14 @@
 """
 The Slack service: everything in `slack/` put together and run with the backend.
 
-`SlackService.start` does nothing unless Slack is on, this machine is set to
-handle it, and both tokens are in the secret store. Then, in order: install the
-gate's refusal and the card's preview, expire cards left open by the last run,
-take the lease (or stand by while another machine holds it), connect, and run
-the background loops — lease heartbeat, job notices, credential reminders and
-the App Home. `stop` tells Slack VISTA is going offline, then undoes all of it.
+`SlackService.start` does nothing unless Slack is on and both tokens are in
+the secret store. Then, in order: install the gate's refusal and the card's
+preview, expire cards left open by the last run, connect, and run the
+background loops — job notices, credential reminders and the App Home. `stop`
+marks the App Home offline, then undoes all of it.
+
+Slack runs on one machine at a time: two connected with the same app token
+would each get a share of the events (`docs/slack.md`).
 
 Events arrive here already verified and acknowledged by the transport. Each
 passes `access.decide` before anything else looks at it.
@@ -36,11 +38,8 @@ from ..services.conversation import start_turn
 from . import access, audit, confirm, credentials, format, gate, limits, linking, store
 from .confirm import Confirmations
 from .events import Action, Event, HomeOpened, Message, keyword
-from .home import Home
+from .home import Home, host_name
 from .jobs import JobMonitor
-from .lease import Lease, host_name
-from .notices import Notices
-from .power import SleepPrevention, SleepWatcher
 from .relay import Place, RunRelay
 from .threads import NoProject, NotYourThread, ThreadQueue, conversation_for
 from .transport import SlackCallError, SlackTransport
@@ -114,42 +113,31 @@ class SlackService:
         *,
         transport_factory: TransportFactory | None = None,
         host: str | None = None,
-        watch_power: bool | None = None,
     ) -> None:
         self._factory = transport_factory  # None: `default_transport`, at start.
         self._host = host or host_name()
-        # Sleep is a laptop's: a hosted instance has none to watch or prevent.
-        self._watch_power = (
-            settings.deployment == "desktop" if watch_power is None else watch_power
-        )
         self.slack: SlackTransport | None = None
         self.state = "off"
-        """ off · connected · standby (another machine has Slack) · error. """
+        """ off · connected · error. """
         self.detail: str | None = None
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
         self._queue = ThreadQueue()
         self._unlinked = access.UnlinkedReplies()
         self._confirmations: Confirmations | None = None
-        self._lease: Lease | None = None
-        self._notices: Notices | None = None
         self._home: Home | None = None
-        self._sleep: SleepWatcher | None = None
-        self._awake: SleepPrevention | None = None
 
     # -- lifecycle -----------------------------------------------------------
 
     @staticmethod
     async def why_not(config: SlackConfigTable) -> str | None:
-        """Why this machine should not run Slack, or None when it should."""
+        """Why Slack should not run, or None when it should."""
         if not config.enabled:
             return "Slack is off."
-        if not config.handle_here:
-            return "This machine is not set to handle Slack."
         return store.why_not_enabled()
 
     async def start(self) -> bool:
-        """Start if Slack is on for this machine. True when it started."""
+        """Start if Slack is on. True when it started."""
         config = await _config()
         why = await self.why_not(config)
         if why is not None:
@@ -162,15 +150,13 @@ class SlackService:
         confirm.set_preview(preview_job)
         self._stop = asyncio.Event()
         self._confirmations = Confirmations(slack)
-        self._lease = Lease(slack, instance_id=config.instance_id, host=self._host)
-        self._notices = Notices(slack, host=self._host)
         self._home = Home(slack, host=self._host)
         try:
             await self._confirmations.close_stale()
         except Exception:
             log.exception("Could not close Slack cards left open by the last run")
-        await self._connect_if_ours()
-        self._spawn(self._lease_loop())
+        await self._connect()
+        self._spawn(self._reconnect_loop())
         self._spawn(
             JobMonitor(slack).run_forever(
                 interval=settings.slack.job_poll_interval, stop_event=self._stop
@@ -178,31 +164,19 @@ class SlackService:
         )
         self._spawn(self._every(settings.slack.reminder_interval, self._remind))
         self._spawn(self._every(settings.slack.home_refresh_interval, self._homes))
-        if self._watch_power:
-            self._sleep = SleepWatcher(self._before_sleep)
-            await self._sleep.start()
-            if config.prevent_sleep:
-                self._awake = SleepPrevention()
-                await self._awake.start()
         return True
 
     async def stop(self) -> None:
-        """Tell Slack, let go of the lease, disconnect. Bounded for a quick quit."""
+        """Mark the Home tabs offline and disconnect. Bounded for a quick quit."""
         if self.slack is None:
             return
         slack, self.slack = self.slack, None
         self._stop.set()
-        if slack.connected and self._notices is not None:
-            await self._notices.going_offline()
+        if slack.connected and self._home is not None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(
-                    self._home.publish_all(online=False),  # type: ignore[union-attr]
-                    timeout=2.0,
+                    self._home.publish_all(online=False), timeout=2.0
                 )
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(self._lease.release(), timeout=2.0)  # type: ignore[union-attr]
-        if self._notices is not None:
-            self._notices.cancel()
         for task in self._tasks:
             task.cancel()
         for task in self._tasks:
@@ -211,73 +185,39 @@ class SlackService:
         self._tasks = []
         if self._confirmations is not None:
             self._confirmations.stop()
-        for power in (self._sleep, self._awake):
-            if power is not None:
-                with contextlib.suppress(Exception):
-                    await power.stop()
-        self._sleep = self._awake = None
         with contextlib.suppress(Exception):
             await slack.disconnect()
         gate.set_refusal(gate.no_refusal)
         confirm.set_preview(confirm.no_preview)
         self.state, self.detail = "off", None
 
-    async def take_over(self) -> None:
-        """From the desktop: handle Slack here even though another machine is."""
-        if self._lease is None or self.slack is None:
-            return
-        await self._lease.take_over()
-        await self._connect()
-
-    async def _connect_if_ours(self) -> None:
-        assert self._lease is not None and self.slack is not None
+    async def _connect(self) -> None:
+        assert self.slack is not None
         try:
-            decision = await self._lease.acquire()
+            await self.slack.connect(self.handle)
         except Exception as exc:
-            log.warning("Could not check who handles Slack: %s", exc)
+            log.warning("Could not connect to Slack: %s", exc)
             self.state, self.detail = "error", f"Could not reach Slack: {exc}"
             return
-        if decision.ours:
-            await self._connect()
-        else:
-            holder = decision.holder
-            self.state = "standby"
-            self.detail = (
-                f"Slack is handled by {holder.host if holder else 'another machine'}."
-            )
-            log.info("Not connecting to Slack: %s", self.detail)
-
-    async def _connect(self) -> None:
-        assert self.slack is not None and self._notices is not None
-        if self.slack.connected:
-            return
-        await self.slack.connect(self.handle)
         self.state, self.detail = "connected", None
-        await self._notices.connected()
+        async with chat_run_module.session_factory() as db:
+            config = await store.get_config(db)
+            config.online_since = store.now_iso()
+            db.add(config)
+            await db.commit()
         await self._homes()
 
-    async def _lease_loop(self) -> None:
-        assert self._lease is not None
+    async def _reconnect_loop(self) -> None:
+        """Connect again whenever the connection is down, as long as Slack is on."""
         while not self._stop.is_set():
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(
-                    self._stop.wait(), timeout=settings.slack.lease_heartbeat
+                    self._stop.wait(), timeout=settings.slack.reconnect_interval
                 )
             if self._stop.is_set() or self.slack is None:
                 return
-            try:
-                if not self.slack.connected:
-                    await self._connect_if_ours()
-                elif not await self._lease.heartbeat():
-                    # Taken over: the other machine says what it needs to.
-                    await self.slack.disconnect()
-                    if self._notices is not None:
-                        self._notices.cancel()
-                    holder = (await self._lease.check()).holder
-                    self.state = "standby"
-                    self.detail = f"Slack was taken over by {holder.host if holder else 'another machine'}."
-            except Exception:
-                log.exception("Slack lease heartbeat failed")
+            if not self.slack.connected:
+                await self._connect()
 
     async def _every(
         self, interval: float, job: Callable[[], Coroutine[Any, Any, Any]]
@@ -298,10 +238,6 @@ class SlackService:
     async def _homes(self) -> None:
         if self._home is not None:
             await self._home.publish_all()
-
-    async def _before_sleep(self) -> None:
-        if self.slack is not None and self.slack.connected and self._notices:
-            await self._notices.going_offline()
 
     def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         self._tasks.append(asyncio.create_task(coro))
@@ -504,11 +440,7 @@ async def restart() -> None:
     global service
     kwargs: dict[str, Any] = {}
     if service is not None:
-        kwargs = {
-            "transport_factory": service._factory,
-            "host": service._host,
-            "watch_power": service._watch_power,
-        }
+        kwargs = {"transport_factory": service._factory, "host": service._host}
         await service.stop()
     await start(**kwargs)
 

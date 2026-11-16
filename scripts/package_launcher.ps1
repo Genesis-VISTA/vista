@@ -6,8 +6,6 @@
 # Windows counterpart of package_launcher.sh, step for step.
 #
 #   .\vista.cmd            first-run setup if needed, then start and open the window
-#   .\vista.cmd -Service   start the services with no window, as VISTA's background
-#                          service (what the login item runs); see service.json
 #   .\vista.cmd --help     show this
 #
 # VISTA.exe runs this script itself, hidden, with -Supervised -Progress jsonl:
@@ -51,7 +49,6 @@ if (Test-Path "$PACKAGE\VERSION") { $VERSION = (Get-Content "$PACKAGE\VERSION" -
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 $SUPERVISED = $false
-$SERVICE = $false
 $PROGRESS_FORMAT = ''
 $PROGRESS_STARTED = $false
 $CURRENT_PHASE = 'preflight'
@@ -100,8 +97,6 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
     exit 0
   } elseif ($arg -eq '-Supervised') {
     $SUPERVISED = $true
-  } elseif ($arg -eq '-Service' -or $arg -eq '--service') {
-    $SERVICE = $true
   } elseif ($arg -eq '-Progress' -and $i + 1 -lt $argv.Count) {
     $i++
     $PROGRESS_FORMAT = $argv[$i]
@@ -114,7 +109,6 @@ for ($i = 0; $i -lt $argv.Count; $i++) {
 # keeps either from becoming an accidental user-facing mode.
 if ($SUPERVISED -and $PROGRESS_FORMAT -ne 'jsonl') { $SUPERVISED = $false; Die '-Supervised requires -Progress jsonl' }
 if (-not $SUPERVISED -and $PROGRESS_FORMAT) { Die '-Progress jsonl requires -Supervised' }
-if ($SERVICE -and $SUPERVISED) { $SUPERVISED = $false; Die '-Service and -Supervised cannot be used together' }
 
 if ($SUPERVISED) {
   Send-StartupEvent preflight running -Label 'Checking this computer'
@@ -289,7 +283,6 @@ $env:VISTA_VERSION = $VERSION
 # The build's commit, which Settings > About shows beside the version.
 $env:VISTA_COMMIT = [string]$manifest.commit
 $env:VISTA_DATA_DIR = $STATE
-$env:VISTA_PACKAGE_DIR = $PACKAGE
 $env:VISTA_MCP_SERVERS_PATH = "$PACKAGE\app\mcp_servers"
 $env:VISTA_MCP_LOCAL_HPC_JOBS_DIR = "$PACKAGE\app\hpc_jobs"
 $env:VISTA_HPC_JOBS_DIR = "$PACKAGE\app\hpc_jobs"
@@ -298,10 +291,6 @@ $env:VISTA_DATA_PAYLOAD_DIR = "$STATE\vista-data"
 $env:VISTA_MCP_URL = "http://127.0.0.1:$MCP_PORT/mcp"
 $env:VISTA_BACKEND_URL = "http://127.0.0.1:$BACKEND_PORT"
 $env:VISTA_BACKEND_PORT = $BACKEND_PORT
-# A package sets no database key of its own, so the backend makes one for this
-# install and keeps it in the OS secret store rather than using the public
-# development key. A key the caller sets wins.
-if (-not $env:VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE) { $env:VISTA_BACKEND_ENCRYPTION_KEY_IN_SECRET_STORE = 'true' }
 $env:HF_HOME = "$STATE\huggingface"
 # A cache miss must fail loudly rather than quietly reaching the network: the
 # weights ship inside the package precisely so this works offline.
@@ -328,7 +317,7 @@ $LOGS = "$STATE\logs"
 # alone and is for the build's smoke test, which has no one to look at a window.
 # The manifest writes it with /, which cmd can misread as a switch.
 $WINDOW_EXE = if ($manifest.window) { $manifest.window.exe.Replace('/', '\') } else { '' }
-if (-not $SUPERVISED -and -not $SERVICE -and $env:VISTA_NO_WINDOW -ne '1') {
+if (-not $SUPERVISED -and $env:VISTA_NO_WINDOW -ne '1') {
   if (-not $WINDOW_EXE -or -not (Test-Path "$PACKAGE\$WINDOW_EXE")) {
     Die 'this package has no VISTA window; rebuild it with build_local_package.sh.'
   }
@@ -366,36 +355,6 @@ $CURRENT_PHASE = 'resources'
 Send-StartupEvent resources running -Label 'Installing bundled resources'
 
 New-Item -ItemType Directory -Force -Path $STATE, $LOGS | Out-Null
-
-# --- background service ------------------------------------------------------
-
-# -Service is what the login item runs. It records itself in service.json once
-# the interface answers, so the VISTA application can open a window onto it
-# instead of starting a second stack, and removes the file when it stops. A
-# file whose process is gone is left from a crash -- or from `schtasks /End`,
-# which runs no cleanup -- and is replaced; the application checks the pid too.
-# Join-Path, not "\": the .NET call in Write-ServiceFile does not read "\" as a
-# separator off Windows, so the file it wrote was not the one Move-Item looked for.
-$SERVICE_FILE = Join-Path $STATE 'service.json'
-$SERVICE_WRITTEN = $false
-if ($SERVICE -and (Test-Path $SERVICE_FILE)) {
-  $running = $null
-  try { $running = (Get-Content -Raw -Encoding UTF8 $SERVICE_FILE | ConvertFrom-Json).pid } catch {}
-  if ($running -and (Get-Process -Id $running -ErrorAction SilentlyContinue)) {
-    Die "VISTA's background service is already running (process $running)."
-  }
-  Remove-Item -Force $SERVICE_FILE -ErrorAction SilentlyContinue
-}
-
-function Write-ServiceFile([string]$Url) {
-  $line = '{"pid": ' + $PID + ', "url": ' + (ConvertTo-JsonString $Url) +
-    ', "version": ' + (ConvertTo-JsonString $VERSION) +
-    ', "started_at": ' + (ConvertTo-JsonString ([DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'))) + '}'
-  $tmp = "$SERVICE_FILE.$PID"
-  [IO.File]::WriteAllText($tmp, $line + "`n", [Text.UTF8Encoding]::new($false))
-  Move-Item -Force $tmp $SERVICE_FILE
-  $script:SERVICE_WRITTEN = $true
-}
 
 $FIRST_RUN = -not (Test-Path "$STATE\vista.db")
 
@@ -620,8 +579,6 @@ function Start-VistaService([string]$Name, [string]$Command) {
 # sandbox servers the backend spawned -- which is what `kill` on a process group
 # does in package_launcher.sh.
 function Stop-VistaServices {
-  # First, so nothing opens a window onto services that are going away.
-  if ($SERVICE_WRITTEN) { Remove-Item -Force $SERVICE_FILE -ErrorAction SilentlyContinue }
   Send-StartupEvent stopping running -Label 'Stopping VISTA'
   Log ''
   Log 'Stopping VISTA...'
@@ -731,14 +688,6 @@ try {
     Log ''
     Log "VISTA is running at $UI_URL (supervised by the VISTA application)"
     Wait-ForStopRequest
-    exit 0
-  }
-
-  if ($SERVICE) {
-    Write-ServiceFile $UI_URL
-    Log ''
-    Log "VISTA is running at $UI_URL (background service)"
-    $services | Wait-Process
     exit 0
   }
 

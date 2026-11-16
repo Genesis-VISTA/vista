@@ -34,9 +34,7 @@ async def get_config(session: AsyncSession) -> SlackConfigTable:
     """The settings row, created with every default on first use."""
     row = await session.get(SlackConfigTable, 1)
     if row is None:
-        row = SlackConfigTable(
-            id=1, allowed_team_ids=[], allowed_channel_ids=[], lease_status=None
-        )
+        row = SlackConfigTable(id=1, allowed_team_ids=[], allowed_channel_ids=[])
         session.add(row)
         await session.flush()
     return row

@@ -23,6 +23,30 @@ def no_real_slack(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_real_connection(request, monkeypatch):
+    """
+    A service started by a settings save connects through a fake, never Socket
+    Mode, and an async test's is stopped when it ends.
+    """
+    from vista_backend.slack import service
+
+    from .fakes import FakeTransport
+
+    monkeypatch.setattr(service, "default_transport", lambda bot, app: FakeTransport())
+    monkeypatch.setattr(service, "service", None)
+    if inspect.iscoroutinefunction(request.function):
+        request.getfixturevalue("stop_slack_service")
+
+
+@pytest.fixture
+async def stop_slack_service():
+    from vista_backend.slack import service
+
+    yield
+    await service.stop()
+
+
+@pytest.fixture(autouse=True)
 def slack_db_is_the_test_db(request, monkeypatch):
     """Slack code opens its own sessions; every one must reach the test's database."""
     from sqlmodel.ext.asyncio.session import AsyncSession
@@ -49,7 +73,6 @@ def audit_log_in_tmp(tmp_path, monkeypatch):
 async def slack_config(session) -> SlackConfigTable:
     row = await store.get_config(session)
     row.enabled = True
-    row.handle_here = True
     row.allowed_team_ids = [TEAM]
     session.add(row)
     await session.commit()
@@ -81,22 +104,3 @@ async def project(session, name: str = "molten-salts"):
     await session.commit()
     await session.refresh(row)
     return row
-
-
-@pytest.fixture(autouse=True)
-def no_real_login_item(tmp_path, monkeypatch):
-    """Background mode in a test home, its commands recorded and never run."""
-    from vista_backend.services import background_service
-
-    ran: list[list[str]] = []
-    service = background_service.BackgroundService(
-        platform="darwin",
-        package=tmp_path / "package",
-        state=tmp_path / "state",
-        home=tmp_path / "home",
-        uid=501,
-        run=ran.append,
-    )
-    service.ran = ran  # type: ignore[attr-defined]
-    monkeypatch.setattr(background_service, "current", lambda: service)
-    return service

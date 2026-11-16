@@ -159,7 +159,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        # First, while runs and the connection are still up: the offline notice.
+        # First, while the connection is still up: the App Home's offline view.
         with contextlib.suppress(Exception):
             await slack_service.stop()
         update_task.cancel()

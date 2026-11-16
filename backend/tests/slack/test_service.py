@@ -10,10 +10,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from vista_backend.db.schemas import SlackAuditTable, SlackConfigTable
 from vista_backend.services import chat_run, conversation
 from vista_backend.services.chat_run import ChatRun
-from vista_backend.slack import confirm, gate, limits, service, store
+from vista_backend.slack import confirm, gate, limits, service
 from vista_backend.slack.events import HomeOpened, Message
-from vista_backend.slack.lease import EVENT_TYPE
-from vista_backend.slack.notices import offline_text
 from vista_backend.slack.service import SlackService
 from vista_backend.utils import secret_store
 
@@ -54,7 +52,7 @@ async def on(db, session, slack_config):
 
 
 def _service() -> SlackService:
-    return SlackService(host="lab-mac", watch_power=False)
+    return SlackService(host="lab-mac")
 
 
 def _dm(text: str, ts="10.0", user="U1", thread_ts=None) -> Message:
@@ -81,26 +79,15 @@ async def test_nothing_starts_while_slack_is_off(db, slack):
     assert confirm._preview is confirm.no_preview
 
 
-async def test_not_this_machine_or_no_tokens(db, slack, session, slack_config):
-    row = await store.get_config(session)
-    row.handle_here = False
-    session.add(row)
-    await session.commit()
+async def test_no_tokens_nothing_starts(db, slack, slack_config):
     svc = _service()
-    assert await svc.start() is False
-    assert svc.detail == "This machine is not set to handle Slack."
-
-    row = await store.get_config(session)
-    row.handle_here = True
-    session.add(row)
-    await session.commit()
     assert await svc.start() is False
     assert "token" in (svc.detail or "")
     assert slack.made == []  # type: ignore[attr-defined]
 
 
 async def test_lifespan_module_start_returns_none_when_off(db, slack):
-    assert await service.start(watch_power=False) is None
+    assert await service.start() is None
     assert service.status() == ("off", "Slack is off.")
     await service.stop()
 
@@ -116,7 +103,6 @@ async def test_on_it_connects_and_installs_the_checks(on, slack, session):
     assert gate._refusal is limits.refusal
     assert confirm._preview is service.preview_job
     assert "U1" in slack.homes, "the Home tab is published on connect"
-    assert slack.pins.get("DU1"), "the lease is pinned in the first DM"
 
     await svc.stop()
     assert not slack.connected and svc.state == "off"
@@ -124,41 +110,58 @@ async def test_on_it_connects_and_installs_the_checks(on, slack, session):
     assert svc._tasks == []
 
 
-async def test_stop_says_offline_and_releases_the_lease(on, slack, session):
+async def test_connect_records_when_for_the_home_tab(on, slack, session):
+    svc = _service()
+    await svc.start()
+
+    async with AsyncSession(session.bind) as s:
+        config = await s.get(SlackConfigTable, 1)
+        assert config is not None and config.online_since is not None
+    await svc.stop()
+
+
+async def test_stop_marks_the_home_offline_and_sends_no_dm(on, slack, session):
     await link(session, "U1")
     svc = _service()
     await svc.start()
 
     await svc.stop()
 
-    texts = [m.text for m in slack.in_channel("DU1")]
-    assert offline_text("lab-mac") in texts
     assert "Offline" in json.dumps(slack.homes["U1"])
-    status = next(m for m in slack.messages if m.metadata)
-    assert status.metadata["event_payload"]["released"] is True
+    assert slack.in_channel("DU1") == [], "no going-offline notice"
 
 
-async def test_another_machine_has_slack_so_stand_by(on, slack, session):
-    await link(session, "U1")
-    other = {
-        "event_type": EVENT_TYPE,
-        "event_payload": {
-            "instance_id": "other",
-            "host": "office-linux",
-            "heartbeat_at": store.now_iso(),
-            "released": False,
-        },
-    }
-    await slack.pin("DU1", await slack.post("DU1", "VISTA status", metadata=other))
+async def test_a_failed_connect_is_reported_and_retried(on, slack, monkeypatch):
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings.slack, "reconnect_interval", 0.01)
+    slack.fail_next["connect"] = "invalid_auth"
     svc = _service()
 
     assert await svc.start() is True
+    assert svc.state == "error" and "invalid_auth" in (svc.detail or "")
 
-    assert not slack.connected
-    assert svc.state == "standby" and "office-linux" in (svc.detail or "")
-
-    await svc.take_over()
+    for _ in range(100):
+        if slack.connected:
+            break
+        await asyncio.sleep(0.01)
     assert slack.connected and svc.state == "connected"
+    await svc.stop()
+
+
+async def test_a_dropped_connection_is_connected_again(on, slack, monkeypatch):
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings.slack, "reconnect_interval", 0.01)
+    svc = _service()
+    await svc.start()
+
+    await slack.disconnect()
+    for _ in range(100):
+        if slack.connected:
+            break
+        await asyncio.sleep(0.01)
+    assert slack.connected and slack.connects == 2
     await svc.stop()
 
 
@@ -317,16 +320,6 @@ async def test_preview_reads_the_mcp_preview(db, session, monkeypatch):
     assert asked == ["preview_hpc_job"]
     assert fields["Account"] == "MAT123" and fields["System"] == "frontier"
     assert await service.preview_job(chat_id, "run_bash", {}) == {}
-
-
-def test_sleep_is_watched_on_a_desktop_only(monkeypatch):
-    from vista_backend.config import settings
-
-    monkeypatch.setattr(settings, "deployment", "hosted")
-    assert SlackService(host="h")._watch_power is False
-    monkeypatch.setattr(settings, "deployment", "desktop")
-    assert SlackService(host="h")._watch_power is True
-    assert SlackService(host="h", watch_power=False)._watch_power is False
 
 
 def test_the_conversation_module_is_what_is_patched():

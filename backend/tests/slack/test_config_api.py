@@ -29,7 +29,6 @@ async def test_a_default_install_has_slack_off(session):
     view = await get_slack_config(session)
 
     assert view.enabled is False
-    assert view.handle_here is False
     assert view.has_bot_token is False and view.has_app_token is False
     assert view.locked is False
     assert (view.max_nodes, view.max_walltime_minutes, view.max_jobs_per_day) == (
@@ -37,7 +36,6 @@ async def test_a_default_install_has_slack_off(session):
         120,
         5,
     )
-    assert view.prevent_sleep is False
 
 
 @pytest.mark.anyio

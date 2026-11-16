@@ -1,5 +1,5 @@
 """
-Secrets kept out of the database: Slack's tokens and the database's own key.
+Secrets kept out of the database: Slack's tokens.
 
 Where they live is a backend, chosen by `settings.secrets.backend`:
 
@@ -41,9 +41,8 @@ SERVICE = "VISTA"
 
 SLACK_BOT_TOKEN = "slack-bot-token"
 SLACK_APP_TOKEN = "slack-app-token"
-DB_ENCRYPTION_KEY = "db-encryption-key"
 
-NAMES = (SLACK_BOT_TOKEN, SLACK_APP_TOKEN, DB_ENCRYPTION_KEY)
+NAMES = (SLACK_BOT_TOKEN, SLACK_APP_TOKEN)
 """ Every secret VISTA keeps; a directory backend names its files after these. """
 
 

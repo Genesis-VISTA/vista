@@ -21,7 +21,6 @@ def _config(**kw) -> SlackConfigTable:
         id=1,
         allowed_team_ids=[],
         allowed_channel_ids=[],
-        lease_status=None,
         **{"max_nodes": 4, "max_walltime_minutes": 120, "max_jobs_per_day": 2, **kw},
     )
 

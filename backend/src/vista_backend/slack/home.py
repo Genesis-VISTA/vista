@@ -10,6 +10,7 @@ ending, and every five minutes.
 
 import asyncio
 import logging
+import socket
 from datetime import datetime
 from typing import Any
 
@@ -20,10 +21,15 @@ from ..services import chat_run as chat_run_module
 from . import credentials, store
 from .credentials import Expiry
 from .format import context, section
-from .lease import host_name
 from .transport import SlackTransport
 
 log = logging.getLogger(__name__)
+
+
+def host_name() -> str:
+    """The machine VISTA runs on, as the Home tab names it."""
+    return socket.gethostname() or "unknown host"
+
 
 INTERVAL = 5 * 60.0
 RECENT = 5

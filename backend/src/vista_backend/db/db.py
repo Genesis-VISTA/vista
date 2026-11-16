@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
-from ..utils.crypto import reencrypt_legacy_values
 from .schema_check import schema_problems
 from .seed import (
     AI_SAFETY_KB_ID,
@@ -370,7 +369,6 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
-        await conn.run_sync(reencrypt_legacy_values)
         await conn.run_sync(_retire_i2_choices)
 
     await seed_db(engine)
