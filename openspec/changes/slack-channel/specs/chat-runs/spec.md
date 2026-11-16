@@ -7,8 +7,10 @@ submission, SHALL wait until they are answered or the run is stopped. They SHALL
 while VISTA is running, within a 24-hour ceiling on any single MCP tool call. A client that
 re-attaches SHALL be shown every prompt that is still unanswered, and SHALL NOT be shown prompts
 that were already answered. Answers to prompts SHALL NOT be stored with the run's events.
-In a run started from Slack, a tool approval SHALL be declined when it is unanswered after 10
-minutes, and a form or URL elicitation SHALL be declined at once without being shown in Slack.
+In a run of a conversation started from Slack, a tool approval or a form whose only field is a
+choice among fixed answers SHALL be shown in Slack and declined when it is unanswered after 10
+minutes, and any other form or URL elicitation SHALL be declined at once without being shown in
+Slack.
 
 #### Scenario: Lux login after a long absence
 
@@ -27,14 +29,19 @@ minutes, and a form or URL elicitation SHALL be declined at once without being s
 - **WHEN** two views show the same pending prompt and the researcher answers it in one
 - **THEN** the other view stops showing it
 
-
 #### Scenario: Approval in a Slack run expires
 
-- **WHEN** a run started from Slack asks for a tool approval and nobody answers for 10 minutes
+- **WHEN** a run in a Slack conversation asks for a tool approval and nobody answers for 10 minutes
 - **THEN** the tool call is declined and the run continues to its answer
+
+#### Scenario: A choice in a Slack run
+
+- **WHEN** a run in a Slack conversation reaches a tool that asks to Approve or Decline a file
+  transfer
+- **THEN** the question is shown in Slack as Approve and Decline buttons, and a tap answers it
 
 #### Scenario: Login form in a Slack run
 
-- **WHEN** a run started from Slack reaches a tool that asks for a Lux login
+- **WHEN** a run in a Slack conversation reaches a tool that asks for a Lux login
 - **THEN** the form is declined immediately and the run's answer says to log in from the desktop
   app

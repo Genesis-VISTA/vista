@@ -1,5 +1,10 @@
 # A Slack relay (design note, not built)
 
+> **Superseded.** This note is kept for reference only. The plan VISTA is following instead is a
+> facility service: VISTA itself runs on a facility system, one VISTA per researcher, started on
+> demand, and one shared Slack app routes each Slack user to their own VISTA. No relay forwards
+> events to a researcher's laptop. VISTA's side is still a second `SlackTransport`, as below.
+
 VISTA's Slack integration ([slack.md](slack.md)) connects from the researcher's own machine
 over Socket Mode. That keeps every token and every result on that machine, at two costs: each
 workspace needs its own Slack app made from the manifest, and a message sent while VISTA is off

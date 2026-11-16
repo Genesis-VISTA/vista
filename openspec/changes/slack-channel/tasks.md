@@ -1,62 +1,60 @@
 # Tasks
 
-## 1. Shared run path
+The rework of !163 onto main's conversation inbox. !163's original task list is in git history
+(`openspec/changes/slack-channel/tasks.md` at `origin/slack-plugin`).
 
-- [x] 1.1 Add `services/conversation.start_turn` and route `api/agent.py` through it; existing `backend/tests/test_agent_api*.py` and chat-run tests pass unchanged
-- [x] 1.2 Add `channel` to `ChatRun` and `ProjectAgent.run_stream`, reset per run; test that a pooled agent serves an app run after a Slack run with app behaviour
+## 1. Onto main
 
-## 2. Data and secrets
+- [ ] 1.1 Merge `origin/main` into `slack-on-inbox` and resolve the conflicts in `agents/agents.py`, `api/agent.py`, `services/chat_run.py`, `submit_job_mcp.py`, `docs/site.toml` and `scripts/docs_site/test_sync_docs.py`, keeping main's inbox path in `api/agent.py`; backend, MCP and Slack tests pass (`./scripts/ci-local.sh backend mcp test`)
 
-- [x] 2.1 Add tables `slack_config`, `slack_link`, `slack_link_code`, `slack_thread`, `slack_pending`, `slack_detail`, `slack_reminder`, `slack_audit`, `hpc_job_record` and `chat_session.origin`; `init_db` on an existing DB adds them (test in `backend/tests/slack/test_schema.py`)
-- [x] 2.2 `utils/secret_store.py` over `keyring`, refusing fail/null backends; tests with an in-memory keyring backend
-- [x] 2.3 Per-install encryption key in the keyring with one-time re-encryption from the dummy key; `backend/tests/test_encryption_key.py`
-- [x] 2.4 `SlackSettings` in `config.py` and `api/slack.py` config endpoints with write-only tokens; API tests
+## 2. Laptop extras out
 
-## 3. Access
+- [ ] 2.1 Remove the lease (`slack/lease.py`), offline/online notices (`slack/notices.Notices`, keeping `CredentialReminder`), sleep (`slack/power.py`) and their settings, API fields, UI controls and tests; Slack still connects and answers in `test_service.py`
+- [ ] 2.2 Remove background mode: `services/background_service.py`, the launchers' `--service` and `service.json`, `electron/src/background-service.js` and its use in `main.js`, the installers' service stop/start, their tests and the Settings toggle; `./scripts/ci-local.sh electron install launcher` pass
+- [ ] 2.3 Remove the per-install database key (`encryption_key_in_secret_store`, `reencrypt_legacy_values`, the launchers' export) and `test_encryption_key.py`; `secret_store` keeps only the Slack tokens
 
-- [x] 3.1 Workspace/channel allowlist and link lookup middleware; `backend/tests/slack/test_access.py` (unlinked refused, rate-limited refusal, foreign workspace ignored, channel allowlist)
-- [x] 3.2 Link codes from DM and `POST /slack/links`; tests for expiry and wrong code
+## 3. Turns through the inbox
 
-## 4. Transport and relay
+- [ ] 3.1 Slack messages enter with `inbox.put` and `chat_run_registry.wake`; remove `services/conversation.start_turn`, `ThreadQueue`, `QUEUE_FULL` and `BUSY`; test: three messages sent during a running turn are all answered, in order, and a message waiting across a restart is answered after it
+- [ ] 3.2 `wake` takes the run's channel from `chat_session.origin` and passes it to `run_stream`; test that a self-started turn in a Slack conversation is a Slack turn and one in an app conversation is not
+- [ ] 3.3 The relay follows every run of a Slack conversation, self-started ones included (a registry hook on run start), and records each turn in the transcript once; test with a job-watch result
+- [ ] 3.4 React 👀 to a queued Slack message and ✅ when a turn takes it; add `reactions:write` to `manifest.yaml`; `FakeTransport` records reactions
 
-- [x] 4.1 `SlackTransport`, `FakeTransport` (tests/slack/fakes.py) and Bolt Socket Mode implementation; a unit test that the Bolt app acks and dispatches a fake event
-- [x] 4.2 Thread→conversation mapping and per-thread queue; `backend/tests/slack/test_threads.py`
-- [x] 4.3 `RunRelay` progress message with throttled edits and transcript writes; tests against a scripted `ChatRun`
-- [x] 4.4 `slack/format.py` mrkdwn, summary-first, chunking, fallbacks, Show more; `backend/tests/slack/test_format.py`
+## 4. Read-only on the desktop
 
-## 5. Confirmation and safeguards
+- [ ] 4.1 The agent-run and prompt-answer endpoints refuse a Slack conversation with `409`; Stop still works; API tests
+- [ ] 4.2 The UI disables the message box of a Slack conversation with a note that it continues in Slack and shows its prompts without answer controls; component test
 
-- [x] 5.1 `SlackGateCapability`, form decline in Slack runs, read-only tags on native tools; tests that read-only runs and others raise approval
-- [x] 5.2 Block Kit confirmation, requester-only, 10-minute expiry, recheck on Confirm; `backend/tests/slack/test_confirm.py`
-- [x] 5.3 Limits (nodes, walltime, jobs/day) and lock/unlock; tests in `test_limits.py`
-- [x] 5.4 `offer_choices` buttons; `backend/tests/slack/test_choices.py`
+## 5. Confirmation and limits
 
-## 6. HPC tools and jobs
+- [ ] 5.1 The confirmed set: `submit_hpc_job`, `agenthpc_submit_parameter_set`, `cancel_hpc_job` and the `agenthpc` cancels; `cancel_hpc_job` uses its card layout; tests in `test_gate.py`
+- [ ] 5.2 Parse approval arguments into a dict when the model sent them as a string, so the card, preview and recheck see them; test with string arguments (the blank-card bug)
+- [ ] 5.3 Check nodes and walltime against `preview_hpc_job`'s resolved values, for both submit tools; test the "defaults over the limit" scenario
+- [ ] 5.4 Confirm requires `action_id == CONFIRM`; tag `watch_hpc_job` and `list_tasks` read-only
+- [ ] 5.5 A form whose only field is a choice (a transfer's Approve/Decline) is shown in Slack as buttons, requester-only, 10-minute expiry; other forms and URLs are declined at once; tests in `test_choices.py`
+- [ ] 5.6 In a turn VISTA started, the card @mentions the conversation's Slack user
 
-- [x] 6.1 MCP `preview_hpc_job` and `get_hpc_queue_status` (read-only) with hermetic tests in `mcp_servers/vista_mcp_server/tests/test_queue_and_preview.py`
-- [x] 6.2 Record jobs on successful submit for every channel; `list_my_recent_jobs`; `backend/tests/slack/test_job_refs.py`
-- [x] 6.3 `JobMonitor` and notifications (DM or in-thread mention, desktop-jobs setting, offline catch-up, once only); `backend/tests/slack/test_job_monitor.py`
+## 6. Job notices from watches
 
-## 7. Presence
+- [ ] 6.1 A successful submission in a Slack conversation registers a job watch; its result starts a turn posted in the thread; test with a fake watch reader
+- [ ] 6.2 Remove `slack/jobs.JobMonitor`, `notify_desktop_jobs` and `notify_in_thread`, their UI and tests; keep `hpc_job_record` for `list_my_recent_jobs` and the daily limit
 
-- [x] 7.1 Lease in Slack, takeover, foreign-lease disconnect; `backend/tests/slack/test_lease.py`
-- [x] 7.2 Offline/online notices with 2-minute debounce, shutdown hook; `backend/tests/slack/test_notices.py`
-- [x] 7.3 Sleep notifications and sleep prevention per OS (`slack/power.py`), optional; unit tests for command construction only
-- [x] 7.4 Credential reminders at 24 h and 2 h, post-expiry refusal; `backend/tests/slack/test_credential_reminders.py`
-- [x] 7.5 App Home view; snapshot test of the blocks
-- [x] 7.6 Audit log with redaction; `backend/tests/slack/test_audit.py`
-- [x] 7.7 Lifespan wiring: nothing starts with Slack off (test)
+## 7. Review fixes
 
-## 8. Desktop
+- [ ] 7.1 `format.chunks` terminates on an unclosed code fence, and `_prose` on a stray NUL; escape `&`, `<`, `>` in code too; tests with those inputs
+- [ ] 7.2 Button taps in DMs pass the channel allowlist; test in `test_access.py`
+- [ ] 7.3 `SocketModeTransport.connect` records the socket only once open; a failed connect is reported and retried; test
+- [ ] 7.4 `stop()` and `close_stale` decline open cards' prompts; test that a settings restart with an open card leaves the run unblocked
+- [ ] 7.5 A card that cannot be posted declines its prompt, and a turn that fails replaces the progress message; tests in `test_relay.py`
 
-- [x] 8.1 Settings → Slack section (tokens, allowlists, links, limits, lock, notifications, handle here, sleep, background) and Slack badge; `npm run lint` and colour check pass
-- [x] 8.2 Launcher `--service` with `service.json`; `./scripts/ci-local.sh launcher`
-- [x] 8.3 Login item install/remove (`services/background_service.py`) for launchd, systemd, schtasks; unit tests of generated files and commands
-- [x] 8.4 Electron attaches to a running service; `cd electron && npm test`
-- [x] 8.5 Installers stop/restart the service; `./scripts/ci-local.sh install`
+## 8. Docs
 
-## 9. Docs and verification
+- [ ] 8.1 `docs/slack.md`: the manifest inline (with a test that it matches `manifest.yaml`), `reactions:write`, the read-only desktop view, the confirmation rules, a note that some workspaces need an admin to approve new apps, one machine at a time; remove "Away from your desk" and the "Standing by" troubleshooting
+- [ ] 8.2 Mark `docs/slack-relay.md` superseded by the facility-service plan; keep both pages in `docs/site.toml`; `./scripts/ci-local.sh docs` passes
+- [ ] 8.3 A short Slack section in `AGENTS.md`: Slack enters through the inbox, a conversation's channel is its origin, the confirmed set and where to add a new cluster action
 
-- [x] 9.1 `backend/src/vista_backend/slack/manifest.yaml`, `docs/slack.md`, `docs/slack-relay.md`; manifest parses as YAML in a test
-- [x] 9.2 Full `./scripts/ci-local.sh` passes
+## 9. Verify
+
+- [ ] 9.1 Full `./scripts/ci-local.sh` passes
+- [ ] 9.2 By hand on this Mac with Beam on Holly: a DM, a queued message, a submission with Confirm, its watch reported in the thread, a transfer approved by buttons, lock, and the read-only desktop view
 - [ ] 9.3 Manual mobile checklist (iOS, Android) — live, not in PR CI
