@@ -86,7 +86,7 @@ dumped = Settings.model_validate({}).model_dump(mode="json")
 print(json.dumps({"fields": sorted(dumped), "model": settings.model}))
 """,
     )
-    assert result["model"] == "openai:claude-sonnet"
+    assert result["model"] == "openai:claude-sonnet-5-5"
     # Sanity check that we really loaded the object and not a stub.
     assert {"model", "env", "data_dir", "database_url"} <= set(result["fields"])
 
@@ -94,7 +94,7 @@ print(json.dumps({"fields": sorted(dumped), "model": settings.model}))
 def test_default_inference_target_is_the_configured_endpoint(tmp_path: Path) -> None:
     """
     With nothing set, requests must go to the AmSC endpoint. The OpenAI SDK's
-    own default is `api.openai.com`, where `claude-sonnet` does not exist.
+    own default is `api.openai.com`, where `claude-sonnet-5-5` does not exist.
     """
     result = _probe(
         tmp_path,
@@ -192,7 +192,7 @@ print(json.dumps({
     assert result["client_base_url"].rstrip("/") == "https://configured.example/v1"
     assert "must-not-be-used" not in result["client_base_url"]
     assert result["api_key"] == "sentinel-key"
-    assert result["model_name"] == "claude-sonnet"
+    assert result["model_name"] == "claude-sonnet-5-5"
 
 
 def test_non_openai_providers_still_resolve_normally(tmp_path: Path) -> None:

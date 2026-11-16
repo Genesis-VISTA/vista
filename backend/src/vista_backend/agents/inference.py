@@ -5,7 +5,7 @@ Construction of the chat model and its inference provider.
 `infer_provider`, which builds every OpenAI-compatible provider from the
 *process environment* — `OPENAI_BASE_URL` and `OPENAI_API_KEY`. Only
 `.env.sample` sets those, so a VISTA started with no `.env` would resolve
-`openai:claude-sonnet` against `api.openai.com`, where that model does not
+`openai:claude-sonnet-5-5` against `api.openai.com`, where that model does not
 exist, and fail with an authentication error that names the wrong host.
 
 Every agent therefore builds its model through `build_inference_model` here,
@@ -85,7 +85,7 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
         id="mag",
         name="AmSC MAG",
         base_url=AMSC_MAG_BASE_URL,
-        default_model="claude-sonnet",
+        default_model="claude-sonnet-5-5",
         key_field="inference_mag_api_key",
     ),
     "olcf": ProviderPreset(
