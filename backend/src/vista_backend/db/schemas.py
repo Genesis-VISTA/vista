@@ -6,7 +6,7 @@ import re
 import uuid
 from contextvars import ContextVar
 from typing import Annotated as A, Any, Literal, Optional
-from sqlalchemy import JSON, Boolean, Column, Index, String, false, true
+from sqlalchemy import JSON, Boolean, Column, Index, Integer, String, false, true
 from pydantic_ai import UsageLimits
 from pydantic import (
     BaseModel,
@@ -1063,6 +1063,15 @@ class LocalSettingsTable(SQLModel, table=True):
 ChatMessageRole = Literal["user", "assistant", "system", "tool"]
 
 
+class ChatTranscriptEvent(BaseModel):
+    """What started a turn VISTA started, or was delivered into one: a task's result."""
+
+    summary: str
+    """ The one line the row shows. """
+    text: str
+    """ The full result the agent received, shown when the row is expanded. """
+
+
 class ChatTranscriptMessage(BaseModel):
     """
     Minimal persisted chat bubble for the UI.
@@ -1074,6 +1083,8 @@ class ChatTranscriptMessage(BaseModel):
     intermediate: bool | None = None
     run_id: str | None = None
     """ The chat run that drew this bubble, so replaying that run can redraw it without duplicates. """
+    event: ChatTranscriptEvent | None = None
+    """ Set on the row drawn for a task's result (openspec change background-tasks). """
 
 
 ChatRunState = Literal["idle", "running", "done", "failed", "interrupted", "stopped"]
@@ -1163,6 +1174,127 @@ class ChatSessionTable(ChatSessionBase, table=True):
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+    # What may start a turn from the inbox (openspec change background-tasks,
+    # design Decision 3). Server defaults keep them additive.
+    auto_turns: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
+    )
+    """ Turns VISTA started in a row without a message from the researcher. """
+    quiet: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+    """ Set by Stop or an interrupted turn: only a researcher message starts a turn. """
+
+
+class InboxItemTable(SQLModel, table=True):
+    """
+    One thing addressed to a conversation's agent: a researcher `message` or a
+    background task's `task_event` (openspec change background-tasks, Decision 1).
+
+    `queued` until a turn takes it, then `taken`; a queued message the researcher
+    deletes, or one Stop returns to the message box, is `withdrawn`. The integer id
+    is the arrival order.
+    """
+
+    __tablename__: str = "inbox_item"
+    __table_args__ = (Index("ix_inbox_item_chat_state", "chat_session_id", "state"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    kind: str
+    """ `message` or `task_event`. """
+    text: str
+    """ What the agent receives. """
+    payload: A[
+        dict[str, Any] | None,
+        Field(default=None, sa_column=Column(JSON, nullable=True)),
+    ]
+    """ For a `task_event`, what the UI's event row shows (task, state, runtime). """
+    state: str = "queued"
+    wakes: bool = True
+    """ False for a note that waits for the researcher's next message. """
+    created_at: str
+    taken_at: str | None = None
+
+
+class BackgroundTaskTable(SQLModel, table=True):
+    """
+    Work a conversation's agent started that outlives its turn (openspec change
+    background-tasks, Decision 4): a sandbox `command`, or a `job_watch` on a
+    cluster job. Kept until the conversation is deleted.
+
+    A command is `running`, then `exited`, `stopped`, `timed_out` or
+    `interrupted`; a watch is `watching` or `paused`, then `ended` or `stopped`.
+    """
+
+    __tablename__: str = "background_task"
+    __table_args__ = (Index("ix_background_task_chat", "chat_session_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    """ Also the sandbox's task id: its `.pid`, `.exit` and log are named after it. """
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    project_id: uuid.UUID
+    label: str
+    """ What the agent and the researcher call it, such as `bg-3`. """
+    kind: str
+    """ `command` or `job_watch`. """
+    state: str
+    command: str | None = None
+    job_id: str | None = None
+    cluster: str | None = None
+    log_path: str | None = None
+    """ The log's path inside the sandbox, under /mnt/data/tasks. """
+    timeout_s: int | None = None
+    exit_status: int | None = None
+    last_job_state: str | None = None
+    started_reported: bool = False
+    paused_reason: str | None = None
+    next_poll_at: str | None = None
+    created_at: str
+    ended_at: str | None = None
+
+
+class BackgroundTaskPublic(BaseModel):
+    """A background task as the Background tab shows it."""
+
+    id: uuid.UUID
+    label: str
+    kind: str
+    state: str
+    command: str | None = None
+    job_id: str | None = None
+    cluster: str | None = None
+    log_path: str | None = None
+    timeout_s: int | None = None
+    exit_status: int | None = None
+    last_job_state: str | None = None
+    paused_reason: str | None = None
+    created_at: str
+    ended_at: str | None = None
+    runtime_s: float = 0
+    """ Seconds from its start to its end, or to now while it runs. """
+
+
+class InboxItemPublic(BaseModel):
+    """An inbox item as the API shows it."""
+
+    id: int
+    kind: str
+    text: str
+    payload: dict[str, Any] | None = None
+    state: str
+    created_at: str
+    taken_at: str | None = None
+
+
+class InboxItemEdit(BaseModel):
+    text: str
 
 
 class DisplayedFileTable(SQLModel, table=True):

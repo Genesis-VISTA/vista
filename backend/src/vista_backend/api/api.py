@@ -21,6 +21,9 @@ from ..config import settings
 from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
+from ..services.background_tasks import background_task_registry
+from ..services.background_tasks import recover_at_startup as recover_background_tasks
+from ..services.chat_run import wake_queued_inboxes
 from ..services.collaboration import (
     CollaborationError,
     CollaborationForbidden,
@@ -87,6 +90,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logging.getLogger(__name__).info(
             "Marked chat runs from the last session as interrupted."
         )
+    # Then background tasks (openspec change background-tasks, Decision 7):
+    # lost commands are noted, watches resume, and then every inbox with
+    # something queued may start a turn, as the hold-back rule allows.
+    interrupted, resumed = await recover_background_tasks()
+    if interrupted or resumed:
+        logging.getLogger(__name__).info(
+            "Background tasks: %d interrupted by the last quit, %d watches resumed.",
+            interrupted,
+            resumed,
+        )
+    await wake_queued_inboxes()
 
     # The Hypothesis Lab's repository is a property of each project now, so
     # there is nothing deployment-wide to reconcile at boot — a project's forum
@@ -149,6 +163,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # End runs while their agents still exist, each saving its partial history.
         # Bounded so it fits inside the launcher's 10 s grace on quit.
         await chat_run_registry.stop_all(reason="interrupted", timeout=5)
+        # Background commands end with their sandboxes; the next start marks
+        # them interrupted. Their watchers hold agents, so they go first.
+        await background_task_registry.shutdown()
         # `project_agent_pool.clear()` runs `_cleanup_project_agent` for every entry,
         # which cancels pending elicitations and drops their tracker entries.
         await project_agent_pool.clear()
@@ -178,9 +195,8 @@ async def _missing_inference_credential(
     expected state, and the request cannot be satisfied until the researcher
     supplies a value the server has no way to obtain. `detail` carries the
     message naming the setting and where to enter it, which is the shape
-    `ui/lib/user.ts:extractError` already surfaces. `code` tells it apart from
-    the chat endpoint's other 409, a conversation that is already running a
-    turn (`run_busy`).
+    `ui/lib/user.ts:extractError` already surfaces. `code` names the condition,
+    so a client never has to tell refusals apart by their wording.
     """
     return JSONResponse(
         status_code=409,

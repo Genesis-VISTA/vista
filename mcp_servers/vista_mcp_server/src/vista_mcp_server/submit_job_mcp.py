@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
-from typing import Literal, NoReturn
+from typing import Any, Literal, NoReturn
 
 from fastmcp import FastMCP, Context
 from fastmcp.exceptions import ToolError
@@ -24,13 +24,14 @@ from mcp.types import ToolAnnotations
 
 from .config import settings
 from .lib.iri import (
-    IriClient, IriDefaults, IriError, IriFileNotFound, IriTaskTimeout, client_for,
+    IriClient, IriCredentialRejected, IriDefaults, IriError, IriFileNotFound,
+    IriRateLimited, IriTaskTimeout, client_for,
 )
 from .lib.globus import (
     GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
 )
 from .lib.olcf_token import get_s3m_token_project
-from .lib.user_config import UserConfig, get_vista_meta
+from .lib.user_config import MissingCredential, UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
 from .metrics import stage as metrics_stage
 from . import dry_run, faults
@@ -1242,6 +1243,35 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster) -> str
         # need the per-agent output dir from project_paths to know where it lands.
         host_output_dir = Path(meta.project_paths.require_output_dir())
         return await _get_job_status(cfg, host_output_dir, job_id, cluster=cluster)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+async def read_hpc_job_state(ctx: Context, job_id: str, cluster: Cluster) -> dict[str, Any]:
+    """
+    For VISTA's job watches, not the agent: a submitted job's state alone, as one
+    IRI status call, with no logs and no Globus.
+
+    Answers `{state, exit_code?, message?}`, or a failure the watch can act on:
+    `{error: "rate_limited", retry_after, message}` when the facility asks for a
+    pause, `{error: "access_lost", cluster, message}` when the researcher's
+    token is missing or refused, and `{error: "failed", message}` for anything else.
+    """
+    return await _read_job_state(get_vista_meta(ctx).user, validate_job_id(job_id), cluster)
+
+
+async def _read_job_state(cfg: UserConfig, job_id: str, cluster: Cluster) -> dict[str, Any]:
+    if dry_run.is_dry_job(job_id):
+        state = dry_run.state(job_id)
+        return {"state": state, **({"exit_code": 0} if state == "COMPLETED" else {})}
+    try:
+        with metrics_stage("hpc.state", tool_name="read_hpc_job_state", payload={"cluster": cluster}):
+            return await _iri_for(cfg, cluster).get_job_status(job_id)
+    except IriRateLimited as e:
+        return {"error": "rate_limited", "retry_after": e.retry_after, "message": str(e)}
+    except (MissingCredential, IriCredentialRejected) as e:
+        return {"error": "access_lost", "cluster": cluster, "message": str(e)}
+    except ToolError as e:
+        return {"error": "failed", "message": str(e)}
 
 
 async def _get_job_status(

@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
+from pydantic_ai.messages import ModelRequest, UserPromptPart
 from pydantic_ai.toolsets.function import FunctionToolset
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -34,6 +35,7 @@ from vista_backend.services import (
     chat_run,
     chat_session as chat_session_service,
     displayed_files as displayed_files_service,
+    inbox,
 )
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
@@ -43,6 +45,8 @@ EVENTS = "/projects/{name}/chat-sessions/{id}/run/events"
 STOP = "/projects/{name}/chat-sessions/{id}/run/stop"
 STATUS = "/projects/{name}/chat-runs/status"
 SESSION = "/projects/{name}/chat-session"
+INBOX = "/projects/{name}/chat-sessions/{id}/inbox"
+ITEM = "/projects/{name}/chat-sessions/{id}/inbox/{item}"
 
 
 async def _conversation(session, project) -> uuid.UUID:
@@ -89,26 +93,227 @@ async def _hung_turn(client, project, conversation_id, hung):
     return request
 
 
-async def test_a_send_while_busy_is_a_409_and_changes_nothing(session):
+async def test_a_send_while_busy_is_queued_and_starts_no_second_run(session):
     project = await seed_project(session, tools=["*"])
     conversation = await _conversation(session, project)
 
     with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
         with api_client(session, agent=agent) as (client, _):
             first = await _hung_turn(client, project, conversation, hung)
+            run = chat_run.chat_run_registry.get(conversation)
 
             busy = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "again", "chat_session_id": str(conversation)},
             )
-            assert busy.status_code == 409
-            assert "already has a turn running" in busy.json()["detail"]
-            assert busy.json()["code"] == "run_busy"
-            assert chat_run.chat_run_registry.get(conversation) is not None
+            assert busy.status_code == 202
+            assert busy.json()["started"] is False
+            assert busy.json()["item"]["text"] == "again"
+            assert busy.json()["item"]["state"] == "queued"
+            assert chat_run.chat_run_registry.get(conversation) is run, "no second run"
+            queued = await client.get(INBOX.format(name=project.name, id=conversation))
+            assert [i["text"] for i in queued.json()] == ["again"]
 
             stopped = await client.post(STOP.format(name=project.name, id=conversation))
             assert stopped.status_code == 202
             await first
+            after = await client.get(INBOX.format(name=project.name, id=conversation))
+
+    finished = [json.loads(e.data) for e in run.events if e.kind == "run_finished"]
+    assert finished[0]["withdrawn"] == [
+        {"id": busy.json()["item"]["id"], "text": "again"}
+    ]
+    assert after.json() == [], "Stop returned the message to the researcher"
+
+
+@contextmanager
+def gated_agent(project, steps):
+    """A real agent whose `gate` tool blocks until the test opens the gate."""
+    at_gate, gate = asyncio.Event(), asyncio.Event()
+    agent = ProjectAgent(project, make_local_settings(), uuid.uuid4())
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain
+    async def gate_tool() -> str:
+        """Blocks until the test releases it."""
+        at_gate.set()
+        await gate.wait()
+        return "gate passed"
+
+    with agent.agent.override(model=step_model(steps), toolsets=[toolset]):
+        yield agent, at_gate, gate
+
+
+async def _gated_turn(client, project, conversation, at_gate):
+    request = asyncio.create_task(
+        client.post(
+            RUN.format(name=project.name),
+            json={"user_prompt": "fit it", "chat_session_id": str(conversation)},
+        )
+    )
+    async with asyncio.timeout(10):
+        await at_gate.wait()
+    return request
+
+
+def _prompts(row: ChatSessionTable) -> list[str]:
+    history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
+        row.message_history
+    )
+    return [
+        p.content
+        for m in history
+        if isinstance(m, ModelRequest)
+        for p in m.parts
+        if isinstance(p, UserPromptPart) and isinstance(p.content, str)
+    ]
+
+
+async def test_an_edited_message_is_delivered_and_an_edit_after_the_take_is_409(
+    session, engine
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+
+    with gated_agent(project, [call("gate_tool"), say("plotted")]) as (
+        agent,
+        at_gate,
+        gate,
+    ):
+        with api_client(session, agent=agent) as (client, _):
+            first = await _gated_turn(client, project, conversation, at_gate)
+            queued = (
+                await client.post(
+                    RUN.format(name=project.name),
+                    json={
+                        "user_prompt": "plot it",
+                        "chat_session_id": str(conversation),
+                    },
+                )
+            ).json()["item"]
+            item_url = ITEM.format(
+                name=project.name, id=conversation, item=queued["id"]
+            )
+
+            edited = await client.patch(item_url, json={"text": "plot it in log scale"})
+            assert edited.status_code == 200
+            assert edited.json()["text"] == "plot it in log scale"
+
+            gate.set()
+            await first
+            too_late = await client.patch(item_url, json={"text": "never mind"})
+            too_late_delete = await client.delete(item_url)
+
+    assert too_late.status_code == 409
+    assert too_late.json()["code"] == "inbox_item_taken"
+    assert too_late.json()["item"]["state"] == "taken"
+    assert too_late.json()["item"]["text"] == "plot it in log scale"
+    assert too_late_delete.status_code == 409
+    async with AsyncSession(engine) as other:
+        saved = await other.get(ChatSessionTable, conversation)
+        assert _prompts(saved) == [
+            "fit it",
+            f"{inbox.MID_TURN_NOTE}\nplot it in log scale",
+        ]
+        taken = [
+            e["data"] for e in saved.run_events or [] if e["event"] == "inbox_taken"
+        ]
+        assert taken[-1]["text"] == "plot it in log scale", (
+            "the thread draws the words sent"
+        )
+
+
+async def test_a_deleted_message_never_reaches_the_agent(session, engine):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+
+    with gated_agent(project, [call("gate_tool"), say("done")]) as (
+        agent,
+        at_gate,
+        gate,
+    ):
+        with api_client(session, agent=agent) as (client, _):
+            first = await _gated_turn(client, project, conversation, at_gate)
+            queued = (
+                await client.post(
+                    RUN.format(name=project.name),
+                    json={
+                        "user_prompt": "never mind",
+                        "chat_session_id": str(conversation),
+                    },
+                )
+            ).json()["item"]
+            deleted = await client.delete(
+                ITEM.format(name=project.name, id=conversation, item=queued["id"])
+            )
+            gate.set()
+            await first
+
+    assert deleted.status_code == 204
+    async with AsyncSession(engine) as other:
+        saved = await other.get(ChatSessionTable, conversation)
+        assert _prompts(saved) == ["fit it"]
+
+
+async def test_a_task_result_cannot_be_edited_or_deleted(session, engine):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    async with AsyncSession(engine) as db:
+        db_item = await inbox.put(
+            db, conversation, kind="task_event", text="bg-1 exited", notify=False
+        )
+
+    with api_client(session) as (client, _):
+        url = ITEM.format(name=project.name, id=conversation, item=db_item.id)
+        edit = await client.patch(url, json={"text": "something else"})
+        delete = await client.delete(url)
+        missing = await client.delete(
+            ITEM.format(name=project.name, id=conversation, item=999_999)
+        )
+
+    assert edit.status_code == 409 and edit.json()["code"] == "not_a_message"
+    assert delete.status_code == 409
+    assert missing.status_code == 404
+
+
+async def test_every_view_of_a_running_turn_hears_of_a_queue_change(session):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+
+    async def first_queue_change(run):
+        async for event in run.subscribe():
+            if event.kind == "inbox_changed":
+                return json.loads(event.data)
+
+    with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
+        with api_client(session, agent=agent) as (client, _):
+            first = await _hung_turn(client, project, conversation, hung)
+            run = chat_run.chat_run_registry.get(conversation)
+            views = [asyncio.create_task(first_queue_change(run)) for _ in range(2)]
+
+            await client.post(
+                RUN.format(name=project.name),
+                json={
+                    "user_prompt": "also plot it",
+                    "chat_session_id": str(conversation),
+                },
+            )
+            async with asyncio.timeout(10):
+                seen = await asyncio.gather(*views)
+
+            await client.post(STOP.format(name=project.name, id=conversation))
+            await first
+
+    for change in seen:
+        assert [i["text"] for i in change["queued"]] == ["also plot it"]
+    saved = [e["event"] for e in (await _saved_events(session, conversation))]
+    assert "inbox_changed" not in saved, "a queue a finished turn saw is not stored"
+
+
+async def _saved_events(session, conversation):
+    async with AsyncSession(session.bind) as other:
+        row = await other.get(ChatSessionTable, conversation)
+        return row.run_events or []
 
 
 async def test_stop_is_404_when_nothing_is_running(session):
@@ -304,6 +509,11 @@ def lifespan_env(engine, monkeypatch):
     monkeypatch.setattr(api_module, "init_db", no_init)
     monkeypatch.setattr(api_module, "get_vista_mcp_server", lambda: _FakeMcpServer())
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
+    from vista_backend.services import background_tasks
+
+    monkeypatch.setattr(
+        background_tasks, "session_factory", lambda: AsyncSession(engine)
+    )
     monkeypatch.setattr(api_module.settings.campaigns, "monitor_enabled", False)
 
 
@@ -494,3 +704,141 @@ async def test_a_chat_of_another_project_is_404(session, file_dirs):
 
     assert (await _displayed(session, project, chat_id)).status_code == 404
     assert (await _displayed(session, project, uuid.uuid4())).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Deleting a conversation with background tasks (openspec change
+# background-tasks, task 6.2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def tasks_env(session, monkeypatch, tmp_path):
+    from harness import FakeSandbox
+    from vista_backend.config import settings
+    from vista_backend.services import background_tasks
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    monkeypatch.setattr(
+        background_tasks, "session_factory", lambda: AsyncSession(session.bind)
+    )
+    registry = background_tasks.BackgroundTaskRegistry()
+    monkeypatch.setattr(background_tasks, "background_task_registry", registry)
+    return SimpleNamespace(
+        registry=registry, sandbox=FakeSandbox(), tmp=tmp_path, tasks=background_tasks
+    )
+
+
+async def _command_with_log(env, project, conversation, command="sleep 600"):
+    async with env.tasks.session_factory() as db:
+        record = await env.tasks.create_command(
+            db, chat_session_id=conversation, project_id=project.id, command=command
+        )
+    volume = env.tmp / "volumes" / str(project.id)
+    log = env.tasks.host_log_path(volume, record)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("output\n", encoding="utf-8")
+    (log.parent / f"{record.id}.pid").write_text("123\n", encoding="utf-8")
+    return record, log
+
+
+async def test_deleting_a_conversation_with_a_running_command_asks_first(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    record, log = await _command_with_log(tasks_env, project, conversation)
+    tasks_env.sandbox.start(str(record.id))
+    await tasks_env.registry.watch_command(
+        record, call=tasks_env.sandbox, volume_root=log.parents[2]
+    )
+
+    with api_client(session) as (client, _):
+        asked = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        still_there = await client.get(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        confirmed = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation), "confirm": "true"},
+        )
+
+    assert asked.status_code == 409
+    assert asked.json()["code"] == "live_tasks"
+    [task] = asked.json()["tasks"]
+    assert (task["label"], task["kind"], task["command"]) == (
+        "bg-1",
+        "command",
+        "sleep 600",
+    )
+    assert still_there.status_code == 200
+    assert confirmed.status_code == 204
+    assert "signal_task" in tasks_env.sandbox.names_called(), "the command was ended"
+    assert not log.exists() and not (log.parent / f"{record.id}.pid").exists()
+    # The request's own session: the app commits it after the response.
+    assert (
+        await session.get(ChatSessionTable, conversation, populate_existing=True)
+        is None
+    )
+    assert chat_run.chat_run_registry.get(conversation) is None, (
+        "its result started no turn"
+    )
+
+
+async def test_deleting_a_conversation_whose_tasks_ended_needs_no_confirmation(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    record, log = await _command_with_log(tasks_env, project, conversation)
+    await tasks_env.tasks.record_end(record.id, "exited", 0)
+
+    with api_client(session) as (client, _):
+        deleted = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+
+    assert deleted.status_code == 204
+    assert not log.exists(), "the logs go with the conversation"
+
+
+async def test_a_watch_is_dropped_with_its_conversation_and_its_job_left_alone(
+    session, tasks_env
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    async with AsyncSession(session.bind) as db:
+        watch = await tasks_env.tasks.create_watch(
+            db,
+            chat_session_id=conversation,
+            project_id=project.id,
+            job_id="4242",
+            cluster="odo",
+        )
+    calls: list[str] = []
+
+    async def read(record):
+        calls.append("read_hpc_job_state")
+        await asyncio.Event().wait()
+
+    tasks_env.registry.watch_job(watch, read=read)
+
+    with api_client(session) as (client, _):
+        asked = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation)},
+        )
+        confirmed = await client.delete(
+            SESSION.format(name=project.name),
+            params={"chat_session_id": str(conversation), "confirm": "true"},
+        )
+
+    assert [t["job_id"] for t in asked.json()["tasks"]] == ["4242"]
+    assert confirmed.status_code == 204
+    assert set(calls) <= {"read_hpc_job_state"}, "nothing but readings: no cancel"
+    assert not tasks_env.registry.watching(watch.id)

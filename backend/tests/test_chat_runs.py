@@ -35,6 +35,7 @@ from vista_backend.agents.agents import ProjectAgent
 from vista_backend.api import api as api_module
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.services import chat_run, chat_session as chat_session_service
+from vista_backend.services import inbox
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
 
@@ -213,32 +214,48 @@ async def test_reattaching_replays_the_run_from_its_start(session):
 # ---------------------------------------------------------------------------
 
 
-async def test_a_send_while_busy_is_refused_and_the_running_turn_finishes(
+async def test_a_send_while_busy_is_queued_and_taken_by_the_running_turn(
     session, engine
 ):
-    """Scenario: Send while busy."""
+    """Scenario: Send while busy (chat-runs), and Sending during a turn (conversation-inbox)."""
     project = await seed_project(session, tools=["*"])
     conversation = await _conversation(session, project)
+    seen: list[list[ModelMessage]] = []
+    steps = [call("gate"), say("first answer, and the plot")]
 
-    with scripted_agent(project, step_model([call("gate"), say("first answer")])) as (
-        agent,
-        turn,
-    ):
+    def driver(messages, info):
+        seen.append(list(messages))
+        return steps[len(seen) - 1]
+
+    with scripted_agent(project, scripted_model(driver)) as (agent, turn):
         with api_client(session, agent=agent) as (client, _):
             running = _send(client, project, conversation, "first")
             await _until(turn.at_gate.is_set)
 
-            refused = await client.post(
+            queued = await client.post(
                 RUN.format(name=project.name),
                 json={"user_prompt": "second", "chat_session_id": str(conversation)},
             )
             turn.gate.set()
             finished = await running
 
-    assert refused.status_code == 409
+    assert queued.status_code == 202
+    assert queued.json()["item"]["text"] == "second"
     assert finished.status_code == 200
+    assert len(seen) == 2, "one run, which took the message after the tool call"
+    assert "second" in json.dumps([m.__dict__ for m in seen[1]], default=str)
+    taken = [
+        json.loads(data)
+        for name, data in parse_sse(finished.text)
+        if name == "inbox_taken"
+    ]
+    # Every send goes through the inbox: the one that started the turn too.
+    assert [(t["kind"], t["text"]) for t in taken] == [
+        ("message", "first"),
+        ("message", "second"),
+    ]
     blob = json.dumps((await _saved(engine, conversation)).message_history)
-    assert "first answer" in blob and "second" not in blob
+    assert "first answer, and the plot" in blob and "second" in blob
 
 
 # ---------------------------------------------------------------------------
@@ -422,3 +439,50 @@ async def test_unseen_outcomes_survive_an_app_restart(session, engine, monkeypat
     ]
     by_id = {s["chat_session_id"]: s["status"] for s in status.json()}
     assert by_id == {str(finished): "done", str(killed): "interrupted"}
+
+
+# ---------------------------------------------------------------------------
+# Waiting on the researcher (openspec change background-tasks, task 2.5)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_result_held_back_after_a_stop_shows_needs_you(session, engine):
+    """Scenario: Result lands just after Stop (conversation-inbox), as the list shows it."""
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    other = await _conversation(session, project)
+
+    with scripted_agent(project, step_model([call("hang"), say("unreachable")])) as (
+        agent,
+        turn,
+    ):
+        with api_client(session, agent=agent) as (client, _):
+            running = _send(client, project, conversation, "fit it")
+            await _until(turn.at_hang.is_set)
+            await client.post(STOP.format(name=project.name, id=conversation))
+            await running
+
+            async with AsyncSession(engine) as db:
+                await inbox.put(
+                    db,
+                    conversation,
+                    kind="task_event",
+                    text="bg-1 exited with status 0",
+                )
+            assert chat_run.chat_run_registry.get(conversation) is None, "no turn"
+
+            status = await client.get(STATUS.format(name=project.name))
+            one = await client.get(
+                f"/projects/{project.name}/chat-session",
+                params={"chat_session_id": str(conversation)},
+            )
+            quiet = await client.get(
+                f"/projects/{project.name}/chat-session",
+                params={"chat_session_id": str(other)},
+            )
+
+    assert {s["chat_session_id"]: s["status"] for s in status.json()} == {
+        str(conversation): "needs_you"
+    }
+    assert one.json()["run_status"] == "needs_you"
+    assert quiet.json()["run_status"] == "idle"

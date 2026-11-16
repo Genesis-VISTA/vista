@@ -180,3 +180,25 @@ async def test_system_prompt_composes_all_layers_in_order(monkeypatch, tmp_path:
         prompt.index("<available_skills>"),
     ]
     assert positions == sorted(positions)
+
+
+async def test_system_prompt_says_how_to_run_work_that_outlives_a_turn():
+    """openspec change background-tasks, task 8.1."""
+    prompt = await _system_prompt_for(make_project(), make_local_settings())
+
+    assert "## Work that outlives your turn" in prompt
+    assert "`background=true`" in prompt and "24 hours at most" in prompt
+    assert "call `watch_hpc_job` with the job id and cluster" in prompt
+    assert "report its final state to the researcher, whatever it is" in prompt
+    assert "They come from VISTA, not from the researcher" in prompt
+    assert "Stopping a watch does not cancel its job" in prompt
+    assert "[The researcher sent this while you were working" in prompt
+
+
+def test_the_mid_turn_note_the_prompt_names_is_the_one_sent():
+    from vista_backend.services.inbox import MID_TURN_NOTE
+
+    assert MID_TURN_NOTE.startswith("[The researcher sent this while you were working")
+    assert MID_TURN_NOTE.startswith(
+        BASE_SYSTEM_PROMPT.split('marked "', 1)[1].split(" …", 1)[0]
+    )

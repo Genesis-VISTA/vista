@@ -255,7 +255,7 @@ test.describe("chat runs", () => {
   // Stop, busy conversations, and how a turn ended
   // -------------------------------------------------------------------------
 
-  test("a running conversation has its input disabled and a Stop that ends it as Stopped", async ({
+  test("a running conversation keeps its input, and a Stop ends it as Stopped", async ({
     page,
   }) => {
     stub = await installStub(page, ROUTES);
@@ -267,8 +267,9 @@ test.describe("chat runs", () => {
     await startRun(stub, QUESTION);
     await toolCall(stub);
 
-    await expect(page.getByPlaceholder(/Ask a question/)).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Send" })).toHaveCount(0);
+    // Messages can be written while the agent works; Send appears once there is one.
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Queue message" })).toHaveCount(0);
     const stop = page.getByRole("button", { name: "Stop" });
     await expect(stop).toBeVisible();
 
@@ -288,6 +289,82 @@ test.describe("chat runs", () => {
     await expect(page.getByRole("button", { name: "Stop" })).toHaveCount(0);
     await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
     await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  });
+
+  test("a queue read just before the turn takes the message shows no chip once it is taken", async ({
+    page,
+  }) => {
+    // The conversation's queue is read as it opens, which can land between the
+    // send queueing its message and the turn taking it.
+    const message = { id: 8, kind: "message", text: QUESTION, state: "queued", created_at: "t" };
+    stub = await installStub(page, { ...ROUTES, "GET /api/chat/inbox": [message] });
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText(QUESTION);
+
+    await ask(page, QUESTION);
+    await stub.waitForStream();
+    await stub.send("run_started", {
+      event_kind: "run_started",
+      run_id: RUN_ID,
+      user_prompt: QUESTION,
+      origin: "researcher",
+    });
+    await stub.send("inbox_taken", {
+      event_kind: "inbox_taken",
+      item_id: 8,
+      kind: "message",
+      text: QUESTION,
+    });
+
+    await expect(chips).toHaveCount(0);
+    await expect(bubbles(page, "user")).toHaveText([QUESTION]);
+    await finishRun(stub, "done");
+    await stub.end();
+  });
+
+  test("a message sent during the turn is queued, editable, and given back by Stop", async ({
+    page,
+  }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await ask(page, QUESTION);
+    await stub.waitForStream();
+    await startRun(stub, QUESTION);
+    await toolCall(stub);
+
+    const queued = { id: 5, kind: "message", text: "plot it", state: "queued", created_at: "t" };
+    await stub.armQueued(queued);
+    await page.getByPlaceholder(/Ask a question/).fill("plot it");
+    await page.getByRole("button", { name: "Queue message" }).click();
+
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText("plot it");
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("");
+    await expect(bubbles(page, "user").filter({ hasText: "plot it" })).toHaveCount(0);
+
+    await stub.setRoute("PATCH /api/chat/inbox", { ...queued, text: "plot it in log scale" });
+    await chips.getByRole("button", { name: "Edit queued message" }).click();
+    const box = chips.getByRole("textbox", { name: "Edit queued message" });
+    await box.fill("plot it in log scale");
+    await chips.getByRole("button", { name: "Save" }).click();
+    await expect(chips).toContainText("plot it in log scale");
+    expect(await stub.bodies("PATCH /api/chat/inbox")).toEqual([{ text: "plot it in log scale" }]);
+    expect(await stub.requests()).toContain(
+      `PATCH /api/chat/inbox?project_name=molten-salt&chat_session_id=${SESSION_ID}&item_id=5`,
+    );
+
+    await page.getByRole("button", { name: "Stop" }).click();
+    await stub.send("run_finished", {
+      event_kind: "run_finished",
+      state: "stopped",
+      withdrawn: [{ id: 5, text: "plot it in log scale" }],
+    });
+    await stub.end();
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("plot it in log scale");
+    await expect(chips).toHaveCount(0);
   });
 
   test("a turn cut off by VISTA quitting shows as interrupted when reopened", async ({ page }) => {
@@ -311,33 +388,222 @@ test.describe("chat runs", () => {
     await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
   });
 
-  test("sending into a conversation that is already running re-attaches to that run", async ({
+  test("sending into a conversation another view is running queues it and shows that run", async ({
     page,
   }) => {
     stub = await installStub(page, ROUTES);
     await openProject(page);
     await openConversation(page, "Density of FLiBe");
 
-    await stub.armConflict();
+    await stub.armQueued({
+      id: 9,
+      kind: "message",
+      text: "A second question",
+      state: "queued",
+      created_at: "t",
+    });
     await stub.armAttach();
     await ask(page, "A second question");
 
-    // The refused send is taken back: the unsent text returns to the composer and
-    // the run that was already going is shown instead.
+    // The send was queued for the turn already going: that turn is shown, and the
+    // message waits as a chip until the agent takes it.
     await stub.waitForStream("attach");
-    await startRun(stub, QUESTION, "attach");
-    await toolCall(stub, "attach");
-    await expect(page.locator(".chat-bubble.user").filter({ hasText: QUESTION })).toHaveCount(1);
-    await expect(page.locator(".chat-bubble").filter({ hasText: "A second question" })).toHaveCount(
-      0,
+    await stub.send(
+      "run_started",
+      { event_kind: "run_started", run_id: RUN_ID, user_prompt: QUESTION, origin: "researcher" },
+      "attach",
     );
-    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("A second question");
+    await stub.send(
+      "inbox_taken",
+      { event_kind: "inbox_taken", item_id: 1, kind: "message", text: QUESTION },
+      "attach",
+    );
+    await toolCall(stub, "attach");
+    const chips = page.getByRole("list", { name: "Queued messages" });
+    await expect(chips).toContainText("A second question");
+    await expect(bubbles(page, "user")).toHaveText([QUESTION]);
+    await expect(page.getByPlaceholder(/Ask a question/)).toHaveValue("");
     await expect(page.getByRole("status")).toHaveText("Searching the literature…");
+
+    // The agent takes it at its next step: the chip goes, the message is in the thread.
+    await stub.send("inbox_changed", { event_kind: "inbox_changed", queued: [] }, "attach");
+    await stub.send(
+      "inbox_taken",
+      { event_kind: "inbox_taken", item_id: 9, kind: "message", text: "A second question" },
+      "attach",
+    );
+    await expect(chips).toHaveCount(0);
+    await expect(bubbles(page, "user")).toHaveText([QUESTION, "A second question"]);
 
     await streamAnswer(stub, "attach");
     await finishRun(stub, "done", "attach");
     await stub.end("attach");
     await expect(page.getByText(ANSWER)).toBeVisible();
+  });
+
+  // -------------------------------------------------------------------------
+  // Background tasks (openspec change background-tasks, tasks 7.2 and 7.3)
+  // -------------------------------------------------------------------------
+
+  const RUNNING_COMMAND = {
+    id: "00000000-0000-4000-8000-0000000000c1",
+    label: "bg-1",
+    kind: "command",
+    state: "running",
+    command: "python fit.py",
+    log_path: "/mnt/data/tasks/c1.log",
+    created_at: "2026-11-12T10:00:00Z",
+    runtime_s: 62,
+  };
+  const PAUSED_WATCH = {
+    id: "00000000-0000-4000-8000-0000000000c2",
+    label: "watch-2",
+    kind: "job_watch",
+    state: "paused",
+    job_id: "4242",
+    cluster: "odo",
+    paused_reason: "Reconnect Odo in Settings",
+    created_at: "2026-11-12T10:00:00Z",
+    runtime_s: 30,
+  };
+
+  const RESULT = "Background task bg-1 exited with status 0 after 4m 2s.\nCommand: python fit.py";
+  const resultTaken = {
+    event_kind: "inbox_taken",
+    item_id: 21,
+    kind: "task_event",
+    text: RESULT,
+    payload: { summary: "bg-1 finished · exit 0 · 4m 2s" },
+  };
+  const selfStarted = {
+    event_kind: "run_started",
+    run_id: RUN_ID,
+    user_prompt: RESULT,
+    origin: "task",
+  };
+
+  test("a turn VISTA starts in the open conversation is drawn live", async ({ page }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+
+    // A background command ended and its result started a turn, which the
+    // run status shows at its next poll.
+    await stub.setRoute("GET /api/chat/session", sessionRoute({ run_status: "working" }));
+    await stub.armAttach();
+    await stub.setRoute("GET /api/chat/runs/status", [
+      { chat_session_id: SESSION_ID, status: "working", unseen: false },
+    ]);
+
+    await stub.waitForStream("attach");
+    await stub.send("run_started", selfStarted, "attach");
+    await stub.send("inbox_taken", resultTaken, "attach");
+    await streamAnswer(stub, "attach");
+    await finishRun(stub, "done", "attach");
+    await stub.end("attach");
+
+    const row = page.locator(".chat-bubble.event");
+    await expect(row).toHaveText(/bg-1 finished · exit 0 · 4m 2s/);
+    await expect(bubbles(page, "user")).toHaveCount(0);
+    await expect(page.getByText(ANSWER)).toBeVisible();
+    await row.locator("summary").click();
+    await expect(row.locator("pre")).toContainText("Command: python fit.py");
+  });
+
+  test("a turn VISTA started and finished between polls is drawn from what it stored", async ({
+    page,
+  }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+    await expect(page.getByPlaceholder(/Ask a question/)).toBeEnabled();
+
+    const stored = storedRun("done");
+    stored[0] = { event: "run_started", data: selfStarted };
+    stored.splice(1, 0, { event: "inbox_taken", data: resultTaken });
+    await stub.setRoute(
+      "GET /api/chat/session",
+      sessionRoute({ run_state: "done", run_status: "done", run_unseen: true, run_events: stored }),
+    );
+    await stub.setRoute("GET /api/chat/runs/status", [
+      { chat_session_id: SESSION_ID, status: "done", unseen: true },
+    ]);
+
+    await expect(page.locator(".chat-bubble.event")).toHaveText(/bg-1 finished/);
+    await expect(page.getByText(ANSWER)).toBeVisible();
+  });
+
+  test("the Background tab appears with the conversation's first task, with its count", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/chat/tasks": by("chat_session_id", {
+        [SESSION_ID]: [RUNNING_COMMAND, PAUSED_WATCH],
+        default: [],
+      }),
+    });
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+
+    const tab = page.getByRole("tab", { name: /Background/ });
+    await expect(tab).toBeVisible();
+    await expect(tab.getByLabel("2 running")).toHaveText("2");
+    await tab.click();
+
+    const panel = page.getByRole("tabpanel", { name: /Background/ });
+    await expect(panel.getByText("python fit.py")).toBeVisible();
+    await expect(panel.getByText("Job 4242 on Odo")).toBeVisible();
+    await expect(panel.getByRole("status")).toHaveText("Paused: Reconnect Odo in Settings");
+
+    await panel.getByRole("button", { name: "Stop" }).first().click();
+    await expect
+      .poll(async () => (await stub!.requests()).filter((r) => r.startsWith("POST /api/chat/tasks/stop")))
+      .toEqual([
+        `POST /api/chat/tasks/stop?project_name=molten-salt&chat_session_id=${SESSION_ID}&task_id=${RUNNING_COMMAND.id}`,
+      ]);
+  });
+
+  test("a conversation without tasks shows no Background tab", async ({ page }) => {
+    stub = await installStub(page, ROUTES);
+    await openProject(page);
+    await openConversation(page, "Density of FLiBe");
+
+    await expect(page.getByRole("tab", { name: "Activity" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: /Background/ })).toHaveCount(0);
+  });
+
+  test("deleting a conversation with a running task names it and ends it on confirming", async ({
+    page,
+  }) => {
+    stub = await installStub(page, {
+      ...ROUTES,
+      "GET /api/chat/tasks": by("chat_session_id", {
+        [SESSION_ID]: [RUNNING_COMMAND, { ...PAUSED_WATCH, state: "ended" }],
+        default: [],
+      }),
+    });
+    await openProject(page);
+    await page
+      .locator(".conversation-list-item")
+      .filter({ hasText: "Density of FLiBe" })
+      .getByRole("button", { name: "Delete conversation" })
+      .click();
+
+    const dialog = page.locator(".modal");
+    const alert = dialog.getByRole("alert");
+    await expect(alert).toContainText("This is still running");
+    await expect(alert).toContainText("bg-1");
+    await expect(alert).toContainText("python fit.py");
+    await expect(alert).not.toContainText("watch-2"); // an ended watch is not named
+    await dialog.getByRole("button", { name: "End them and delete" }).click();
+
+    await expect
+      .poll(async () => (await stub!.requests()).filter((r) => r.startsWith("DELETE /api/chat/session")))
+      .toEqual([
+        `DELETE /api/chat/session?project_name=molten-salt&chat_session_id=${SESSION_ID}&confirm=true`,
+      ]);
   });
 
   // -------------------------------------------------------------------------

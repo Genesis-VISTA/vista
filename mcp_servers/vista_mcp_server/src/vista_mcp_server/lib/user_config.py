@@ -22,6 +22,18 @@ expands in output paths -- is refused rather than escaped in several syntaxes.
 """
 
 
+class MissingCredential(ToolError):
+    """
+    A token the call needs is not in the researcher's Settings. Its own type, so
+    a caller that waits for the researcher (a job watch) can tell it from a
+    failure; `cluster` names whose token it is.
+    """
+
+    def __init__(self, message: str, cluster: str):
+        super().__init__(message)
+        self.cluster = cluster
+
+
 class UserConfig(BaseModel):
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
@@ -46,9 +58,10 @@ class UserConfig(BaseModel):
             "lux": self.lux_s3m_token,
         }[cluster]
         if not token:
-            raise ToolError(
+            raise MissingCredential(
                 f"No S3M token configured for {cluster!r}. Add a {cluster} S3M token in the "
-                "Vista user settings page before submitting jobs."
+                "Vista user settings page before submitting jobs.",
+                cluster=cluster,
             )
         return token
 
@@ -84,13 +97,14 @@ class UserConfig(BaseModel):
             if transfer and https:
                 return GlobusTokens(transfer=transfer, https=https)
 
-        raise ToolError(
+        raise MissingCredential(
             f"Globus file transfer is not connected for {cluster.title()}"
             + (" (Lux uses Frontier's connection)" if cluster == "lux" else "")
             + ". Connect it in the VISTA user settings, which asks Globus for "
             "permission to read and write this cluster's files. If you "
             "connected before, connect again -- VISTA now needs one more "
-            "permission than it did, so the older connection is incomplete."
+            "permission than it did, so the older connection is incomplete.",
+            cluster=cluster,
         )
 
     def require_remote_dir(self, cluster: Literal["odo", "frontier", "perlmutter", "lux"]) -> str:
@@ -137,9 +151,10 @@ class UserConfig(BaseModel):
 
     def require_nersc_iri_token(self) -> str:
         if not self.nersc_iri_token:
-            raise ToolError(
+            raise MissingCredential(
                 "No NERSC IRI token configured for this user. Add one in the Vista "
-                "user settings page before submitting jobs to Perlmutter."
+                "user settings page before submitting jobs to Perlmutter.",
+                cluster="perlmutter",
             )
         return self.nersc_iri_token
 

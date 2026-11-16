@@ -296,6 +296,33 @@ and write. Each source counts only when it has both halves: one alone lists a di
 cannot read.
 Absent Globus is never fatal; it costs only the OLCF clusters' file operations, nothing else.
 
+## Background tasks and the conversation inbox
+
+Background commands, job watches and queued messages (openspec change background-tasks; the
+researcher's view is [`docs/background-tasks.md`](docs/background-tasks.md)).
+
+- **Every send goes through the inbox** (`services/inbox.py`). A turn starts only through
+  `ChatRunRegistry.wake`, which takes everything queued and applies the hold-back rule; call
+  `registry.start` directly only in tests. A running turn takes new items between its steps
+  through the `InboxDelivery` capability, which leans on PydanticAI's internal enqueue queue:
+  `tests/test_inbox_delivery.py` pins it, so a PydanticAI upgrade that breaks it fails there.
+- **Hidden tools.** `wait_task`, `signal_task` (dev server) and `read_hpc_job_state` (vista
+  MCP) are VISTA's own and are filtered from the agent by `HIDDEN_TOOLS`. `read_hpc_job_state`
+  is also in `HPC_TOOLS`, so it gets credentials. A job watch reads only that tool, never
+  Globus: a lapsed Globus session must not hold back a job's result.
+- **The log is written by a `perl` reader, not `head -c`** (`dev_mcp_server/lib/tasks.py`):
+  `head` buffers, so a running task's log stayed empty.
+- **Starts are serialised per conversation** (`_start_lock`): a model step's tool calls run
+  concurrently, and unserialised starts all counted none running and shared a label.
+- **A command's watcher pins the agent that started it** with `TTLPool.hold(agent)`, not
+  `project_agent_pool.get(key)`, so its sandbox outlives a Settings or model change that
+  rebuilds the conversation's agent.
+- **Tests.** Records go through `background_tasks.session_factory`, which `api_client` points
+  at the test database; a test that runs the app's lifespan without it must patch it too, or
+  startup recovery opens the real one (in a checkout, `data/`). Watches and commands have
+  fakes: `harness.FakeSandbox` for the dev server, and an injected reader and `Clock` for
+  watches. Real-sandbox cases are `-m sandbox` with `VISTA_RUN_SANDBOX=1`.
+
 ## Hypothesis Lab forum
 
 The Hypothesis Lab's debates live in a plain git repository per project (the

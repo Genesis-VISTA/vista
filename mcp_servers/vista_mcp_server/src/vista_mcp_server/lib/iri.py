@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import time
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
@@ -120,6 +122,40 @@ def iri_target(cluster: IriCluster) -> IriTarget:
 
 class IriError(ToolError):
     """ An IRI call failed; the message says what to do about it. """
+
+
+class IriCredentialRejected(IriError):
+    """ The facility refused the researcher's token (401/403): it expired, or was revoked. """
+
+    def __init__(self, message: str, cluster: str):
+        super().__init__(message)
+        self.cluster = cluster
+
+
+class IriRateLimited(IriError):
+    """
+    The facility answered HTTP 429, too many requests. `retry_after` is how many
+    seconds it asked for (`Retry-After`), or None when it named none.
+    """
+
+    def __init__(self, message: str, retry_after: float | None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def parse_retry_after(value: str | None, *, now: float | None = None) -> float | None:
+    """ Seconds from a `Retry-After` header: delta-seconds or an HTTP date; None if neither. """
+    if not value:
+        return None
+    value = value.strip()
+    if value.isdigit():
+        return float(value)
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    current = now if now is not None else time.time()
+    return max(0.0, when.timestamp() - current)
 
 
 class IriFileNotFound(IriError):
@@ -299,9 +335,18 @@ class IriClient:
         t, code = self.target, response.status_code
         body = response.text[:300]
         if code in (401, 403):
-            raise IriError(
+            raise IriCredentialRejected(
                 f"{t.cluster} rejected your {_TOKEN_NAMES[t.cluster]} (HTTP {code}). It may have "
-                f"expired: mint a new one and save it in VISTA's Settings. ({body})"
+                f"expired: mint a new one and save it in VISTA's Settings. ({body})",
+                cluster=t.cluster,
+            )
+        if code == 429:
+            retry_after = parse_retry_after(response.headers.get("retry-after"))
+            wait = f"retry after {retry_after:.0f} s" if retry_after is not None else "wait a few minutes"
+            raise IriRateLimited(
+                f"{what} on {t.cluster}: the facility is getting too many requests (HTTP 429); "
+                f"{wait} before asking again.",
+                retry_after=retry_after,
             )
         if code == 404 and path.startswith("compute/job/"):
             raise IriError(
