@@ -201,3 +201,24 @@ async def test_a_failing_handler_does_not_reach_bolt(transport):
     response = await run_async_bolt_app(transport.app, req)
     await asyncio.gather(*transport._tasks)
     assert response.status == 200
+
+
+def test_a_menu_pick_carries_the_option_chosen():
+    from vista_backend.slack.socket_mode import action_event
+
+    action = action_event(
+        {
+            "team": {"id": "T1"},
+            "channel": {"id": "D1"},
+            "user": {"id": "U1"},
+            "container": {"message_ts": "5.0", "thread_ts": "4.0"},
+            "actions": [
+                {
+                    "action_id": "vista_project_menu",
+                    "type": "static_select",
+                    "selected_option": {"value": "ask1:p6"},
+                }
+            ],
+        }
+    )
+    assert action is not None and action.value == "ask1:p6"

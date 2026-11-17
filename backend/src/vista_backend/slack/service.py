@@ -10,7 +10,9 @@ offline, then undoes all of it.
 
 A Slack message is put in its conversation's inbox, like a message sent in the
 app, and wakes the conversation; there is no other way into a turn. One that
-waits behind a running turn gets 👀, swapped for ✅ when a turn takes it.
+waits behind a running turn gets ⏳, swapped for ✅ when a turn takes it. A new
+thread from someone with several projects and none chosen for Slack is first
+asked which project; its messages wait for the tap.
 
 Slack runs on one machine at a time: two connected with the same app token
 would each get a share of the events (`docs/slack.md`).
@@ -36,18 +38,27 @@ from ..config import settings
 from ..db.schemas import (
     ChatSessionTable,
     SlackConfigTable,
+    SlackProjectAskTable,
     SlackDetailTable,
     SlackLinkTable,
 )
 from ..services import chat_run as chat_run_module
 from ..services import inbox, local_settings
+from ..services import project as project_service
 from . import access, audit, confirm, credentials, format, gate, limits, linking, store
 from .confirm import Confirmations
 from .events import Action, Event, HomeOpened, Message, keyword
 from .home import Home, host_name
 from .jobs import JobMonitor
 from .relay import Place, RunRelay
-from .threads import NoProject, NotYourThread, conversation_for, thread_of
+from .threads import (
+    ChooseProject,
+    NoProject,
+    NotYourThread,
+    conversation_for,
+    held_ask,
+    thread_of,
+)
 from .transport import SlackCallError, SlackTransport
 
 log = logging.getLogger("vista.slack")
@@ -55,11 +66,16 @@ log = logging.getLogger("vista.slack")
 TransportFactory = Callable[[str, str], SlackTransport]
 """ (bot token, app token) → a transport, not yet connected. """
 
-WAITING = "eyes"
+WAITING = "hourglass_flowing_sand"
 """ The reaction on a message that waits behind a running turn. """
 TAKEN = "white_check_mark"
 """ What replaces it once a turn has taken the message. """
 NOT_STARTED = "Sorry, I couldn't start on that. Try again, or check the desktop app."
+WHICH_PROJECT = "Which project should this go in?"
+GONE = "That's no longer available."
+
+Held = tuple[str, str]
+""" A message waiting to go into a conversation's inbox: (text, its `ts`). """
 
 
 following: dict[str, asyncio.Task] = {}
@@ -289,7 +305,7 @@ class SlackService:
             if self._home is not None:
                 await self._home.publish(event.team_id, event.user_id)
         elif isinstance(event, Action):
-            await self._action(event)
+            await self._action(event, link)
         elif isinstance(event, Message):
             await self._message(event, link)
 
@@ -341,65 +357,251 @@ class SlackService:
             return
         try:
             async with chat_run_module.session_factory() as db:
-                conversation = await conversation_for(
-                    db, message, project_id=link.project_id
+                ask = await held_ask(
+                    db, message.team_id, message.channel_id, message.root_ts
                 )
-                chat_id = conversation.chat_session_id
-                chat = await db.get(ChatSessionTable, chat_id)
-                # The chat's own model counts, as in the app.
-                require_inference_credential(
-                    await local_settings.get_public(db),
-                    chat.inference_model if chat else None,
-                )
-                await db.commit()
+                if ask is not None:
+                    # A reply before the project is picked waits with the first.
+                    if ask.slack_user_id != message.user_id:
+                        raise NotYourThread(
+                            "This thread is someone else's conversation with VISTA. "
+                            "Mention me in a new message to start your own."
+                        )
+                    ask.prompts = [
+                        *ask.prompts,
+                        {"text": message.prompt, "ts": message.ts},
+                    ]
+                    db.add(ask)
+                    await db.commit()
+                    chat_id = None
+                else:
+                    conversation = await conversation_for(
+                        db, message, project_id=link.project_id
+                    )
+                    chat_id = conversation.chat_session_id
+                    chat = await db.get(ChatSessionTable, chat_id)
+                    model = chat.inference_model if chat else None
+                    await db.commit()
+                    await self._check_model(model)
         except (NotYourThread, NoProject) as exc:
             await self._reply(message, str(exc), ephemeral=False)
+            return
+        except ChooseProject as exc:
+            await self._ask_project(message, exc.choices)
             return
         except (MissingInferenceCredential, MissingInferenceModel) as exc:
             await self._reply(message, format.plain(exc.detail).text, ephemeral=False)
             return
-        await audit.request(
+        if chat_id is None:
+            await self._mark(message.channel_id, message.ts, add=WAITING)
+            return
+        await self._send(
+            chat_id,
+            channel=message.channel_id,
+            thread_ts=message.root_ts,
             team_id=message.team_id,
             slack_user_id=message.user_id,
             collab_sub=link.collab_sub,
-            chat_session_id=chat_id,
-            channel_id=message.channel_id,
-            thread_ts=message.root_ts,
-            text=message.prompt,
+            held=[(message.prompt, message.ts)],
         )
-        await self._enqueue(message, chat_id)
 
-    async def _enqueue(self, message: Message, chat_id: uuid.UUID) -> None:
+    @staticmethod
+    async def _check_model(model: str | None) -> None:
+        """Raise `MissingInference*` unless there is a model to send to, as the app checks."""
+        async with chat_run_module.session_factory() as db:
+            local = await local_settings.get_public(db)
+            await db.commit()
+        require_inference_credential(local, model)
+
+    async def _send(
+        self,
+        chat_id: uuid.UUID,
+        *,
+        channel: str,
+        thread_ts: str,
+        team_id: str,
+        slack_user_id: str,
+        collab_sub: str | None,
+        held: list[Held],
+    ) -> None:
+        """Record each message as a request, then put them in the inbox and wake it."""
+        for text, _ in held:
+            await audit.request(
+                team_id=team_id,
+                slack_user_id=slack_user_id,
+                collab_sub=collab_sub,
+                chat_session_id=chat_id,
+                channel_id=channel,
+                thread_ts=thread_ts,
+                text=text,
+            )
+        await self._enqueue(chat_id, channel=channel, thread_ts=thread_ts, held=held)
+
+    async def _enqueue(
+        self, chat_id: uuid.UUID, *, channel: str, thread_ts: str, held: list[Held]
+    ) -> None:
         """
-        Put the message in the conversation's inbox and wake it, as the app's send
-        does. Marked 👀 first if a turn is running, which will take it.
+        Put the messages in the conversation's inbox, in order, and wake it, as
+        the app's send does. Marked ⏳ first if a turn is running, which will
+        take them.
         """
         assert self.slack is not None
         registry = chat_run_module.chat_run_registry
         if registry.get(chat_id) is not None:
-            await self._mark(message.channel_id, message.ts, add=WAITING)
+            for _, ts in held:
+                await self._mark(channel, ts, add=WAITING)
+        items = []
         async with chat_run_module.session_factory() as db:
-            item = await inbox.put(
-                db,
-                chat_id,
-                kind="message",
-                text=message.prompt,
-                payload={"slack": {"channel": message.channel_id, "ts": message.ts}},
-                notify=False,
-            )
+            for text, ts in held:
+                items.append(
+                    await inbox.put(
+                        db,
+                        chat_id,
+                        kind="message",
+                        text=text,
+                        payload={"slack": {"channel": channel, "ts": ts}},
+                        notify=False,
+                    )
+                )
         try:
             run = await registry.wake(chat_id)
         except Exception:
             log.exception("Could not start a turn for a Slack message")
             async with chat_run_module.session_factory() as db:
-                with contextlib.suppress(inbox.ItemTaken):
-                    assert item.id is not None
-                    await inbox.withdraw(db, chat_id, item.id)
-            await self._reply(message, NOT_STARTED, ephemeral=False)
+                for item in items:
+                    with contextlib.suppress(inbox.ItemTaken):
+                        assert item.id is not None
+                        await inbox.withdraw(db, chat_id, item.id)
+            await self._post(channel, NOT_STARTED, thread_ts=thread_ts)
             return
-        if run is None or not any(i.id == item.id for i in run.items):
-            # The running turn takes it at its next step; show the desktop too.
+        started = {i.id for i in run.items} if run is not None else set()
+        if any(item.id not in started for item in items):
+            # The running turn takes them at its next step; show the desktop too.
             await registry.announce_inbox(chat_id)
+
+    async def _post(self, channel: str, text: str, *, thread_ts: str) -> None:
+        assert self.slack is not None
+        try:
+            await self.slack.post(channel, text, thread_ts=thread_ts)
+        except SlackCallError as exc:
+            log.info("Could not post in Slack: %s", exc.error)
+
+    # -- which project -------------------------------------------------------
+
+    async def _ask_project(
+        self, message: Message, choices: list[tuple[uuid.UUID, str]]
+    ) -> None:
+        """Hold the thread's first message and ask which project it goes in."""
+        assert self.slack is not None
+        try:
+            await self._check_model(None)
+        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+            await self._reply(message, format.plain(exc.detail).text, ephemeral=False)
+            return
+        async with chat_run_module.session_factory() as db:
+            ask = SlackProjectAskTable(
+                team_id=message.team_id,
+                channel_id=message.channel_id,
+                thread_ts=message.root_ts,
+                slack_user_id=message.user_id,
+                prompts=[{"text": message.prompt, "ts": message.ts}],
+                created_at=store.now_iso(),
+            )
+            ask_id = ask.id  # Before the commit expires it.
+            db.add(ask)
+            await db.commit()
+        reply = format.project_picker(
+            WHICH_PROJECT, str(ask_id), [(str(pid), name) for pid, name in choices]
+        )
+        try:
+            ts = await self.slack.post(
+                message.channel_id,
+                reply.text,
+                blocks=reply.blocks,
+                thread_ts=message.root_ts,
+            )
+        except SlackCallError as exc:
+            log.warning("Could not ask which project: %s", exc.error)
+            return
+        async with chat_run_module.session_factory() as db:
+            row = await db.get(SlackProjectAskTable, ask_id)
+            if row is not None:
+                row.message_ts = ts
+                db.add(row)
+            await db.commit()
+
+    async def _pick(self, action: Action, link: SlackLinkTable) -> None:
+        """A project was tapped: start the thread's conversation there with what waited."""
+        assert self.slack is not None
+        ask_id, _, project_id = action.value.partition(":")
+        try:
+            ask_key, project_key = uuid.UUID(ask_id), uuid.UUID(project_id)
+        except ValueError:
+            await self._reply(action, GONE, ephemeral=True)
+            return
+        async with chat_run_module.session_factory() as db:
+            ask = await db.get(SlackProjectAskTable, ask_key)
+            if ask is None:
+                await db.commit()
+                await self._reply(action, GONE, ephemeral=True)
+                return
+            if ask.slack_user_id != action.user_id:
+                owner = ask.slack_user_id
+                await db.commit()
+                await self._reply(
+                    action,
+                    f"Only <@{owner}> can choose for this thread.",
+                    ephemeral=True,
+                )
+                return
+            projects = await project_service.list_projects(db)
+            project = next((p for p in projects if p.id == project_key), None)
+            if project is None:
+                await db.commit()
+                await self._reply(
+                    action, "That project is gone. Pick another.", ephemeral=True
+                )
+                return
+            name = project.name
+            held = [(p["text"], p["ts"]) for p in ask.prompts]
+            where = (ask.team_id, ask.channel_id, ask.thread_ts, ask.message_ts)
+            await db.commit()
+        team_id, channel, thread_ts, picker_ts = where
+        try:
+            await self._check_model(None)
+        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+            # The question stays, to be answered once a model is set up.
+            await self._reply(action, format.plain(exc.detail).text, ephemeral=True)
+            return
+        first = Message(
+            team_id=team_id,
+            channel_id=channel,
+            user_id=action.user_id,
+            text=held[0][0] if held else "",
+            ts=thread_ts,
+        )
+        async with chat_run_module.session_factory() as db:
+            ask = await db.get(SlackProjectAskTable, ask_key)
+            if ask is None:  # A second tap got here first.
+                await db.commit()
+                return
+            await db.delete(ask)
+            conversation = await conversation_for(db, first, project_id=project_key)
+            chat_id = conversation.chat_session_id
+        if picker_ts is not None:
+            with contextlib.suppress(SlackCallError):
+                await self.slack.update(
+                    channel, picker_ts, f"Going in *{format.to_mrkdwn(name)}*."
+                )
+        await self._send(
+            chat_id,
+            channel=channel,
+            thread_ts=thread_ts,
+            team_id=team_id,
+            slack_user_id=action.user_id,
+            collab_sub=link.collab_sub,
+            held=held,
+        )
 
     async def _mark(
         self, channel: str, ts: str, *, add: str, remove: str | None = None
@@ -421,7 +623,7 @@ class SlackService:
         return True
 
     async def _taken(self, item: dict[str, Any]) -> None:
-        """A turn took an inbox item: a Slack message that waited gets ✅ for its 👀."""
+        """A turn took an inbox item: a Slack message that waited gets ✅ for its ⏳."""
         where = (item.get("payload") or {}).get("slack") or {}
         if item.get("kind") == "message" and where.get("channel") and where.get("ts"):
             await self._mark(where["channel"], where["ts"], add=TAKEN, remove=WAITING)
@@ -471,8 +673,11 @@ class SlackService:
         relay = RunRelay(self.slack, place, on_prompt=on_prompt, on_taken=self._taken)
         await relay.follow(run)
 
-    async def _action(self, action: Action) -> None:
+    async def _action(self, action: Action, link: SlackLinkTable) -> None:
         assert self.slack is not None and self._confirmations is not None
+        if action.action_id.startswith(format.PICK_PROJECT):
+            await self._pick(action, link)
+            return
         if action.action_id != format.SHOW_MORE:
             await self._confirmations.on_action(action)
             return

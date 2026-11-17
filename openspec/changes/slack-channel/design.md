@@ -100,10 +100,17 @@ the desktop app. A Lux submission thus works from Slack exactly while the deskto
 lasts (an hour).
 
 ### D6. Threads, origin and transcript
-`slack_thread(team_id, channel_id, thread_ts)` → `chat_session_id`, requester and project (the
-link's chosen project, defaulting to the user's first project by name). The conversation is
-created with `origin="slack"`, which drives a badge and the read-only view in the UI. A message
-in a thread whose turn is running waits in the inbox, with no cap; VISTA reacts to it with 👀
+`slack_thread(team_id, channel_id, thread_ts)` → `chat_session_id`, requester and project: the
+link's chosen project if one is set in Settings → Slack, otherwise the one the user picks. With
+only one project VISTA uses it without asking. Otherwise the first message of a new thread is
+answered in the thread with "Which project should this go in?" and a button per project (a menu
+past five); only the requester's tap counts, and the choice holds for that thread only. The
+message, and any replies sent before the tap, are held in `slack_project_ask(team_id,
+channel_id, thread_ts, slack_user_id, prompts, created_at)` (a new table, so the change stays
+additive) and go into the new conversation's inbox in order once a project is tapped. A held
+ask survives a restart and does not expire. The conversation is created with `origin="slack"`,
+which drives a badge and the read-only view in the UI. A message in a thread whose turn is
+running waits in the inbox, with no cap; VISTA reacts to it with ⏳ (`hourglass_flowing_sand`)
 and swaps that for ✅ when a turn takes it (`reactions:write`). The relay follows every run of a
 Slack conversation, including those VISTA starts, so nothing in it happens out of the thread's
 sight. After each turn the relay appends user/assistant bubbles to `chat_session.messages` so

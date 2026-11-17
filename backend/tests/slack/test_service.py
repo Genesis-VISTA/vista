@@ -16,11 +16,12 @@ from vista_backend.db.schemas import (
     ChatSessionTable,
     SlackAuditTable,
     SlackConfigTable,
+    SlackProjectAskTable,
     SlackThreadTable,
 )
 from vista_backend.services import chat_run, inbox
 from vista_backend.slack import confirm, gate, limits, service, store
-from vista_backend.slack.events import HomeOpened, Message
+from vista_backend.slack.events import Action, HomeOpened, Message
 from vista_backend.slack.service import SlackService
 from vista_backend.utils import secret_store
 
@@ -389,6 +390,127 @@ async def test_a_turn_in_an_app_conversation_is_not_followed(
     await _settled(env, row.id)
 
     assert slack.messages == []
+
+
+class _NewChats(dict):
+    """
+    `env.agents` for conversations the service creates: each borrows one agent
+    scripted with `steps`, made beforehand (an override must be entered in the
+    test's own context).
+    """
+
+    def __init__(self, agents, agent) -> None:
+        super().__init__(agents)
+        self.agent = agent
+
+    def __missing__(self, chat_id):
+        return self.agent
+
+
+async def _for_new_chats(env, steps) -> None:
+    row, _ = await env.conversation(steps)  # an app chat, only to hold the agent
+    env.agents = _NewChats(env.agents, env.agents[row.id])
+
+
+def _picker(slack, thread="10.0"):
+    (asked,) = [
+        m
+        for m in slack.in_channel("DU1")
+        if m.thread_ts == thread and m.text == service.WHICH_PROJECT
+    ]
+    elements = asked.blocks[-1]["elements"]
+    return asked, {e["text"]["text"]: e for e in elements}
+
+
+def _tap(asked, button, user="U1") -> Action:
+    return Action(
+        team_id=TEAM,
+        channel_id="DU1",
+        user_id=user,
+        action_id=button["action_id"],
+        value=button["value"],
+        message_ts=asked.ts,
+        thread_ts=asked.thread_ts,
+    )
+
+
+async def _slack_chats(env) -> list[ChatSessionTable]:
+    async with AsyncSession(env.engine) as db:
+        rows = (await db.exec(select(ChatSessionTable))).all()
+        return [r for r in rows if r.origin == "slack"]
+
+
+async def test_with_several_projects_vista_asks_and_answers_in_the_one_tapped(
+    env, on, slack, session, credential
+):
+    await link(session, "U1")
+    await link(session, "U2")
+    other = await project(session, "zz-frontier-runs")
+    other_id = other.id
+    await _for_new_chats(env, [say("Answered in the project you picked.")])
+    await service.start(host="lab-mac")
+
+    await slack.deliver(_dm("how is the Frontier queue?"))
+    asked, buttons = _picker(slack)
+    assert set(buttons) == {env.project.name, "zz-frontier-runs"}
+    assert await _slack_chats(env) == [], "nothing starts before the tap"
+
+    await slack.deliver(_dm("and Lux?", ts="11.0", thread_ts="10.0"))
+    assert slack.reactions[("DU1", "11.0")] == [service.WAITING], "a reply waits"
+
+    await slack.deliver(_tap(asked, buttons["zz-frontier-runs"], user="U2"))
+    assert any(
+        "can choose" in text for _, user, text in slack.ephemerals if user == "U2"
+    )
+    assert await _slack_chats(env) == [], "another user's tap counts for nothing"
+
+    await slack.deliver(_tap(asked, buttons["zz-frontier-runs"]))
+    (chat,) = await _slack_chats(env)
+    await _settled(env, chat.id)
+
+    saved = await env.row(chat.id)
+    assert saved.project_id == other_id
+    assert [m["content"] for m in saved.messages if m["role"] == "user"] == [
+        "how is the Frontier queue?",
+        "and Lux?",
+    ]
+    assert slack.reactions[("DU1", "11.0")] == [service.TAKEN]
+    assert "zz-frontier-runs" in asked.edits[0]
+    assert any("Answered in the project you picked." in a for a in _answers(slack))
+    async with AsyncSession(env.engine) as db:
+        assert (await db.exec(select(SlackProjectAskTable))).all() == []
+
+
+async def test_a_question_about_the_project_survives_a_restart(
+    env, on, slack, session, credential
+):
+    await link(session, "U1")
+    await project(session, "zz-frontier-runs")
+    await _for_new_chats(env, [say("Still answered.")])
+    await service.start(host="lab-mac")
+    await slack.deliver(_dm("how is the Frontier queue?"))
+    asked, buttons = _picker(slack)
+
+    await service.stop()
+    await service.start(host="lab-mac")
+    await slack.deliver(_tap(asked, buttons[env.project.name]))
+
+    (chat,) = await _slack_chats(env)
+    await _settled(env, chat.id)
+    assert any("Still answered." in a for a in _answers(slack))
+
+
+async def test_with_one_project_vista_does_not_ask(env, on, slack, session, credential):
+    await link(session, "U1")
+    await _for_new_chats(env, [say("Straight in.")])
+    await service.start(host="lab-mac")
+
+    await slack.deliver(_dm("how is the Frontier queue?"))
+    (chat,) = await _slack_chats(env)
+    await _settled(env, chat.id)
+
+    assert not any(m.text == service.WHICH_PROJECT for m in slack.messages)
+    assert any("Straight in." in a for a in _answers(slack))
 
 
 async def test_lock_from_slack_and_unlock_only_from_desktop(on, slack, session):

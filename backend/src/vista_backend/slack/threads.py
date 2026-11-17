@@ -2,8 +2,10 @@
 One Slack thread is one VISTA conversation.
 
 A top-level DM or mention starts a conversation (marked `origin="slack"`, so
-the desktop shows where it came from) in the linked researcher's chosen
-project; replies in that thread continue it. Every message goes into the
+the desktop shows where it came from) in the project the researcher chose for
+Slack, or their only one; with several and none chosen, VISTA asks which
+(`ChooseProject`, held in `slack_project_ask` until they tap one). Replies in
+that thread continue it. Every message goes into the
 conversation's inbox (`services/inbox.py`), so one that arrives while the
 thread's turn is running waits for it rather than being dropped.
 """
@@ -18,6 +20,7 @@ from ..db.schemas import (
     ChatSessionCreate,
     ChatSessionTable,
     ProjectTable,
+    SlackProjectAskTable,
     SlackThreadTable,
 )
 from ..services import chat_session as chat_session_service
@@ -32,6 +35,17 @@ class NoProject(LookupError):
     """The researcher has no project for Slack conversations to run in."""
 
 
+class ChooseProject(LookupError):
+    """Several projects and none chosen for Slack: the researcher picks one."""
+
+    def __init__(self, projects: list[ProjectTable]) -> None:
+        super().__init__("Which project should this go in?")
+        self.choices = sorted(
+            ((p.id, p.name) for p in projects), key=lambda c: c[1].lower()
+        )
+        """ (id, name) of each, by name: read here, as the rows do not outlive the session. """
+
+
 @dataclass(frozen=True)
 class Conversation:
     chat_session_id: uuid.UUID
@@ -42,14 +56,24 @@ class Conversation:
 async def project_for(
     session: AsyncSession, project_id: uuid.UUID | None
 ) -> ProjectTable:
-    """The link's chosen project, if it still exists, else the first by name."""
+    """
+    The chosen project, if it still exists, else the researcher's only one.
+
+    Raises:
+        NoProject: they have none.
+        ChooseProject: they have several and none of them is chosen.
+    """
     projects = await project_service.list_projects(session)
     if not projects:
         raise NoProject(
             "You don't have a VISTA project yet. Create one in the desktop app first."
         )
     chosen = next((p for p in projects if p.id == project_id), None)
-    return chosen or sorted(projects, key=lambda p: p.name)[0]
+    if chosen is not None:
+        return chosen
+    if len(projects) == 1:
+        return projects[0]
+    raise ChooseProject(projects)
 
 
 def _title(text: str) -> str:
@@ -72,9 +96,13 @@ async def conversation_for(
     """
     The conversation for `message`'s thread, started if it has none.
 
+    `project_id` is the project to start one in: the link's, or the one the
+    researcher picked for this thread.
+
     Raises:
         NotYourThread: someone else started this thread.
         NoProject: the researcher has no project to start one in.
+        ChooseProject: VISTA must ask which project first.
     """
     row = (
         await session.exec(
@@ -130,6 +158,21 @@ async def thread_of(
         await session.exec(
             select(SlackThreadTable).where(
                 SlackThreadTable.chat_session_id == chat_session_id
+            )
+        )
+    ).first()
+
+
+async def held_ask(
+    session: AsyncSession, team_id: str, channel_id: str, thread_ts: str
+) -> SlackProjectAskTable | None:
+    """The thread's question about which project, while nobody has answered it."""
+    return (
+        await session.exec(
+            select(SlackProjectAskTable).where(
+                SlackProjectAskTable.team_id == team_id,
+                SlackProjectAskTable.channel_id == channel_id,
+                SlackProjectAskTable.thread_ts == thread_ts,
             )
         )
     ).first()

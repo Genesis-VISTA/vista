@@ -2044,6 +2044,29 @@ class SlackThreadTable(SQLModel, table=True):
     created_at: str
 
 
+class SlackProjectAskTable(SQLModel, table=True):
+    """
+    A new thread waiting for its researcher to pick a project. Its messages are
+    held here until then, and go into the new conversation's inbox in order.
+    """
+
+    __tablename__: str = "slack_project_ask"
+    __table_args__ = (UniqueConstraint("team_id", "channel_id", "thread_ts"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    team_id: str
+    channel_id: str
+    thread_ts: str
+    slack_user_id: str
+    prompts: A[
+        list[dict[str, str]], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    """ Each held message: `{"text", "ts"}`, in arrival order. """
+    message_ts: str | None = None
+    """ The picker's message, edited once a project is picked. """
+    created_at: str
+
+
 class SlackPendingTable(SQLModel, table=True):
     """A confirmation or choice posted in Slack and waiting for the requester."""
 

@@ -14,7 +14,7 @@ researcher's messages the turn took, then the answer.
 
 Every turn of a Slack conversation is followed, including those VISTA starts
 itself from a task result. Each inbox item a turn takes is passed to
-`on_taken`, which swaps a waiting message's 👀 for ✅.
+`on_taken`, which swaps a waiting message's ⏳ for ✅.
 """
 
 import json

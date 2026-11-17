@@ -116,3 +116,18 @@ def _within_limits(reply: fmt.Reply) -> None:
         if block["type"] == "section":
             assert len(block["text"]["text"]) <= 3000
     assert len(json.dumps(reply.blocks)) < 50_000
+
+
+def test_the_project_picker_is_buttons_then_a_menu_past_five():
+    few = fmt.project_picker("Which?", "ask1", [("p1", "salts"), ("p2", "runs")])
+    buttons = few.blocks[-1]["elements"]
+    assert [b["type"] for b in buttons] == ["button", "button"]
+    assert len({b["action_id"] for b in buttons}) == 2, "unique within the block"
+    assert all(b["action_id"].startswith(fmt.PICK_PROJECT) for b in buttons)
+    assert buttons[1]["value"] == "ask1:p2"
+
+    many = fmt.project_picker("Which?", "ask1", [(f"p{i}", f"n{i}") for i in range(7)])
+    (menu,) = many.blocks[-1]["elements"]
+    assert menu["type"] == "static_select"
+    assert menu["action_id"].startswith(fmt.PICK_PROJECT)
+    assert [o["value"] for o in menu["options"]][-1] == "ask1:p6"

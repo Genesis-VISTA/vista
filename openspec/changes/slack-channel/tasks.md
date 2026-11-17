@@ -19,6 +19,8 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 - [x] 3.2 `wake` takes the run's channel from `chat_session.origin` and passes it to `run_stream`; test that a self-started turn in a Slack conversation is a Slack turn and one in an app conversation is not
 - [x] 3.3 The relay follows every run of a Slack conversation, self-started ones included (a registry hook on run start), and records each turn in the transcript once; test with a job-watch result
 - [x] 3.4 React 👀 to a queued Slack message and ✅ when a turn takes it; add `reactions:write` to `manifest.yaml`; `FakeTransport` records reactions
+- [x] 3.5 The waiting reaction is ⏳ `hourglass_flowing_sand`; test that waiting messages carry it, then ✅
+- [x] 3.6 Ask for the project: `threads.conversation_for` raises `ChooseProject` instead of falling back to the first project; a `slack_project_ask` table; the picker (buttons, a menu past five) posted through `format`; an `Action` handler for `vista_project`; the held prompts go into the inbox in order; tests: several projects → asked, one → not, another user's tap refused, a reply before the tap held and answered after it, an ask that survives a restart
 
 ## 4. Read-only on the desktop
 

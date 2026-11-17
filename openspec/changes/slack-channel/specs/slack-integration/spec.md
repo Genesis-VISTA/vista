@@ -175,12 +175,23 @@ locked. Limits and lock SHALL also be checked again when Confirm is tapped.
 
 ### Requirement: One Slack thread is one conversation
 
-Each Slack thread SHALL be one VISTA conversation in the linked researcher's chosen project, and
+Each Slack thread SHALL be one VISTA conversation, in the project the researcher chose for Slack
+or, when none is chosen and they have more than one, the project they pick when VISTA asks, and
 SHALL appear in the desktop app's conversation list marked as from Slack. A top-level DM or
 mention SHALL start a new conversation, and replies SHALL go in its thread. Within a thread,
 references such as "my last job", "the Lux job" or "rerun exp42 with 8 nodes" SHALL be resolved
 against the researcher's recorded jobs. When a job or script is ambiguous, VISTA SHALL offer up to
 five buttons rather than ask the user to type a path; only the requester's tap SHALL count.
+
+#### Scenario: Choosing a project
+
+- **WHEN** a linked user with several projects and no Slack project chosen starts a thread
+- **THEN** VISTA asks in the thread which project it should go in, and answers in the one they tap
+
+#### Scenario: One project
+
+- **WHEN** a linked user with one project and no Slack project chosen starts a thread
+- **THEN** VISTA answers in that project without asking
 
 #### Scenario: Following up in a thread
 

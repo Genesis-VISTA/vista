@@ -20,6 +20,9 @@ SUMMARY_LIMIT = 300
 FALLBACK_LIMIT = 3500
 
 SHOW_MORE = "vista_show_more"
+PICK_PROJECT = "vista_project"
+""" The project picker's action ids: this, then the button's index (unique per block). """
+MAX_PROJECT_BUTTONS = 5
 
 _FENCE = re.compile(r"^```.*?$\n?(.*?)^```[ \t]*$", re.M | re.S)
 _INLINE_CODE = re.compile(r"`[^`\n]+`")
@@ -247,6 +250,39 @@ def show_more_button(reply: Reply, detail_id: str) -> Reply:
         "elements": [button("Show more", SHOW_MORE, detail_id)],
     }
     return Reply(text=reply.text, blocks=[*reply.blocks, actions], detail=reply.detail)
+
+
+def project_picker(
+    question: str, ask_id: str, projects: list[tuple[str, str]]
+) -> Reply:
+    """
+    `question` with a button per project, or a menu past `MAX_PROJECT_BUTTONS`.
+    `projects` is (id, name); each value is `<ask id>:<project id>`.
+    """
+    if len(projects) <= MAX_PROJECT_BUTTONS:
+        elements = [
+            button(name, f"{PICK_PROJECT}{i}", f"{ask_id}:{pid}")
+            for i, (pid, name) in enumerate(projects)
+        ]
+    else:
+        elements = [
+            {
+                "type": "static_select",
+                "action_id": f"{PICK_PROJECT}_menu",
+                "placeholder": {"type": "plain_text", "text": "Choose a project"},
+                "options": [
+                    {
+                        "text": {"type": "plain_text", "text": name[:75]},
+                        "value": f"{ask_id}:{pid}",
+                    }
+                    for pid, name in projects[:100]
+                ],
+            }
+        ]
+    return Reply(
+        text=question,
+        blocks=[section(question), {"type": "actions", "elements": elements}],
+    )
 
 
 def detail_messages(detail: str) -> list[Reply]:

@@ -74,7 +74,9 @@ def action_event(body: dict[str, Any]) -> Action | None:
         or container.get("channel_id", ""),
         user_id=(body.get("user") or {}).get("id", ""),
         action_id=action.get("action_id", ""),
-        value=action.get("value", ""),
+        # A button carries `value`; a menu, the option picked.
+        value=action.get("value")
+        or (action.get("selected_option") or {}).get("value", ""),
         message_ts=container.get("message_ts") or message.get("ts", ""),
         thread_ts=container.get("thread_ts") or message.get("thread_ts"),
     )

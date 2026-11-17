@@ -3,10 +3,12 @@
 import uuid
 
 import pytest
+from sqlmodel import select
 
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.slack.events import Message
 from vista_backend.slack.threads import (
+    ChooseProject,
     NoProject,
     NotYourThread,
     conversation_for,
@@ -86,8 +88,31 @@ async def test_the_chosen_project_is_used_while_it_exists(session):
     assert (
         await conversation_for(session, msg(ts="1"), project_id=chosen)
     ).project.id == chosen
-    fallback = await conversation_for(session, msg(ts="2"), project_id=deleted)
-    assert fallback.project.name == "a-first"
+    with pytest.raises(ChooseProject) as asked:
+        await conversation_for(session, msg(ts="2"), project_id=deleted)
+    assert [name for _, name in asked.value.choices] == ["a-first", "b-chosen"]
+
+
+@pytest.mark.anyio
+async def test_several_projects_and_none_chosen_asks(session):
+    await project(session, "molten-salts")
+    await project(session, "Frontier-runs")
+
+    with pytest.raises(ChooseProject) as asked:
+        await conversation_for(session, msg(), project_id=None)
+
+    assert [name for _, name in asked.value.choices] == [
+        "Frontier-runs",
+        "molten-salts",
+    ]
+    assert (await session.exec(select(ChatSessionTable))).all() == [], "nothing started"
+
+
+@pytest.mark.anyio
+async def test_an_only_project_is_used_without_asking(session):
+    only = await project(session)
+    convo = await conversation_for(session, msg(), project_id=None)
+    assert convo.project.id == only.id
 
 
 @pytest.mark.anyio
