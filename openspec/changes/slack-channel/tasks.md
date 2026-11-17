@@ -35,6 +35,7 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 - [x] 5.4 Confirm requires `action_id == CONFIRM`; tag `watch_hpc_job` and `list_tasks` read-only
 - [x] 5.5 A form whose only field is a choice (a transfer's Approve/Decline) is shown in Slack as buttons, requester-only, 10-minute expiry; other forms and URLs are declined at once; tests in `test_choices.py`
 - [x] 5.6 In a turn VISTA started, the card @mentions the conversation's Slack user
+- [x] 5.7 `preview_hpc_job` shows the account an OLCF job is charged to: it introspects the S3M token (a few seconds at most, S3M only, never the cluster) instead of reading only a 10-minute cache, and falls back to "the S3M token's project" only when S3M does not answer; tests: the project from a stubbed introspection, the fallback on a failed or slow one
 
 ## 6. Job notices from watches
 

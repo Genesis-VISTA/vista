@@ -1,7 +1,8 @@
 """
 `preview_hpc_job` and `get_hpc_queue_status`: the read-only tools Slack runs
-without a confirmation. Preview contacts nothing; queue status reads the
-facility's public IRI status feed, served here by `httpx.MockTransport`.
+without a confirmation. Preview never contacts the cluster, only S3M to name
+the token's project; queue status reads the facility's public IRI status feed,
+served here by `httpx.MockTransport`.
 """
 
 from __future__ import annotations
@@ -57,14 +58,31 @@ def jobs(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def no_network(monkeypatch):
-    async def refuse(*args, **kwargs):
-        raise AssertionError("preview must not contact anything")
+def s3m(monkeypatch):
+    """S3M's introspection: each token's project, or an exception to raise. Records what was asked."""
+    projects: dict[str, object] = {"frontier-token": "mat201", "lux-token": "mat202"}
+    asked: list[str] = []
+
+    async def introspect(token, *, introspect_url):
+        asked.append(token)
+        answer = projects[token]
+        if isinstance(answer, BaseException):
+            raise answer
+        if callable(answer):
+            return await answer()
+        return answer
+
+    monkeypatch.setattr(m, "get_s3m_token_project", introspect)
+    return SimpleNamespace(projects=projects, asked=asked)
+
+
+@pytest.fixture
+def no_network(monkeypatch, s3m):
+    """The cluster is never contacted; S3M is the stub above."""
 
     def refuse_client(*args, **kwargs):
-        raise AssertionError("preview must not contact anything")
+        raise AssertionError("preview must not contact the cluster")
 
-    monkeypatch.setattr(m, "get_s3m_token_project", refuse)
     monkeypatch.setattr(m, "client_for", refuse_client)
 
 
@@ -78,7 +96,7 @@ async def test_preview_applies_the_jobs_defaults(no_network):
     assert "nodes: 2" in text
     assert "duration: 1:00:00 (3600s)" in text
     assert "script: flibe-md/job.frontier.slurm" in text
-    assert "account: the S3M token's project" in text
+    assert "account: mat201" in text
 
 
 async def test_preview_shows_what_was_asked_for(no_network):
@@ -92,19 +110,52 @@ async def test_preview_shows_what_was_asked_for(no_network):
     )
 
     # Lux, like Frontier, charges its S3M token's project.
-    assert "account: the S3M token's project" in text
+    assert "account: mat202" in text
     assert "nodes: 4" in text and "duration: 0:30:00" in text
     assert "job.lux.slurm --steps 1000 --salt 'Li F'" in text
 
 
-async def test_preview_names_a_recently_introspected_project(no_network):
+async def test_preview_names_a_recently_introspected_project(no_network, s3m):
     olcf_token._introspect_cache[
         (settings.frontier_introspect_url, "frontier-token")
-    ] = "mat201"
+    ] = "mat200"
 
     text = await m.preview_hpc_job(_ctx(), job="flibe-md", cluster="frontier")
 
+    assert "account: mat200" in text
+    assert s3m.asked == [], "a cached project is not asked for again"
+
+
+async def test_preview_asks_s3m_for_the_project_when_none_is_cached(no_network, s3m):
+    """After a restart the cache is empty; the card still names the project."""
+    text = await m.preview_hpc_job(_ctx(), job="flibe-md", cluster="frontier")
+
     assert "account: mat201" in text
+    assert s3m.asked == ["frontier-token"]
+
+
+async def test_preview_falls_back_when_s3m_refuses(no_network, s3m):
+    s3m.projects["frontier-token"] = ToolError("S3M token introspection failed (401).")
+
+    text = await m.preview_hpc_job(_ctx(), job="flibe-md", cluster="frontier")
+
+    assert f"account: {m.ACCOUNT_UNKNOWN}" in text
+    assert "nodes: 2" in text, "the rest of the preview still answers"
+
+
+async def test_preview_does_not_wait_long_for_s3m(no_network, s3m, monkeypatch):
+    import asyncio
+
+    async def slow():
+        await asyncio.sleep(10)
+        return "never"
+
+    s3m.projects["frontier-token"] = slow
+    monkeypatch.setattr(m, "PREVIEW_INTROSPECT_TIMEOUT", 0.05)
+
+    text = await m.preview_hpc_job(_ctx(), job="flibe-md", cluster="frontier")
+
+    assert f"account: {m.ACCOUNT_UNKNOWN}" in text
 
 
 @pytest.mark.parametrize(

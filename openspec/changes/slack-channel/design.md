@@ -80,7 +80,9 @@ the limits and credential expiry (a refusal returns a tool error text instead of
 in the confirmed set — job submission (`submit_hpc_job`, `agenthpc_submit_parameter_set`) and
 cancellation (`cancel_hpc_job` and the `agenthpc` cancels) — then raise `ApprovalRequired`; every
 other tool runs, so sandbox work does not stop at each step. Limits are checked against the
-values `preview_hpc_job` resolves (the job's defaults included), not the model's arguments. The
+values `preview_hpc_job` resolves (the job's defaults included), not the model's arguments. On Odo,
+Frontier and Lux the card's account is the S3M token's project, which the preview introspects
+(S3M only, a few seconds at most) rather than leave as a placeholder. The
 existing approval path emits `mcp_tool_approval`, with the arguments parsed into a dict when they
 arrive as a string; the Slack relay renders it as Block Kit with fields from `preview_hpc_job`,
 called through `direct_call_tool` with the user's metadata. Button values carry only the

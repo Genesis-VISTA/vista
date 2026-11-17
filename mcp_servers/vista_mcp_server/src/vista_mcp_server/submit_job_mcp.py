@@ -12,7 +12,7 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
+import asyncio, logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, NoReturn
@@ -475,11 +475,19 @@ def _hms(seconds: int) -> str:
     return f"{h}:{m:02d}:{s:02d}"
 
 
-def _account_without_asking(cfg: UserConfig, cluster: Cluster) -> str:
+PREVIEW_INTROSPECT_TIMEOUT = 5.0
+""" Seconds a preview waits for S3M to name a token's project before showing a placeholder. """
+
+ACCOUNT_UNKNOWN = "the S3M token's project"
+
+
+async def _account_for_preview(cfg: UserConfig, cluster: Cluster) -> str:
     """
-    The account a job would be charged to, from what is already known: the
-    setting for Perlmutter, and for Odo, Frontier and Lux the S3M token's
-    project if it was introspected recently (`_olcf_project`). Never a network call.
+    The account a job would be charged to: the setting for Perlmutter, and for
+    Odo, Frontier and Lux the S3M token's project. That comes from S3M's
+    introspection, cached (`lib/olcf_token`); a preview asks S3M when nothing is
+    cached, for at most `PREVIEW_INTROSPECT_TIMEOUT` seconds, so a Confirm card
+    names the project rather than a placeholder. It never contacts the cluster.
     """
     if cluster == "perlmutter":
         return cfg.nersc_account or "(no NERSC account set)"
@@ -491,7 +499,18 @@ def _account_without_asking(cfg: UserConfig, cluster: Cluster) -> str:
     if not token:
         return f"(no {cluster.capitalize()} S3M token)"
     url = settings.odo_introspect_url if cluster == "odo" else settings.frontier_introspect_url
-    return cached_s3m_token_project(token, introspect_url=url) or "the S3M token's project"
+    cached = cached_s3m_token_project(token, introspect_url=url)
+    if cached:
+        return cached
+    try:
+        return await asyncio.wait_for(
+            get_s3m_token_project(token, introspect_url=url),
+            timeout=PREVIEW_INTROSPECT_TIMEOUT,
+        )
+    except (ToolError, TimeoutError) as e:
+        # An expired token is the submission's to report; the preview still answers.
+        logging.info("Preview could not name %s's S3M project: %s", cluster, e)
+        return ACCOUNT_UNKNOWN
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
@@ -505,7 +524,8 @@ async def preview_hpc_job(
 ) -> str:
     """
     What submit_hpc_job would submit with these arguments, without submitting
-    or contacting the cluster: the system, account, nodes, walltime and script,
+    or contacting the cluster (S3M may be asked, for a few seconds, which
+    project the token charges): the system, account, nodes, walltime and script,
     after the job's defaults are applied. Takes the same arguments as
     submit_hpc_job and rejects the same mistakes.
     """
@@ -521,7 +541,7 @@ async def preview_hpc_job(
     command = f"{script} {shlex.join(shlex.split(script_args or ''))}".strip()
     return "\n".join([
         f"cluster: {cluster}",
-        f"account: {_account_without_asking(meta.user, cluster)}",
+        f"account: {await _account_for_preview(meta.user, cluster)}",
         f"nodes: {nodes}",
         f"duration: {_hms(seconds)} ({seconds}s)",
         f"script: {job}/{command}",
