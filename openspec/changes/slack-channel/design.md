@@ -65,7 +65,9 @@ the only implementation: Bolt's `AsyncApp` with `AsyncSocketModeHandler`, using 
 `AsyncWebClient` with `AsyncRateLimitErrorRetryHandler`. Handlers depend on the interface; tests
 use `FakeTransport`. Bolt's default middleware (self-event filtering, request verification) is
 kept. `connect` records the socket only once it is open; a failed connect leaves the service
-disconnected with the reason and is retried. *Alternative:* raw `slack_sdk` Socket Mode
+disconnected with the reason and is retried. The socket opens with the app-level token alone, so
+the service first calls `auth.test` with the bot token: a rejected one is a failed connect, not
+a "connected" service whose every event Bolt drops. *Alternative:* raw `slack_sdk` Socket Mode
 client — Bolt gives acking and action routing.
 
 ### D3. Access is a middleware before any handler
@@ -154,7 +156,9 @@ duration, args, submitted_at. Written in `chat_run` on a successful `submit_hpc_
 `list_my_recent_jobs(cluster=None, limit=10)` (read-only) and the daily limit. Campaign
 `HpcJobTable` is untouched. A successful submission in a Slack conversation also registers a job
 watch for it (`services/background_tasks`, as `watch_hpc_job` would), so the watch's report of
-the job's end starts a turn in that conversation and the relay posts it in the thread. A watch
+the job's end starts a turn in that conversation and the relay posts it in the thread. Its start
+is not reported there: each report would be a turn that pings the researcher, so outside the app
+a job gets one, at its end. A watch
 outlives a restart, so a job that ended while VISTA was off is reported when it is back. There is
 no separate Slack job monitor and no setting for desktop jobs: a desktop conversation never posts
 to Slack.

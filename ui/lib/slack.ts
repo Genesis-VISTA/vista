@@ -47,7 +47,6 @@ export type SlackLink = {
   collab_name: string | null;
   /** The project new Slack conversations start in; null asks which one (unless there is only one). */
   project_id: string | null;
-  /** Job notices in the job's thread rather than a DM. */
   created_at: string;
 };
 

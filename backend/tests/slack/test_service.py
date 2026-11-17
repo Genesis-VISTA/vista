@@ -781,3 +781,15 @@ async def test_an_edit_slack_refuses_falls_back_to_posting(on, slack, session):
     posted = [m for m in slack.messages if m.ts != ts]
     assert posted and "More about it." in posted[0].text
     await svc.stop()
+
+
+async def test_a_rejected_bot_token_is_reported_not_connected(on, slack, monkeypatch):
+    """The socket opens with the app token alone; a bad bot token must not read as Connected."""
+    slack.fail_next["identity"] = "invalid_auth"
+    svc = _service()
+    await svc.start()
+
+    assert svc.state == "error" and "bot token" in (svc.detail or "")
+    assert "invalid_auth" in (svc.detail or "")
+    assert not slack.connected, "no socket opened with a bot token Slack refuses"
+    await svc.stop()

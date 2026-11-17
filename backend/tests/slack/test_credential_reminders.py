@@ -200,3 +200,32 @@ async def test_connecting_globus_stamps_when(session, monkeypatch):
     row = await local_settings.get(session)
     assert row.frontier_globus_connected_at
     assert row.odo_globus_connected_at is None
+
+
+async def test_lux_has_its_own_s3m_token_and_is_reminded(
+    linked, engine, session, monkeypatch
+):
+    """Lux runs on its own S3M token, which expires like Odo's and Frontier's."""
+    from types import SimpleNamespace
+
+    from vista_backend.services import local_settings
+    from vista_backend.services.hpc_status import hpc_status_service
+
+    soon = _in(1)
+
+    async def status(local, **kw):
+        lux = SimpleNamespace(
+            cluster="lux",
+            checks=SimpleNamespace(credential=SimpleNamespace(expires_at=soon)),
+        )
+        return SimpleNamespace(clusters=[lux])
+
+    monkeypatch.setattr(hpc_status_service, "status", status)
+    local = await local_settings.get(session)
+
+    expiries = await credentials.known_expiries(local)
+
+    assert Expiry("lux", "S3M token", soon) in expiries
+    slack = FakeTransport()
+    await CredentialReminder(slack, expiries=_source(*expiries)).run_once()
+    assert any("Lux" in m.text for m in slack.messages)

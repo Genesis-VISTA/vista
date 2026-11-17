@@ -4,8 +4,8 @@ The bot's Home tab: is VISTA up, on which machine, and what is it doing.
 Slack keeps the last view published, so a Home tab seen while VISTA is off
 shows how things stood when it was last on. Every view says "as of" when, so
 a stale one is plain; and a "going offline" view is published on a clean stop.
-It is published when the tab is opened, after a lock or link change or a job
-ending, and every five minutes.
+It is published when the tab is opened, when Slack connects, when the lock
+changes (from Slack or the desktop), and every five minutes.
 """
 
 import asyncio

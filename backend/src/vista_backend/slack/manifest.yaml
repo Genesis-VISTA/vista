@@ -20,10 +20,10 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read # @VISTA in a channel
-      - chat:write # replies, the "working" message, confirmations, job notices
+      - chat:write # replies, the "working" message, confirmation cards, reminders
       - im:history # DMs to VISTA
       - im:read
-      - im:write # opening a DM for job notices and reminders
+      - im:write # opening a DM for credential reminders
       - files:write # the figures and files a turn displayed
       - reactions:write # ⏳ on a message that waits, ✅ when a turn takes it
 settings:

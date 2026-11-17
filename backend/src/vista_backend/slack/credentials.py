@@ -4,14 +4,14 @@ HPC credentials running out: reminders before, and a plain answer after.
 Every 15 minutes, for each linked researcher, VISTA works out when each of
 their credentials expires, where that is knowable:
 
-- Odo and Frontier S3M tokens: S3M's `plannedExpiration`, from the HPC status
-  checks the desktop app already runs.
+- Odo, Frontier and Lux S3M tokens: S3M's `plannedExpiration`, from the HPC
+  status checks the desktop app already runs.
 - A NERSC IRI token: its own `exp`, when it is a JWT. Read, not verified; it
   is the researcher's own token and only the time is used.
 - OLCF Globus: three days from the last login, the High Assurance session
   length, which refreshing does not extend. An estimate, and labelled one.
 
-Lux has nothing stored to expire. A reminder goes by direct message once a
+A reminder goes by direct message once a
 credential has 24 hours left, and again at 2 hours; each is recorded, so a
 renewed credential gets reminders of its own. After expiry, a Slack request
 that needs the credential is refused saying what is unavailable, and the
@@ -43,7 +43,12 @@ INTERVAL = 15 * 60.0
 GLOBUS_SESSION = timedelta(days=3)
 WINDOWS = (("2h", timedelta(hours=2)), ("24h", timedelta(hours=24)))
 """ Narrowest first: a credential with an hour left is in the 2-hour window. """
-TITLES = {"odo": "Odo", "frontier": "Frontier", "perlmutter": "Perlmutter"}
+TITLES = {
+    "odo": "Odo",
+    "frontier": "Frontier",
+    "lux": "Lux",
+    "perlmutter": "Perlmutter",
+}
 NEEDS_CREDENTIAL = {"submit_hpc_job", "cancel_hpc_job", "get_hpc_job_outputs"}
 
 
@@ -106,7 +111,7 @@ async def known_expiries(local: LocalSettingsTable) -> list[Expiry]:
     else:
         for cluster in status.clusters:
             expires = cluster.checks.credential.expires_at
-            if expires is not None and cluster.cluster in ("odo", "frontier"):
+            if expires is not None and cluster.cluster in ("odo", "frontier", "lux"):
                 out.append(Expiry(cluster.cluster, "S3M token", expires))
     nersc = jwt_expiry(local.nersc_iri_token)
     if nersc is not None:

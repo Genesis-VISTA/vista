@@ -75,7 +75,7 @@ export function SlackSection({
         <span className="user-settings-hint">
           Talk to VISTA from Slack on your phone or desktop while VISTA runs on this machine. Jobs
           run with your VISTA session here; Slack never sees a cluster credential, and VISTA never
-          asks for one there. Anything that changes something waits for your Confirm in Slack.
+          asks for one there. Submitting or cancelling a job waits for your Confirm in Slack.
         </span>
       </SectionHeader>
       <div className="settings-section-body">

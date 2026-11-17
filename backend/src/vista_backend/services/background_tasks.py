@@ -42,7 +42,7 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.db import get_engine
-from ..db.schemas import BackgroundTaskTable
+from ..db.schemas import BackgroundTaskTable, ChatSessionTable
 from ..utils.misc import now_iso
 from . import inbox as inbox_service
 
@@ -599,6 +599,21 @@ async def _save_watch(task_id: uuid.UUID, **values: Any) -> BackgroundTaskTable 
         return BackgroundTaskTable.model_validate(record)
 
 
+async def _reports_start(record: BackgroundTaskTable) -> bool:
+    """
+    Whether a job's start is reported to its conversation. Outside the app (a
+    Slack thread) each report is a turn that pings the researcher, so only the
+    end is: one job, one notification.
+    """
+    from . import chat_run
+
+    async with session_factory() as db:
+        row = await db.get(ChatSessionTable, record.chat_session_id)
+        reports = row is None or chat_run.channel_of(row) == "app"
+        await db.commit()
+    return reports
+
+
 async def _put_event(
     record: BackgroundTaskTable, text: str, payload: dict[str, Any]
 ) -> None:
@@ -754,7 +769,10 @@ class BackgroundTaskRegistry:
                     changes["started_reported"] = True
                     pace.job_started(now)
                     record = await _save_watch(record.id, **changes) or record
-                    await _put_event(record, *_job_event(record, "started", reading))
+                    if await _reports_start(record):
+                        await _put_event(
+                            record, *_job_event(record, "started", reading)
+                        )
                     changes = {}
                 if ended:
                     # `changes` may hold a resume from a pause: the end overrides it.

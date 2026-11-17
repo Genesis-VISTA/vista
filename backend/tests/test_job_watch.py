@@ -15,7 +15,7 @@ import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import seed_project
-from vista_backend.db.schemas import LocalSettingsUpdate
+from vista_backend.db.schemas import ChatSessionTable, LocalSettingsUpdate
 from vista_backend.services import background_tasks, chat_run, inbox, local_settings
 from vista_backend.services import chat_session as chat_session_service
 
@@ -583,3 +583,24 @@ async def test_a_job_that_finished_while_vista_was_closed_is_reported(
     assert sorted(read_at[:2]) == ["111", "222"], "each read at once"
     events = await events_by_job()
     assert events == {"111": "ended", "222": "started"}
+
+
+async def test_outside_the_app_only_the_end_is_reported(registry, records, chat):
+    """In a Slack conversation each report is a turn that pings the researcher: one per job."""
+    async with AsyncSession(records) as db:
+        row = await db.get(ChatSessionTable, chat[0])
+        row.origin = "slack"
+        await db.commit()
+    record = await _watch(records, chat)
+
+    await _run(
+        registry,
+        record,
+        Script(state("RUNNING"), state("COMPLETED", exit_code=0)),
+    )
+
+    events = await _events(records, chat[0])
+    assert [e.payload["event"] for e in events] == ["ended"]
+    assert (await _record(records, record)).started_reported, (
+        "still known to have started"
+    )

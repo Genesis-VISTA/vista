@@ -145,3 +145,21 @@ async def test_limits_must_be_positive(session):
         30,
         0,
     )
+
+
+@pytest.mark.anyio
+async def test_unlocking_redraws_the_home_tab_at_once(session, monkeypatch):
+    """The Home tab shows the lock; it should not say Locked for minutes after unlocking."""
+    from vista_backend.slack import service
+
+    redrawn = []
+
+    async def refresh():
+        redrawn.append(True)
+
+    monkeypatch.setattr(service, "refresh_homes", refresh)
+    await _put(session, locked=True)
+    await _put(session, locked=False)
+    await _put(session, max_nodes=8)
+
+    assert redrawn == [True, True], "on each lock change, not on a limit change"

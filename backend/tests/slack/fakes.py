@@ -58,6 +58,7 @@ class FakeTransport(SlackTransport):
         await self._handler(event)
 
     async def identity(self) -> Identity:
+        self._maybe_fail("identity")
         return self._identity
 
     async def connect(self, handler: Handler) -> None:

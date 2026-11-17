@@ -259,6 +259,22 @@ class SlackService:
 
     async def _connect(self) -> None:
         assert self.slack is not None
+        # The socket opens with the app-level token alone; a bot token Slack
+        # rejects would leave it "connected" with every event dropped.
+        try:
+            await self.slack.identity()
+        except SlackCallError as exc:
+            log.warning("Slack rejected the bot token: %s", exc.error)
+            self.state, self.detail = (
+                "error",
+                f"Slack rejected the bot token ({exc.error}). Paste a fresh one from the "
+                "app's OAuth & Permissions page.",
+            )
+            return
+        except Exception as exc:
+            log.warning("Could not reach Slack: %s", exc)
+            self.state, self.detail = "error", f"Could not reach Slack: {exc}"
+            return
         try:
             await self.slack.connect(self.handle)
         except Exception as exc:
@@ -801,6 +817,16 @@ async def restart() -> None:
         watch_runs()  # A turn that starts in between is followed after.
         await service.stop()
     await start(**kwargs)
+
+
+async def refresh_homes() -> None:
+    """Republish the App Home tabs now, as after the lock changes on the desktop."""
+    if service is None or service.slack is None or not service.slack.connected:
+        return
+    try:
+        await service._homes()
+    except Exception:
+        log.exception("Could not refresh the Slack Home tabs")
 
 
 def status() -> tuple[str, str | None]:

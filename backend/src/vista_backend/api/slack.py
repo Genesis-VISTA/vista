@@ -128,7 +128,10 @@ async def update_slack_config(
 
     session.add(row)
     await session.commit()
-    # Locking needs no reconnect: the gate reads the lock on every call.
+    # Locking needs no reconnect: the gate reads the lock on every call. The
+    # Home tab shows the lock, so it is redrawn now rather than within 5 minutes.
+    if updates.locked is not None:
+        await slack_service.refresh_homes()
     if set(updates.model_fields_set) - {
         "locked",
         "max_nodes",

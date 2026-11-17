@@ -72,8 +72,6 @@ class SlackSettings(BaseModel):
     reconnect_interval: float = 60.0
     """ Seconds between attempts to connect again while the connection is down. """
 
-    """ Seconds between checks of jobs VISTA submitted that have not finished. """
-
     reminder_interval: float = 900.0
     """ Seconds between checks for HPC credentials about to expire. """
 
