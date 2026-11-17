@@ -221,3 +221,65 @@ async def test_an_unanswered_choice_expires(answers, session, monkeypatch):
 
     assert answers == [("c1", "decline", None)]
     assert "Expired." in json.dumps(slack.messages[0].blocks)
+
+
+async def test_a_transfer_approval_is_answered_under_its_own_field(answers, session):
+    """FastMCP's Approve/Decline names its one field `value`, not `choice`."""
+    p = await project(session)
+    chat = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
+    session.add(chat)
+    await session.commit()
+    await session.refresh(chat)
+    data = {
+        "event_kind": "mcp_form_elicitation",
+        "elicitation_id": "c1",
+        "message": "Download chart.png from Odo?",
+        "requested_schema": {
+            "type": "object",
+            "properties": {"value": {"type": "string", "enum": ["Approve", "Decline"]}},
+            "required": ["value"],
+        },
+    }
+    slack = FakeTransport()
+    confirmations = Confirmations(slack)
+    await confirmations.offer(
+        RunEvent(
+            seq=1, kind="mcp_form_elicitation", data=json.dumps(data), prompt_id="c1"
+        ),
+        place=PLACE,
+        team_id=TEAM,
+        chat_session_id=chat.id,
+    )
+    assert "Approve" in json.dumps(slack.messages[0].blocks)
+
+    await confirmations.on_action(_tap(0))
+
+    assert answers == [("c1", "accept", {"value": "Approve"})]
+
+
+def test_a_single_enum_field_of_any_name_is_a_choice():
+    from vista_backend.slack.choices import choice_of
+
+    assert choice_of(choice_schema(["a", "b"])) == ("choice", ["a", "b"])
+    assert choice_of(
+        {
+            "type": "object",
+            "properties": {"value": {"type": "string", "enum": ["Approve", "Decline"]}},
+        }
+    ) == ("value", ["Approve", "Decline"])
+    assert (
+        choice_of({"type": "object", "properties": {"user": {"type": "string"}}})
+        is None
+    )
+    assert (
+        choice_of(
+            {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "string", "enum": ["x"]},
+                    "b": {"type": "string", "enum": ["y"]},
+                },
+            }
+        )
+        is None
+    )

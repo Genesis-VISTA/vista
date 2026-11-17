@@ -29,7 +29,7 @@ from ..config import settings
 from ..db.schemas import ChatSessionTable, SlackPendingTable
 from ..services import chat_run as chat_run_module
 from . import audit, format, gate
-from .choices import options_of
+from .choices import FIELD, choice_of
 from .events import Action
 from .relay import Place, step_label
 from .store import now
@@ -61,6 +61,13 @@ def set_preview(preview: Preview) -> None:
     _preview = preview
 
 
+async def preview(
+    chat_session_id: uuid.UUID, tool_name: str, args: dict[str, Any]
+) -> dict[str, str]:
+    """What would actually be submitted, as card fields; {} when there is no preview."""
+    return await _preview(chat_session_id, tool_name, args)
+
+
 def _tail(tool_name: str) -> str:
     return tool_name.split("__")[-1]
 
@@ -82,6 +89,25 @@ def fields_for(tool_name: str, args: dict[str, Any]) -> dict[str, str]:
             "System": str(args.get("cluster") or "?"),
             "Job": str(args.get("job_id") or "?"),
         }
+    if _tail(tool_name) == "agenthpc_submit_parameter_set":
+        fields = {
+            "Application": str(args.get("app_type") or "?"),
+            "Parameters": ", ".join(str(p) for p in args.get("parameters") or [])
+            or "?",
+        }
+        if args.get("trial_number") is not None:
+            fields["Trial"] = str(args["trial_number"])
+        return fields
+    if _tail(tool_name) == "agenthpc_cancel_job":
+        return {
+            "Application": str(args.get("app_type") or "?"),
+            "Job": str(args.get("job_id") or "?"),
+        }
+    if _tail(tool_name) == "agenthpc_cancel_all_pending":
+        return {
+            "Application": str(args.get("app_type") or "?"),
+            "Jobs": "every job still in flight",
+        }
     return {
         key: format.truncate(
             value if isinstance(value, str) else json.dumps(value), 300, "…"
@@ -94,11 +120,18 @@ def _field(name: str, value: str) -> dict[str, str]:
     return {"type": "mrkdwn", "text": f"*{name}*\n{format.truncate(value, 1900, '…')}"}
 
 
+def _for_whom(pending: SlackPendingTable) -> str:
+    """In a turn VISTA started, the card @mentions its user, who did not just ask."""
+    return (
+        f"<@{pending.slack_user_id}> " if (pending.summary or {}).get("mention") else ""
+    )
+
+
 def _choice_card(pending: SlackPendingTable) -> format.Reply:
     summary = pending.summary or {}
     question = str(summary.get("question") or "Which one?")
     options: list[str] = summary.get("options") or []
-    blocks: list[dict[str, Any]] = [format.section(f"*{question}*")]
+    blocks: list[dict[str, Any]] = [format.section(f"{_for_whom(pending)}*{question}*")]
     if pending.outcome is None:
         minutes = round(settings.slack.confirmation_ttl / 60)
         blocks.append(
@@ -134,7 +167,7 @@ def card(pending: SlackPendingTable) -> format.Reply:
     summary = pending.summary or {}
     title = f"*Confirm: {step_label(pending.tool_name or '')}?*"
     fields = [_field(k, str(v)) for k, v in (summary.get("fields") or {}).items()]
-    blocks: list[dict[str, Any]] = [format.section(title)]
+    blocks: list[dict[str, Any]] = [format.section(_for_whom(pending) + title)]
     if fields:
         blocks.append({"type": "section", "fields": fields[:10]})
     if pending.outcome is None:
@@ -186,23 +219,34 @@ class Confirmations:
         place: Place,
         team_id: str,
         chat_session_id: uuid.UUID,
+        mention: bool = False,
     ) -> None:
-        """Post the card for a `mcp_tool_approval` event; anything else is declined."""
+        """
+        Post the card for a tool approval, or buttons for a choice; anything else
+        is declined. `mention`: the turn was VISTA's own, so the card @mentions
+        the user, who alone can answer it.
+        """
         data = json.loads(event.data)
         elicitation_id = data.get("elicitation_id") or event.prompt_id
-        options = (
-            options_of(data.get("requested_schema"))
+        choice = (
+            choice_of(data.get("requested_schema"))
             if event.kind == "mcp_form_elicitation"
             else None
         )
-        if options and elicitation_id:
+        if choice and elicitation_id:
+            field, options = choice
             pending = self._pending(
                 elicitation_id,
                 "choice",
                 place=place,
                 team_id=team_id,
                 chat_session_id=chat_session_id,
-                summary={"question": data.get("message") or "", "options": options},
+                summary={
+                    "question": data.get("message") or "",
+                    "options": options,
+                    "field": field,
+                    "mention": mention,
+                },
             )
             await self._post(pending, place)
             return
@@ -226,7 +270,7 @@ class Confirmations:
             team_id=team_id,
             chat_session_id=chat_session_id,
             tool_name=tool_name,
-            summary={"fields": fields, "args": args},
+            summary={"fields": fields, "args": args, "mention": mention},
         )
         await self._post(pending, place)
 
@@ -333,11 +377,16 @@ class Confirmations:
         if action.action_id == CANCEL:
             await self._close(elicitation_id, "cancelled")
             return
+        if action.action_id != CONFIRM:  # Only the Confirm button confirms.
+            await self._tell(action, "That request is no longer open.")
+            return
         if not conversation_exists:  # It was deleted on the desktop.
             await self._close(elicitation_id, "expired")
             return
         why = await gate.refusal(
-            pending.tool_name or "", (pending.summary or {}).get("args") or {}
+            pending.tool_name or "",
+            (pending.summary or {}).get("args") or {},
+            chat_session_id=pending.chat_session_id,
         )
         if why is not None:
             await self._close(elicitation_id, "refused", reason=why)
@@ -363,8 +412,9 @@ class Confirmations:
         if timer is not None and timer is not asyncio.current_task():
             timer.cancel()
         if outcome == "chosen":
+            field = (pending.summary or {}).get("field") or FIELD
             answered = await chat_run_module.resolve_prompt(
-                elicitation_id, "accept", {"choice": chosen}
+                elicitation_id, "accept", {field: chosen}
             )
         else:
             action = "accept" if outcome == "confirmed" else "decline"

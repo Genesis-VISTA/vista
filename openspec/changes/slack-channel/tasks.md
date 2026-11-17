@@ -29,12 +29,12 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 5. Confirmation and limits
 
-- [ ] 5.1 The confirmed set: `submit_hpc_job`, `agenthpc_submit_parameter_set`, `cancel_hpc_job` and the `agenthpc` cancels; `cancel_hpc_job` uses its card layout; tests in `test_gate.py`
-- [ ] 5.2 Parse approval arguments into a dict when the model sent them as a string, so the card, preview and recheck see them; test with string arguments (the blank-card bug)
-- [ ] 5.3 Check nodes and walltime against `preview_hpc_job`'s resolved values, for both submit tools; test the "defaults over the limit" scenario
-- [ ] 5.4 Confirm requires `action_id == CONFIRM`; tag `watch_hpc_job` and `list_tasks` read-only
-- [ ] 5.5 A form whose only field is a choice (a transfer's Approve/Decline) is shown in Slack as buttons, requester-only, 10-minute expiry; other forms and URLs are declined at once; tests in `test_choices.py`
-- [ ] 5.6 In a turn VISTA started, the card @mentions the conversation's Slack user
+- [x] 5.1 The confirmed set: `submit_hpc_job`, `agenthpc_submit_parameter_set`, `cancel_hpc_job` and the `agenthpc` cancels; `cancel_hpc_job` uses its card layout; tests in `test_gate.py`
+- [x] 5.2 Parse approval arguments into a dict when the model sent them as a string, so the card, preview and recheck see them; test with string arguments (the blank-card bug)
+- [x] 5.3 Check nodes and walltime against `preview_hpc_job`'s resolved values, for both submit tools; test the "defaults over the limit" scenario
+- [x] 5.4 Confirm requires `action_id == CONFIRM`; tag `watch_hpc_job` and `list_tasks` read-only
+- [x] 5.5 A form whose only field is a choice (a transfer's Approve/Decline) is shown in Slack as buttons, requester-only, 10-minute expiry; other forms and URLs are declined at once; tests in `test_choices.py`
+- [x] 5.6 In a turn VISTA started, the card @mentions the conversation's Slack user
 
 ## 6. Job notices from watches
 

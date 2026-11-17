@@ -207,7 +207,7 @@ async def test_lock_and_limits_are_checked_again_on_confirm(
     slack = FakeTransport()
     confirmations = await _offer(slack, session)
 
-    async def locked(tool, args):
+    async def locked(tool, args, **_):
         assert args == SUBMIT
         return "Slack is locked. Unlock it from the VISTA desktop app."
 
@@ -281,3 +281,87 @@ def test_fields_for_other_tools():
     }
     long = fields_for("run_bash", {"command": "x" * 1000})
     assert len(long["command"]) <= 300
+
+
+# ---------------------------------------------------------------------------
+# Group 5
+# ---------------------------------------------------------------------------
+
+
+async def test_only_the_confirm_button_confirms(answers, session):
+    slack = FakeTransport()
+    confirmations = await _offer(slack, session)
+
+    await confirmations.on_action(_tap(action_id="vista_choose_0"))
+    await confirmations.on_action(_tap(action_id="vista_show_more"))
+
+    assert answers == [], "a tap on anything but Confirm or Cancel answers nothing"
+    await confirmations.on_action(_tap())
+    assert answers == [("e1", "accept")]
+
+
+async def test_a_card_in_a_turn_vista_started_mentions_its_user(answers, session):
+    slack = FakeTransport()
+    confirmations = Confirmations(slack)
+    await confirmations.offer(
+        _approval(),
+        place=PLACE,
+        team_id=TEAM,
+        chat_session_id=await _chat(session),
+        mention=True,
+    )
+    (posted,) = slack.messages
+    assert posted.blocks[0]["text"]["text"].startswith("<@U1> *Confirm")
+
+    await confirmations.on_action(_tap(action_id=CANCEL))
+    assert "<@U1> *Confirm" in _card_text(slack.find(posted.ts)), "kept on redraw"
+
+
+async def test_a_card_in_a_requested_turn_does_not_mention(answers, session):
+    slack = FakeTransport()
+    await _offer(slack, session)
+    assert slack.messages[0].blocks[0]["text"]["text"].startswith("*Confirm")
+
+
+def test_cancellation_and_agenthpc_cards_show_what_they_act_on():
+    assert fields_for(
+        "vista__cancel_hpc_job", {"cluster": "odo", "job_id": "4471"}
+    ) == {
+        "System": "odo",
+        "Job": "4471",
+    }
+    submit = fields_for(
+        "vista__agenthpc_submit_parameter_set",
+        {
+            "app_type": "monbtaw",
+            "parameters": [0.25, 0.25, 0.25, 0.25],
+            "trial_number": 3,
+        },
+    )
+    assert submit == {
+        "Application": "monbtaw",
+        "Parameters": "0.25, 0.25, 0.25, 0.25",
+        "Trial": "3",
+    }
+    assert (
+        fields_for("vista__agenthpc_cancel_all_pending", {"app_type": "monbtaw"})[
+            "Jobs"
+        ]
+        == "every job still in flight"
+    )
+
+
+async def test_the_confirm_recheck_sees_the_conversations_preview(
+    answers, session, monkeypatch
+):
+    seen = []
+
+    async def refusal(tool, args, *, chat_session_id=None):
+        seen.append(chat_session_id)
+        return None
+
+    monkeypatch.setattr(gate, "_refusal", refusal)
+    slack = FakeTransport()
+    confirmations = await _offer(slack, session)
+    await confirmations.on_action(_tap())
+    assert seen and seen[0] is not None

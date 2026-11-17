@@ -715,6 +715,7 @@ class SlackService:
                 place=place,
                 team_id=team_id,
                 chat_session_id=run.chat_session_id,
+                mention=run.origin == "task",
             )
 
         relay = RunRelay(

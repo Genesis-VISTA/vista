@@ -81,8 +81,8 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
-from ..slack.choices import choice_schema, register_choice_tool
-from ..slack.gate import READ_ONLY, SLACK_INSTRUCTIONS, SlackGateCapability
+from ..slack.choices import choice_of, choice_schema, register_choice_tool
+from ..slack.gate import READ_ONLY, SLACK_INSTRUCTIONS, SlackGateCapability, args_dict
 from . import source_fetch
 from .kb_fetch import copy_kb_file, kb_prompt_block
 from .skills import to_prompt
@@ -642,7 +642,12 @@ class ProjectAgent:
         )
         # A Slack turn's side effects wait for the requester's Confirm, through
         # the approval path above. Inert on every other channel.
-        capabilities.append(SlackGateCapability(channel=lambda: self._cur_channel))
+        capabilities.append(
+            SlackGateCapability(
+                channel=lambda: self._cur_channel,
+                chat_session_id=lambda: self.session_id,
+            )
+        )
 
         agent = Agent(
             model=model,
@@ -705,7 +710,7 @@ class ProjectAgent:
                 jobs = await recent_jobs(session, cluster=cluster, limit=limit)
                 return describe_jobs(jobs)
 
-        @agent.tool_plain
+        @agent.tool_plain(metadata=READ_ONLY)
         async def list_tasks() -> str:
             """
             List this conversation's background tasks (commands started with
@@ -722,7 +727,7 @@ class ProjectAgent:
                 return "No background tasks in this conversation."
             return "\n".join(background_tasks.describe(r) for r in records)
 
-        @agent.tool_plain
+        @agent.tool_plain(metadata=READ_ONLY)
         async def watch_hpc_job(
             job_id: str, cluster: Literal["odo", "frontier", "lux", "perlmutter"]
         ) -> str:
@@ -1137,8 +1142,13 @@ class ProjectAgent:
             ],
             params: mcp.types.ElicitRequestParams,
         ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
-            if self._cur_channel == "slack":
-                # Forms ask for logins and secrets, which never go through Slack.
+            if self._cur_channel == "slack" and not (
+                isinstance(params, mcp.types.ElicitRequestFormParams)
+                and choice_of(params.requestedSchema) is not None
+            ):
+                # Other forms ask for logins and secrets, and a URL needs a
+                # browser: neither goes through Slack. A choice among fixed
+                # answers (a transfer's Approve/Decline) is shown as buttons.
                 return mcp.types.ElicitResult(action="decline")
             if isinstance(params, mcp.types.ElicitRequestFormParams):
                 event = McpFormElicitationEvent(
@@ -1224,7 +1234,7 @@ class ProjectAgent:
                 elicitation_id=tool_call_id,
                 tool_name=tool_name,
                 message=f"Approve call to {tool_name!r}?",
-                args=args if isinstance(args, dict) else None,
+                args=args_dict(args),
                 decision_metadata=decision_metadata,
             )
             future: asyncio.Future[mcp.types.ElicitResult] = (

@@ -32,15 +32,30 @@ def choice_schema(options: list[str]) -> dict[str, Any]:
     }
 
 
+def choice_of(schema: dict[str, Any] | None) -> tuple[str, list[str]] | None:
+    """
+    (field, options) if `schema`'s only field is a choice among fixed strings,
+    else None (an ordinary form). `offer_choices` names its field `choice`; a
+    transfer's Approve/Decline (FastMCP's scalar elicitation) names it `value`.
+    """
+    props = (schema or {}).get("properties") or {}
+    if len(props) != 1:
+        return None
+    ((key, field),) = props.items()
+    enum = field.get("enum") if isinstance(field, dict) else None
+    if (
+        not isinstance(enum, list)
+        or not enum
+        or not all(isinstance(o, str) for o in enum)
+    ):
+        return None
+    return key, enum
+
+
 def options_of(schema: dict[str, Any] | None) -> list[str] | None:
     """The options if `schema` is a choice, else None (an ordinary form)."""
-    props = (schema or {}).get("properties") or {}
-    if set(props) != {FIELD}:
-        return None
-    enum = props[FIELD].get("enum")
-    if not isinstance(enum, list) or not all(isinstance(o, str) for o in enum):
-        return None
-    return enum
+    found = choice_of(schema)
+    return found[1] if found else None
 
 
 def register_choice_tool(

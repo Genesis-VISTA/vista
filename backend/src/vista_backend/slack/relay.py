@@ -56,6 +56,10 @@ STEP_LABELS = {
     "get_hpc_queue_status": "Checking the queue",
     "list_my_recent_jobs": "Looking up your jobs",
     "preview_hpc_job": "Preparing the job",
+    "cancel_hpc_job": "Cancelling the job",
+    "agenthpc_submit_parameter_set": "Submitting a parameter set",
+    "agenthpc_cancel_job": "Cancelling the job",
+    "agenthpc_cancel_all_pending": "Cancelling every pending job",
 }
 
 _END_TEXT = {
