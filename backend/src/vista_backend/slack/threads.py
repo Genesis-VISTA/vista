@@ -3,14 +3,12 @@ One Slack thread is one VISTA conversation.
 
 A top-level DM or mention starts a conversation (marked `origin="slack"`, so
 the desktop shows where it came from) in the linked researcher's chosen
-project; replies in that thread continue it. A message that arrives while the
-thread's turn is still running waits for it, a few deep, rather than being
-dropped.
+project; replies in that thread continue it. Every message goes into the
+conversation's inbox (`services/inbox.py`), so one that arrives while the
+thread's turn is running waits for it rather than being dropped.
 """
 
-import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlmodel import select
@@ -27,7 +25,6 @@ from ..services import project as project_service
 from .events import Message
 from .store import now_iso
 
-MAX_WAITING = 3
 TITLE_LENGTH = 60
 
 
@@ -136,36 +133,3 @@ async def thread_of(
             )
         )
     ).first()
-
-
-class ThreadQueue:
-    """
-    Turns in one conversation run one after another.
-
-    `run(key, job)` runs `job` once every earlier job for `key` has finished.
-    At most `MAX_WAITING` may wait behind a running one; past that `run`
-    returns False at once and the caller says so.
-    """
-
-    def __init__(self) -> None:
-        self._locks: dict[uuid.UUID, asyncio.Lock] = {}
-        self._waiting: dict[uuid.UUID, int] = {}
-
-    def busy(self, key: uuid.UUID) -> bool:
-        lock = self._locks.get(key)
-        return lock is not None and lock.locked()
-
-    async def run(self, key: uuid.UUID, job: Callable[[], Awaitable[None]]) -> bool:
-        lock = self._locks.setdefault(key, asyncio.Lock())
-        if lock.locked() and self._waiting.get(key, 0) >= MAX_WAITING:
-            return False
-        self._waiting[key] = self._waiting.get(key, 0) + 1
-        try:
-            async with lock:
-                self._waiting[key] -= 1
-                await job()
-        finally:
-            if self._waiting.get(key) == 0 and not lock.locked():
-                self._locks.pop(key, None)
-                self._waiting.pop(key, None)
-        return True

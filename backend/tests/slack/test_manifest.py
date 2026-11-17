@@ -34,6 +34,7 @@ def test_manifest_scopes_cover_the_calls_and_nothing_wider():
         "im:history",
         "im:write",
         "files:write",
+        "reactions:write",
     } <= scopes
     # No reading channels VISTA wasn't mentioned in, and no user directory.
     assert not scopes & {"channels:history", "groups:history", "users:read"}

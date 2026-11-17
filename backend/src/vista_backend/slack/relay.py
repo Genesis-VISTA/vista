@@ -9,7 +9,12 @@ posted instead; if it refuses the blocks, it goes as plain text. Nothing about
 the answer's length can make it fail.
 
 Afterwards the turn is added to the conversation's transcript, so the desktop
-shows it, tagged with the run's id as the in-app chat tags its own bubbles.
+shows it, tagged with the run's id as the in-app chat tags its own bubbles: the
+researcher's messages the turn took, then the answer.
+
+Every turn of a Slack conversation is followed, including those VISTA starts
+itself from a task result. Each inbox item a turn takes is passed to
+`on_taken`, which swaps a waiting message's 👀 for ✅.
 """
 
 import json
@@ -100,6 +105,8 @@ class Place:
 
 
 PromptHandler = Callable[[RunEvent], Awaitable[None]]
+TakenHandler = Callable[[dict[str, Any]], Awaitable[None]]
+""" Gets each `inbox_taken` event's data: `item_id`, `kind`, `text`, `payload`. """
 
 
 class RunRelay:
@@ -109,11 +116,13 @@ class RunRelay:
         place: Place,
         *,
         on_prompt: PromptHandler | None = None,
+        on_taken: TakenHandler | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.transport = transport
         self.place = place
         self.on_prompt = on_prompt
+        self.on_taken = on_taken
         self.clock = clock
         self.progress_ts: str | None = None
         self._last_edit = 0.0
@@ -130,12 +139,21 @@ class RunRelay:
             await self.start()
         result: dict[str, Any] = {}
         state = "done"
+        taken: list[dict[str, Any]] = []
         async for event in run.subscribe():
             if event.kind in PROMPT_EVENT_KINDS:
                 if self.on_prompt is not None:
                     await self.on_prompt(event)
                 continue
-            if event.kind == "function_tool_call":
+            if event.kind == "inbox_taken":
+                item = json.loads(event.data)
+                taken.append(item)
+                if self.on_taken is not None:
+                    try:
+                        await self.on_taken(item)
+                    except Exception:
+                        log.exception("Could not mark a taken Slack message")
+            elif event.kind == "function_tool_call":
                 data = json.loads(event.data)
                 name = (data.get("part") or {}).get("tool_name") or ""
                 await self._progress(step_label(name))
@@ -155,7 +173,7 @@ class RunRelay:
                 reply, await self._keep_detail(reply.detail)
             )
         await self._replace(reply)
-        await record_turn(run, answer or reply.text)
+        await record_turn(run, answer or reply.text, prompts=_prompts(run, taken))
         return answer
 
     async def _progress(self, step: str) -> None:
@@ -227,8 +245,27 @@ class RunRelay:
         return detail_id
 
 
-async def record_turn(run: ChatRun, answer: str) -> None:
-    """Add the turn to the transcript the desktop shows, once."""
+def _prompts(run: ChatRun, taken: list[dict[str, Any]]) -> list[str]:
+    """
+    The researcher's messages this turn took, in order. A turn that took no
+    items was started directly with its prompt (tests); one that took only task
+    results has none.
+    """
+    if not taken:
+        return [run.user_prompt] if run.origin == "researcher" else []
+    return [i.get("text") or "" for i in taken if i.get("kind") == "message"]
+
+
+async def record_turn(
+    run: ChatRun, answer: str, *, prompts: list[str] | None = None
+) -> None:
+    """
+    Add the turn to the transcript the desktop shows: `prompts` (default the
+    run's prompt) as user bubbles, then `answer`. Once: whatever the transcript
+    already holds for this run is replaced.
+    """
+    if prompts is None:
+        prompts = [run.user_prompt]
     async with chat_run_module.session_factory() as db:
         row = await db.get(ChatSessionTable, run.chat_session_id)
         if row is None:  # Deleted on the desktop meanwhile.
@@ -240,11 +277,11 @@ async def record_turn(run: ChatRun, answer: str) -> None:
         ]
         kept += [
             ChatTranscriptMessage(
-                id=uuid.uuid4().hex,
-                role="user",
-                content=run.user_prompt,
-                run_id=run.run_id,
-            ),
+                id=uuid.uuid4().hex, role="user", content=prompt, run_id=run.run_id
+            )
+            for prompt in prompts
+        ]
+        kept += [
             ChatTranscriptMessage(
                 id=uuid.uuid4().hex, role="assistant", content=answer, run_id=run.run_id
             ),

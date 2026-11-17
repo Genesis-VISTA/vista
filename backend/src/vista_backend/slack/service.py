@@ -3,9 +3,14 @@ The Slack service: everything in `slack/` put together and run with the backend.
 
 `SlackService.start` does nothing unless Slack is on and both tokens are in
 the secret store. Then, in order: install the gate's refusal and the card's
-preview, expire cards left open by the last run, connect, and run the
-background loops — job notices, credential reminders and the App Home. `stop`
-marks the App Home offline, then undoes all of it.
+preview, expire cards left open by the last run, connect, follow every run of
+a Slack conversation in its thread, and run the background loops — job
+notices, credential reminders and the App Home. `stop` marks the App Home
+offline, then undoes all of it.
+
+A Slack message is put in its conversation's inbox, like a message sent in the
+app, and wakes the conversation; there is no other way into a turn. One that
+waits behind a running turn gets 👀, swapped for ✅ when a turn takes it.
 
 Slack runs on one machine at a time: two connected with the same app token
 would each get a share of the events (`docs/slack.md`).
@@ -22,26 +27,27 @@ from collections.abc import Callable, Coroutine
 from typing import Any
 
 from ..agents.campaign.mcp_invoke import build_mcp_invoke, project_paths_for
-from ..agents.inference import MissingInferenceCredential, MissingInferenceModel
+from ..agents.inference import (
+    MissingInferenceCredential,
+    MissingInferenceModel,
+    require_inference_credential,
+)
 from ..config import settings
 from ..db.schemas import (
     ChatSessionTable,
-    ProjectPublic,
     SlackConfigTable,
     SlackDetailTable,
     SlackLinkTable,
 )
 from ..services import chat_run as chat_run_module
-from ..services import local_settings
-from ..services.chat_run import RunBusy
-from ..services.conversation import start_turn
+from ..services import inbox, local_settings
 from . import access, audit, confirm, credentials, format, gate, limits, linking, store
 from .confirm import Confirmations
 from .events import Action, Event, HomeOpened, Message, keyword
 from .home import Home, host_name
 from .jobs import JobMonitor
 from .relay import Place, RunRelay
-from .threads import NoProject, NotYourThread, ThreadQueue, conversation_for
+from .threads import NoProject, NotYourThread, conversation_for, thread_of
 from .transport import SlackCallError, SlackTransport
 
 log = logging.getLogger("vista.slack")
@@ -49,11 +55,19 @@ log = logging.getLogger("vista.slack")
 TransportFactory = Callable[[str, str], SlackTransport]
 """ (bot token, app token) → a transport, not yet connected. """
 
-QUEUE_FULL = (
-    "I'm still working on this thread and a few messages are already waiting. "
-    "Send this again when I've answered."
-)
-BUSY = "This conversation already has a turn running in the desktop app. Try again when it's done."
+WAITING = "eyes"
+""" The reaction on a message that waits behind a running turn. """
+TAKEN = "white_check_mark"
+""" What replaces it once a turn has taken the message. """
+NOT_STARTED = "Sorry, I couldn't start on that. Try again, or check the desktop app."
+
+
+following: dict[str, asyncio.Task] = {}
+"""
+Run id → the task showing that run in its thread. Kept across a service's
+stop, so a turn still going when the settings are saved or VISTA quits ends
+in its thread ("stopped", "VISTA quit before…"), and is not followed twice.
+"""
 
 
 def socket_mode(bot_token: str, app_token: str) -> SlackTransport:
@@ -122,7 +136,7 @@ class SlackService:
         self.detail: str | None = None
         self._tasks: list[asyncio.Task] = []
         self._stop = asyncio.Event()
-        self._queue = ThreadQueue()
+        self._unhook: Callable[[], None] | None = None
         self._unlinked = access.UnlinkedReplies()
         self._confirmations: Confirmations | None = None
         self._home: Home | None = None
@@ -156,6 +170,10 @@ class SlackService:
         except Exception:
             log.exception("Could not close Slack cards left open by the last run")
         await self._connect()
+        self._unhook = chat_run_module.on_run_started(self._on_run)
+        # Turns already going, such as one startup began from a waiting message.
+        for run in chat_run_module.chat_run_registry.active():
+            self._on_run(run)
         self._spawn(self._reconnect_loop())
         self._spawn(
             JobMonitor(slack).run_forever(
@@ -172,6 +190,9 @@ class SlackService:
             return
         slack, self.slack = self.slack, None
         self._stop.set()
+        if self._unhook is not None:
+            self._unhook()
+            self._unhook = None
         if slack.connected and self._home is not None:
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(
@@ -324,42 +345,19 @@ class SlackService:
                     db, message, project_id=link.project_id
                 )
                 chat_id = conversation.chat_session_id
-                project = ProjectPublic.model_validate(conversation.project)
+                chat = await db.get(ChatSessionTable, chat_id)
+                # The chat's own model counts, as in the app.
+                require_inference_credential(
+                    await local_settings.get_public(db),
+                    chat.inference_model if chat else None,
+                )
                 await db.commit()
         except (NotYourThread, NoProject) as exc:
             await self._reply(message, str(exc), ephemeral=False)
             return
-        queued = await self._queue.run(
-            chat_id, lambda: self._turn(message, link, project, chat_id)
-        )
-        if not queued:
-            await self._reply(message, QUEUE_FULL, ephemeral=False)
-
-    async def _turn(
-        self,
-        message: Message,
-        link: SlackLinkTable,
-        project: ProjectPublic,
-        chat_id: uuid.UUID,
-    ) -> None:
-        assert self.slack is not None and self._confirmations is not None
-        place = Place(
-            channel=message.channel_id,
-            thread_ts=message.root_ts,
-            slack_user_id=message.user_id,
-        )
-        confirmations = self._confirmations
-
-        async def on_prompt(event: chat_run_module.RunEvent) -> None:
-            await confirmations.offer(
-                event,
-                place=place,
-                team_id=message.team_id,
-                chat_session_id=chat_id,
-            )
-
-        relay = RunRelay(self.slack, place, on_prompt=on_prompt)
-        await relay.start()
+        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+            await self._reply(message, format.plain(exc.detail).text, ephemeral=False)
+            return
         await audit.request(
             team_id=message.team_id,
             slack_user_id=message.user_id,
@@ -369,32 +367,109 @@ class SlackService:
             thread_ts=message.root_ts,
             text=message.prompt,
         )
-        try:
-            async with chat_run_module.session_factory() as db:
-                run = await start_turn(
-                    db,
-                    local=await local_settings.get_public(db),
-                    project=project,
-                    chat_session_id=chat_id,
-                    user_prompt=message.prompt,
-                    channel="slack",
-                )
-        except (MissingInferenceCredential, MissingInferenceModel) as exc:
-            await self._say_instead(relay, place, exc.detail)
-            return
-        except RunBusy:
-            await self._say_instead(relay, place, BUSY)
-            return
-        await relay.follow(run)
+        await self._enqueue(message, chat_id)
 
-    async def _say_instead(self, relay: RunRelay, place: Place, text: str) -> None:
-        """Replace the progress message when the turn never started."""
-        assert self.slack is not None and relay.progress_ts is not None
-        reply = format.plain(text)
+    async def _enqueue(self, message: Message, chat_id: uuid.UUID) -> None:
+        """
+        Put the message in the conversation's inbox and wake it, as the app's send
+        does. Marked 👀 first if a turn is running, which will take it.
+        """
+        assert self.slack is not None
+        registry = chat_run_module.chat_run_registry
+        if registry.get(chat_id) is not None:
+            await self._mark(message.channel_id, message.ts, add=WAITING)
+        async with chat_run_module.session_factory() as db:
+            item = await inbox.put(
+                db,
+                chat_id,
+                kind="message",
+                text=message.prompt,
+                payload={"slack": {"channel": message.channel_id, "ts": message.ts}},
+                notify=False,
+            )
         try:
-            await self.slack.update(place.channel, relay.progress_ts, reply.text)
-        except SlackCallError:
-            await self.slack.post(place.channel, reply.text, thread_ts=place.thread_ts)
+            run = await registry.wake(chat_id)
+        except Exception:
+            log.exception("Could not start a turn for a Slack message")
+            async with chat_run_module.session_factory() as db:
+                with contextlib.suppress(inbox.ItemTaken):
+                    assert item.id is not None
+                    await inbox.withdraw(db, chat_id, item.id)
+            await self._reply(message, NOT_STARTED, ephemeral=False)
+            return
+        if run is None or not any(i.id == item.id for i in run.items):
+            # The running turn takes it at its next step; show the desktop too.
+            await registry.announce_inbox(chat_id)
+
+    async def _mark(
+        self, channel: str, ts: str, *, add: str, remove: str | None = None
+    ) -> bool:
+        """Swap the bot's reaction on a message. False when `remove` was not there."""
+        assert self.slack is not None
+        if remove is not None:
+            try:
+                await self.slack.unreact(channel, ts, remove)
+            except SlackCallError as exc:
+                if exc.error != "no_reaction":
+                    log.info("Could not remove a Slack reaction: %s", exc.error)
+                return False
+        try:
+            await self.slack.react(channel, ts, add)
+        except SlackCallError as exc:
+            if exc.error != "already_reacted":
+                log.info("Could not add a Slack reaction: %s", exc.error)
+        return True
+
+    async def _taken(self, item: dict[str, Any]) -> None:
+        """A turn took an inbox item: a Slack message that waited gets ✅ for its 👀."""
+        where = (item.get("payload") or {}).get("slack") or {}
+        if item.get("kind") == "message" and where.get("channel") and where.get("ts"):
+            await self._mark(where["channel"], where["ts"], add=TAKEN, remove=WAITING)
+
+    # -- following runs ------------------------------------------------------
+
+    def _on_run(self, run: chat_run_module.ChatRun) -> None:
+        """A run started: show it in its thread if it is a Slack conversation's."""
+        if run.channel != "slack" or self.slack is None or run.run_id in following:
+            return
+        task = asyncio.create_task(self._follow(run))
+        following[run.run_id] = task
+        task.add_done_callback(lambda _: following.pop(run.run_id, None))
+
+    async def _follow(self, run: chat_run_module.ChatRun) -> None:
+        """Post the run's progress and answer in its thread; offer its prompts there."""
+        try:
+            await self._show(run)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Could not show run %s in Slack", run.run_id)
+
+    async def _show(self, run: chat_run_module.ChatRun) -> None:
+        assert self.slack is not None and self._confirmations is not None
+        async with chat_run_module.session_factory() as db:
+            thread = await thread_of(db, run.chat_session_id)
+            if thread is None:
+                log.warning("No Slack thread for conversation %s", run.chat_session_id)
+                return
+            place = Place(
+                channel=thread.channel_id,
+                thread_ts=thread.thread_ts,
+                slack_user_id=thread.slack_user_id,
+            )
+            team_id = thread.team_id
+        confirmations = self._confirmations
+
+        async def on_prompt(event: chat_run_module.RunEvent) -> None:
+            await confirmations.offer(
+                event,
+                place=place,
+                team_id=team_id,
+                chat_session_id=run.chat_session_id,
+            )
+
+        relay = RunRelay(self.slack, place, on_prompt=on_prompt, on_taken=self._taken)
+        await relay.follow(run)
 
     async def _action(self, action: Action) -> None:
         assert self.slack is not None and self._confirmations is not None

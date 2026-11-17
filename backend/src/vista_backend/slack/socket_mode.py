@@ -212,6 +212,12 @@ class SocketModeTransport(SlackTransport):
             thread_ts=thread_ts,
         )
 
+    async def react(self, channel, ts, name) -> None:
+        await self._call("reactions_add", channel=channel, timestamp=ts, name=name)
+
+    async def unreact(self, channel, ts, name) -> None:
+        await self._call("reactions_remove", channel=channel, timestamp=ts, name=name)
+
     async def open_dm(self, user: str) -> str:
         response = await self._call("conversations_open", users=user)
         return response["channel"]["id"]

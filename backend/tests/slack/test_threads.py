@@ -1,6 +1,5 @@
-"""One Slack thread is one VISTA conversation, and its turns run in order."""
+"""One Slack thread is one VISTA conversation."""
 
-import asyncio
 import uuid
 
 import pytest
@@ -8,10 +7,8 @@ import pytest
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.slack.events import Message
 from vista_backend.slack.threads import (
-    MAX_WAITING,
     NoProject,
     NotYourThread,
-    ThreadQueue,
     conversation_for,
 )
 
@@ -110,69 +107,3 @@ async def test_a_conversation_deleted_on_the_desktop_starts_again(session):
         session, msg(ts="11.0", thread_ts="10.0"), project_id=None
     )
     assert again.is_new and again.chat_session_id != first.chat_session_id
-
-
-@pytest.mark.anyio
-async def test_turns_in_a_thread_run_in_order_and_are_not_dropped():
-    queue = ThreadQueue()
-    key = uuid.uuid4()
-    order: list[str] = []
-    release = asyncio.Event()
-
-    async def first():
-        order.append("first start")
-        await release.wait()
-        order.append("first end")
-
-    async def second():
-        order.append("second")
-
-    t1 = asyncio.create_task(queue.run(key, first))
-    await asyncio.sleep(0)
-    t2 = asyncio.create_task(queue.run(key, second))
-    await asyncio.sleep(0)
-    assert queue.busy(key) and order == ["first start"]
-
-    release.set()
-    assert await t1 and await t2
-    assert order == ["first start", "first end", "second"]
-    assert not queue.busy(key)
-
-
-@pytest.mark.anyio
-async def test_too_many_waiting_is_refused_not_queued():
-    queue = ThreadQueue()
-    key = uuid.uuid4()
-    release = asyncio.Event()
-
-    async def hold():
-        await release.wait()
-
-    running = asyncio.create_task(queue.run(key, hold))
-    await asyncio.sleep(0)
-    waiting = [asyncio.create_task(queue.run(key, hold)) for _ in range(MAX_WAITING)]
-    await asyncio.sleep(0)
-
-    assert await queue.run(key, hold) is False
-    release.set()
-    assert all(await asyncio.gather(running, *waiting))
-
-
-@pytest.mark.anyio
-async def test_other_threads_do_not_wait():
-    queue = ThreadQueue()
-    release = asyncio.Event()
-
-    async def hold():
-        await release.wait()
-
-    ran = []
-
-    async def quick():
-        ran.append(True)
-
-    blocked = asyncio.create_task(queue.run(uuid.uuid4(), hold))
-    await asyncio.sleep(0)
-    assert await queue.run(uuid.uuid4(), quick) and ran == [True]
-    release.set()
-    await blocked

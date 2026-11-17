@@ -15,10 +15,10 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 3. Turns through the inbox
 
-- [ ] 3.1 Slack messages enter with `inbox.put` and `chat_run_registry.wake`; remove `services/conversation.start_turn`, `ThreadQueue`, `QUEUE_FULL` and `BUSY`; test: three messages sent during a running turn are all answered, in order, and a message waiting across a restart is answered after it
-- [ ] 3.2 `wake` takes the run's channel from `chat_session.origin` and passes it to `run_stream`; test that a self-started turn in a Slack conversation is a Slack turn and one in an app conversation is not
-- [ ] 3.3 The relay follows every run of a Slack conversation, self-started ones included (a registry hook on run start), and records each turn in the transcript once; test with a job-watch result
-- [ ] 3.4 React 👀 to a queued Slack message and ✅ when a turn takes it; add `reactions:write` to `manifest.yaml`; `FakeTransport` records reactions
+- [x] 3.1 Slack messages enter with `inbox.put` and `chat_run_registry.wake`; remove `services/conversation.start_turn`, `ThreadQueue`, `QUEUE_FULL` and `BUSY`; test: three messages sent during a running turn are all answered, in order, and a message waiting across a restart is answered after it
+- [x] 3.2 `wake` takes the run's channel from `chat_session.origin` and passes it to `run_stream`; test that a self-started turn in a Slack conversation is a Slack turn and one in an app conversation is not
+- [x] 3.3 The relay follows every run of a Slack conversation, self-started ones included (a registry hook on run start), and records each turn in the transcript once; test with a job-watch result
+- [x] 3.4 React 👀 to a queued Slack message and ✅ when a turn takes it; add `reactions:write` to `manifest.yaml`; `FakeTransport` records reactions
 
 ## 4. Read-only on the desktop
 

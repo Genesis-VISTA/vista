@@ -38,6 +38,8 @@ class FakeTransport(SlackTransport):
         """ (channel, user, text). """
         self.uploads: list[dict[str, Any]] = []
         self.homes: dict[str, dict[str, Any]] = {}
+        self.reactions: dict[tuple[str, str], list[str]] = {}
+        """ (channel, ts) → the bot's reactions on that message, in the order added. """
         self.fail_next: dict[str, str] = {}
         """ method → Slack error code, raised once by the next such call. """
         self.connects = 0
@@ -109,6 +111,20 @@ class FakeTransport(SlackTransport):
                 "thread_ts": thread_ts,
             }
         )
+
+    async def react(self, channel, ts, name) -> None:
+        self._maybe_fail("react")
+        names = self.reactions.setdefault((channel, ts), [])
+        if name in names:
+            raise SlackCallError("reactions_add", "already_reacted")
+        names.append(name)
+
+    async def unreact(self, channel, ts, name) -> None:
+        self._maybe_fail("unreact")
+        names = self.reactions.get((channel, ts), [])
+        if name not in names:
+            raise SlackCallError("reactions_remove", "no_reaction")
+        names.remove(name)
 
     async def open_dm(self, user: str) -> str:
         return f"D{user}"

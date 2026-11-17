@@ -95,6 +95,17 @@ class SlackTransport(ABC):
         """Attach a file to a channel or thread."""
 
     @abstractmethod
+    async def react(self, channel: str, ts: str, name: str) -> None:
+        """Add the bot's `name` reaction (e.g. `eyes`) to a message."""
+
+    @abstractmethod
+    async def unreact(self, channel: str, ts: str, name: str) -> None:
+        """
+        Remove the bot's `name` reaction. `SlackCallError("no_reaction")` when
+        the bot had none there.
+        """
+
+    @abstractmethod
     async def open_dm(self, user: str) -> str:
         """The bot's direct-message channel with `user`."""
 

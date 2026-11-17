@@ -1,5 +1,8 @@
 """The Slack service: nothing starts while Slack is off; on, events reach the agent."""
 
+# `env` is test_chat_run's fixture, imported, so each test that takes it "redefines" it.
+# ruff: noqa: F811
+
 import asyncio
 import json
 
@@ -7,10 +10,16 @@ import pytest
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from vista_backend.db.schemas import SlackAuditTable, SlackConfigTable
-from vista_backend.services import chat_run, conversation
-from vista_backend.services.chat_run import ChatRun
-from vista_backend.slack import confirm, gate, limits, service
+from harness import call, say
+from test_chat_run import env  # noqa: F401  (scripted agents and a registry)
+from vista_backend.db.schemas import (
+    ChatSessionTable,
+    SlackAuditTable,
+    SlackConfigTable,
+    SlackThreadTable,
+)
+from vista_backend.services import chat_run, inbox
+from vista_backend.slack import confirm, gate, limits, service, store
 from vista_backend.slack.events import HomeOpened, Message
 from vista_backend.slack.service import SlackService
 from vista_backend.utils import secret_store
@@ -165,69 +174,221 @@ async def test_a_dropped_connection_is_connected_again(on, slack, monkeypatch):
     await svc.stop()
 
 
-async def test_a_dm_runs_a_slack_turn(on, slack, session, local, monkeypatch):
-    await link(session, "U1")
-    await project(session)
-    started: list[dict] = []
-
-    async def fake_start(db, **kw):
-        started.append(kw)
-        run = ChatRun(
-            chat_session_id=kw["chat_session_id"],
-            project_id=kw["project"].id,
-            agent_key=("k",),  # type: ignore[arg-type]
-            user_prompt=kw["user_prompt"],
-            prior_history=[],
-            channel=kw["channel"],
+async def _slack_conversation(on, steps, *, thread_ts="10.0", user="U1"):
+    """A Slack conversation on a scripted agent, bound to a DM thread."""
+    row, _ = await on.conversation(steps)
+    async with AsyncSession(on.engine) as s:
+        saved = await s.get(ChatSessionTable, row.id)
+        saved.origin = "slack"
+        s.add(
+            SlackThreadTable(
+                team_id=TEAM,
+                channel_id=f"D{user}",
+                thread_ts=thread_ts,
+                chat_session_id=row.id,
+                slack_user_id=user,
+                created_at=store.now_iso(),
+            )
         )
+        await s.commit()
+    return row
 
-        async def finish():
-            await run.append(
-                "agent_run_result",
-                json.dumps(
-                    {
-                        "event_kind": "agent_run_result",
-                        "result": {
-                            "new_messages": [
-                                {
-                                    "kind": "response",
-                                    "parts": [
-                                        {
-                                            "part_kind": "text",
-                                            "content": "Queue is short.",
-                                        }
-                                    ],
-                                }
-                            ]
-                        },
-                    }
-                ),
-            )
-            await run.append(
-                "run_finished",
-                json.dumps({"event_kind": "run_finished", "state": "done"}),
-            )
-            await run._finish()
 
-        asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(finish()))
-        return run
+async def _settled(on, chat_id) -> None:
+    """Until no turn runs and nothing is queued, and the relay is done."""
+    async with asyncio.timeout(10):
+        while True:
+            run = on.registry.get(chat_id)
+            if run is not None:
+                await run.wait()
+                continue
+            async with AsyncSession(on.engine) as db:
+                if not await inbox.list_queued(db, chat_id):
+                    break
+            await asyncio.sleep(0.01)
+        for task in list(service.following.values()):
+            await task
 
-    monkeypatch.setattr(service, "start_turn", fake_start)
-    svc = _service()
-    await svc.start()
+
+def _answers(slack, channel="DU1", thread="10.0") -> list[str]:
+    return [
+        (m.edits or [m.text])[-1]
+        for m in slack.in_channel(channel)
+        if m.thread_ts == thread
+    ]
+
+
+@pytest.fixture
+def credential(monkeypatch):
+    """The install has a model to send to."""
+    monkeypatch.setattr(service, "require_inference_credential", lambda *a: None)
+
+
+async def test_a_dm_runs_a_slack_turn(env, on, slack, session, credential):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [say("Queue is short.")])
+    await service.start(host="lab-mac")
 
     await slack.deliver(_dm("<@UBOT> how is the Frontier queue?"))
+    await _settled(env, row.id)
 
-    (kw,) = started
-    assert kw["channel"] == "slack"
-    assert kw["local"].install_id == local.install_id, "as the install's researcher"
-    assert kw["user_prompt"] == "how is the Frontier queue?"
-    answer = [m for m in slack.in_channel("DU1") if m.thread_ts == "10.0"]
-    assert answer and "Queue is short." in (answer[-1].edits or [answer[-1].text])[-1]
+    saved = await env.row(row.id)
+    assert saved.run_state == "done"
+    assert any("Queue is short." in a for a in _answers(slack))
+    assert [(m["role"], m["content"]) for m in saved.messages] == [
+        ("user", "how is the Frontier queue?"),
+        ("assistant", "Queue is short."),
+    ]
+    assert slack.reactions.get(("DU1", "10.0"), []) == [], "nothing waited"
     async with AsyncSession(session.bind) as s:
         events = [r.event for r in (await s.exec(select(SlackAuditTable))).all()]
     assert "request" in events
-    await svc.stop()
+
+
+async def test_messages_during_a_turn_are_all_answered_in_order(
+    env,
+    on,
+    slack,
+    session,
+    credential,
+):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [call("gate"), say("Done with all three.")])
+    await service.start(host="lab-mac")
+
+    await slack.deliver(_dm("start the long one"))
+    await asyncio.wait_for(env.at_gate.wait(), 10)
+    for n, ts in enumerate(["11.0", "12.0", "13.0"], 1):
+        await slack.deliver(_dm(f"also {n}", ts=ts, thread_ts="10.0"))
+    assert all(
+        slack.reactions[("DU1", ts)] == [service.WAITING]
+        for ts in ["11.0", "12.0", "13.0"]
+    ), "each waiting message is marked received"
+
+    env.gate.set()
+    await _settled(env, row.id)
+
+    saved = await env.row(row.id)
+    prompts = [
+        part["content"]
+        for message in saved.message_history
+        if message["kind"] == "request"
+        for part in message["parts"]
+        if part["part_kind"] == "user-prompt"
+    ]
+    assert [p.splitlines()[-1] for p in prompts] == [
+        "start the long one",
+        "also 1",
+        "also 2",
+        "also 3",
+    ]
+    assert all(
+        slack.reactions[("DU1", ts)] == [service.TAKEN]
+        for ts in ["11.0", "12.0", "13.0"]
+    )
+    assert [m["content"] for m in saved.messages if m["role"] == "user"] == [
+        "start the long one",
+        "also 1",
+        "also 2",
+        "also 3",
+    ]
+    assert any("Done with all three." in a for a in _answers(slack))
+
+
+async def test_a_message_waiting_across_a_restart_is_answered(
+    env,
+    on,
+    slack,
+    session,
+    credential,
+):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [say("Here it is.")])
+    async with AsyncSession(env.engine) as db:
+        saved = await db.get(ChatSessionTable, row.id)
+        saved.run_state = "running"  # the turn the quit cut short
+        await db.commit()
+        await inbox.put(
+            db,
+            row.id,
+            kind="message",
+            text="and the outputs?",
+            payload={"slack": {"channel": "DU1", "ts": "11.0"}},
+            notify=False,
+        )
+
+    # What the lifespan does at startup, in its order.
+    assert await chat_run.sweep_interrupted_runs() == 1
+    assert await chat_run.wake_queued_inboxes() == 1
+    await service.start(host="lab-mac")
+    await _settled(env, row.id)
+
+    assert any("Here it is." in a for a in _answers(slack))
+    saved = await env.row(row.id)
+    assert [m["content"] for m in saved.messages if m["role"] == "user"] == [
+        "and the outputs?"
+    ]
+
+
+async def test_a_turn_vista_starts_is_shown_in_the_thread_once(
+    env,
+    on,
+    slack,
+    session,
+):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [say("Job 42 finished; outputs are in.")])
+    await service.start(host="lab-mac")
+
+    async with AsyncSession(env.engine) as db:
+        await inbox.put(db, row.id, kind="task_event", text="[watch] job 42 COMPLETED")
+    await _settled(env, row.id)
+
+    run_rows = (await env.row(row.id)).messages
+    assert [(m["role"], m["content"]) for m in run_rows] == [
+        ("assistant", "Job 42 finished; outputs are in.")
+    ], "no user bubble for a task result, and the answer once"
+    (progress,) = [m for m in slack.in_channel("DU1") if m.thread_ts == "10.0"]
+    assert "Job 42 finished" in progress.edits[-1]
+
+
+async def test_a_turn_running_at_quit_says_so_in_its_thread(
+    env,
+    on,
+    slack,
+    session,
+    credential,
+):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [call("hang"), say("unreachable")])
+    await service.start(host="lab-mac")
+    await slack.deliver(_dm("start the long one"))
+    await asyncio.wait_for(env.hang_started.wait(), 10)
+
+    # The lifespan's order: Slack first, then the runs.
+    await service.stop()
+    await env.registry.stop_all(reason="interrupted")
+    for task in list(service.following.values()):
+        await task
+
+    assert (await env.row(row.id)).run_state == "interrupted"
+    assert any("VISTA quit before that turn finished" in a for a in _answers(slack))
+
+
+async def test_a_turn_in_an_app_conversation_is_not_followed(
+    env,
+    on,
+    slack,
+    session,
+):
+    row, _ = await env.conversation([say("Done.")])
+    await service.start(host="lab-mac")
+
+    async with AsyncSession(env.engine) as db:
+        await inbox.put(db, row.id, kind="task_event", text="job 42 COMPLETED")
+    await _settled(env, row.id)
+
+    assert slack.messages == []
 
 
 async def test_lock_from_slack_and_unlock_only_from_desktop(on, slack, session):
@@ -256,7 +417,7 @@ async def test_an_unlinked_user_is_refused_and_nothing_runs(
     async def never(*a, **kw):
         raise AssertionError("no turn for an unlinked user")
 
-    monkeypatch.setattr(service, "start_turn", never)
+    monkeypatch.setattr(inbox, "put", never)
     svc = _service()
     await svc.start()
 
@@ -320,8 +481,3 @@ async def test_preview_reads_the_mcp_preview(db, session, monkeypatch):
     assert asked == ["preview_hpc_job"]
     assert fields["Account"] == "MAT123" and fields["System"] == "frontier"
     assert await service.preview_job(chat_id, "run_bash", {}) == {}
-
-
-def test_the_conversation_module_is_what_is_patched():
-    """`service.start_turn` is the shared entry point, not a Slack copy."""
-    assert service.start_turn is conversation.start_turn
