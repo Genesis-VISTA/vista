@@ -12,14 +12,13 @@ that needs one (an S3M or NERSC token, connecting Globus) happens in the desktop
 ## How it connects
 
 VISTA uses Slack's **Socket Mode**: the machine running VISTA opens an outbound WebSocket to
-Slack, so there is no public URL, no port to open, and nothing has to reach your machine. Slack
-signs every event and Bolt verifies it before VISTA sees it. If the connection drops, VISTA
-connects again by itself.
+Slack, so there is no public URL, no port to open, and nothing has to reach your machine.
+Events arrive only over that connection, which VISTA opened with your app-level token. If the
+connection drops, VISTA connects again by itself.
 
 The consequence is that VISTA answers only while it is running and online. A message sent
 while it is off is not queued anywhere, and Slack shows the app as away. When VISTA quits, its
-Home tab says it is offline. A hosted relay that could hold messages is a design note only:
-[slack-relay.md](slack-relay.md).
+Home tab says it is offline.
 
 ## Setting up
 
@@ -40,15 +39,17 @@ a workspace admin.
    - paste both tokens. They go to the system keychain (macOS Keychain, Windows Credential
      Manager, the Secret Service on Linux) and are never shown again or written to a config
      file or log. On a machine with no keychain, Slack can't be turned on, and the section says
-     why. On macOS the first access may ask once whether VISTA's Python may use the keychain.
-     A hosted VISTA keeps them in a secrets directory instead (see
-     [Running VISTA hosted](#running-vista-hosted)).
+     why. macOS may ask whether VISTA may use the keychain; choose *Always Allow*.
    - add the **workspace ID** (`T…`, from the workspace's URL or *About this workspace*) to the
-     allowed workspaces. Events from any other workspace are dropped without a reply.
-   - optionally list **channel IDs** (`C…`). If you do, @mentions anywhere else are ignored.
-     DMs, and the buttons in them, are always allowed.
-   - turn on **Slack**. The status line should say *Connected*.
-5. **Link your Slack account.** DM VISTA `link`. It replies with a 6-digit code; enter it under
+     allowed workspaces. Slack can't be turned on without one, and events from any other
+     workspace are dropped without a reply.
+   - optionally list **channel IDs** (`C…`). If you do, an @mention anywhere else gets a reply
+     only its sender sees, *I don't work in this channel*, and nothing more. DMs, and the
+     buttons in them, are always allowed.
+   - turn on **Slack**. The status line should say *Connected*. Saving any Slack setting other
+     than the lock and the limits reconnects, and expires any confirmation card still open.
+5. **Link your Slack account.** DM VISTA `link` (in a DM, as the whole message). It replies with
+   a 6-digit code; enter it under
    *Linked Slack accounts* within 10 minutes. Each link can pick the project new Slack
    conversations start in; *Ask each time* (the default) has VISTA ask in each new thread, unless
    you have only one project.
@@ -59,9 +60,7 @@ once in a while, that their account isn't linked and how to link it.
 A VISTA has one researcher, so a link admits a Slack account to *this* VISTA, and that account
 then acts as you, with your cluster credentials and your projects. Only someone at the desktop
 app can enter the code, so only you can complete a link. Link only your own accounts: one Slack
-app serves one researcher's VISTA. When you are signed in to a collaboration server, the link
-also records who you are there; nothing uses it to decide access yet, but it is what a shared,
-hosted Slack bot would route by (see [the relay design note](slack-relay.md)).
+app serves one researcher's VISTA.
 
 ### The manifest
 
@@ -91,10 +90,10 @@ oauth_config:
   scopes:
     bot:
       - app_mentions:read # @VISTA in a channel
-      - chat:write # replies, the "working" message, confirmations, job notices
+      - chat:write # replies, the "working" message, confirmation cards, reminders
       - im:history # DMs to VISTA
       - im:read
-      - im:write # opening a DM for job notices and reminders
+      - im:write # opening a DM for credential reminders
       - files:write # the figures and files a turn displayed
       - reactions:write # ⏳ on a message that waits, ✅ when a turn takes it
 settings:
@@ -119,7 +118,11 @@ by neither. To move Slack to another machine, turn it off on the first one.
 ## Using it
 
 - **DM VISTA**, or **@VISTA** in a channel it has been invited to. A thread is one
-  conversation: replies in the thread continue it, and a new message starts a new one.
+  conversation: replies in the thread continue it, and a new message starts a new one. In a
+  channel, @mention VISTA in each reply too: it sees only the messages that mention it there.
+  Only the person who started a thread can continue it.
+- If you have no project yet, or no model is set up in the desktop app, VISTA says so instead
+  of answering.
 - **Which project:** with no project chosen for your link and more than one project, the first
   message of a new thread is answered with *Which project should this go in?* and a button per
   project (a menu past five). Messages you send before tapping wait, and are answered in the
@@ -134,12 +137,14 @@ by neither. To move Slack to another machine, turn it off on the first one.
 - Ask about your jobs in plain words: "my last job", "the Frontier job from this morning",
   "show me its log". When a request is ambiguous, VISTA may offer up to five buttons to choose
   from.
-- **A job submitted from Slack is watched.** When it ends (completed, failed, cancelled, timed
-  out), VISTA answers in its thread, @mentioning you. A job that ended while VISTA was off is
+- **A job submitted from Slack with `submit_hpc_job` is watched** (an `agenthpc` campaign's
+  parameter sets are not). When it ends (completed, failed, cancelled, timed out), VISTA answers
+  in its thread, @mentioning you. A job that ended while VISTA was off is
   reported when it is back. A conversation in the desktop app never posts to Slack.
-- The **Home tab** shows whether VISTA is connected and since when, whether Slack is locked,
-  your recent jobs, and which clusters' credentials are expiring. It says when it was last
-  updated, since Slack keeps showing the last version while VISTA is offline.
+- The **Home tab** shows whether VISTA is connected, on which machine and since when, whether
+  Slack is locked, the Slack limits, your five most recent jobs from Slack, and when each known
+  cluster credential expires or expired. It says when it was last updated, since Slack keeps
+  showing the last version while VISTA is offline.
 
 ### On the desktop
 
@@ -169,48 +174,44 @@ by the model.
 
 ### Limits and the lock
 
-Under *Limits for Slack requests* you set the most nodes per job, the longest walltime and the
-number of jobs per day that Slack may submit. They are checked against the job as it would be
-submitted, its defaults included, before it is offered for confirmation. An `agenthpc`
-parameter set's nodes and walltime are fixed by its application on the cluster, so it is held
-to the lock and the daily count only. Jobs started in the app are not limited. These are set
+Under *Limits for Slack requests* you set *Most nodes per job*, *Longest walltime (minutes)* and
+*Jobs per day* (counted over any 24 hours) that Slack may submit; they start at 4 nodes, 120
+minutes and 5 jobs. They are checked against the job as it would be submitted, its defaults
+included, before it is offered for confirmation: a job over a limit gets no card, and the agent
+is told why. An `agenthpc` parameter set's nodes and walltime are fixed by its application on
+the cluster, so it is held to the lock and to the count of jobs submitted, which it doesn't add
+to. Jobs started in the app are not limited. These are set
 only in the app, so a lost or borrowed phone can't raise them.
 
-Say **lock** to VISTA in Slack (DM or @mention) to block every action that changes something
-until you unlock it. Questions still work. Unlocking is only possible with the *Locked* switch
+Say **lock** to VISTA in Slack (DM or @mention, as the whole message) to block every action
+that changes something until you unlock it. Questions still work. Unlocking is only possible with the *Locked* switch
 in the desktop app; saying `unlock` in Slack just says so.
 
 ### Credentials
 
 VISTA reminds you in a DM when a cluster credential will expire within 24 hours, and again
-within 2 hours: S3M tokens (Odo, Frontier), the NERSC token, and the Globus session (an
+within 2 hours: S3M tokens (Odo, Frontier, Lux), the NERSC token, and the Globus session (an
 estimate, three days after connecting, which refreshing doesn't extend). Renew it in the
 desktop app. After it expires, VISTA tells you which actions are unavailable on that cluster
 rather than trying them.
 
 ## Audit log
 
-Every Slack request, refusal, confirmation card, confirm, cancel, expiry and tool result is
-recorded with the time, workspace, Slack user, collaboration-server identity (when known),
-thread, tool and job id, in the
-database and in `<data dir>/logs/slack-audit.jsonl`. Arguments are redacted first: any key
-naming a token, password, secret or passcode is dropped. Tokens never appear in any log.
-
-## Running VISTA hosted
-
-A VISTA can also run headless, serving one researcher from a server rather than their laptop,
-with `VISTA_BACKEND_DEPLOYMENT=hosted`. Slack then works without the laptop: Socket Mode only
-connects outward, so the server needs no address Slack can reach. In hosted mode the Slack
-tokens are kept one file per secret in `<data dir>/secrets`, or
-`VISTA_BACKEND_SECRETS__DIRECTORY`. The directory must be mode `0700`, or VISTA refuses to use
-it, as it refuses a plaintext keyring; an operator may provide a secret by mounting a file of
-that name. `VISTA_BACKEND_SECRETS__BACKEND` (`os`, `directory`) overrides the choice either way.
+Every Slack request, `lock`, refusal by the lock, the limits or an expired credential,
+confirmation card and how it closed (confirmed, cancelled, expired, refused), and each job
+submitted from Slack with its job id, is recorded with the time, workspace and Slack user
+(where known), collaboration-server identity (when known), conversation, tool and job id; a
+request also records its channel and thread. It is kept in the database and in
+`<data dir>/logs/slack-audit.jsonl`. Values under any key naming a token, password, secret,
+passcode, OTP or MFA are replaced with `[redacted]`, and anything shaped like a Slack token, a
+JWT or a bearer token is masked wherever it appears. VISTA never logs the tokens themselves.
 
 ## Troubleshooting
 
-- *Can't connect*: the detail under the status says what Slack answered. `invalid_auth` is a
-  wrong or revoked bot token; `not_allowed_token_type` is the two tokens swapped. VISTA tries
-  again every minute.
+- *Can't connect*: the detail under the status says what Slack answered. *Slack rejected the
+  bot token* means a wrong or revoked bot token: reinstall the app and paste a fresh one.
+  `invalid_auth` from the connection itself is the app-level token. VISTA tries again every
+  minute.
 - *Some messages get no answer*: another machine may have Slack on with the same app token.
   Turn it off there.
 - *Nothing happens on an @mention*: invite VISTA to the channel (`/invite @VISTA`), and check
@@ -229,3 +230,11 @@ are in `openspec/changes/slack-channel/`. The manifest above is checked against
 Before a release, run the manual checklist in
 [`openspec/changes/slack-channel/mobile-checklist.md`](../openspec/changes/slack-channel/mobile-checklist.md)
 on iOS and Android.
+
+### Running VISTA hosted
+
+`VISTA_BACKEND_DEPLOYMENT=hosted` is for a headless VISTA serving one researcher from a server.
+Its one effect on Slack is where the tokens live: one file per secret in `<data dir>/secrets`, or
+`VISTA_BACKEND_SECRETS__DIRECTORY`, instead of the OS keychain. The directory must be mode
+`0700`, or VISTA refuses to use it, and an operator may provide a secret by mounting a file of
+that name. `VISTA_BACKEND_SECRETS__BACKEND` (`os`, `directory`) overrides the choice either way.

@@ -55,7 +55,7 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 ## 8. Docs
 
 - [x] 8.1 `docs/slack.md`: the manifest inline (with a test that it matches `manifest.yaml`), `reactions:write`, the read-only desktop view, the confirmation rules, a note that some workspaces need an admin to approve new apps, one machine at a time; remove "Away from your desk" and the "Standing by" troubleshooting
-- [x] 8.2 Mark `docs/slack-relay.md` superseded by the facility-service plan; keep both pages in `docs/site.toml`; `./scripts/ci-local.sh docs` passes
+- [x] 8.2 Mark `docs/slack-relay.md` superseded by the facility-service plan; list only `slack.md` in `docs/site.toml` (the relay note is excluded: a design note, not for the public site); `./scripts/ci-local.sh docs` passes
 - [x] 8.3 A short Slack section in `AGENTS.md`: Slack enters through the inbox, a conversation's channel is its origin, the confirmed set and where to add a new cluster action
 
 ## 9. Verify

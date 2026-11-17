@@ -38,7 +38,7 @@ there with the same agent as the desktop chat.
 - Slack tokens live in the OS secret store, or in a secrets directory when VISTA runs hosted.
 - An audit log of every Slack-initiated action.
 - A Slack app manifest and a setup guide published on the docs site. The hosted-relay design note
-  is kept, marked superseded by the facility-service plan.
+  is kept in the repository, marked superseded by the facility-service plan, and not published.
 
 ### Not in this change
 
