@@ -26,8 +26,8 @@ Record the date, VISTA version, Slack app version and device for each run.
 | 15 | Ask something ambiguous ("submit the MD job") | Up to five choice buttons; tapping one continues | | |
 | 16 | Say `lock`; ask to submit; say `unlock` | Locked; the submit is refused; `unlock` says it's desktop-only. Unlock in the app | | |
 | 17 | Open VISTA's **Home** tab | Online since, lock state, recent jobs, credential expiries, "as of" time | | |
-| 18 | Quit VISTA from the desktop; message it; start it again | Offline notice; no reply to the message; back-online notice (not if restarted within 2 minutes) | | |
-| 19 | Lux job request with no desktop Lux login | Told to log in from the desktop app; never asked for a passcode in Slack | | |
+| 18 | Quit VISTA from the desktop; message it; start it again | Home tab says offline; no reply to the message; after the start, Home tab says online since then | | |
+| 19 | A request that needs a login (the `agenthpc` server's SSH login) with none made in the desktop app | Told to log in from the desktop app; never asked for a passcode in Slack | | |
 | 20 | Scroll back through the session | No password, passcode, MFA code or token anywhere in Slack | | |
 | 21 | Rotate to landscape and back; switch to dark mode | Cards and code blocks still readable | | |
 

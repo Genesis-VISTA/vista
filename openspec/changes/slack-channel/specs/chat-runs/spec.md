@@ -2,8 +2,8 @@
 
 ### Requirement: Prompts wait for the researcher
 
-Tool approvals and MCP form and URL elicitations, including the SSH login requested by Lux job
-submission, SHALL wait until they are answered or the run is stopped. They SHALL NOT time out
+Tool approvals and MCP form and URL elicitations, including the SSH login the optional `agenthpc`
+server asks for, SHALL wait until they are answered or the run is stopped. They SHALL NOT time out
 while VISTA is running, within a 24-hour ceiling on any single MCP tool call. A client that
 re-attaches SHALL be shown every prompt that is still unanswered, and SHALL NOT be shown prompts
 that were already answered. Answers to prompts SHALL NOT be stored with the run's events.
@@ -14,8 +14,8 @@ Slack.
 
 #### Scenario: Lux login after a long absence
 
-- **WHEN** a Lux submission asks for an SSH login while the researcher is on another page, and
-  they return an hour later
+- **WHEN** a tool asks for an SSH login while the researcher is on another page, and they
+  return an hour later
 - **THEN** the login form is shown when they open the conversation
 - **AND** answering it lets the submission proceed
 
@@ -42,6 +42,6 @@ Slack.
 
 #### Scenario: Login form in a Slack run
 
-- **WHEN** a run in a Slack conversation reaches a tool that asks for a Lux login
+- **WHEN** a run in a Slack conversation reaches a tool that asks for a login
 - **THEN** the form is declined immediately and the run's answer says to log in from the desktop
   app

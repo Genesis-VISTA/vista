@@ -73,10 +73,11 @@ credential in a Slack message, file or log. A login form that a tool asks for du
 Slack-initiated turn SHALL be declined at once and SHALL NOT be shown in Slack; the reply SHALL
 say which login is needed and that it is done in the desktop app.
 
-#### Scenario: Lux without a recent desktop login
+#### Scenario: A tool that needs a login
 
-- **WHEN** a linked user asks from Slack to submit a Lux job and no Lux login is cached
-- **THEN** no login form is shown in Slack and the reply says Lux needs a login in the VISTA
+- **WHEN** a linked user asks from Slack for something a tool needs a login for, such as the
+  `agenthpc` server's SSH login, and there is none from the desktop app
+- **THEN** no login form is shown in Slack and the reply says the login is done in the VISTA
   desktop app
 
 ### Requirement: Cluster actions need the requester's confirmation

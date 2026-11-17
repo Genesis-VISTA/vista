@@ -19,8 +19,9 @@
   call's arguments as the model sent them, which for OpenAI-compatible providers is a JSON string.
 - The vista MCP server has `submit_hpc_job`, `cancel_hpc_job`, `hpc_upload_files`,
   `hpc_download_files` (not read-only) and `get_hpc_job_status`, `get_hpc_job_outputs`
-  (read-only); `agenthpc` adds its own submit and cancel tools. Lux logs in over SSH through a
-  form elicitation; the login is cached per researcher for an hour.
+  (read-only); `agenthpc` adds its own submit and cancel tools. Odo, Frontier and Lux all run
+  through S3M's IRI with a token set in the desktop app; only the optional `agenthpc` server logs
+  in over SSH, through a form elicitation.
 - The only known credential expiry is S3M's `plannedExpiration` (`services/hpc_status.py`).
 - Database secrets are Fernet-encrypted with `VISTA_BACKEND_ENCRYPTION_KEY`.
 - Schema changes are additive: `init_db` runs `create_all` and adds missing columns.
@@ -98,8 +99,8 @@ expired or already-answered card can be redrawn after a restart. Native tools th
 answers (a transfer's Approve/Decline, `offer_choices`) is emitted as usual and the Slack relay
 shows it as buttons, requester-only, declined after 10 minutes; any other form (a login) or URL
 elicitation is declined at once, and the Slack instructions tell the agent that logins happen in
-the desktop app. A Lux submission thus works from Slack exactly while the desktop's cached login
-lasts (an hour).
+the desktop app. A tool that needs a login (the `agenthpc` server's SSH login) thus works from
+Slack only while a login made in the desktop app lasts.
 
 ### D6. Threads, origin and transcript
 `slack_thread(team_id, channel_id, thread_ts)` → `chat_session_id`, requester and project: the

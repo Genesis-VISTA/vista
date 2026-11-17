@@ -7,7 +7,7 @@ under **Settings → Slack**, never in Slack.
 
 What Slack never gets: a cluster credential. Jobs run with the VISTA session already on your
 machine, and VISTA never asks for a password, passcode, MFA code or token in Slack. Anything
-that needs one (a Lux login, connecting Globus) happens in the desktop app.
+that needs one (an S3M or NERSC token, connecting Globus) happens in the desktop app.
 
 ## How it connects
 
@@ -187,9 +187,6 @@ within 2 hours: S3M tokens (Odo, Frontier), the NERSC token, and the Globus sess
 estimate, three days after connecting, which refreshing doesn't extend). Renew it in the
 desktop app. After it expires, VISTA tells you which actions are unavailable on that cluster
 rather than trying them.
-
-A Lux login is an hour-long SSH login made in the desktop app. Slack can use it while it lasts;
-when there is none, VISTA says to log in from the app.
 
 ## Audit log
 
