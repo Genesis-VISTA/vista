@@ -309,7 +309,8 @@ async def test_lost_access_pauses_without_a_word_to_the_agent(
     registry.watch_job(record, read=Script(LOST), clock=clock)
 
     async def paused():
-        return (await _record(records, record)).state == "paused"
+        # The pause is saved before the watch sleeps: wait for both.
+        return (await _record(records, record)).state == "paused" and bool(clock.sleeps)
 
     await _until(paused)
     saved = await _record(records, record)
@@ -353,7 +354,10 @@ async def test_reconnecting_in_settings_resumes_the_watch_and_later_changes_are_
     await session.commit()
 
     async def resumed():
-        return (await _record(records, record)).state == "watching"
+        # "watching" is saved before the "started" event is put: wait for both.
+        return (await _record(records, record)).state == "watching" and bool(
+            await _events(records, chat[0])
+        )
 
     await _until(resumed)
     saved = await _record(records, record)
