@@ -107,6 +107,10 @@ class Place:
 PromptHandler = Callable[[RunEvent], Awaitable[None]]
 TakenHandler = Callable[[dict[str, Any]], Awaitable[None]]
 """ Gets each `inbox_taken` event's data: `item_id`, `kind`, `text`, `payload`. """
+WithdrawnHandler = Callable[[list[int]], Awaitable[None]]
+""" Gets the ids of the queued messages a Stop withdrew, unanswered. """
+
+WITHDRAWN = "Messages sent while it ran weren't answered. Send them again if you still need them."
 
 
 class RunRelay:
@@ -117,12 +121,14 @@ class RunRelay:
         *,
         on_prompt: PromptHandler | None = None,
         on_taken: TakenHandler | None = None,
+        on_withdrawn: WithdrawnHandler | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.transport = transport
         self.place = place
         self.on_prompt = on_prompt
         self.on_taken = on_taken
+        self.on_withdrawn = on_withdrawn
         self.clock = clock
         self.progress_ts: str | None = None
         self._last_edit = 0.0
@@ -140,6 +146,7 @@ class RunRelay:
         result: dict[str, Any] = {}
         state = "done"
         taken: list[dict[str, Any]] = []
+        withdrawn: list[int] = []
         async for event in run.subscribe():
             if event.kind in PROMPT_EVENT_KINDS:
                 if self.on_prompt is not None:
@@ -160,12 +167,16 @@ class RunRelay:
             elif event.kind == "agent_run_result":
                 result = json.loads(event.data)
             elif event.kind == "run_finished":
-                state = json.loads(event.data).get("state") or "done"
+                finished = json.loads(event.data)
+                state = finished.get("state") or "done"
+                withdrawn = [w["id"] for w in finished.get("withdrawn") or []]
         answer = final_text(result)
         if state != "done" or not answer:
-            reply = format.plain(_END_TEXT.get(state, _END_TEXT["failed"]))
+            end = _END_TEXT.get(state, _END_TEXT["failed"])
+            notes = [end, WITHDRAWN] if withdrawn else [end]
+            reply = format.plain(" ".join(notes))
             if answer:  # Stopped after it had something to say.
-                reply = format.answer(answer, notes=[_END_TEXT.get(state, "")])
+                reply = format.answer(answer, notes=notes)
         else:
             reply = format.answer(answer, notes=_notes(result))
         if reply.detail:
@@ -173,6 +184,11 @@ class RunRelay:
                 reply, await self._keep_detail(reply.detail)
             )
         await self._replace(reply)
+        if withdrawn and self.on_withdrawn is not None:
+            try:
+                await self.on_withdrawn(withdrawn)
+            except Exception:
+                log.exception("Could not unmark withdrawn Slack messages")
         await record_turn(run, answer or reply.text, prompts=_prompts(run, taken))
         return answer
 

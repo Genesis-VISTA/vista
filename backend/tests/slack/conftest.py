@@ -34,6 +34,8 @@ def no_real_connection(request, monkeypatch):
 
     monkeypatch.setattr(service, "default_transport", lambda bot, app: FakeTransport())
     monkeypatch.setattr(service, "service", None)
+    monkeypatch.setattr(service, "_held", [])
+    monkeypatch.setattr(service, "_holding", False)
     if inspect.iscoroutinefunction(request.function):
         request.getfixturevalue("stop_slack_service")
 

@@ -86,6 +86,35 @@ in its thread ("stopped", "VISTA quit before…"), and is not followed twice.
 """
 
 
+_held: list[chat_run_module.ChatRun] = []
+""" Slack runs that started while no service was connected to follow them. """
+_holding = False
+_unhold: Callable[[], None] | None = None
+
+
+def _hold(run: chat_run_module.ChatRun) -> None:
+    if _holding and run.channel == "slack":
+        _held.append(run)
+
+
+def watch_runs() -> None:
+    """
+    Before startup can start a turn: hold each Slack run until the service
+    connects and follows it. Slack starts last, after a turn begun from a
+    waiting message may already have answered.
+    """
+    global _holding, _unhold
+    _holding = True
+    if _unhold is None:
+        _unhold = chat_run_module.on_run_started(_hold)
+
+
+def _stop_holding() -> None:
+    global _holding
+    _holding = False
+    _held.clear()
+
+
 def socket_mode(bot_token: str, app_token: str) -> SlackTransport:
     from .socket_mode import SocketModeTransport
 
@@ -187,9 +216,12 @@ class SlackService:
             log.exception("Could not close Slack cards left open by the last run")
         await self._connect()
         self._unhook = chat_run_module.on_run_started(self._on_run)
-        # Turns already going, such as one startup began from a waiting message.
-        for run in chat_run_module.chat_run_registry.active():
+        # Turns already going, and those that started (and may have ended)
+        # before Slack connected, such as one startup began from a waiting
+        # message: following a finished run replays it whole.
+        for run in [*_held, *chat_run_module.chat_run_registry.active()]:
             self._on_run(run)
+        _held.clear()
         self._spawn(self._reconnect_loop())
         self._spawn(
             JobMonitor(slack).run_forever(
@@ -628,6 +660,21 @@ class SlackService:
         if item.get("kind") == "message" and where.get("channel") and where.get("ts"):
             await self._mark(where["channel"], where["ts"], add=TAKEN, remove=WAITING)
 
+    async def _withdrawn(self, chat_id: uuid.UUID, item_ids: list[int]) -> None:
+        """A Stop withdrew these waiting messages: take their ⏳ off, as none will be answered."""
+        for item_id in item_ids:
+            async with chat_run_module.session_factory() as db:
+                try:
+                    item = await inbox.get(db, chat_id, item_id)
+                except inbox.ItemNotFound:
+                    continue
+                where = (item.payload or {}).get("slack") or {}
+                await db.commit()
+            if where.get("channel") and where.get("ts"):
+                assert self.slack is not None
+                with contextlib.suppress(SlackCallError):
+                    await self.slack.unreact(where["channel"], where["ts"], WAITING)
+
     # -- following runs ------------------------------------------------------
 
     def _on_run(self, run: chat_run_module.ChatRun) -> None:
@@ -670,7 +717,13 @@ class SlackService:
                 chat_session_id=run.chat_session_id,
             )
 
-        relay = RunRelay(self.slack, place, on_prompt=on_prompt, on_taken=self._taken)
+        relay = RunRelay(
+            self.slack,
+            place,
+            on_prompt=on_prompt,
+            on_taken=self._taken,
+            on_withdrawn=lambda ids: self._withdrawn(run.chat_session_id, ids),
+        )
         await relay.follow(run)
 
     async def _action(self, action: Action, link: SlackLinkTable) -> None:
@@ -707,7 +760,10 @@ async def start(**kwargs: Any) -> SlackService | None:
     global service
     candidate = SlackService(**kwargs)
     service = candidate
-    return candidate if await candidate.start() else None
+    try:
+        return candidate if await candidate.start() else None
+    finally:
+        _stop_holding()  # Followed now, or Slack is off and nothing will be.
 
 
 async def stop() -> None:
@@ -721,6 +777,7 @@ async def restart() -> None:
     kwargs: dict[str, Any] = {}
     if service is not None:
         kwargs = {"transport_factory": service._factory, "host": service._host}
+        watch_runs()  # A turn that starts in between is followed after.
         await service.stop()
     await start(**kwargs)
 

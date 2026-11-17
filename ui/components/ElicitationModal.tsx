@@ -10,6 +10,10 @@ type Props = {
   message: string;
   schema: Record<string, unknown>;
   onSubmit: (id: string, action: "accept" | "decline" | "cancel", content?: Record<string, unknown>) => void;
+  /** Answered elsewhere (a Slack conversation's prompt): this note instead of the form. */
+  elsewhere?: string;
+  /** Closes the read-only view; required with `elsewhere`. */
+  onClose?: () => void;
 };
 
 /**
@@ -50,7 +54,7 @@ export function singleChoice(
   return { key, options: options as string[] };
 }
 
-export default function ElicitationModal({ id, message, schema, onSubmit }: Props) {
+export default function ElicitationModal({ id, message, schema, onSubmit, elsewhere, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
   const uiSchema = useMemo(() => buildUiSchema(schema), [schema]);
@@ -77,14 +81,23 @@ export default function ElicitationModal({ id, message, schema, onSubmit }: Prop
   };
 
   return (
-    <div className="modal-backdrop" onClick={handleCancel}>
+    <div className="modal-backdrop" onClick={elsewhere ? () => onClose?.() : handleCancel}>
       <div className="modal elicitation-modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-header">
           <div className="panel-title">Confirm</div>
         </div>
         <div className="modal-body">
           {message && <p className="elicitation-message" style={{ whiteSpace: "pre-wrap" }}>{message}</p>}
-          {choice ? (
+          {elsewhere ? (
+            <>
+              <p className="user-settings-hint">{elsewhere}</p>
+              <div className="elicitation-actions">
+                <button type="button" className="button ghost" onClick={() => onClose?.()}>
+                  Close
+                </button>
+              </div>
+            </>
+          ) : choice ? (
             <div className="elicitation-actions">
               {choice.options.map((option, i) => (
                 <button

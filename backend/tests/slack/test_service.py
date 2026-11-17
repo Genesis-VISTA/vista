@@ -20,7 +20,7 @@ from vista_backend.db.schemas import (
     SlackThreadTable,
 )
 from vista_backend.services import chat_run, inbox
-from vista_backend.slack import confirm, gate, limits, service, store
+from vista_backend.slack import confirm, gate, limits, relay, service, store
 from vista_backend.slack.events import Action, HomeOpened, Message
 from vista_backend.slack.service import SlackService
 from vista_backend.utils import secret_store
@@ -318,9 +318,12 @@ async def test_a_message_waiting_across_a_restart_is_answered(
             notify=False,
         )
 
-    # What the lifespan does at startup, in its order.
+    # What the lifespan does at startup, in its order. The turn ends before
+    # Slack connects, as it may when the model answers quickly.
+    service.watch_runs()
     assert await chat_run.sweep_interrupted_runs() == 1
     assert await chat_run.wake_queued_inboxes() == 1
+    await env.registry.get(row.id).wait()
     await service.start(host="lab-mac")
     await _settled(env, row.id)
 
@@ -351,6 +354,26 @@ async def test_a_turn_vista_starts_is_shown_in_the_thread_once(
     ], "no user bubble for a task result, and the answer once"
     (progress,) = [m for m in slack.in_channel("DU1") if m.thread_ts == "10.0"]
     assert "Job 42 finished" in progress.edits[-1]
+
+
+async def test_stop_from_the_desktop_unmarks_what_waited_and_says_so(
+    env, on, slack, session, credential
+):
+    await link(session, "U1")
+    row = await _slack_conversation(env, [call("hang"), say("unreachable")])
+    await service.start(host="lab-mac")
+    await slack.deliver(_dm("start the long one"))
+    await asyncio.wait_for(env.hang_started.wait(), 10)
+    await slack.deliver(_dm("also this", ts="11.0", thread_ts="10.0"))
+    assert slack.reactions[("DU1", "11.0")] == [service.WAITING]
+
+    await env.registry.stop(row.id)  # what the desktop's Stop does
+    await _settled(env, row.id)
+
+    assert slack.reactions[("DU1", "11.0")] == [], "it will not be answered"
+    (answer,) = _answers(slack)
+    assert "That turn was stopped." in answer
+    assert relay.WITHDRAWN in answer
 
 
 async def test_a_turn_running_at_quit_says_so_in_its_thread(

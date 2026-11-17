@@ -177,8 +177,9 @@ async def test_an_unanswered_card_expires(answers, session, monkeypatch):
     slack = FakeTransport()
     confirmations = await _offer(slack, session)
 
-    for _ in range(100):
-        if answers:
+    # The decline is recorded before the card is edited: wait for both.
+    for _ in range(500):
+        if answers and "Expired" in _card_text(slack.messages[0]):
             break
         await asyncio.sleep(0.01)
 

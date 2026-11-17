@@ -563,12 +563,19 @@ async def test_a_job_that_finished_while_vista_was_closed_is_reported(
     await registry.wait(watching.id)
     assert (await _record(records, watching)).state == "ended"
 
+    async def events_by_job():
+        return {
+            e.payload["job_id"]: e.payload["event"]
+            for e in await _events(records, chat[0])
+        }
+
     async def resumed_watch():
-        return (await _record(records, paused)).state == "watching"
+        # The state is written before the "started" event: wait for both.
+        return (await _record(records, paused)).state == "watching" and (
+            "222" in await events_by_job()
+        )
 
     await _until(resumed_watch)
     assert sorted(read_at[:2]) == ["111", "222"], "each read at once"
-    events = {
-        e.payload["job_id"]: e.payload["event"] for e in await _events(records, chat[0])
-    }
+    events = await events_by_job()
     assert events == {"111": "ended", "222": "started"}

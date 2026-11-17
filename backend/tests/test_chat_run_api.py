@@ -842,3 +842,63 @@ async def test_a_watch_is_dropped_with_its_conversation_and_its_job_left_alone(
     assert confirmed.status_code == 204
     assert set(calls) <= {"read_hpc_job_state"}, "nothing but readings: no cancel"
     assert not tasks_env.registry.watching(watch.id)
+
+
+# ---------------------------------------------------------------------------
+# A conversation from Slack is read-only here (openspec change slack-channel)
+# ---------------------------------------------------------------------------
+
+
+async def test_a_slack_conversation_refuses_sends_answers_and_edits_but_stops(
+    session, engine
+):
+    project = await seed_project(session, tools=["*"])
+    conversation = await _conversation(session, project)
+    async with AsyncSession(engine) as db:
+        row = await db.get(ChatSessionTable, conversation)
+        row.origin = "slack"
+        await db.commit()
+
+    with scripted_agent(project, [call("hang"), say("unreachable")]) as (agent, hung):
+        with api_client(session, agent=agent) as (client, _):
+            # Slack's way in: the inbox, which starts a Slack turn.
+            async with AsyncSession(engine) as db:
+                await inbox.put(db, conversation, kind="message", text="from Slack")
+            await asyncio.wait_for(hung.wait(), 10)
+            run = chat_run.chat_run_registry.get(conversation)
+            assert run is not None and run.channel == "slack"
+            async with AsyncSession(engine) as db:
+                waiting = await inbox.put(
+                    db, conversation, kind="message", text="also from Slack"
+                )
+            await run.append(
+                "mcp_tool_approval",
+                json.dumps({"event_kind": "mcp_tool_approval", "elicitation_id": "e1"}),
+                prompt_id="e1",
+            )
+
+            sent = await client.post(
+                RUN.format(name=project.name),
+                json={
+                    "user_prompt": "from the desktop",
+                    "chat_session_id": str(conversation),
+                },
+            )
+            answered = await client.post(
+                f"/projects/{project.name}/elicitation",
+                json={"id": "e1", "action": "accept"},
+            )
+            item_url = ITEM.format(name=project.name, id=conversation, item=waiting.id)
+            edited = await client.patch(item_url, json={"text": "changed here"})
+            deleted = await client.delete(item_url)
+            stopped = await client.post(STOP.format(name=project.name, id=conversation))
+            await run.wait()
+
+    for refused in (sent, answered, edited, deleted):
+        assert refused.status_code == 409, refused.text
+        assert "continues in Slack" in refused.json()["detail"]
+    assert "e1" in run.pending or run.finished, "the desktop answered nothing"
+    assert stopped.status_code == 202
+    assert run.state == "stopped"
+    async with AsyncSession(engine) as db:
+        assert await inbox.list_queued(db, conversation) == [], "Stop withdrew it"

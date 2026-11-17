@@ -90,3 +90,10 @@ export function slackNote(config: SlackConfig | null): string | null {
       return "Not running";
   }
 }
+
+/** In a conversation started from Slack, instead of the message box: it is answered in Slack only. */
+export const CONTINUES_IN_SLACK =
+  "This conversation continues in Slack. Reply in its Slack thread; from here you can stop its turn.";
+
+/** On a Slack conversation's prompt, instead of its answer controls. */
+export const ANSWER_IN_SLACK = "Answer this in the conversation's Slack thread.";

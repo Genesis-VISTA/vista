@@ -86,6 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except DatabaseIncompatible as refusal:
         _report_database_incompatible(refusal)
         raise
+    # Slack connects last; until then it holds the turns startup begins in Slack
+    # conversations, so their answers still reach the thread.
+    from ..slack import service as slack_service
+
+    slack_service.watch_runs()
     # No run survives a restart: a row still `running` died with the last process.
     if await sweep_interrupted_runs():
         logging.getLogger(__name__).info(
@@ -147,10 +152,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     update_task = asyncio.create_task(update_checker.run())
     # A cached download of the version now running is the update that worked.
     await asyncio.to_thread(clean_cache, settings.version)
-    # Slack, when it is on and this machine handles it; otherwise nothing starts.
-    # A failure here costs only Slack, never the app.
-    from ..slack import service as slack_service
-
+    # Slack, when it is on; otherwise nothing starts. A failure here costs only
+    # Slack, never the app.
     try:
         await slack_service.start()
     except Exception:

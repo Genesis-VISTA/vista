@@ -110,6 +110,20 @@ def channel_of(row: ChatSessionTable) -> Channel:
     return "slack" if row.origin == "slack" else "app"
 
 
+ELSEWHERE = (
+    "This conversation continues in Slack. Reply in its Slack thread; "
+    "from here you can only stop its turn."
+)
+""" Why the desktop may not send to, or answer prompts in, a conversation from another channel. """
+
+
+def run_for_prompt(elicitation_id: str) -> "ChatRun | None":
+    """The active run waiting on this prompt, if any."""
+    return next(
+        (r for r in chat_run_registry.active() if elicitation_id in r.pending), None
+    )
+
+
 def session_factory() -> AsyncSession:
     """
     The session a run reads and writes through.

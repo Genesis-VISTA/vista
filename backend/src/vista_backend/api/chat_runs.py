@@ -16,7 +16,7 @@ from ..services import background_tasks
 from ..services import chat_session as chat_session_service
 from ..services import inbox as inbox_service
 from ..services import project as project_service
-from ..services.chat_run import chat_run_registry, row_status
+from ..services.chat_run import ELSEWHERE, channel_of, chat_run_registry, row_status
 
 router = APIRouter(prefix="/projects", tags=["chat-runs"])
 
@@ -105,6 +105,12 @@ async def chat_runs_status(
 # ---------------------------------------------------------------------------
 
 
+def _only_here(chat) -> None:
+    """409 for a conversation from Slack: its messages are sent and changed there."""
+    if channel_of(chat) != "app":
+        raise HTTPException(status_code=409, detail=ELSEWHERE)
+
+
 def _item(item) -> InboxItemPublic:
     return InboxItemPublic.model_validate(item, from_attributes=True)
 
@@ -156,8 +162,10 @@ async def edit_inbox_item(
 ):
     """Change a queued message's text. 409 once the agent has taken it, with the item as delivered."""
     project = await project_service.get_project_by_name(session, project_name)
-    await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+    _only_here(
+        await chat_session_service.get_chat_session(
+            session, project_id=project.id, chat_session_id=chat_session_id
+        )
     )
     _, refused = await _queued_message(session, chat_session_id, item_id)
     if refused is not None:
@@ -183,8 +191,10 @@ async def delete_inbox_item(
 ):
     """Delete a queued message so the agent never receives it. 409 once it has been taken."""
     project = await project_service.get_project_by_name(session, project_name)
-    await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+    _only_here(
+        await chat_session_service.get_chat_session(
+            session, project_id=project.id, chat_session_id=chat_session_id
+        )
     )
     _, refused = await _queued_message(session, chat_session_id, item_id)
     if refused is not None:

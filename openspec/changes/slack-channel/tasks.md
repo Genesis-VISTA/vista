@@ -24,8 +24,8 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 4. Read-only on the desktop
 
-- [ ] 4.1 The agent-run and prompt-answer endpoints refuse a Slack conversation with `409`; Stop still works; API tests
-- [ ] 4.2 The UI disables the message box of a Slack conversation with a note that it continues in Slack and shows its prompts without answer controls; component test
+- [x] 4.1 The agent-run and prompt-answer endpoints refuse a Slack conversation with `409`; Stop still works; API tests
+- [x] 4.2 The UI disables the message box of a Slack conversation with a note that it continues in Slack and shows its prompts without answer controls; component test
 
 ## 5. Confirmation and limits
 
