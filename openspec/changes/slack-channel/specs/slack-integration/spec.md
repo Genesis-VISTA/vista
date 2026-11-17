@@ -279,6 +279,16 @@ as Slack asks and retry.
 - **WHEN** a turn takes a minute of tool calls
 - **THEN** one message in the thread shows its progress and becomes the answer
 
+#### Scenario: A figure
+
+- **WHEN** a turn in a Slack conversation displays an image
+- **THEN** the image is attached in the thread after the answer
+
+#### Scenario: Many figures
+
+- **WHEN** a turn displays more than 10 files
+- **THEN** the first 10 are attached and the thread says how many more are in the desktop app
+
 #### Scenario: Rate limited
 
 - **WHEN** Slack answers a call with HTTP 429

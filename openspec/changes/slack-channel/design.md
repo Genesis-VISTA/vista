@@ -121,7 +121,13 @@ the desktop shows the conversation.
 the current step (tool name mapped to a phrase), and on `run_finished` replaces it with the
 formatted answer. `chat.update` failures fall back to posting. A card that cannot be posted
 declines its prompt, and a turn that fails in any way replaces the progress message with what
-happened. Every Slack call goes through the SDK's retry handler for 429s.
+happened. Every Slack call goes through the SDK's retry handler for 429s. After the answer, the
+relay attaches each file the run displayed (`display_file`): the run writes its `displayed_file`
+rows before `run_finished`, so the relay reads them by run id and uploads each from the
+conversation's output or uploads folder into the thread (`files:write`; Slack previews images
+inline). At most 10 per turn; past that the thread says how many more are in the desktop app. An
+upload that fails posts one line naming the file and pointing to the desktop app, so an answer that
+says "displayed above" never points at nothing.
 
 ### D8. Formatting
 `slack/format.py`: Markdown → mrkdwn (bold, italics, links, headings, lists, code, tables as code
