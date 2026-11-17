@@ -16,6 +16,7 @@ Button values carry only the elicitation id: nothing in a card is trusted.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -304,9 +305,18 @@ class Confirmations:
     async def _post(self, pending: SlackPendingTable, place: Place) -> None:
         elicitation_id = pending.elicitation_id
         reply = card(pending)
-        pending.message_ts = await self.transport.post(
-            place.channel, reply.text, blocks=reply.blocks, thread_ts=place.thread_ts
-        )
+        try:
+            pending.message_ts = await self.transport.post(
+                place.channel,
+                reply.text,
+                blocks=reply.blocks,
+                thread_ts=place.thread_ts,
+            )
+        except SlackCallError as exc:
+            # Nobody could answer a card that is not there: the run goes on without it.
+            log.warning("Could not post a Slack card, so it is declined: %s", exc.error)
+            await chat_run_module.resolve_prompt(elicitation_id, "decline")
+            return
         posted = SlackPendingTable.model_validate(pending.model_dump())
         async with chat_run_module.session_factory() as db:
             db.add(pending)
@@ -473,7 +483,11 @@ class Confirmations:
             log.info("Could not answer a Slack tap: %s", exc.error)
 
     async def close_stale(self) -> int:
-        """At start-up: no run survived, so every open card has expired."""
+        """
+        At start-up: every card left open has expired. Its prompt is declined as
+        well as the card redrawn, in case its run is still waiting on it (Slack
+        restarted while the backend did not).
+        """
         async with chat_run_module.session_factory() as db:
             rows = list(
                 (
@@ -491,10 +505,20 @@ class Confirmations:
             for row in rows:
                 await db.refresh(row)
         for row in rows:
+            with contextlib.suppress(Exception):
+                await chat_run_module.resolve_prompt(row.elicitation_id, "decline")
             await self._redraw(row)
         return len(rows)
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
+        """
+        Close every open card as expired, declining its prompt, so no run waits
+        on a card nobody can answer once this is gone (a settings save restarts
+        the service). Then cancel the expiry timers.
+        """
+        for elicitation_id in list(self._timers):
+            with contextlib.suppress(Exception):
+                await self._close(elicitation_id, "expired")
         for timer in self._timers.values():
             timer.cancel()
         self._timers.clear()

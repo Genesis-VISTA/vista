@@ -222,3 +222,43 @@ def test_a_menu_pick_carries_the_option_chosen():
         }
     )
     assert action is not None and action.value == "ask1:p6"
+
+
+class _Socket:
+    """Stands in for Bolt's Socket Mode handler; `fail` makes the connect raise."""
+
+    fail = False
+    closed = 0
+
+    def __init__(self, app, token) -> None:
+        pass
+
+    async def connect_async(self) -> None:
+        if _Socket.fail:
+            raise ConnectionError("Slack is unreachable")
+
+    async def close_async(self) -> None:
+        _Socket.closed += 1
+
+
+@pytest.mark.anyio
+async def test_connected_only_once_the_socket_is_open(transport, monkeypatch):
+    """7.3: a failed connect is reported, not recorded, so the service retries it."""
+    from vista_backend.slack import socket_mode
+
+    monkeypatch.setattr(socket_mode, "AsyncSocketModeHandler", _Socket)
+
+    async def handler(event):
+        pass
+
+    _Socket.fail = True
+    with pytest.raises(ConnectionError):
+        await transport.connect(handler)
+    assert not transport.connected
+    assert _Socket.closed == 1, "the half-open socket is closed"
+
+    _Socket.fail = False
+    await transport.connect(handler)
+    assert transport.connected
+    await transport.disconnect()
+    assert not transport.connected

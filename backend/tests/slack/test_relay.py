@@ -12,6 +12,7 @@ from vista_backend.services import chat_run
 from vista_backend.services.chat_run import ChatRun
 from vista_backend.slack import format
 from vista_backend.slack.relay import WORKING, Place, RunRelay, step_label
+from vista_backend.slack.transport import SlackCallError
 
 from .conftest import project
 from .fakes import FakeTransport
@@ -263,3 +264,221 @@ def test_step_labels():
     assert step_label("rag_search") == "Searching the literature"
     assert step_label("vista__submit_hpc_job") == "Submitting a job to the cluster"
     assert step_label("vista__something_new") == "Running `something_new`"
+
+
+# ---------------------------------------------------------------------------
+# 7.5: nothing left waiting, nothing left saying "Working on it…"
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_prompt_that_cannot_be_shown_is_declined(db, session, monkeypatch):
+    told: list[tuple[str, str]] = []
+
+    async def resolve(elicitation_id, action, content=None):
+        told.append((elicitation_id, action))
+        return True
+
+    monkeypatch.setattr(chat_run, "resolve_prompt", resolve)
+    slack = FakeTransport()
+    run = _run(await _chat(session))
+
+    async def broken_card(event):
+        raise SlackCallError("chat.postMessage", "channel_not_found")
+
+    relay = RunRelay(slack, PLACE, on_prompt=broken_card)
+
+    async def script():
+        await run.append(
+            "mcp_tool_approval",
+            json.dumps({"event_kind": "mcp_tool_approval", "elicitation_id": "e1"}),
+            prompt_id="e1",
+        )
+        await _answer(run, "Not submitted: the confirmation could not be shown.")
+
+    await _follow(relay, run, script)
+
+    assert told == [("e1", "decline")], "the run is not left waiting on it"
+
+
+@pytest.mark.anyio
+async def test_a_card_slack_refuses_is_declined(db, session, monkeypatch):
+    told: list[tuple[str, str]] = []
+
+    async def resolve(elicitation_id, action, content=None):
+        told.append((elicitation_id, action))
+        return True
+
+    monkeypatch.setattr(chat_run, "resolve_prompt", resolve)
+    from vista_backend.slack.confirm import Confirmations
+
+    slack = FakeTransport()
+    slack.fail_next["post"] = "channel_not_found"
+    event = chat_run.RunEvent(
+        seq=1,
+        kind="mcp_tool_approval",
+        data=json.dumps(
+            {
+                "event_kind": "mcp_tool_approval",
+                "elicitation_id": "e1",
+                "tool_name": "vista__cancel_hpc_job",
+                "args": {"cluster": "odo", "job_id": "1"},
+            }
+        ),
+        prompt_id="e1",
+    )
+    await Confirmations(slack).offer(
+        event, place=PLACE, team_id="T0001", chat_session_id=await _chat(session)
+    )
+
+    assert told == [("e1", "decline")]
+    assert slack.messages == []
+
+
+@pytest.mark.anyio
+async def test_a_failed_turn_replaces_the_progress_message(db, session):
+    slack = FakeTransport()
+    run = _run(await _chat(session))
+    relay = RunRelay(slack, PLACE)
+
+    async def script():
+        await _finish(run, "failed")
+
+    await _follow(relay, run, script)
+
+    (posted,) = slack.messages
+    assert "failed before it finished" in posted.edits[-1]
+
+
+@pytest.mark.anyio
+async def test_without_a_progress_message_the_answer_is_still_posted(db, session):
+    slack = FakeTransport()
+    slack.fail_next["post"] = "ratelimited"  # the "Working on it…" post
+    run = _run(await _chat(session))
+    relay = RunRelay(slack, PLACE)
+
+    async def script():
+        await _answer(run, "Done.")
+
+    await _follow(relay, run, script)
+
+    (posted,) = slack.messages
+    assert posted.text == "Done." and posted.edits == []
+
+
+# ---------------------------------------------------------------------------
+# 7.7: the files a turn displayed are attached in its thread
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def volumes(tmp_path, monkeypatch):
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    return tmp_path
+
+
+async def _shown_run(session, volumes, names, *, kind="outputs"):
+    """A run whose turn displayed `names`, written to its project's output folder."""
+    from vista_backend.agents.agents import agent_volume_root
+    from vista_backend.db.schemas import DisplayedFileTable
+    from vista_backend.slack.store import now_iso
+
+    chat_id = await _chat(session)
+    chat = await session.get(ChatSessionTable, chat_id)
+    run = _run(chat_id)
+    run.project_id = chat.project_id
+    folder = (
+        agent_volume_root(chat.project_id)
+        / "data"
+        / ("output" if kind == "outputs" else "uploads")
+    )
+    for name in names:
+        path = folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\x89PNG " + name.encode())
+        session.add(
+            DisplayedFileTable(
+                project_id=chat.project_id,
+                chat_session_id=chat_id,
+                run_id=run.run_id,
+                tool_call_id=f"t-{name}",
+                kind=kind,
+                path=name,
+                shown_at=now_iso(),
+                size=path.stat().st_size,
+                mtime_ns=path.stat().st_mtime_ns,
+            )
+        )
+    await session.commit()
+    return run
+
+
+@pytest.mark.anyio
+async def test_a_displayed_figure_is_attached_after_the_answer(db, session, volumes):
+    slack = FakeTransport()
+    run = await _shown_run(session, volumes, ["45777/chart.png"])
+
+    await _follow(
+        RunRelay(slack, PLACE),
+        run,
+        lambda: _answer(run, "Here's the chart, shown above."),
+    )
+
+    (upload,) = slack.uploads
+    assert upload["filename"] == "chart.png" and upload["thread_ts"] == "10.0"
+    assert upload["content"] == b"\x89PNG 45777/chart.png"
+
+
+@pytest.mark.anyio
+async def test_past_ten_files_the_thread_says_how_many_more(db, session, volumes):
+    slack = FakeTransport()
+    run = await _shown_run(session, volumes, [f"plot{n:02}.png" for n in range(12)])
+
+    await _follow(RunRelay(slack, PLACE), run, lambda: _answer(run, "Twelve plots."))
+
+    assert [u["filename"] for u in slack.uploads] == [
+        f"plot{n:02}.png" for n in range(10)
+    ]
+    assert any("2 more files" in m.text for m in slack.messages)
+
+
+@pytest.mark.anyio
+async def test_a_file_that_cannot_be_uploaded_is_named(db, session, volumes):
+    slack = FakeTransport()
+    slack.fail_next["upload"] = "file_too_large"
+    run = await _shown_run(session, volumes, ["big.png"])
+
+    await _follow(RunRelay(slack, PLACE), run, lambda: _answer(run, "A big figure."))
+
+    assert slack.uploads == []
+    assert any("Couldn't attach `big.png`" in m.text for m in slack.messages)
+
+
+@pytest.mark.anyio
+async def test_a_path_outside_its_folder_is_not_read(db, session, volumes):
+    slack = FakeTransport()
+    run = await _shown_run(session, volumes, [])
+    from vista_backend.db.schemas import DisplayedFileTable
+    from vista_backend.slack.store import now_iso
+
+    (volumes / "secret.txt").write_text("no", encoding="utf-8")
+    session.add(
+        DisplayedFileTable(
+            project_id=run.project_id,
+            chat_session_id=run.chat_session_id,
+            run_id=run.run_id,
+            tool_call_id="t1",
+            kind="outputs",
+            path="../../../../secret.txt",
+            shown_at=now_iso(),
+            size=2,
+            mtime_ns=0,
+        )
+    )
+    await session.commit()
+
+    await _follow(RunRelay(slack, PLACE), run, lambda: _answer(run, "Shown."))
+
+    assert slack.uploads == []

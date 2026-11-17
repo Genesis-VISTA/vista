@@ -44,13 +44,13 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 7. Review fixes
 
-- [ ] 7.1 `format.chunks` terminates on an unclosed code fence, and `_prose` on a stray NUL; escape `&`, `<`, `>` in code too; tests with those inputs
-- [ ] 7.2 Button taps in DMs pass the channel allowlist; test in `test_access.py`
-- [ ] 7.3 `SocketModeTransport.connect` records the socket only once open; a failed connect is reported and retried; test
-- [ ] 7.4 `stop()` and `close_stale` decline open cards' prompts; test that a settings restart with an open card leaves the run unblocked
-- [ ] 7.5 A card that cannot be posted declines its prompt, and a turn that fails replaces the progress message; tests in `test_relay.py`
-- [ ] 7.6 "Show more" expands the answer in place: `chat.update` to the summary plus as much detail as one message holds, without the button; only the remainder is posted, once; an edit Slack refuses falls back to posting; tests: a tap edits and removes the button, a second tap posts nothing, an answer past one message posts only its remainder
-- [ ] 7.7 The relay attaches the run's displayed files in the thread after the answer: `displayed_file` rows by run id, read from the output or uploads folder, uploaded with `transport.upload`; at most 10, then a line saying how many more are in the desktop app; a failed upload posts a line naming the file; tests in `test_relay.py`: a PNG is uploaded in the thread, 12 files upload 10 and say "2 more", a failed upload posts the fallback line, a desktop conversation uploads nothing
+- [x] 7.1 `format.chunks` terminates on an unclosed code fence, and `_prose` on a stray NUL; escape `&`, `<`, `>` in code too; tests with those inputs
+- [x] 7.2 Button taps in DMs pass the channel allowlist; test in `test_access.py`
+- [x] 7.3 `SocketModeTransport.connect` records the socket only once open; a failed connect is reported and retried; test
+- [x] 7.4 `stop()` and `close_stale` decline open cards' prompts; test that a settings restart with an open card leaves the run unblocked
+- [x] 7.5 A card that cannot be posted declines its prompt, and a turn that fails replaces the progress message; tests in `test_relay.py`
+- [x] 7.6 "Show more" expands the answer in place: `chat.update` to the summary plus as much detail as one message holds, without the button; only the remainder is posted, once; an edit Slack refuses falls back to posting; tests: a tap edits and removes the button, a second tap posts nothing, an answer past one message posts only its remainder
+- [x] 7.7 The relay attaches the run's displayed files in the thread after the answer: `displayed_file` rows by run id, read from the output or uploads folder, uploaded with `transport.upload`; at most 10, then a line saying how many more are in the desktop app; a failed upload posts a line naming the file; tests in `test_relay.py`: a PNG is uploaded in the thread, 12 files upload 10 and say "2 more", a failed upload posts the fallback line, a desktop conversation uploads nothing
 
 ## 8. Docs
 

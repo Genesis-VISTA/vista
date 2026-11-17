@@ -177,3 +177,25 @@ async def test_home_is_shown_only_to_a_linked_user(session, slack_config):
     assert (
         await decide(session, HomeOpened(TEAM, "U2"), slack_config, UnlinkedReplies())
     ).verdict == "drop"
+
+
+@pytest.mark.anyio
+async def test_a_tap_in_a_dm_passes_the_channel_allowlist(session, slack_config):
+    """A Confirm in the DM thread must count, as the DM did (7.2)."""
+    await link(session, "U1")
+    slack_config.allowed_channel_ids = ["C1"]
+
+    def tap(channel):
+        return Action(
+            team_id=TEAM,
+            channel_id=channel,
+            user_id="U1",
+            action_id="vista_confirm",
+            value="e1",
+            message_ts="3.0",
+        )
+
+    replies = UnlinkedReplies()
+    assert (await decide(session, tap("DU1"), slack_config, replies)).verdict == "allow"
+    assert (await decide(session, tap("C1"), slack_config, replies)).verdict == "allow"
+    assert (await decide(session, tap("C2"), slack_config, replies)).verdict == "drop"

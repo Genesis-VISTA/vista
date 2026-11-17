@@ -119,7 +119,10 @@ async def decide(
         linked = await find_link(session, event.team_id, event.user_id)
         return Decision("allow", linked=linked) if linked else Decision("drop")
 
-    is_dm = isinstance(event, Message) and event.is_dm
+    # A tap carries no `is_dm`; a direct message's channel id starts with D.
+    is_dm = (
+        event.is_dm if isinstance(event, Message) else event.channel_id.startswith("D")
+    )
     if (
         config.allowed_channel_ids
         and not is_dm

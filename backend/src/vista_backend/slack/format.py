@@ -83,7 +83,7 @@ def _prose(text: str) -> str:
         keep.append(value)
         return f"\x00{len(keep) - 1}\x00"
 
-    text = _INLINE_CODE.sub(lambda m: hold(m.group(0)), text)
+    text = _INLINE_CODE.sub(lambda m: hold(_escape(m.group(0))), text)
     text = _LINK.sub(lambda m: hold(f"<{m.group(2)}|{_escape(m.group(1))}>"), text)
     text = _BARE_URL.sub(lambda m: hold(f"<{m.group(1)}>"), text)
     text = _escape(text)
@@ -99,13 +99,17 @@ def _prose(text: str) -> str:
 
 
 def to_mrkdwn(markdown: str) -> str:
-    """Slack mrkdwn for the agent's Markdown. Code is left exactly as it is."""
-    text = _tables_to_code(markdown.replace("\r\n", "\n"))
+    """
+    Slack mrkdwn for the agent's Markdown. Code keeps its text, with `&`, `<`
+    and `>` escaped as Slack requires everywhere: unescaped, `<@U123>` in code
+    would mention someone. NULs are dropped: `_prose` uses them as markers.
+    """
+    text = _tables_to_code(markdown.replace("\r\n", "\n").replace("\x00", ""))
     out: list[str] = []
     last = 0
     for match in _FENCE.finditer(text):
         out.append(_prose(text[last : match.start()]))
-        out.append("```\n" + match.group(1).rstrip("\n") + "\n```")
+        out.append("```\n" + _escape(match.group(1).rstrip("\n")) + "\n```")
         last = match.end()
     out.append(_prose(text[last:]))
     return "".join(out).strip()
@@ -160,11 +164,15 @@ def chunks(text: str, limit: int = CHUNK_LIMIT) -> list[str]:
     rest = text.strip()
     while rest:
         at = _cut(rest, limit - 8)
-        piece, rest = rest[:at].rstrip(), rest[at:].lstrip("\n")
+        piece, rest = rest[:at].rstrip(), rest[at:].lstrip("\n").strip()
         if piece.count("```") % 2 == 1:
+            # Closed here; reopened only if code follows, so an unclosed fence
+            # at the end cannot be carried forward for ever.
             piece += "\n```"
-            rest = "```\n" + rest
-        pieces.append(piece)
+            if rest:
+                rest = "```\n" + rest
+        if piece.strip("`\n "):
+            pieces.append(piece)
     return pieces
 
 
@@ -217,7 +225,9 @@ class Reply:
     text: str
     blocks: list[dict[str, Any]]
     detail: str | None = None
-    """ What "Show more" posts; the caller stores it and puts its id on the button. """
+    """ Set when there is more than the summary: the button's caller stores `full`. """
+    full: str | None = None
+    """ The whole answer, notes included, which "Show more" expands the message into. """
 
 
 def answer(markdown: str, *, notes: list[str] | None = None) -> Reply:
@@ -239,6 +249,7 @@ def answer(markdown: str, *, notes: list[str] | None = None) -> Reply:
         text=truncate(summary, FALLBACK_LIMIT, ""),
         blocks=blocks,
         detail=detail or None,
+        full="\n\n".join([text, *(notes or [])[:3]]) if detail else None,
     )
 
 
@@ -251,7 +262,9 @@ def mention(reply: Reply, slack_user_id: str) -> Reply:
     )
     if first is not None:
         first["text"] = {**first["text"], "text": tag + first["text"]["text"]}
-    return Reply(text=tag + reply.text, blocks=blocks, detail=reply.detail)
+    return Reply(
+        text=tag + reply.text, blocks=blocks, detail=reply.detail, full=reply.full
+    )
 
 
 def show_more_button(reply: Reply, detail_id: str) -> Reply:
@@ -261,7 +274,12 @@ def show_more_button(reply: Reply, detail_id: str) -> Reply:
         "type": "actions",
         "elements": [button("Show more", SHOW_MORE, detail_id)],
     }
-    return Reply(text=reply.text, blocks=[*reply.blocks, actions], detail=reply.detail)
+    return Reply(
+        text=reply.text,
+        blocks=[*reply.blocks, actions],
+        detail=reply.detail,
+        full=reply.full,
+    )
 
 
 def project_picker(
@@ -295,6 +313,15 @@ def project_picker(
         text=question,
         blocks=[section(question), {"type": "actions", "elements": elements}],
     )
+
+
+def expanded(full: str) -> tuple[Reply, list[Reply]]:
+    """
+    What "Show more" makes of an answer: the message itself, edited to as much
+    of `full` as one message holds (no button), and the rest, to post once.
+    """
+    pieces = detail_messages(full) or [plain(full)]
+    return pieces[0], pieces[1:]
 
 
 def detail_messages(detail: str) -> list[Reply]:

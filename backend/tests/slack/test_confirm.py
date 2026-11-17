@@ -107,7 +107,7 @@ async def test_the_card_shows_what_would_be_submitted(answers, session):
         assert value in text
     assert CONFIRM in text and CANCEL in text
     assert "Only <@U1> can confirm" in text
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_the_preview_adds_the_account(answers, session, monkeypatch):
@@ -122,7 +122,7 @@ async def test_the_preview_adds_the_account(answers, session, monkeypatch):
     confirmations = await _offer(slack, session)
 
     assert "MAT123" in _card_text(slack.messages[0])
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_confirm_by_the_requester_goes_ahead(answers, engine, session):
@@ -148,7 +148,7 @@ async def test_someone_else_cannot_confirm(answers, session):
     assert answers == []
     assert slack.ephemerals == [("DU1", "U2", "Only <@U1> can answer this request.")]
     assert CONFIRM in _card_text(slack.messages[0]), "still open for the requester"
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_cancel_declines(answers, session):
@@ -251,7 +251,7 @@ async def test_a_tap_from_another_workspace_is_ignored(answers, session):
     await confirmations.on_action(Action(**{**tap.__dict__, "team_id": "T9999"}))
 
     assert answers == []
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_url_prompts_are_declined_not_shown(answers, session):
@@ -365,3 +365,26 @@ async def test_the_confirm_recheck_sees_the_conversations_preview(
     confirmations = await _offer(slack, session)
     await confirmations.on_action(_tap())
     assert seen and seen[0] is not None
+
+
+async def test_stopping_declines_an_open_card_so_its_run_goes_on(answers, session):
+    """7.4: a settings save restarts the service; the turn must not wait for ever."""
+    slack = FakeTransport()
+    confirmations = await _offer(slack, session)
+
+    await confirmations.stop()
+
+    assert answers == [("e1", "decline")]
+    assert "Expired" in _card_text(slack.messages[0])
+    async with AsyncSession(session.bind) as db:
+        assert (await db.get(SlackPendingTable, "e1")).outcome == "expired"
+
+
+async def test_a_card_left_open_is_declined_at_start(answers, session):
+    slack = FakeTransport()
+    await _offer(slack, session)  # and then VISTA stopped without closing it
+
+    assert await Confirmations(slack).close_stale() == 1
+
+    assert answers == [("e1", "decline")]
+    assert "Expired" in _card_text(slack.find(slack.messages[0].ts))

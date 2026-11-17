@@ -17,6 +17,7 @@ from vista_backend.db.schemas import (
     HpcJobRecordTable,
     SlackAuditTable,
     SlackConfigTable,
+    SlackDetailTable,
     SlackProjectAskTable,
     SlackThreadTable,
 )
@@ -28,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from vista_backend.services import background_tasks, chat_run, inbox
 from vista_backend.services.job_records import SubmitWatcher
-from vista_backend.slack import confirm, gate, limits, relay, service, store
+from vista_backend.slack import confirm, format, gate, limits, relay, service, store
 from vista_backend.slack.events import Action, HomeOpened, Message
 from vista_backend.slack.service import SlackService
 from vista_backend.utils import secret_store
@@ -477,6 +478,7 @@ async def test_a_turn_in_an_app_conversation_is_not_followed(
     await _settled(env, row.id)
 
     assert slack.messages == []
+    assert slack.uploads == [], "and no displayed file is attached anywhere"
 
 
 class _NewChats(dict):
@@ -690,3 +692,92 @@ async def test_preview_reads_the_mcp_preview(db, session, monkeypatch):
     assert asked == ["preview_hpc_job"]
     assert fields["Account"] == "MAT123" and fields["System"] == "frontier"
     assert await service.preview_job(chat_id, "run_bash", {}) == {}
+
+
+# ---------------------------------------------------------------------------
+# 7.6: Show more expands the answer in place, once
+# ---------------------------------------------------------------------------
+
+
+async def _long_answer(slack, session, text):
+    """An answer posted with a Show more button, as the relay leaves it."""
+    reply = format.answer(text)
+    detail_id = "d1"
+    session.add(
+        SlackDetailTable(
+            id=detail_id,
+            slack_user_id="U1",
+            text=reply.full,
+            created_at=store.now_iso(),
+        )
+    )
+    await session.commit()
+    reply = format.show_more_button(reply, detail_id)
+    ts = await slack.post("DU1", reply.text, blocks=reply.blocks, thread_ts="10.0")
+    return ts, Action(
+        team_id=TEAM,
+        channel_id="DU1",
+        user_id="U1",
+        action_id=format.SHOW_MORE,
+        value=detail_id,
+        message_ts=ts,
+        thread_ts="10.0",
+    )
+
+
+async def test_show_more_expands_the_answer_in_place_once(on, slack, session):
+    await link(session, "U1")
+    svc = _service()
+    await svc.start()
+    text = "Yes, it finished. " + " ".join(["Here is more about it."] * 60)
+    ts, tap = await _long_answer(slack, session, text)
+
+    await slack.deliver(tap)
+
+    message = slack.find(ts)
+    assert "Here is more about it." in message.text
+    assert format.SHOW_MORE not in json.dumps(message.blocks), "the button is gone"
+    assert len(slack.messages) == 1, "it fit in place: nothing posted"
+
+    await slack.deliver(tap)  # a second tap, from a client that had not redrawn
+    assert len(slack.messages) == 1 and slack.ephemerals == [], (
+        "a second tap does nothing"
+    )
+    await svc.stop()
+
+
+async def test_an_answer_past_one_message_posts_only_its_remainder(on, slack, session):
+    await link(session, "U1")
+    svc = _service()
+    await svc.start()
+    text = "The short version is yes.\n\n" + "\n\n".join(
+        f"Paragraph {n}: " + "detail " * 60 for n in range(40)
+    )
+    ts, tap = await _long_answer(slack, session, text)
+
+    await slack.deliver(tap)
+
+    expanded = slack.find(ts)
+    assert expanded.text.startswith("The short version is yes.")
+    below = [m for m in slack.messages if m.ts != ts]
+    assert below and all(m.thread_ts == "10.0" for m in below)
+    shown = expanded.text + "".join(m.text for m in below)
+    assert "Paragraph 0:" in shown and "Paragraph 39:" in shown
+    assert shown.count("Paragraph 39:") == 1, "nothing twice"
+    await svc.stop()
+
+
+async def test_an_edit_slack_refuses_falls_back_to_posting(on, slack, session):
+    await link(session, "U1")
+    svc = _service()
+    await svc.start()
+    ts, tap = await _long_answer(
+        slack, session, "Yes. " + " ".join(["More about it."] * 60)
+    )
+    slack.fail_next["update"] = "cant_update_message"
+
+    await slack.deliver(tap)
+
+    posted = [m for m in slack.messages if m.ts != ts]
+    assert posted and "More about it." in posted[0].text
+    await svc.stop()

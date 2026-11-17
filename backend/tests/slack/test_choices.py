@@ -174,7 +174,7 @@ async def test_one_button_per_option(answers, session):
     (actions,) = [b for b in posted.blocks if b["type"] == "actions"]
     assert [e["text"]["text"] for e in actions["elements"]] == JOBS
     assert posted.thread_ts == "10.0"
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_the_requesters_tap_answers_with_the_option(answers, session):
@@ -196,7 +196,7 @@ async def test_someone_elses_tap_does_not_count(answers, session):
 
     assert answers == []
     assert slack.ephemerals == [("DU1", "U2", "Only <@U1> can answer this request.")]
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_an_index_out_of_range_is_ignored(answers, session):
@@ -206,7 +206,7 @@ async def test_an_index_out_of_range_is_ignored(answers, session):
     await confirmations.on_action(_tap(7))
 
     assert answers == []
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_an_unanswered_choice_expires(answers, session, monkeypatch):

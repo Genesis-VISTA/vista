@@ -15,8 +15,13 @@ researcher's messages the turn took, then the answer.
 Every turn of a Slack conversation is followed, including those VISTA starts
 itself from a task result. Each inbox item a turn takes is passed to
 `on_taken`, which swaps a waiting message's ⏳ for ✅.
+
+The files the turn displayed (`display_file`: a figure, a log) are attached in
+the thread after the answer, at most `MAX_ATTACHMENTS`, so an answer that says
+"shown above" has something above it.
 """
 
+import asyncio
 import json
 import logging
 import secrets
@@ -26,8 +31,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from pathlib import Path
+
+from sqlmodel import col, select
+
+from ..agents.agents import agent_volume_root
 from ..config import settings
-from ..db.schemas import ChatSessionTable, ChatTranscriptMessage, SlackDetailTable
+from ..db.schemas import (
+    ChatSessionTable,
+    ChatTranscriptMessage,
+    DisplayedFileTable,
+    SlackDetailTable,
+)
 from ..services import chat_run as chat_run_module
 from ..services.chat_run import PROMPT_EVENT_KINDS, ChatRun, RunEvent
 from . import format
@@ -37,6 +52,11 @@ from .transport import SlackCallError, SlackTransport
 log = logging.getLogger(__name__)
 
 WORKING = "Working on it…"
+
+MAX_ATTACHMENTS = 10
+""" Files a turn displayed that are attached in its thread; past this the thread says how many more. """
+MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+""" Larger files are left for the desktop app rather than uploaded from a laptop's connection. """
 
 # Slack refused the message itself; a plainer one will go through.
 _REFUSED_CONTENT = {"msg_too_long", "invalid_blocks", "invalid_blocks_format"}
@@ -135,17 +155,23 @@ class RunRelay:
         self.on_withdrawn = on_withdrawn
         self.clock = clock
         self.progress_ts: str | None = None
+        self._started = False
         self._last_edit = 0.0
         self._step: str | None = None
 
     async def start(self) -> None:
         """Post the progress message. Call before the run's events are read."""
-        self.progress_ts = await self._post(format.plain(WORKING))
+        try:
+            self.progress_ts = await self._post(format.plain(WORKING))
+        except SlackCallError as exc:
+            # The answer is posted on its own at the end instead.
+            log.info("Could not post Slack progress: %s", exc.error)
         self._last_edit = self.clock()
+        self._started = True
 
     async def follow(self, run: ChatRun) -> str:
         """Show `run` until it ends; returns the answer's Markdown ("" if none)."""
-        if self.progress_ts is None:
+        if not self._started:
             await self.start()
         result: dict[str, Any] = {}
         state = "done"
@@ -153,8 +179,7 @@ class RunRelay:
         withdrawn: list[int] = []
         async for event in run.subscribe():
             if event.kind in PROMPT_EVENT_KINDS:
-                if self.on_prompt is not None:
-                    await self.on_prompt(event)
+                await self._prompt(event)
                 continue
             if event.kind == "inbox_taken":
                 item = json.loads(event.data)
@@ -189,9 +214,10 @@ class RunRelay:
             reply = format.mention(reply, self.place.slack_user_id)
         if reply.detail:
             reply = format.show_more_button(
-                reply, await self._keep_detail(reply.detail)
+                reply, await self._keep_detail(reply.full or reply.detail)
             )
         await self._replace(reply)
+        await self._attach(run)
         if withdrawn and self.on_withdrawn is not None:
             try:
                 await self.on_withdrawn(withdrawn)
@@ -200,11 +226,24 @@ class RunRelay:
         await record_turn(run, answer or reply.text, prompts=_prompts(run, taken))
         return answer
 
+    async def _prompt(self, event: RunEvent) -> None:
+        """Show a prompt; one that cannot be shown is declined, so the run is not stuck on it."""
+        try:
+            if self.on_prompt is None:
+                raise RuntimeError("no way to show prompts here")
+            await self.on_prompt(event)
+        except Exception:
+            log.exception("Could not show a prompt in Slack; declining it")
+            if event.prompt_id:
+                await chat_run_module.resolve_prompt(event.prompt_id, "decline")
+
     async def _progress(self, step: str) -> None:
         if step == self._step:
             return
         self._step = step
         if self.clock() - self._last_edit < settings.slack.progress_edit_interval:
+            return
+        if self.progress_ts is None:
             return
         self._last_edit = self.clock()
         try:
@@ -215,6 +254,9 @@ class RunRelay:
             log.info("Could not update Slack progress: %s", exc.error)
 
     async def _replace(self, reply: format.Reply) -> None:
+        if self.progress_ts is None:
+            await self._post(reply)
+            return
         try:
             await self.transport.update(
                 self.place.channel, self._ts(), reply.text, blocks=reply.blocks
@@ -249,6 +291,55 @@ class RunRelay:
                 format.plain(reply.text).text,
                 thread_ts=self.place.thread_ts,
             )
+
+    async def _attach(self, run: ChatRun) -> None:
+        """Upload the files the run displayed into the thread; say so for any that cannot go."""
+        try:
+            async with chat_run_module.session_factory() as db:
+                rows = (
+                    await db.exec(
+                        select(DisplayedFileTable)
+                        .where(DisplayedFileTable.run_id == run.run_id)
+                        .order_by(col(DisplayedFileTable.shown_at))
+                    )
+                ).all()
+                shown = list(dict.fromkeys((r.kind, r.path) for r in rows))
+                await db.commit()
+        except Exception:
+            log.exception("Could not list run %s's displayed files", run.run_id)
+            return
+        folders = {
+            "outputs": agent_volume_root(run.project_id) / "data" / "output",
+            "uploads": agent_volume_root(run.project_id) / "data" / "uploads",
+        }
+        for kind, rel in shown[:MAX_ATTACHMENTS]:
+            name = Path(rel).name or rel
+            try:
+                content = await asyncio.to_thread(_read_shown, folders.get(kind), rel)
+                await self.transport.upload(
+                    self.place.channel,
+                    filename=name,
+                    content=content,
+                    title=name,
+                    thread_ts=self.place.thread_ts,
+                )
+            except (OSError, ValueError, SlackCallError) as exc:
+                log.info("Could not attach %s in Slack: %s", rel, exc)
+                await self._say(
+                    f"Couldn't attach `{name}` here. Open it in the VISTA desktop app."
+                )
+        more = len(shown) - MAX_ATTACHMENTS
+        if more > 0:
+            files = "file" if more == 1 else "files"
+            await self._say(
+                f"{more} more {files} from this answer are in the VISTA desktop app."
+            )
+
+    async def _say(self, text: str) -> None:
+        try:
+            await self._post(format.plain(text))
+        except SlackCallError as exc:
+            log.info("Could not post in Slack: %s", exc.error)
 
     def _ts(self) -> str:
         assert self.progress_ts is not None
@@ -314,3 +405,15 @@ async def record_turn(
         row.updated_at = now_iso()
         db.add(row)
         await db.commit()
+
+
+def _read_shown(folder: Path | None, rel: str) -> bytes:
+    """A displayed file's bytes, refusing anything outside its folder or too large to send."""
+    if folder is None:
+        raise ValueError(f"no folder for {rel}")
+    path = (folder / rel).resolve()
+    if not path.is_relative_to(folder.resolve()):
+        raise ValueError(f"{rel} is outside its folder")
+    if path.stat().st_size > MAX_ATTACHMENT_BYTES:
+        raise ValueError(f"{rel} is too large to attach")
+    return path.read_bytes()

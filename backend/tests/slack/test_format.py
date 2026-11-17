@@ -17,12 +17,12 @@ def test_markdown_becomes_mrkdwn():
     assert "~old~" in out
 
 
-def test_code_is_left_alone_and_specials_are_escaped():
+def test_code_keeps_its_markup_and_specials_are_escaped():
     md = "Use `a < b` here: x < y & z\n```\nif a < b and **c**:\n    pass\n```"
     out = fmt.to_mrkdwn(md)
-    assert "`a < b`" in out
+    assert "`a &lt; b`" in out, "escaped in code too, as Slack requires"
     assert "x &lt; y &amp; z" in out
-    assert "if a < b and **c**:" in out
+    assert "if a &lt; b and **c**:" in out, "no bold inside code"
 
 
 def test_tables_become_monospaced():
@@ -131,3 +131,45 @@ def test_the_project_picker_is_buttons_then_a_menu_past_five():
     assert menu["type"] == "static_select"
     assert menu["action_id"].startswith(fmt.PICK_PROJECT)
     assert [o["value"] for o in menu["options"]][-1] == "ask1:p6"
+
+
+# ---------------------------------------------------------------------------
+# 7.1: inputs that used to hang, and code that went to Slack unescaped
+# ---------------------------------------------------------------------------
+
+
+def _finishes(fn, *args, seconds: float = 2.0):
+    """Run `fn` in a thread; fail instead of hanging the suite if it never returns."""
+    import threading
+
+    out: list = []
+    worker = threading.Thread(target=lambda: out.append(fn(*args)), daemon=True)
+    worker.start()
+    worker.join(seconds)
+    assert not worker.is_alive(), f"{fn.__name__} did not finish"
+    return out[0]
+
+
+def test_chunks_finish_on_an_unclosed_code_fence():
+    text = "Here is the script:\n\n```bash\n" + "echo step\n" * 2000
+
+    pieces = _finishes(fmt.chunks, text)
+
+    assert pieces and all(len(p) <= fmt.CHUNK_LIMIT for p in pieces)
+    assert all(p.count("```") % 2 == 0 for p in pieces), "each piece's code is closed"
+    assert _finishes(fmt.chunks, "```") == []
+    assert _finishes(fmt.chunks, "text\n```") == ["text\n```\n```"]
+
+
+def test_a_stray_nul_does_not_hang_the_conversion():
+    out = _finishes(fmt.to_mrkdwn, "**bold**\x00 and \x00 `code`\x00")
+    assert "\x00" not in out and "*bold*" in out and "`code`" in out
+
+
+def test_code_is_escaped_too():
+    out = fmt.to_mrkdwn(
+        "Run `a && b <in >out`:\n\n```\nif x < 1 && y > 2: <@U123>\n```"
+    )
+    assert "`a &amp;&amp; b &lt;in &gt;out`" in out
+    assert "if x &lt; 1 &amp;&amp; y &gt; 2: &lt;@U123&gt;" in out
+    assert "<@U123>" not in out, "code cannot mention anyone"

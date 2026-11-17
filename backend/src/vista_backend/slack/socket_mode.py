@@ -8,6 +8,7 @@ through the SDK's rate-limit handler, which waits as long as a 429 asks.
 """
 
 import asyncio
+import contextlib
 import logging
 import re
 from typing import Any
@@ -148,9 +149,20 @@ class SocketModeTransport(SlackTransport):
         return self._identity
 
     async def connect(self, handler: Handler) -> None:
+        """
+        Open the socket. It counts as connected only once open: a connect that
+        fails leaves this disconnected and raises, and the service retries.
+        """
+        socket = AsyncSocketModeHandler(self.app, self._app_token)
         self._handler = handler
-        self._socket = AsyncSocketModeHandler(self.app, self._app_token)
-        await self._socket.connect_async()
+        try:
+            await socket.connect_async()
+        except BaseException:
+            self._handler = None
+            with contextlib.suppress(Exception):
+                await socket.close_async()
+            raise
+        self._socket = socket
         log.info("Connected to Slack (Socket Mode).")
 
     async def disconnect(self) -> None:

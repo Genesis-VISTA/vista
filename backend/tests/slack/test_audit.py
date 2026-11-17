@@ -115,7 +115,7 @@ async def test_a_confirmed_submission_is_one_trail(answers, jsonl, engine, sessi
         [r.detail for r in rows]
     )
     assert "xoxb-999" not in everything
-    confirmations.stop()
+    await confirmations.stop()
 
 
 async def test_cancel_and_expiry_are_recorded(answers, jsonl, engine, session):
@@ -127,8 +127,8 @@ async def test_cancel_and_expiry_are_recorded(answers, jsonl, engine, session):
 
     events = [r.event for r in await _rows(engine)]
     assert events.count("cancelled") == 1 and events.count("expired") == 1
-    confirmations.stop()
-    second.stop()
+    await confirmations.stop()
+    await second.stop()
 
 
 async def test_an_app_submit_is_not_audited(answers, jsonl, engine, session):

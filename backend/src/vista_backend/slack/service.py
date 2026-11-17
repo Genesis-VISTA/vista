@@ -248,7 +248,9 @@ class SlackService:
                 await task
         self._tasks = []
         if self._confirmations is not None:
-            self._confirmations.stop()
+            # Before disconnecting, so the cards can still be redrawn.
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(self._confirmations.stop(), timeout=5.0)
         with contextlib.suppress(Exception):
             await slack.disconnect()
         gate.set_refusal(gate.no_refusal)
@@ -730,19 +732,42 @@ class SlackService:
         if action.action_id != format.SHOW_MORE:
             await self._confirmations.on_action(action)
             return
+        await self._show_more(action)
+
+    async def _show_more(self, action: Action) -> None:
+        """
+        Expand the answer in place: the message becomes the whole answer, or as
+        much as one message holds, without the button, and only what is left is
+        posted below it. Once: the stored answer is used up by the tap.
+        """
+        assert self.slack is not None
         async with chat_run_module.session_factory() as db:
             row = await db.get(SlackDetailTable, action.value)
-            text = row.text if row and row.slack_user_id == action.user_id else None
+            if row is None:  # Already expanded (or expired): nothing to add.
+                await db.commit()
+                return
+            if row.slack_user_id != action.user_id:
+                await db.commit()
+                await self._reply(action, "That's no longer available.", ephemeral=True)
+                return
+            full = row.text
+            await db.delete(row)
             await db.commit()
-        if text is None:
-            await self._reply(action, "That's no longer available.", ephemeral=True)
-            return
-        for reply in format.detail_messages(text):
+        first, rest = format.expanded(full)
+        thread = action.thread_ts or action.message_ts
+        try:
+            await self.slack.update(
+                action.channel_id, action.message_ts, first.text, blocks=first.blocks
+            )
+        except SlackCallError as exc:
+            log.info("Could not expand the answer in place: %s", exc.error)
+            rest = [first, *rest]
+        for reply in rest:
             await self.slack.post(
                 action.channel_id,
                 reply.text,
                 blocks=reply.blocks or None,
-                thread_ts=action.thread_ts or action.message_ts,
+                thread_ts=thread,
             )
 
 
