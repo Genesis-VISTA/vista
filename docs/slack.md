@@ -224,11 +224,11 @@ The code is `backend/src/vista_backend/slack/`. Slack is reached only through th
 `SlackTransport` interface (`transport.py`); `socket_mode.py` is the Bolt implementation, and
 tests use `tests/slack/fakes.py`'s `FakeTransport`, with every real Web API call made to fail.
 `tests/slack/` mocks Slack and HPC alike and never submits a job. The design and its decisions
-are in `openspec/changes/slack-channel/`. The manifest above is checked against
+are in `openspec/specs/slack-integration/` and the archived change `openspec/changes/archive/2026-11-17-slack-channel/`. The manifest above is checked against
 `manifest.yaml` by `tests/slack/test_manifest.py`.
 
 Before a release, run the manual checklist in
-[`openspec/changes/slack-channel/mobile-checklist.md`](../openspec/changes/slack-channel/mobile-checklist.md)
+[`openspec/changes/archive/2026-11-17-slack-channel/mobile-checklist.md`](../openspec/changes/archive/2026-11-17-slack-channel/mobile-checklist.md)
 on iOS and Android.
 
 ### Running VISTA hosted
