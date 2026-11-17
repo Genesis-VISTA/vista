@@ -237,9 +237,16 @@ function ChatPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatSessions, setChatSessions] = useState<PersistedChatSessionSummary[]>([]);
+  /**
+   * Where the open conversation started, from the conversation itself: the list
+   * is only loaded on the list view, so it is empty when VISTA opens straight
+   * into a conversation.
+   */
+  const [activeChatOrigin, setActiveChatOrigin] = useState<"app" | "slack" | null>(null);
   /** The open conversation was started from Slack: read-only here (openspec change slack-channel). */
   const isFromSlack =
-    isConversationOpen && chatSessions.find((c) => c.id === activeChatSessionId)?.origin === "slack";
+    isConversationOpen &&
+    (activeChatOrigin ?? chatSessions.find((c) => c.id === activeChatSessionId)?.origin) === "slack";
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
@@ -371,6 +378,7 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       setIsSessionHydrated(false);
       return;
     }
@@ -379,6 +387,7 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       setMessages([]);
       setMessageHistory([]);
       setLatestResult(null);
@@ -398,6 +407,7 @@ function ChatPage() {
     if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
       locallyCreatedSessionIdRef.current = null;
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       hydratedSessionKeyRef.current = sessionKey;
       // Nothing is persisted for it yet, so the next change must save.
       lastPersistedSnapshotRef.current = null;
@@ -407,6 +417,7 @@ function ChatPage() {
 
     let cancelled = false;
     setIsSessionHydrated(false);
+    setActiveChatOrigin(null);
     setAgentLogs([]);
 
     void (async () => {
@@ -420,6 +431,7 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(persisted.title);
         setActiveChatModel(persisted.inference_model ?? null);
+        setActiveChatOrigin(persisted.origin ?? "app");
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -441,6 +453,7 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(null);
         setActiveChatModel(null);
+        setActiveChatOrigin(null);
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
