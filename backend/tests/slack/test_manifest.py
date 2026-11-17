@@ -45,3 +45,13 @@ def test_manifest_has_a_home_tab_and_dms():
     assert home["home_tab_enabled"] is True
     assert home["messages_tab_enabled"] is True
     assert home["messages_tab_read_only_enabled"] is False
+
+
+def test_the_docs_show_the_manifest_as_it_is():
+    """`docs/slack.md` has the manifest inline for pasting; it must be this file, exactly."""
+    import re
+
+    doc = (MANIFEST.parents[4] / "docs" / "slack.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```yaml\n(.*?)\n```", doc, re.S)
+    assert len(blocks) == 1, "one manifest in the docs"
+    assert blocks[0] == MANIFEST.read_text(encoding="utf-8").rstrip("\n")

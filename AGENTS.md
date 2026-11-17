@@ -323,6 +323,35 @@ researcher's view is [`docs/background-tasks.md`](docs/background-tasks.md)).
   fakes: `harness.FakeSandbox` for the dev server, and an injected reader and `Clock` for
   watches. Real-sandbox cases are `-m sandbox` with `VISTA_RUN_SANDBOX=1`.
 
+## Slack
+
+VISTA in Slack (openspec change slack-channel; the researcher's view is
+[`docs/slack.md`](docs/slack.md)). The code is `backend/src/vista_backend/slack/`.
+
+- **A Slack message enters through the inbox**, like a send in the app: `SlackService._enqueue`
+  puts it and calls `ChatRunRegistry.wake`. There is no other way into a Slack turn.
+- **A conversation's channel is its origin.** `chat_run.channel_of(row)` maps
+  `chat_session.origin` to the run's `channel`, so every turn of a Slack conversation is a Slack
+  turn, the ones VISTA starts from a job watch included. The agent side switches only on
+  `channel != "app"` (the gate, the prompt rule, the instructions). The desktop is read-only for
+  such a conversation: the send, prompt-answer and queue-edit endpoints answer `409`
+  (`ELSEWHERE`); Stop works.
+- **The relay follows runs, not messages.** `chat_run.on_run_started` tells the service of each
+  run; it shows a Slack one in its thread (`slack/threads.thread_of`). Startup can begin a run
+  before Slack connects, so the lifespan calls `slack_service.watch_runs()` before
+  `wake_queued_inboxes`, and the service follows the held runs when it connects.
+- **Confirmed actions.** On a Slack turn, `SlackGateCapability` checks every tool not marked
+  read-only (MCP `readOnlyHint`, or `metadata=READ_ONLY` on a native tool) against the lock and
+  the limits; the names in `gate.CONFIRMED` (job submissions and cancellations) then wait for
+  Confirm. A new cluster action that changes something goes in `CONFIRMED`, with its card
+  fields in `confirm.fields_for`, its step label in `relay.STEP_LABELS`, and, if it submits,
+  its limits in `limits.check`. A new tool that only reads is marked read-only, or a Slack turn
+  checks it against the lock for nothing.
+- **Tests.** `tests/slack/conftest.py` gives every test a `FakeTransport` and points
+  `chat_run.session_factory` and `background_tasks.session_factory` at the test database, with
+  job watches recorded rather than run; a test that needs a real watch puts `watch_job` back.
+  Turns run on the scripted agents of `tests/test_chat_run.py` (the `env` fixture).
+
 ## Hypothesis Lab forum
 
 The Hypothesis Lab's debates live in a plain git repository per project (the

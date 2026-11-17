@@ -24,7 +24,7 @@ oauth_config:
       - im:history # DMs to VISTA
       - im:read
       - im:write # opening a DM for job notices and reminders
-      - files:write # logs posted on request
+      - files:write # the figures and files a turn displayed
       - reactions:write # ⏳ on a message that waits, ✅ when a turn takes it
 settings:
   event_subscriptions:
