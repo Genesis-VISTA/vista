@@ -741,8 +741,8 @@ main {
 }
 
 .model-picker-label {
-  /* Room for "Default (claude-sonnet)". */
-  max-width: 26ch;
+  /* Room for "Default (claude-sonnet-5-5)". */
+  max-width: 28ch;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

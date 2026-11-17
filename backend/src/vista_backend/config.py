@@ -273,14 +273,14 @@ class Settings(BaseSettings):
     the researcher's own progress lives in `LocalSettingsTable.onboarding_tour`.
     """
 
-    model: str = "openai:claude-sonnet"
+    model: str = "openai:claude-sonnet-5-5"
     """
     LLM to use.
     
     This is passed to Pydantic AI, see https://pydantic.dev/docs/ai/api/pydantic-ai/providers/ for
     other env vars to set for specific providers
 
-    Defaults to the AmSC-served `claude-sonnet` reached over the
+    Defaults to the AmSC-served `claude-sonnet-5-5` reached over the
     OpenAI-compatible endpoint in `openai_base_url`, so a fresh install has a
     working inference target with no configuration and only the access key is
     outstanding. Written with the `openai:` provider prefix to match

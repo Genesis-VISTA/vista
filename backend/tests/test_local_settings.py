@@ -531,7 +531,7 @@ def default_settings(monkeypatch):
     """An installation whose own configuration is the default preset's, keyless."""
     from vista_backend.config import settings
 
-    monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(settings, "model", "openai:claude-sonnet-5-5")
     monkeypatch.setattr(
         settings, "openai_base_url", "https://mag.genesis.americansciencecloud.org/v1"
     )
@@ -613,7 +613,7 @@ async def test_inference_view_has_no_secrets(session, default_settings):
         "id": "mag",
         "name": "AmSC MAG",
         "takes_url": False,
-        "default_model": "claude-sonnet",
+        "default_model": "claude-sonnet-5-5",
     }
     assert view["providers"][1] == {
         "id": "olcf",
@@ -624,7 +624,7 @@ async def test_inference_view_has_no_secrets(session, default_settings):
     assert view["providers"][2]["takes_url"] is True
     assert view["provider"] == "mag"
     assert view["source"] == "default"
-    assert view["model"] == "openai:claude-sonnet"
+    assert view["model"] == "openai:claude-sonnet-5-5"
     assert view["model_is_default"] is True
     assert view["has_credential"] is True
     assert view["keys_set"] == {
@@ -652,7 +652,7 @@ async def test_inference_view_on_mag_uses_its_default(session, default_settings)
     view = await get_inference(await _local(session))
     assert view.provider == "mag"
     assert view.source == "user"
-    assert view.model == "openai:claude-sonnet"
+    assert view.model == "openai:claude-sonnet-5-5"
     assert view.model_is_default is True
     assert view.has_credential is False
     assert view.config_key_set is False

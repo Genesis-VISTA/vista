@@ -9,7 +9,7 @@ import {
 import { qualifyModelInput } from "@/lib/models";
 
 const PROVIDERS = [
-  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet" },
+  { id: "mag", name: "AmSC MAG", takes_url: false, default_model: "claude-sonnet-5-5" },
   { id: "olcf", name: "OLCF Inference", takes_url: false, default_model: "gpt-oss-120b" },
   { id: "custom", name: "Custom", takes_url: true, default_model: null },
 ];
@@ -20,7 +20,7 @@ function inferenceView(overrides: Record<string, unknown> = {}) {
     provider: "mag",
     source: "default",
     base_url: "https://mag.genesis.americansciencecloud.org/v1",
-    model: "openai:claude-sonnet",
+    model: "openai:claude-sonnet-5-5",
     model_is_default: true,
     has_credential: true,
     keys_set: { mag: true, olcf: false, custom: false },
@@ -57,7 +57,7 @@ describe("agent settings store", () => {
     expect(fetchMock).toHaveBeenCalledWith("/api/settings/inference", expect.anything());
     expect(result.current.settings).toMatchObject({
       provider: "mag",
-      model: "openai:claude-sonnet",
+      model: "openai:claude-sonnet-5-5",
       modelIsDefault: true,
       keysSet: { mag: true, olcf: false, custom: false },
       configKeySet: false,
@@ -66,7 +66,7 @@ describe("agent settings store", () => {
       id: "mag",
       name: "AmSC MAG",
       takesUrl: false,
-      defaultModel: "claude-sonnet",
+      defaultModel: "claude-sonnet-5-5",
     });
   });
 

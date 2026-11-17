@@ -136,7 +136,7 @@ def test_resolved_target_reaches_the_built_client(monkeypatch):
 @pytest.fixture
 def default_settings(monkeypatch):
     """An installation whose own configuration is the default preset's, keyless."""
-    monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(settings, "model", "openai:claude-sonnet-5-5")
     monkeypatch.setattr(
         settings, "openai_base_url", "https://mag.genesis.americansciencecloud.org/v1"
     )
@@ -147,7 +147,7 @@ def test_presets():
     mag, olcf, custom = (PROVIDER_PRESETS[p] for p in ("mag", "olcf", "custom"))
     assert list(PROVIDER_PRESETS) == ["mag", "olcf", "custom"]
     assert mag.base_url == "https://mag.genesis.americansciencecloud.org/v1"
-    assert mag.default_model == "claude-sonnet"
+    assert mag.default_model == "claude-sonnet-5-5"
     assert olcf.name == "OLCF Inference"
     assert olcf.base_url == "https://s3m.olcf.ornl.gov/olcf/open/v1/inference"
     assert olcf.default_model == "gpt-oss-120b"
@@ -179,7 +179,12 @@ _ALL_KEYS = dict(
 @pytest.mark.parametrize(
     "provider,base_url,key,model",
     [
-        ("mag", PROVIDER_PRESETS["mag"].base_url, "mag-key", "openai:claude-sonnet"),
+        (
+            "mag",
+            PROVIDER_PRESETS["mag"].base_url,
+            "mag-key",
+            "openai:claude-sonnet-5-5",
+        ),
         ("olcf", PROVIDER_PRESETS["olcf"].base_url, "olcf-key", "openai:gpt-oss-120b"),
         ("custom", "https://custom.example/v1", "custom-key", None),
     ],
@@ -244,7 +249,7 @@ def test_nothing_set_is_mag_with_its_default(default_settings):
     target = resolve_inference_target(_local())
     assert target.provider == "mag"
     assert target.source == "default"
-    assert target.model == "openai:claude-sonnet"
+    assert target.model == "openai:claude-sonnet-5-5"
     assert target.model_is_default is True
     assert target.base_url == PROVIDER_PRESETS["mag"].base_url
 
@@ -419,7 +424,7 @@ async def test_new_keys_are_not_plaintext_in_the_database_file(tmp_path, monkeyp
 
 def test_missing_credential_names_the_setting(monkeypatch):
     monkeypatch.setattr(settings, "openai_api_key", None)
-    monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+    monkeypatch.setattr(settings, "model", "openai:claude-sonnet-5-5")
     with pytest.raises(MissingInferenceCredential) as excinfo:
         require_inference_credential(_local())
     detail = excinfo.value.detail
@@ -597,7 +602,7 @@ class TestHttpSurface:
     @staticmethod
     def _no_credential(monkeypatch) -> None:
         """A fresh install: our endpoint is the target and nothing supplies a key."""
-        monkeypatch.setattr(settings, "model", "openai:claude-sonnet")
+        monkeypatch.setattr(settings, "model", "openai:claude-sonnet-5-5")
         monkeypatch.setattr(settings, "openai_api_key", None)
 
     @pytest.mark.anyio
