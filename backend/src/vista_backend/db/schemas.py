@@ -2008,7 +2008,7 @@ class SlackLinkTable(SQLModel, table=True):
     project_id: uuid.UUID | None = Field(
         default=None, foreign_key="project.id", ondelete="SET NULL"
     )
-    """ The project Slack conversations run in; None means the first project. """
+    """ The project Slack conversations run in; None asks in each new thread (unless there is only one). """
     dm_channel_id: str | None = None
     notify_in_thread: bool = False
     """ Job notifications @mention in the thread instead of by direct message. """

@@ -46,7 +46,7 @@ export type SlackLink = {
   slack_user_id: string;
   /** Who the researcher was on the collaboration server when it was linked, if signed in. */
   collab_name: string | null;
-  /** The project new Slack conversations start in; null is the first project. */
+  /** The project new Slack conversations start in; null asks which one (unless there is only one). */
   project_id: string | null;
   /** Job notices in the job's thread rather than a DM. */
   notify_in_thread: boolean;

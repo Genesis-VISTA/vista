@@ -481,7 +481,7 @@ function LinkedAccounts() {
                 void run(async () => replace(await updateSlackLink(link.id, { project_id: e.target.value || null })))
               }
             >
-              <option value="">First project</option>
+              <option value="">Ask each time</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
