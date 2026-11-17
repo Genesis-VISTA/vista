@@ -7,6 +7,10 @@ reported, what was asked for, and, for a Slack turn, the thread to report back
 to. `list_my_recent_jobs` reads them, so "my last job" means the last job this
 researcher submitted, not whatever the model remembers. Campaign jobs keep
 their own table and are not recorded here.
+
+A job submitted in a Slack conversation is also watched (`background_tasks`,
+as `watch_hpc_job` would), so its end starts a turn the thread is shown; the
+watch writes the final state back here.
 """
 
 import logging
@@ -25,7 +29,7 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.campaign.hpc_tools import parse_submit_summary
-from ..db.schemas import HpcJobRecordTable, SlackThreadTable
+from ..db.schemas import ChatSessionTable, HpcJobRecordTable, SlackThreadTable
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +116,9 @@ class SubmitWatcher:
         except Exception:
             log.exception("Could not record job %s", found["job_id"])
         if self._channel == "slack":
+            await self._watch(
+                found["cluster"] or str(args.get("cluster") or ""), found["job_id"]
+            )
             from ..slack import audit  # Here, as it imports the chat run.
 
             await audit.record(
@@ -124,6 +131,35 @@ class SubmitWatcher:
                 job_id=found["job_id"],
             )
 
+    async def _watch(self, cluster: str, job_id: str) -> None:
+        """Watch a job submitted from Slack, so its end is reported in the thread."""
+        from . import background_tasks  # Here, as it imports the chat run.
+
+        try:
+            async with self._session_factory() as db:
+                chat = await db.get(ChatSessionTable, self._chat_session_id)
+                project_id = chat.project_id if chat is not None else None
+                await db.commit()
+            if project_id is None:
+                return
+            async with background_tasks.session_factory() as db:
+                record = await background_tasks.create_watch(
+                    db,
+                    chat_session_id=self._chat_session_id,
+                    project_id=project_id,
+                    job_id=job_id,
+                    cluster=cluster,
+                )
+        except background_tasks.TaskRefused as refused:
+            log.info("Job %s is not watched: %s", job_id, refused)
+            return
+        except Exception:
+            log.exception("Could not watch job %s", job_id)
+            return
+        background_tasks.background_task_registry.watch_job(
+            record, read=background_tasks.shared_state_reader()
+        )
+
 
 def _int(value: Any) -> int | None:
     return value if isinstance(value, int) else None
@@ -131,6 +167,25 @@ def _int(value: Any) -> int | None:
 
 def _str(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+async def set_final_state(
+    db: AsyncSession, *, cluster: str, job_id: str, state: str
+) -> None:
+    """Record how a job ended, on its record if it has one."""
+    rows = (
+        await db.exec(
+            select(HpcJobRecordTable).where(
+                HpcJobRecordTable.cluster == cluster,
+                HpcJobRecordTable.job_id == job_id,
+            )
+        )
+    ).all()
+    for row in rows:
+        row.state = state
+        row.finished_at = datetime.now(UTC).isoformat(timespec="seconds")
+        db.add(row)
+    await db.commit()
 
 
 async def recent_jobs(

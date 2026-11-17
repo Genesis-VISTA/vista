@@ -20,7 +20,7 @@ from vista_backend.db.schemas import (
     HpcJobRecordTable,
     SlackThreadTable,
 )
-from vista_backend.services import job_records
+from vista_backend.services import background_tasks, job_records
 from vista_backend.services.job_records import SubmitWatcher
 from vista_backend.slack import store
 
@@ -118,6 +118,57 @@ async def test_a_slack_submit_remembers_its_thread(engine, session):
         "10.0",
     )
     assert job.slack_user_id == "U1"
+
+
+async def test_a_slack_submit_is_watched_and_a_desktop_one_is_not(
+    engine, session, request
+):
+    """Its end then starts a turn in the thread (`test_service`); one watch per job."""
+    slack_chat = await _chat(session)
+    session.add(
+        SlackThreadTable(
+            team_id=TEAM,
+            channel_id="DU1",
+            thread_ts="10.0",
+            chat_session_id=slack_chat,
+            slack_user_id="U1",
+            created_at=store.now_iso(),
+        )
+    )
+    await session.commit()
+    app_chat = await _chat(session)
+
+    await _submit(_watcher(engine, slack_chat, channel="slack"))
+    await _submit(_watcher(engine, app_chat))
+
+    (watch,) = request.node.started_watches
+    assert (watch.chat_session_id, watch.job_id, watch.cluster) == (
+        slack_chat,
+        "4471",
+        "frontier",
+    )
+    async with AsyncSession(engine) as db:
+        with pytest.raises(background_tasks.TaskRefused, match="already watched"):
+            await background_tasks.create_watch(
+                db,
+                chat_session_id=slack_chat,
+                project_id=watch.project_id,
+                job_id="4471",
+                cluster="frontier",
+            )
+
+
+async def test_a_watched_end_is_written_to_the_record(engine, session):
+    chat_id = await _chat(session)
+    await _submit(_watcher(engine, chat_id))
+
+    async with AsyncSession(engine) as db:
+        await job_records.set_final_state(
+            db, cluster="frontier", job_id="4471", state="COMPLETED"
+        )
+
+    (job,) = await _records(engine)
+    assert job.state == "COMPLETED" and job.finished_at
 
 
 async def test_a_failed_or_refused_submit_records_nothing(engine, session):

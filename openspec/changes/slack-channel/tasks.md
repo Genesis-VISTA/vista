@@ -39,8 +39,8 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 6. Job notices from watches
 
-- [ ] 6.1 A successful submission in a Slack conversation registers a job watch; its result starts a turn posted in the thread; test with a fake watch reader
-- [ ] 6.2 Remove `slack/jobs.JobMonitor`, `notify_desktop_jobs` and `notify_in_thread`, their UI and tests; keep `hpc_job_record` for `list_my_recent_jobs` and the daily limit
+- [x] 6.1 A successful submission in a Slack conversation registers a job watch; its result starts a turn posted in the thread; test with a fake watch reader
+- [x] 6.2 Remove `slack/jobs.JobMonitor`, `notify_desktop_jobs` and `notify_in_thread`, their UI and tests; keep `hpc_job_record` for `list_my_recent_jobs` and the daily limit
 
 ## 7. Review fixes
 

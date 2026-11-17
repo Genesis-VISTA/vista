@@ -4,8 +4,9 @@ The Slack service: everything in `slack/` put together and run with the backend.
 `SlackService.start` does nothing unless Slack is on and both tokens are in
 the secret store. Then, in order: install the gate's refusal and the card's
 preview, expire cards left open by the last run, connect, follow every run of
-a Slack conversation in its thread, and run the background loops — job
-notices, credential reminders and the App Home. `stop` marks the App Home
+a Slack conversation in its thread, and run the background loops —
+credential reminders and the App Home. A job's end reaches its thread through
+its watch (`services/job_records`), not a loop here. `stop` marks the App Home
 offline, then undoes all of it.
 
 A Slack message is put in its conversation's inbox, like a message sent in the
@@ -49,7 +50,6 @@ from . import access, audit, confirm, credentials, format, gate, limits, linking
 from .confirm import Confirmations
 from .events import Action, Event, HomeOpened, Message, keyword
 from .home import Home, host_name
-from .jobs import JobMonitor
 from .relay import Place, RunRelay
 from .threads import (
     ChooseProject,
@@ -223,11 +223,6 @@ class SlackService:
             self._on_run(run)
         _held.clear()
         self._spawn(self._reconnect_loop())
-        self._spawn(
-            JobMonitor(slack).run_forever(
-                interval=settings.slack.job_poll_interval, stop_event=self._stop
-            )
-        )
         self._spawn(self._every(settings.slack.reminder_interval, self._remind))
         self._spawn(self._every(settings.slack.home_refresh_interval, self._homes))
         return True

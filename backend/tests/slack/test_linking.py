@@ -190,9 +190,9 @@ async def test_a_link_is_changed_and_removed(session, local):
     )
 
     updated = await update_slack_link(
-        view.id, SlackLinkUpdate(notify_in_thread=True), session
+        view.id, SlackLinkUpdate(project_id=None), session
     )
-    assert updated.notify_in_thread is True
+    assert updated.project_id is None
     await delete_slack_link(view.id, session)
     assert await list_slack_links(session) == []
 
@@ -201,7 +201,7 @@ async def test_a_link_is_changed_and_removed(session, local):
 async def test_an_unknown_link_is_not_found(session):
     missing = uuid.uuid4()
     for call in (
-        update_slack_link(missing, SlackLinkUpdate(notify_in_thread=True), session),
+        update_slack_link(missing, SlackLinkUpdate(project_id=None), session),
         delete_slack_link(missing, session),
     ):
         with pytest.raises(HTTPException) as err:

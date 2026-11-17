@@ -183,6 +183,10 @@ class RunRelay:
                 reply = format.answer(answer, notes=notes)
         else:
             reply = format.answer(answer, notes=_notes(result))
+        if run.origin == "task":
+            # VISTA started this turn (a watch's or a command's result): the user
+            # did not just ask, so the answer @mentions them.
+            reply = format.mention(reply, self.place.slack_user_id)
         if reply.detail:
             reply = format.show_more_button(
                 reply, await self._keep_detail(reply.detail)

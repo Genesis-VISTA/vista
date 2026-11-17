@@ -61,6 +61,20 @@ def slack_db_is_the_test_db(request, monkeypatch):
         return
     engine = request.getfixturevalue("engine")
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
+    # A job submitted from Slack is watched: its record goes to the test's
+    # database too, and no watch reads a real cluster unless a test says so.
+    from vista_backend.services import background_tasks
+
+    monkeypatch.setattr(
+        background_tasks, "session_factory", lambda: AsyncSession(engine)
+    )
+    started: list = []
+    monkeypatch.setattr(
+        background_tasks.background_task_registry,
+        "watch_job",
+        lambda record, **kw: started.append(record),
+    )
+    request.node.started_watches = started
 
 
 @pytest.fixture(autouse=True)

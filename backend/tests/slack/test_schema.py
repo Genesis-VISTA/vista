@@ -61,8 +61,8 @@ def test_an_existing_link_gains_the_collaboration_identity_columns(tmp_path):
             conn.execute(text(f'ALTER TABLE slack_link DROP COLUMN "{column}"'))
         conn.execute(
             text(
-                "INSERT INTO slack_link (id, team_id, slack_user_id,"
-                " notify_in_thread, created_at) VALUES ('l', 'T1', 'U1', 0, '')"
+                "INSERT INTO slack_link (id, team_id, slack_user_id, created_at)"
+                " VALUES ('l', 'T1', 'U1', '')"
             )
         )
 

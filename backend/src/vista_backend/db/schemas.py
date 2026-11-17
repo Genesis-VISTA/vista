@@ -1951,7 +1951,6 @@ class HpcJobRecordTable(SQLModel, table=True):
     state: str | None = None
     """ The last state seen; set once the job is terminal. """
     finished_at: str | None = None
-    notified_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1979,7 +1978,6 @@ class SlackConfigTable(SQLModel, table=True):
     locked: bool = False
     locked_at: str | None = None
     locked_by: str | None = None
-    notify_desktop_jobs: bool = False
     online_since: str | None = None
     """ When Slack last connected, for the App Home. """
 
@@ -2010,8 +2008,6 @@ class SlackLinkTable(SQLModel, table=True):
     )
     """ The project Slack conversations run in; None asks in each new thread (unless there is only one). """
     dm_channel_id: str | None = None
-    notify_in_thread: bool = False
-    """ Job notifications @mention in the thread instead of by direct message. """
     created_at: str
 
 

@@ -193,17 +193,6 @@ export function SlackSection({
             {...field("locked")}
           />
         </Group>
-
-        <Group title="Notifications">
-          <Switch
-            name="notify_desktop_jobs"
-            label="Tell me in Slack about jobs started here"
-            hint="Jobs started from Slack are always reported there when they finish."
-            checked={config.notify_desktop_jobs}
-            onToggle={(on) => save("notify_desktop_jobs", { notify_desktop_jobs: on })}
-            {...field("notify_desktop_jobs")}
-          />
-        </Group>
       </div>
     </section>
   );
@@ -488,16 +477,6 @@ function LinkedAccounts() {
                 </option>
               ))}
             </select>
-          </label>
-          <label className="user-settings-hint slack-link-check">
-            <input
-              type="checkbox"
-              checked={link.notify_in_thread}
-              onChange={(e) =>
-                void run(async () => replace(await updateSlackLink(link.id, { notify_in_thread: e.target.checked })))
-              }
-            />{" "}
-            Job notices in the job&rsquo;s thread, not a DM
           </label>
           <button
             type="button"

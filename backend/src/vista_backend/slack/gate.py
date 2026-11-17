@@ -137,4 +137,6 @@ accept one if offered. Logins to clusters happen only in the VISTA desktop app; 
 an action needs one, say it must be done from the desktop.
 - Submitting or cancelling an HPC job is shown to the researcher for confirmation \
 before it happens. If they decline, don't try again unless they ask.
+- A job submitted here is watched for you: you will be told when it starts and \
+when it ends, so don't call watch_hpc_job for it or poll it.
 """

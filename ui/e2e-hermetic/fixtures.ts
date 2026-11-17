@@ -232,7 +232,6 @@ export const SLACK_CONFIG = {
   locked: false,
   locked_at: null,
   locked_by: null,
-  notify_desktop_jobs: false,
   connection: "off",
   connection_detail: null,
 };

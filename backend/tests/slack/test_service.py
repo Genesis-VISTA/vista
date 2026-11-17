@@ -14,12 +14,20 @@ from harness import call, say
 from test_chat_run import env  # noqa: F401  (scripted agents and a registry)
 from vista_backend.db.schemas import (
     ChatSessionTable,
+    HpcJobRecordTable,
     SlackAuditTable,
     SlackConfigTable,
     SlackProjectAskTable,
     SlackThreadTable,
 )
-from vista_backend.services import chat_run, inbox
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from vista_backend.services import background_tasks, chat_run, inbox
+from vista_backend.services.job_records import SubmitWatcher
 from vista_backend.slack import confirm, gate, limits, relay, service, store
 from vista_backend.slack.events import Action, HomeOpened, Message
 from vista_backend.slack.service import SlackService
@@ -397,6 +405,62 @@ async def test_a_turn_running_at_quit_says_so_in_its_thread(
 
     assert (await env.row(row.id)).run_state == "interrupted"
     assert any("VISTA quit before that turn finished" in a for a in _answers(slack))
+
+
+async def test_a_job_submitted_from_slack_is_reported_in_its_thread(
+    env, on, slack, session, monkeypatch
+):
+    """Its watch reads COMPLETED, which starts a turn posted in the thread @mentioning the user."""
+    await link(session, "U1")
+    row = await _slack_conversation(env, [say("Job 4471 finished: COMPLETED.")])
+    registry = background_tasks.background_task_registry
+    monkeypatch.setattr(
+        registry, "watch_job", type(registry).watch_job.__get__(registry)
+    )
+    read: list[str] = []
+
+    async def reader(record):
+        read.append(record.job_id)
+        return {"state": "COMPLETED", "exit_code": 0}
+
+    monkeypatch.setattr(background_tasks, "shared_state_reader", lambda: reader)
+    await service.start(host="lab-mac")
+
+    # What the chat run does with a successful submit in this conversation.
+    watcher = SubmitWatcher(
+        session_factory=chat_run.session_factory,
+        chat_session_id=row.id,
+        channel="slack",
+    )
+    await watcher.observe(
+        FunctionToolCallEvent(
+            part=ToolCallPart(
+                tool_name="vista__submit_hpc_job",
+                args={"job": "flibe-md", "cluster": "frontier"},
+                tool_call_id="c1",
+            )
+        )
+    )
+    await watcher.observe(
+        FunctionToolResultEvent(
+            part=ToolReturnPart(
+                tool_name="vista__submit_hpc_job",
+                content="job_id: 4471\ncluster: frontier",
+                tool_call_id="c1",
+            )
+        )
+    )
+    async with asyncio.timeout(10):
+        while env.registry.get(row.id) is None and not _answers(slack):
+            await asyncio.sleep(0.01)
+    await _settled(env, row.id)
+
+    assert read == ["4471"]
+    (answer,) = _answers(slack)
+    assert answer.startswith("<@U1> ") and "Job 4471 finished" in answer
+    async with AsyncSession(env.engine) as db:
+        (job,) = (await db.exec(select(HpcJobRecordTable))).all()
+        assert job.state == "COMPLETED", "the watch wrote how it ended"
 
 
 async def test_a_turn_in_an_app_conversation_is_not_followed(

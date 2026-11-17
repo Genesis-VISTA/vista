@@ -38,7 +38,6 @@ class SlackConfigView(BaseModel):
     locked: bool
     locked_at: str | None
     locked_by: str | None
-    notify_desktop_jobs: bool
     connection: str
     """ off · connected · error. """
     connection_detail: str | None
@@ -56,7 +55,6 @@ class SlackConfigUpdate(BaseModel):
     max_walltime_minutes: int | None = Field(default=None, ge=1)
     max_jobs_per_day: int | None = Field(default=None, ge=0)
     locked: bool | None = None
-    notify_desktop_jobs: bool | None = None
 
 
 def _ids(values: list[str]) -> list[str]:
@@ -81,7 +79,6 @@ async def _view(session) -> SlackConfigView:
         locked=row.locked,
         locked_at=row.locked_at,
         locked_by=row.locked_by,
-        notify_desktop_jobs=row.notify_desktop_jobs,
         connection=state,
         connection_detail=detail,
     )
@@ -137,7 +134,6 @@ async def update_slack_config(
         "max_nodes",
         "max_walltime_minutes",
         "max_jobs_per_day",
-        "notify_desktop_jobs",
     }:
         await slack_service.restart()
     return await _view(session)
@@ -150,7 +146,6 @@ class SlackLinkView(BaseModel):
     collab_name: str | None
     """ Who the researcher was on the collaboration server when linked, if signed in. """
     project_id: uuid.UUID | None
-    notify_in_thread: bool
     created_at: str
 
 
@@ -160,7 +155,6 @@ class SlackLinkCreate(BaseModel):
 
 class SlackLinkUpdate(BaseModel):
     project_id: uuid.UUID | None = None
-    notify_in_thread: bool | None = None
 
 
 def _link_view(link: SlackLinkTable) -> SlackLinkView:
@@ -214,8 +208,6 @@ async def update_slack_link(
             if body.project_id not in mine:
                 raise HTTPException(status_code=400, detail="No such project.")
         link.project_id = body.project_id
-    if body.notify_in_thread is not None:
-        link.notify_in_thread = body.notify_in_thread
     session.add(link)
     await session.commit()
     await session.refresh(link)

@@ -242,6 +242,18 @@ def answer(markdown: str, *, notes: list[str] | None = None) -> Reply:
     )
 
 
+def mention(reply: Reply, slack_user_id: str) -> Reply:
+    """`reply` @mentioning `slack_user_id`, so they are notified: added after formatting, which escapes `<`."""
+    tag = f"<@{slack_user_id}> "
+    blocks = [dict(b) for b in reply.blocks]
+    first = next(
+        (b for b in blocks if b.get("type") == "section" and "text" in b), None
+    )
+    if first is not None:
+        first["text"] = {**first["text"], "text": tag + first["text"]["text"]}
+    return Reply(text=tag + reply.text, blocks=blocks, detail=reply.detail)
+
+
 def show_more_button(reply: Reply, detail_id: str) -> Reply:
     if reply.detail is None:
         return reply

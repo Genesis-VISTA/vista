@@ -469,6 +469,23 @@ async def _create_watch(
     job_id: str,
     cluster: str,
 ) -> BackgroundTaskTable:
+    already = (
+        await db.exec(
+            select(BackgroundTaskTable).where(
+                BackgroundTaskTable.chat_session_id == chat_session_id,
+                BackgroundTaskTable.kind == "job_watch",
+                BackgroundTaskTable.job_id == job_id.strip(),
+                BackgroundTaskTable.cluster == cluster,
+                col(BackgroundTaskTable.state).in_(["watching", "paused"]),
+            )
+        )
+    ).first()
+    if already is not None:
+        # A Slack submission is watched on its own; one end, reported once.
+        raise TaskRefused(
+            f"Job {already.job_id} on {cluster} is already watched as {already.label}: "
+            "you will be told when it starts running and when it ends."
+        )
     active = (
         await db.exec(
             select(func.count())
@@ -506,6 +523,22 @@ async def _create_watch(
     await db.commit()
     await db.refresh(record)
     return BackgroundTaskTable.model_validate(record)
+
+
+async def _record_final_state(record: BackgroundTaskTable, state: str) -> None:
+    """The job's end on its `hpc_job_record`, for "my recent jobs" and the App Home."""
+    from . import job_records
+
+    try:
+        async with session_factory() as db:
+            await job_records.set_final_state(
+                db,
+                cluster=record.cluster or "",
+                job_id=record.job_id or "",
+                state=state,
+            )
+    except Exception:
+        log.exception("Could not record how job %s ended", record.job_id)
 
 
 def watch_started_message(record: BackgroundTaskTable) -> str:
@@ -728,6 +761,7 @@ class BackgroundTaskRegistry:
                     changes.update(state="ended", ended_at=now_iso(), next_poll_at=None)
                     record = await _save_watch(record.id, **changes) or record
                     await _put_event(record, *_job_event(record, "ended", reading))
+                    await _record_final_state(record, state)
                     return
                 if changes:
                     record = await _save_watch(record.id, **changes) or record

@@ -18,7 +18,6 @@ export type SlackConfig = {
   locked: boolean;
   locked_at: string | null;
   locked_by: string | null;
-  notify_desktop_jobs: boolean;
   /** The connection to Slack: off, connected or error. */
   connection: "off" | "connected" | "error";
   /** Why it is off, or what went wrong. */
@@ -49,7 +48,6 @@ export type SlackLink = {
   /** The project new Slack conversations start in; null asks which one (unless there is only one). */
   project_id: string | null;
   /** Job notices in the job's thread rather than a DM. */
-  notify_in_thread: boolean;
   created_at: string;
 };
 
@@ -71,7 +69,7 @@ export const fetchSlackLinks = () => call<SlackLink[]>("links");
 export const linkSlack = (code: string) => call<SlackLink>("links", "POST", { code });
 export const updateSlackLink = (
   id: string,
-  updates: Partial<Pick<SlackLink, "project_id" | "notify_in_thread">>,
+  updates: Partial<Pick<SlackLink, "project_id">>,
 ) => call<SlackLink>(`links/${encodeURIComponent(id)}`, "PUT", updates);
 export const unlinkSlack = (id: string) =>
   call<void>(`links/${encodeURIComponent(id)}`, "DELETE");
