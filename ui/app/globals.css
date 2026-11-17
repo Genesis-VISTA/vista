@@ -7077,6 +7077,17 @@ textarea.input:focus {
   max-width: 320px;
 }
 
+/* The code field takes what is left; the button keeps its word on one line. */
+.slack-link-form .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.slack-link-form .button {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* A conversation that started in a Slack thread. */
 .conversation-origin-badge {
   align-self: flex-start;
