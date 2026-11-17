@@ -287,7 +287,7 @@ as Slack asks and retry.
 ### Requirement: Replies suited to a phone
 
 Replies SHALL be in Slack's markup and SHALL lead with a summary of one or two lines. Further
-detail SHALL be behind a "Show more" button that posts it in the thread. Output that does not fit
+detail SHALL be behind a "Show more" button that expands the answer in place, once. Output that does not fit
 in a Slack message SHALL be truncated with a pointer to ask for it; full output SHALL be attached
 as a file only on request. No reply, however long, SHALL fail to post because of Slack's length
 limits.
@@ -295,8 +295,13 @@ limits.
 #### Scenario: A long answer
 
 - **WHEN** the agent's answer is many times longer than a Slack message allows
-- **THEN** a summary and a "Show more" button are posted, and tapping it posts the rest in the
-  thread in as many messages as needed
+- **THEN** a summary and a "Show more" button are posted, and tapping it turns the answer into
+  as much of the full text as one message holds, posting only the remainder below it
+
+#### Scenario: Show more tapped twice
+
+- **WHEN** the researcher taps "Show more" and then looks for it again
+- **THEN** the button is gone from the expanded answer, and nothing was posted twice
 
 #### Scenario: Asking for the full log
 

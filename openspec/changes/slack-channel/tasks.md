@@ -48,6 +48,7 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 - [ ] 7.3 `SocketModeTransport.connect` records the socket only once open; a failed connect is reported and retried; test
 - [ ] 7.4 `stop()` and `close_stale` decline open cards' prompts; test that a settings restart with an open card leaves the run unblocked
 - [ ] 7.5 A card that cannot be posted declines its prompt, and a turn that fails replaces the progress message; tests in `test_relay.py`
+- [ ] 7.6 "Show more" expands the answer in place: `chat.update` to the summary plus as much detail as one message holds, without the button; only the remainder is posted, once; an edit Slack refuses falls back to posting; tests: a tap edits and removes the button, a second tap posts nothing, an answer past one message posts only its remainder
 
 ## 8. Docs
 

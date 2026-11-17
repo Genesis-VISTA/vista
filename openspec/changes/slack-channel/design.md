@@ -127,8 +127,13 @@ happened. Every Slack call goes through the SDK's retry handler for 429s.
 `slack/format.py`: Markdown → mrkdwn (bold, italics, links, headings, lists, code, tables as code
 blocks), with `&`, `<`, `>` escaped everywhere, code included. The answer is split into summary
 (first paragraph, trimmed to ~300 characters at a sentence boundary) and detail. Detail is cached
-(`slack_detail`, keyed by a random id, 24 h) and posted by "Show more" in chunks below Slack's
-limits (section text 3,000, message text 40,000, 50 blocks; we use 2,900 / 3,800-per-chunk / 40).
+(`slack_detail`, keyed by a random id, 24 h). "Show more" expands the answer in place: the tap
+edits the answer into the full text and removes the button, so a second tap is impossible and
+nothing is posted twice; the notification still shows only the summary. What does not fit in one
+message stays in place up to the limit, and the rest is posted once below it in chunks under
+Slack's limits (section text 3,000, message text 40,000, 50 blocks; we use 2,900 /
+3,800-per-chunk / 40). *Alternative:* posting the detail as new messages on every tap, as !163
+did — a repeated tap repeated the post.
 Chunking terminates on any input, an unclosed code fence included, and stray NULs are stripped
 before placeholders are used. Any `msg_too_long` or `invalid_blocks` response falls back to a
 plain truncated text post; the handler never raises on length.
