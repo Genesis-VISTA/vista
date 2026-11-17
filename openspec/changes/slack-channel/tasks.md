@@ -60,6 +60,6 @@ The rework of !163 onto main's conversation inbox. !163's original task list is 
 
 ## 9. Verify
 
-- [ ] 9.1 Full `./scripts/ci-local.sh` passes
+- [x] 9.1 Full `./scripts/ci-local.sh` passes
 - [ ] 9.2 By hand on this Mac with Beam on Holly: a DM, a queued message, a submission with Confirm, its watch reported in the thread, a transfer approved by buttons, lock, and the read-only desktop view
 - [ ] 9.3 Manual mobile checklist (iOS, Android) — live, not in PR CI
