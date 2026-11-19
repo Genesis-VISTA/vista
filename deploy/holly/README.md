@@ -8,7 +8,7 @@ Two system services, neither started at boot:
 
 - `vllm-beam.service`: Beam on `127.0.0.1:8100`, all 8 GPUs.
 - `vista.service`, from the Quadlet file `vista.container`: the `vista-server`
-  image on its own pasta network, with the UI on `127.0.0.1:3001` (Grafana has
+  image with host networking, the UI on port 3001 (`PORT` in `vista.env`; Grafana has
   3000). Starting it starts beam; stopping beam stops it.
 
 ## Install
