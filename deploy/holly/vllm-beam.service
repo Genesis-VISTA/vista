@@ -1,0 +1,21 @@
+# Beam on vLLM, the model behind the Holly staging VISTA (vista.container).
+# Serves the OpenAI API as model "beam" on 127.0.0.1:8100, across all 8 GPUs.
+# The command and its environment are in vllm-beam.sh, which sources env.sh.
+# No [Install] section: it starts only when asked, never at boot, so it does not
+# take the GPUs before anyone wants them.
+[Unit]
+Description=vLLM serving Beam as "beam" on 127.0.0.1:8100
+After=network-online.target remote-fs.target
+Wants=network-online.target
+RequiresMountsFor=/scratch/baumannsk
+
+[Service]
+Type=exec
+User=baumannsk
+WorkingDirectory=/scratch/baumannsk
+ExecStart=/bin/bash /scratch/baumannsk/vista/deploy/holly/vllm-beam.sh
+Restart=on-failure
+RestartSec=30
+# SIGTERM to vLLM's main process first, so it shuts its TP workers down itself.
+KillMode=mixed
+TimeoutStopSec=120

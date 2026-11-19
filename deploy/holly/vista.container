@@ -1,0 +1,26 @@
+# VISTA, headless, on Holly: a Quadlet file (podman >= 4.4). Installed in
+# /etc/containers/systemd/, it becomes vista.service under rootful podman.
+# Starting it starts beam first (vllm-beam.service); stopping beam stops it.
+# No [Install] section: it starts only when asked, never at boot.
+[Unit]
+Description=VISTA (headless staging), backed by beam
+Requires=vllm-beam.service
+After=vllm-beam.service network-online.target
+
+[Container]
+Image=localhost/vista-server:latest
+ContainerName=vista
+# Host networking: reaches beam on 127.0.0.1:8100; the UI is on :3000.
+Network=host
+# The code sandbox is a microsandbox MicroVM.
+AddDevice=/dev/kvm
+# :U gives the folder to the container's user (ubuntu).
+Volume=/scratch/baumannsk/vista-holly/data:/data:U
+EnvironmentFile=/scratch/baumannsk/vista-holly/vista.env
+# Appended to the image's entrypoint (launch.sh logs --prod --no-build).
+Exec=--no-electron
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=300
