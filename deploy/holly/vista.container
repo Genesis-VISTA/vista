@@ -10,8 +10,13 @@ After=vllm-beam.service network-online.target
 [Container]
 Image=localhost/vista-server:latest
 ContainerName=vista
-# Host networking: reaches beam on 127.0.0.1:8100; the UI is on :3000.
-Network=host
+# VISTA's own ports (UI 3000, MCP server 8000, backend 8001, fixed in launch.sh)
+# stay in the container's namespace: on Holly, Grafana has 3000 and something
+# scrapes 127.0.0.1:8000/metrics. pasta's -T forwards the container's
+# 127.0.0.1:8100 to the host's, where beam listens.
+Network=pasta:-T,8100
+# The UI, on the host's loopback only (no login): tunnel to 127.0.0.1:3001.
+PublishPort=127.0.0.1:3001:3000
 # The code sandbox is a microsandbox MicroVM.
 AddDevice=/dev/kvm
 # :U gives the folder to the container's user (ubuntu).
