@@ -21,7 +21,7 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -32,6 +32,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import (
+    Channel,
     McpElicitationEvent,
     ProjectAgent,
     ProjectAgentResult,
@@ -48,6 +49,7 @@ from ..db.schemas import (
 )
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from .job_records import SubmitWatcher
 from . import inbox as inbox_service
 from .displayed_files import sandbox_path_to_file
 from .project_agent import (
@@ -88,6 +90,40 @@ class RunBusy(Exception):
     """The conversation already has an active run."""
 
 
+RunListener = Callable[["ChatRun"], None]
+_run_listeners: list[RunListener] = []
+
+
+def on_run_started(listener: RunListener) -> Callable[[], None]:
+    """
+    Call `listener(run)` as each run starts, whoever started it: a message, a
+    task result, or startup. Returns a function that removes it. Slack listens,
+    to follow every turn of a Slack conversation in its thread. A listener must
+    not block; it may spawn a task that subscribes to the run.
+    """
+    _run_listeners.append(listener)
+    return lambda: _run_listeners.remove(listener)
+
+
+def channel_of(row: ChatSessionTable) -> Channel:
+    """The channel every turn of this conversation runs in: where it was started."""
+    return "slack" if row.origin == "slack" else "app"
+
+
+ELSEWHERE = (
+    "This conversation continues in Slack. Reply in its Slack thread; "
+    "from here you can only stop its turn."
+)
+""" Why the desktop may not send to, or answer prompts in, a conversation from another channel. """
+
+
+def run_for_prompt(elicitation_id: str) -> "ChatRun | None":
+    """The active run waiting on this prompt, if any."""
+    return next(
+        (r for r in chat_run_registry.active() if elicitation_id in r.pending), None
+    )
+
+
 def session_factory() -> AsyncSession:
     """
     The session a run reads and writes through.
@@ -118,6 +154,7 @@ class ChatRun:
     agent_key: ProjectAgentKey
     user_prompt: str
     prior_history: list[ModelMessage]
+    channel: Channel = "app"
     origin: Origin = "researcher"
     items: list[InboxItemTable] = field(default_factory=list)
     """ The inbox items the turn started with; their texts make up `user_prompt`. """
@@ -219,6 +256,7 @@ class ChatRunRegistry:
         agent_key: ProjectAgentKey,
         user_prompt: str,
         prior_history: list[ModelMessage],
+        channel: Channel = "app",
         origin: Origin = "researcher",
         items: list[InboxItemTable] | None = None,
     ) -> ChatRun:
@@ -239,6 +277,7 @@ class ChatRunRegistry:
             agent_key=agent_key,
             user_prompt=user_prompt,
             prior_history=prior_history,
+            channel=channel,
             origin=origin,
             items=list(items or []),
         )
@@ -254,6 +293,11 @@ class ChatRunRegistry:
         # only a weak reference to a running task.
         run.task = asyncio.create_task(self._drive(run))
         await run._started.wait()
+        for listener in list(_run_listeners):
+            try:
+                listener(run)
+            except Exception:
+                log.exception("Run listener failed for %s", run.run_id)
         return run
 
     async def stop(
@@ -274,9 +318,10 @@ class ChatRunRegistry:
         Start a turn from the conversation's inbox if it is idle and may start one.
 
         Called after every inbox `put` and when a run ends. The turn takes every
-        queued item, in arrival order, as its prompt. Returns the run it started,
-        or None: a run is going (it takes items itself), nothing is queued, or
-        the hold-back rule says wait (`inbox.may_start_turn`).
+        queued item, in arrival order, as its prompt, in the conversation's
+        channel (`channel_of`). Returns the run it started, or None: a run is
+        going (it takes items itself), nothing is queued, or the hold-back rule
+        says wait (`inbox.may_start_turn`).
         """
         if chat_session_id in self._runs:
             return None
@@ -293,6 +338,7 @@ class ChatRunRegistry:
                     return None
                 # Read before the take commits and expires the row.
                 project_id = row.project_id
+                channel = channel_of(row)
                 history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
                     row.message_history
                 )
@@ -309,6 +355,7 @@ class ChatRunRegistry:
                     agent_key=(chat_session_id, project_id),
                     user_prompt="\n\n".join(i.text for i in items),
                     prior_history=history,
+                    channel=channel,
                     origin=origin,
                     items=items,
                 )
@@ -391,12 +438,18 @@ class ChatRunRegistry:
                     )
                     for item in run.items:
                         await _append_taken(run, item)
+                    submits = SubmitWatcher(
+                        session_factory=lambda: session_factory(),
+                        chat_session_id=run.chat_session_id,
+                        channel=run.channel,
+                    )
                     async for event in agent.run_stream(
                         user_prompt=run.user_prompt,
                         message_history=run.prior_history,
                         enable_elicitation=True,
                         db_session=db,
                         capture=run.capture,
+                        channel=run.channel,
                         capabilities=[
                             inbox_service.InboxDelivery(lambda: self._take_into(run))
                         ],
@@ -409,6 +462,7 @@ class ChatRunRegistry:
                             prompt_id = event.elicitation_id
                         if isinstance(event, ProjectAgentResultEvent):
                             run.result = event.result
+                        await submits.observe(event)
                         await run.append(
                             event.event_kind,
                             _EVENT_ADAPTER.dump_json(event).decode(),
@@ -454,7 +508,7 @@ class ChatRunRegistry:
         if error_msg:
             finished["error"] = error_msg
         quiet = run.state in _QUIET_STATES
-        if quiet:
+        if quiet and _withdraws_on(run.state, run.channel):
             # Before the row is final, so the turn `wake` may start next sees it.
             try:
                 withdrawn = await asyncio.shield(_withdraw_messages(run))
@@ -618,6 +672,17 @@ async def _append_taken(run: ChatRun, item: InboxItemTable) -> None:
     )
 
 
+def _withdraws_on(state: str, channel: str) -> bool:
+    """
+    Whether a turn ending in `state` withdraws the messages queued behind it.
+
+    A stop always does. A quit does in the app, whose view shows what was
+    withdrawn so the researcher can send it again; outside the app nothing
+    would, so there the messages wait and are answered after the restart.
+    """
+    return state == "stopped" or channel == "app"
+
+
 async def _withdraw_messages(run: ChatRun) -> list[InboxItemTable]:
     async with session_factory() as db:
         return await inbox_service.withdraw_messages(db, run.chat_session_id)
@@ -702,7 +767,8 @@ async def sweep_interrupted_runs() -> int:
 
     No run survives a restart, so a row still saying `running` belongs to a turn
     that died with the previous process (design D4). Like a stopped turn, it
-    leaves the conversation quiet and withdraws its queued messages.
+    leaves the conversation quiet and, in the app, withdraws its queued
+    messages (`_withdraws_on`).
     """
     async with session_factory() as db:
         rows = (
@@ -711,13 +777,16 @@ async def sweep_interrupted_runs() -> int:
             )
         ).all()
         ids = [row.id for row in rows]
+        withdraw = [
+            row.id for row in rows if _withdraws_on("interrupted", channel_of(row))
+        ]
         for row in rows:
             row.run_state = "interrupted"
             row.run_unseen = True
             row.quiet = True
             db.add(row)
         await db.commit()
-        for chat_session_id in ids:
+        for chat_session_id in withdraw:
             await inbox_service.withdraw_messages(db, chat_session_id)
     return len(ids)
 

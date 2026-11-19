@@ -217,6 +217,25 @@ export const INFERENCE = {
   config_key_set: false,
 };
 
+/** Slack as a fresh install has it: off, no tokens, the default limits. */
+export const SLACK_CONFIG = {
+  enabled: false,
+  has_bot_token: false,
+  has_app_token: false,
+  secret_store_available: true,
+  secret_store_problem: null,
+  allowed_team_ids: [],
+  allowed_channel_ids: [],
+  max_nodes: 4,
+  max_walltime_minutes: 120,
+  max_jobs_per_day: 5,
+  locked: false,
+  locked_at: null,
+  locked_by: null,
+  connection: "off",
+  connection_detail: null,
+};
+
 /**
  * `GET /collaboration/status`: a fresh install, on VISTA's default server and
  * not signed in, so collaboration is quiet: no Publish, Import or sharing line
@@ -286,6 +305,8 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/knowledge-bases/molten-salt-papers/publications": [],
   "GET /api/files/uploads": [],
   "GET /api/files/outputs": [],
+  "GET /api/slack/config": SLACK_CONFIG,
+  "GET /api/slack/links": [],
   // A checkout: no update checks, so no marker. `updates.spec.ts` offers one.
   "GET /api/version": VERSION,
   "POST /api/updates/check": VERSION,

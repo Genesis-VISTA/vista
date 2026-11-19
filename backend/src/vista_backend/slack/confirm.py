@@ -1,0 +1,524 @@
+"""
+Confirm/Cancel cards for side effects requested from Slack.
+
+The gate (`slack/gate.py`) defers a side effect; the agent emits
+`mcp_tool_approval`; `Confirmations.offer` posts it in the thread as a card
+with what would actually happen. Only the Slack user who asked can answer it.
+Confirm checks the lock and limits again before the run is told to go ahead;
+an unanswered card is declined after `confirmation_ttl` (10 minutes).
+
+An `offer_choices` question (a form whose one field is an enum) is shown the
+same way, as one button per option, and answered with the option tapped.
+
+Every card is also a `slack_pending` row, so the outcome survives a restart
+and a card left open when VISTA quit is marked expired the next time it starts.
+Button values carry only the elicitation id: nothing in a card is trusted.
+"""
+
+import asyncio
+import contextlib
+import json
+import logging
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
+from typing import Any, cast
+
+from sqlmodel import select
+
+from ..config import settings
+from ..db.schemas import ChatSessionTable, SlackPendingTable
+from ..services import chat_run as chat_run_module
+from . import audit, format, gate
+from .choices import FIELD, choice_of
+from .events import Action
+from .relay import Place, step_label
+from .store import now
+from .transport import SlackCallError, SlackTransport
+
+log = logging.getLogger(__name__)
+
+CONFIRM = "vista_confirm"
+CANCEL = "vista_cancel"
+CHOOSE = "vista_choose_"
+""" Prefix of a choice button's action id; the suffix is the option's index. """
+
+Preview = Callable[[uuid.UUID, str, dict[str, Any]], Awaitable[dict[str, str]]]
+""" (conversation id, tool name, args) → card fields for what would happen. """
+
+
+async def no_preview(
+    chat_session_id: uuid.UUID, tool: str, args: dict[str, Any]
+) -> dict[str, str]:
+    return {}
+
+
+_preview: Preview = no_preview
+
+
+def set_preview(preview: Preview) -> None:
+    """Install the job preview (`preview_hpc_job`); the Slack service does."""
+    global _preview
+    _preview = preview
+
+
+async def preview(
+    chat_session_id: uuid.UUID, tool_name: str, args: dict[str, Any]
+) -> dict[str, str]:
+    """What would actually be submitted, as card fields; {} when there is no preview."""
+    return await _preview(chat_session_id, tool_name, args)
+
+
+def _tail(tool_name: str) -> str:
+    return tool_name.split("__")[-1]
+
+
+def fields_for(tool_name: str, args: dict[str, Any]) -> dict[str, str]:
+    """What the card shows for a call, before any preview adds to it."""
+    if _tail(tool_name) == "submit_hpc_job":
+        script = str(args.get("job") or "?")
+        if args.get("script_args"):
+            script += f" {args['script_args']}"
+        return {
+            "System": str(args.get("cluster") or "default cluster"),
+            "Nodes": str(args.get("node_count") or "job default"),
+            "Walltime": str(args.get("duration") or "job default"),
+            "Script": script,
+        }
+    if _tail(tool_name) == "cancel_hpc_job":
+        return {
+            "System": str(args.get("cluster") or "?"),
+            "Job": str(args.get("job_id") or "?"),
+        }
+    if _tail(tool_name) == "agenthpc_submit_parameter_set":
+        fields = {
+            "Application": str(args.get("app_type") or "?"),
+            "Parameters": ", ".join(str(p) for p in args.get("parameters") or [])
+            or "?",
+        }
+        if args.get("trial_number") is not None:
+            fields["Trial"] = str(args["trial_number"])
+        return fields
+    if _tail(tool_name) == "agenthpc_cancel_job":
+        return {
+            "Application": str(args.get("app_type") or "?"),
+            "Job": str(args.get("job_id") or "?"),
+        }
+    if _tail(tool_name) == "agenthpc_cancel_all_pending":
+        return {
+            "Application": str(args.get("app_type") or "?"),
+            "Jobs": "every job still in flight",
+        }
+    return {
+        key: format.truncate(
+            value if isinstance(value, str) else json.dumps(value), 300, "…"
+        )
+        for key, value in list(args.items())[:8]
+    }
+
+
+def _field(name: str, value: str) -> dict[str, str]:
+    return {"type": "mrkdwn", "text": f"*{name}*\n{format.truncate(value, 1900, '…')}"}
+
+
+def _for_whom(pending: SlackPendingTable) -> str:
+    """In a turn VISTA started, the card @mentions its user, who did not just ask."""
+    return (
+        f"<@{pending.slack_user_id}> " if (pending.summary or {}).get("mention") else ""
+    )
+
+
+def _choice_card(pending: SlackPendingTable) -> format.Reply:
+    summary = pending.summary or {}
+    question = str(summary.get("question") or "Which one?")
+    options: list[str] = summary.get("options") or []
+    blocks: list[dict[str, Any]] = [format.section(f"{_for_whom(pending)}*{question}*")]
+    if pending.outcome is None:
+        minutes = round(settings.slack.confirmation_ttl / 60)
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    format.button(option, f"{CHOOSE}{i}", pending.elicitation_id)
+                    for i, option in enumerate(options)
+                ],
+            }
+        )
+        blocks.append(
+            format.context(
+                f"Only <@{pending.slack_user_id}> can choose. "
+                f"Expires in {minutes} minutes."
+            )
+        )
+    elif pending.outcome == "chosen":
+        blocks.append(
+            format.context(
+                f":point_right: <@{pending.slack_user_id}> chose "
+                f"*{summary.get('chosen', '?')}*."
+            )
+        )
+    else:
+        blocks.append(format.context(_outcome_text(pending)))
+    return format.Reply(text=question, blocks=blocks)
+
+
+def card(pending: SlackPendingTable) -> format.Reply:
+    if pending.kind == "choice":
+        return _choice_card(pending)
+    summary = pending.summary or {}
+    title = f"*Confirm: {step_label(pending.tool_name or '')}?*"
+    fields = [_field(k, str(v)) for k, v in (summary.get("fields") or {}).items()]
+    blocks: list[dict[str, Any]] = [format.section(_for_whom(pending) + title)]
+    if fields:
+        blocks.append({"type": "section", "fields": fields[:10]})
+    if pending.outcome is None:
+        minutes = round(settings.slack.confirmation_ttl / 60)
+        blocks.append(
+            format.context(
+                f"Only <@{pending.slack_user_id}> can confirm. "
+                f"Expires in {minutes} minutes."
+            )
+        )
+        blocks.append(
+            {
+                "type": "actions",
+                "elements": [
+                    format.button(
+                        "Confirm", CONFIRM, pending.elicitation_id, "primary"
+                    ),
+                    format.button("Cancel", CANCEL, pending.elicitation_id, "danger"),
+                ],
+            }
+        )
+    else:
+        blocks.append(format.context(_outcome_text(pending)))
+    return format.Reply(text=title.strip("*"), blocks=blocks)
+
+
+def _outcome_text(pending: SlackPendingTable) -> str:
+    who = f"<@{pending.slack_user_id}>"
+    reason = (pending.summary or {}).get("reason")
+    return {
+        "confirmed": f":white_check_mark: Confirmed by {who}.",
+        "cancelled": f":no_entry_sign: Cancelled by {who}. Nothing was done.",
+        "expired": ":hourglass: Expired. Nothing was done."
+        if pending.kind == "confirm"
+        else ":hourglass: Expired.",
+        "refused": f":lock: Not done: {reason}",
+    }.get(pending.outcome or "", "Closed.")
+
+
+class Confirmations:
+    def __init__(self, transport: SlackTransport) -> None:
+        self.transport = transport
+        self._timers: dict[str, asyncio.Task] = {}
+
+    async def offer(
+        self,
+        event: chat_run_module.RunEvent,
+        *,
+        place: Place,
+        team_id: str,
+        chat_session_id: uuid.UUID,
+        mention: bool = False,
+    ) -> None:
+        """
+        Post the card for a tool approval, or buttons for a choice; anything else
+        is declined. `mention`: the turn was VISTA's own, so the card @mentions
+        the user, who alone can answer it.
+        """
+        data = json.loads(event.data)
+        elicitation_id = data.get("elicitation_id") or event.prompt_id
+        choice = (
+            choice_of(data.get("requested_schema"))
+            if event.kind == "mcp_form_elicitation"
+            else None
+        )
+        if choice and elicitation_id:
+            field, options = choice
+            pending = self._pending(
+                elicitation_id,
+                "choice",
+                place=place,
+                team_id=team_id,
+                chat_session_id=chat_session_id,
+                summary={
+                    "question": data.get("message") or "",
+                    "options": options,
+                    "field": field,
+                    "mention": mention,
+                },
+            )
+            await self._post(pending, place)
+            return
+        if event.kind != "mcp_tool_approval" or not elicitation_id:
+            # Forms are declined in Slack runs before they get here; a URL or
+            # anything else needs the desktop.
+            if elicitation_id:
+                await chat_run_module.resolve_prompt(elicitation_id, "decline")
+            return
+        tool_name = data.get("tool_name") or ""
+        args = data.get("args") or {}
+        fields = fields_for(tool_name, args)
+        try:
+            fields.update(await _preview(chat_session_id, tool_name, args))
+        except Exception:
+            log.exception("Could not preview %s for Slack", tool_name)
+        pending = self._pending(
+            elicitation_id,
+            "confirm",
+            place=place,
+            team_id=team_id,
+            chat_session_id=chat_session_id,
+            tool_name=tool_name,
+            summary={"fields": fields, "args": args, "mention": mention},
+        )
+        await self._post(pending, place)
+
+    def _pending(
+        self,
+        elicitation_id: str,
+        kind: str,
+        *,
+        place: Place,
+        team_id: str,
+        chat_session_id: uuid.UUID,
+        summary: dict[str, Any],
+        tool_name: str | None = None,
+    ) -> SlackPendingTable:
+        created = now()
+        return SlackPendingTable(
+            elicitation_id=elicitation_id,
+            kind=kind,
+            team_id=team_id,
+            channel_id=place.channel,
+            slack_user_id=place.slack_user_id,
+            chat_session_id=chat_session_id,
+            tool_name=tool_name,
+            summary=summary,
+            created_at=created.isoformat(timespec="seconds"),
+            expires_at=(
+                created + timedelta(seconds=settings.slack.confirmation_ttl)
+            ).isoformat(timespec="seconds"),
+        )
+
+    async def _post(self, pending: SlackPendingTable, place: Place) -> None:
+        elicitation_id = pending.elicitation_id
+        reply = card(pending)
+        try:
+            pending.message_ts = await self.transport.post(
+                place.channel,
+                reply.text,
+                blocks=reply.blocks,
+                thread_ts=place.thread_ts,
+            )
+        except SlackCallError as exc:
+            # Nobody could answer a card that is not there: the run goes on without it.
+            log.warning("Could not post a Slack card, so it is declined: %s", exc.error)
+            await chat_run_module.resolve_prompt(elicitation_id, "decline")
+            return
+        posted = SlackPendingTable.model_validate(pending.model_dump())
+        async with chat_run_module.session_factory() as db:
+            db.add(pending)
+            await db.commit()
+        self._timers[elicitation_id] = asyncio.create_task(
+            self._expire_later(elicitation_id)
+        )
+        if posted.kind == "confirm":
+            await audit.record(
+                "confirm_posted",
+                team_id=posted.team_id,
+                slack_user_id=posted.slack_user_id,
+                chat_session_id=posted.chat_session_id,
+                tool_name=posted.tool_name,
+                detail=posted.summary,
+            )
+
+    async def _expire_later(self, elicitation_id: str) -> None:
+        await asyncio.sleep(settings.slack.confirmation_ttl)
+        self._timers.pop(elicitation_id, None)
+        await self.expire(elicitation_id)
+
+    async def expire(self, elicitation_id: str) -> None:
+        """Decline a card nobody answered in time."""
+        await self._close(elicitation_id, "expired")
+
+    async def on_action(self, action: Action) -> None:
+        """A tap on Confirm or Cancel."""
+        elicitation_id = action.value
+        async with chat_run_module.session_factory() as db:
+            pending = await db.get(SlackPendingTable, elicitation_id)
+            chat = (
+                await db.get(ChatSessionTable, pending.chat_session_id)
+                if pending is not None and pending.chat_session_id
+                else None
+            )
+            conversation_exists = chat is not None
+        if pending is None or pending.team_id != action.team_id:
+            await self._tell(action, "That request is no longer open.")
+            return
+        if action.user_id != pending.slack_user_id:
+            await self._tell(
+                action, f"Only <@{pending.slack_user_id}> can answer this request."
+            )
+            return
+        if pending.outcome is not None:
+            await self._tell(action, "That request is already closed.")
+            return
+        if now() >= datetime.fromisoformat(pending.expires_at):
+            await self._close(elicitation_id, "expired")
+            await self._tell(action, "That request expired. Nothing was done.")
+            return
+        if action.action_id.startswith(CHOOSE):
+            options: list[str] = (pending.summary or {}).get("options") or []
+            index = action.action_id.removeprefix(CHOOSE)
+            if (
+                pending.kind != "choice"
+                or not index.isdigit()
+                or int(index) >= len(options)
+            ):
+                await self._tell(action, "That request is no longer open.")
+                return
+            await self._close(elicitation_id, "chosen", chosen=options[int(index)])
+            return
+        if pending.kind != "confirm":
+            await self._tell(action, "That request is no longer open.")
+            return
+        if action.action_id == CANCEL:
+            await self._close(elicitation_id, "cancelled")
+            return
+        if action.action_id != CONFIRM:  # Only the Confirm button confirms.
+            await self._tell(action, "That request is no longer open.")
+            return
+        if not conversation_exists:  # It was deleted on the desktop.
+            await self._close(elicitation_id, "expired")
+            return
+        why = await gate.refusal(
+            pending.tool_name or "",
+            (pending.summary or {}).get("args") or {},
+            chat_session_id=pending.chat_session_id,
+        )
+        if why is not None:
+            await self._close(elicitation_id, "refused", reason=why)
+            return
+        await self._close(elicitation_id, "confirmed")
+
+    async def _close(
+        self, elicitation_id: str, outcome: str, reason: str = "", chosen: str = ""
+    ) -> None:
+        async with chat_run_module.session_factory() as db:
+            pending = await db.get(SlackPendingTable, elicitation_id)
+            if pending is None or pending.outcome is not None:
+                return
+            pending.outcome = outcome
+            if reason:
+                pending.summary = {**(pending.summary or {}), "reason": reason}
+            if chosen:
+                pending.summary = {**(pending.summary or {}), "chosen": chosen}
+            db.add(pending)
+            await db.commit()
+            await db.refresh(pending)
+        timer = self._timers.pop(elicitation_id, None)
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+        if outcome == "chosen":
+            field = (pending.summary or {}).get("field") or FIELD
+            answered = await chat_run_module.resolve_prompt(
+                elicitation_id, "accept", {field: chosen}
+            )
+        else:
+            action = "accept" if outcome == "confirmed" else "decline"
+            answered = await chat_run_module.resolve_prompt(elicitation_id, action)
+        if not answered and outcome in ("confirmed", "chosen"):
+            # The run is gone (VISTA restarted, or it was stopped): nothing ran.
+            await self._set_outcome(pending, "expired")
+        if pending.kind == "confirm":
+            await self._audit(pending)
+        await self._redraw(pending)
+
+    async def _audit(self, pending: SlackPendingTable) -> None:
+        """How a card closed, and by whom: only its requester can answer it."""
+        summary = pending.summary or {}
+        await audit.record(
+            cast(audit.Event, pending.outcome),
+            team_id=pending.team_id,
+            slack_user_id=pending.slack_user_id,
+            chat_session_id=pending.chat_session_id,
+            tool_name=pending.tool_name,
+            detail={
+                "by": pending.slack_user_id
+                if pending.outcome in ("confirmed", "cancelled")
+                else None,
+                "args": summary.get("args"),
+                "reason": summary.get("reason"),
+            },
+        )
+
+    async def _set_outcome(self, pending: SlackPendingTable, outcome: str) -> None:
+        async with chat_run_module.session_factory() as db:
+            row = await db.get(SlackPendingTable, pending.elicitation_id)
+            if row is not None:
+                row.outcome = outcome
+                db.add(row)
+                await db.commit()
+        pending.outcome = outcome
+
+    async def _redraw(self, pending: SlackPendingTable) -> None:
+        if pending.message_ts is None:
+            return
+        reply = card(pending)
+        try:
+            await self.transport.update(
+                pending.channel_id, pending.message_ts, reply.text, blocks=reply.blocks
+            )
+        except SlackCallError as exc:
+            log.info("Could not update a Slack confirmation card: %s", exc.error)
+
+    async def _tell(self, action: Action, text: str) -> None:
+        try:
+            await self.transport.ephemeral(
+                action.channel_id, action.user_id, text, thread_ts=action.thread_ts
+            )
+        except SlackCallError as exc:
+            log.info("Could not answer a Slack tap: %s", exc.error)
+
+    async def close_stale(self) -> int:
+        """
+        At start-up: every card left open has expired. Its prompt is declined as
+        well as the card redrawn, in case its run is still waiting on it (Slack
+        restarted while the backend did not).
+        """
+        async with chat_run_module.session_factory() as db:
+            rows = list(
+                (
+                    await db.exec(
+                        select(SlackPendingTable).where(
+                            SlackPendingTable.outcome == None  # noqa: E711
+                        )
+                    )
+                ).all()
+            )
+            for row in rows:
+                row.outcome = "expired"
+                db.add(row)
+            await db.commit()
+            for row in rows:
+                await db.refresh(row)
+        for row in rows:
+            with contextlib.suppress(Exception):
+                await chat_run_module.resolve_prompt(row.elicitation_id, "decline")
+            await self._redraw(row)
+        return len(rows)
+
+    async def stop(self) -> None:
+        """
+        Close every open card as expired, declining its prompt, so no run waits
+        on a card nobody can answer once this is gone (a settings save restarts
+        the service). Then cancel the expiry timers.
+        """
+        for elicitation_id in list(self._timers):
+            with contextlib.suppress(Exception):
+                await self._close(elicitation_id, "expired")
+        for timer in self._timers.values():
+            timer.cancel()
+        self._timers.clear()

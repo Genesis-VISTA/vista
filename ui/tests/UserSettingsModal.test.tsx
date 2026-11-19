@@ -257,7 +257,7 @@ async function openOn(name: string) {
 }
 
 describe("UserSettingsModal navigation", () => {
-  it("lists seven focused sections, About last, and opens on Research profile", async () => {
+  it("lists eight focused sections, About last, and opens on Research profile", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow());
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
@@ -272,6 +272,7 @@ describe("UserSettingsModal navigation", () => {
       "Repositories",
       "Collaboration",
       "Compute",
+      "Slack",
       "About",
     ]);
 

@@ -154,6 +154,8 @@ def test_vista_metadata_paths_are_scoped_per_project():
         "hpc_list_files",
         "hpc_download_files",
         "hpc_upload_files",
+        "get_hpc_queue_status",
+        "preview_hpc_job",
     ],
 )
 def test_vista_metadata_attaches_settings_credentials_for_hpc_tools(tool):

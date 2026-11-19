@@ -41,6 +41,9 @@ import {
   type CollaborationView,
 } from "@/lib/collaboration";
 import { HpcStatusDot, STATE_LABELS, WORD_TONE } from "./HpcStatusSection";
+import { FieldError, SaveMark, SectionHeader, fieldId } from "./SettingsParts";
+import { SlackSection } from "./SlackSection";
+import { fetchSlackConfig, slackNote, type SlackConfig } from "@/lib/slack";
 import { CopyableLine } from "./CopyableLine";
 import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
@@ -55,6 +58,7 @@ export type SettingsSection =
   | "repositories"
   | "collaboration"
   | "compute"
+  | "slack"
   | "about"
   | HpcCluster;
 type Section = SettingsSection;
@@ -187,11 +191,6 @@ function sectionOf(field: string): Section {
 }
 
 const HIDDEN_FIELD = "hpc_hidden_clusters";
-
-/** The element a field's label, error and jump-to-field all refer to. */
-function fieldId(field: string, cluster?: HpcCluster): string {
-  return `settings-field-${field}${cluster ? `-${cluster}` : ""}`;
-}
 
 /** What a field component spreads onto its input, its save mark, and why its save failed. */
 type FieldBinding = {
@@ -333,6 +332,12 @@ export function UserSettingsModal({
   }
 
   const [announcement, setAnnouncement] = useState("");
+  // Its own endpoint, not the user row: Slack is this installation's, and is
+  // read even while the user loads.
+  const [slack, setSlack] = useState<SlackConfig | null>(null);
+  useEffect(() => {
+    fetchSlackConfig().then(setSlack, () => setSlack(null));
+  }, []);
 
   function announce(field: string, outcome: SaveOutcome) {
     const label =
@@ -554,6 +559,8 @@ export function UserSettingsModal({
     // The theme is this machine's, not the settings row's, so it needs nothing
     // loaded and applies at once.
     content = <AppearanceSection />;
+  } else if (section === "slack") {
+    content = <SlackSection config={slack} onChange={setSlack} />;
   } else if (!user || !draft) {
     content = (
       <div className="settings-section-body">
@@ -679,6 +686,7 @@ export function UserSettingsModal({
             personalize={draft?.personalizeResponses ?? true}
             repoTokens={(user?.has_github_token ? 1 : 0) + (user?.has_gitlab_token ? 1 : 0)}
             failed={failedSections}
+            slack={slack}
             onChoose={choose}
           />
           <div className="settings-main">
@@ -693,34 +701,6 @@ export function UserSettingsModal({
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * A field's save mark: a spinner for a slow save, a check that fades once
- * saved, a cross while failed, and nothing at all for a save in flight. Visual
- * only: the modal's live region says the same in words.
- */
-function SaveMark({ mark }: { mark?: FieldMark }) {
-  if (!mark) return null;
-  return (
-    <span className="settings-mark" data-mark={mark} aria-hidden="true">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        {mark === "saved" && <path d="M5 12.5l4.5 4.5L19 7.5" />}
-        {mark === "failed" && <path d="M6 6l12 12M18 6L6 18" />}
-        {mark === "slow" && <path d="M12 3a9 9 0 1 0 9 9" />}
-      </svg>
-    </span>
-  );
-}
-
-/** Why a field's last save failed, under the field. */
-function FieldError({ field, error }: { field: string; error?: string }) {
-  if (!error) return null;
-  return (
-    <span id={`${fieldId(field)}-error`} className="error settings-field-error">
-      {error}
-    </span>
   );
 }
 
@@ -741,6 +721,7 @@ function SettingsNav({
   personalize,
   repoTokens,
   failed,
+  slack,
   onChoose,
 }: {
   section: Section;
@@ -750,6 +731,7 @@ function SettingsNav({
   repoTokens: number;
   /** Sections holding a field whose save failed. */
   failed: Set<Section>;
+  slack: SlackConfig | null;
   onChoose: (section: Section) => void;
 }) {
   const { settings } = useAgentSettings();
@@ -862,6 +844,23 @@ function SettingsNav({
         <span className="settings-nav-note">{ready} of {visible.length}</span>
       </NavEntry>
       <NavEntry
+        label={["Slack", slackNote(slack)?.toLowerCase()].filter(Boolean).join(", ")}
+        current={section === "slack"}
+        onClick={() => onChoose("slack")}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z" />
+        </svg>
+        <span className="settings-nav-name">Slack</span>
+        {slackNote(slack) && (
+          <span
+            className={`settings-nav-note${slack?.locked || slack?.connection === "error" ? " hpc-word--warn" : ""}`}
+          >
+            {slackNote(slack)}
+          </span>
+        )}
+      </NavEntry>
+      <NavEntry
         label={["About", versionInfo?.version, updateReady ? `VISTA ${versionInfo?.latest} available` : null]
           .filter(Boolean)
           .join(", ")}
@@ -914,30 +913,6 @@ function NavEntry({
         </span>
       )}
     </button>
-  );
-}
-
-function SectionHeader({
-  titleId,
-  title,
-  place,
-  children,
-}: {
-  titleId?: string;
-  title: string;
-  /** A line above the title, e.g. the cluster's institution and facility. */
-  place?: string;
-  /** Below the title: a description, or the cluster's status. */
-  children?: ReactNode;
-}) {
-  return (
-    <div className="settings-section-header">
-      {place && <span className="settings-section-place">{place}</span>}
-      <h2 id={titleId} className="settings-section-title">
-        {title}
-      </h2>
-      {children}
-    </div>
   );
 }
 

@@ -6164,6 +6164,11 @@ textarea.input:focus {
   justify-content: flex-end;
 }
 
+.user-settings-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .user-settings-switch:focus-visible {
   outline: 2px solid var(--brand);
   outline-offset: 2px;
@@ -7020,6 +7025,78 @@ textarea.input:focus {
    it just stops moving. */
 @media (prefers-reduced-motion: reduce) {
   .debate-working__pulse { animation: none; opacity: 0.9; }
+}
+
+/* ---------------------------------------------------------------------- */
+/*  Settings → Slack                                                       */
+/* ---------------------------------------------------------------------- */
+
+.slack-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.slack-status-word {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.slack-status-word--quiet {
+  color: var(--muted);
+}
+
+.slack-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-weight: 400;
+}
+
+.slack-link-who {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.slack-link-project {
+  width: auto;
+  padding: 2px 6px;
+  font-size: 12px;
+}
+
+.slack-link-form {
+  display: flex;
+  gap: 8px;
+  max-width: 320px;
+}
+
+/* The code field takes what is left; the button keeps its word on one line. */
+.slack-link-form .input {
+  flex: 1;
+  min-width: 0;
+}
+
+.slack-link-form .button {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* A conversation that started in a Slack thread. */
+.conversation-origin-badge {
+  align-self: flex-start;
+  padding: 0 6px;
+  border: 1px solid var(--brand-line);
+  border-radius: var(--r-pill);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--brand);
 }
 
 /* The artifacts feed: the files the agent showed in this conversation, newest first. */

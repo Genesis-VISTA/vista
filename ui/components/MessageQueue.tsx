@@ -9,6 +9,8 @@ type Props = {
   /** Save an edit. Resolves when the queue has been told; the chip follows `items`. */
   onEdit(id: number, text: string): Promise<void>;
   onDelete(id: number): Promise<void>;
+  /** Shown but not changeable: the conversation's messages are sent and changed elsewhere (Slack). */
+  readOnly?: boolean;
 };
 
 /**
@@ -17,7 +19,7 @@ type Props = {
  * edited or deleted until then; a chip leaves when its message is taken, and the
  * message appears in the conversation where the agent received it.
  */
-export default function MessageQueue({ items, onEdit, onDelete }: Props) {
+export default function MessageQueue({ items, onEdit, onDelete, readOnly = false }: Props) {
   const [editing, setEditing] = useState<{ id: number; text: string } | null>(null);
   const [busy, setBusy] = useState<number | null>(null);
 
@@ -84,6 +86,7 @@ export default function MessageQueue({ items, onEdit, onDelete }: Props) {
           <li key={item.id} className="message-queue-chip">
             <span className="message-queue-label">Queued</span>
             <span className="message-queue-text">{item.text}</span>
+            {!readOnly && (<>
             <button
               type="button"
               className="message-queue-icon"
@@ -110,6 +113,7 @@ export default function MessageQueue({ items, onEdit, onDelete }: Props) {
                 <path d="M18 6L6 18" />
               </svg>
             </button>
+            </>)}
           </li>
         ),
       )}

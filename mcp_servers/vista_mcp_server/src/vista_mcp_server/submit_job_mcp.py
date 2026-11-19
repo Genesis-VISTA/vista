@@ -12,7 +12,7 @@ second collection to own, to start, or to have been created by the wrong
 identity.
 """
 from __future__ import annotations
-import logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
+import asyncio, logging, os, posixpath, re, shlex, textwrap, dataclasses, functools, hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, NoReturn
@@ -25,12 +25,12 @@ from mcp.types import ToolAnnotations
 from .config import settings
 from .lib.iri import (
     IriClient, IriCredentialRejected, IriDefaults, IriError, IriFileNotFound,
-    IriRateLimited, IriTaskTimeout, client_for,
+    IriRateLimited, IriTaskTimeout, TERMINAL_STATES, client_for,
 )
 from .lib.globus import (
     GlobusClient, GlobusFileNotFound, GlobusSessionExpired, create_globus_client,
 )
-from .lib.olcf_token import get_s3m_token_project
+from .lib.olcf_token import cached_s3m_token_project, get_s3m_token_project
 from .lib.user_config import MissingCredential, UserConfig, get_vista_meta
 from .lib.misc import parse_time_limit, validate_job_id
 from .metrics import stage as metrics_stage
@@ -448,6 +448,106 @@ def _resolve_cluster(cluster: Cluster | None, cfg: UserConfig) -> Cluster:
     return _default_cluster(cfg)
 
 
+def _validate_submit(
+    skills_dir: str | Path | None, job: str, node_count: int | None, duration: str | None,
+) -> tuple[JobInfo, int | None]:
+    """ The checks `submit_hpc_job` and `preview_hpc_job` share: the job, and its limits. """
+    job_info = resolve_job(job, skills_dir)
+    if node_count and (node_count > MAX_NODES or node_count <= 0):
+        raise ValueError(f"node_count out of range (max {MAX_NODES})")
+    duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
+    if duration_int and (duration_int > MAX_TIME or duration_int < 1):
+        raise ValueError(f"Time limit too large (max: {MAX_TIME})")
+    return job_info, duration_int
+
+
+_CLUSTER_SCRIPTS: dict[str, str] = {
+    "odo": ODO_JOB_SCRIPT,
+    "frontier": FRONTIER_JOB_SCRIPT,
+    "perlmutter": PERLMUTTER_JOB_SCRIPT,
+    "lux": LUX_JOB_SCRIPT,
+}
+
+
+def _hms(seconds: int) -> str:
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}"
+
+
+PREVIEW_INTROSPECT_TIMEOUT = 5.0
+""" Seconds a preview waits for S3M to name a token's project before showing a placeholder. """
+
+ACCOUNT_UNKNOWN = "the S3M token's project"
+
+
+async def _account_for_preview(cfg: UserConfig, cluster: Cluster) -> str:
+    """
+    The account a job would be charged to: the setting for Perlmutter, and for
+    Odo, Frontier and Lux the S3M token's project. That comes from S3M's
+    introspection, cached (`lib/olcf_token`); a preview asks S3M when nothing is
+    cached, for at most `PREVIEW_INTROSPECT_TIMEOUT` seconds, so a Confirm card
+    names the project rather than a placeholder. It never contacts the cluster.
+    """
+    if cluster == "perlmutter":
+        return cfg.nersc_account or "(no NERSC account set)"
+    token = {
+        "odo": cfg.odo_s3m_token,
+        "frontier": cfg.frontier_s3m_token,
+        "lux": cfg.lux_s3m_token,
+    }[cluster]
+    if not token:
+        return f"(no {cluster.capitalize()} S3M token)"
+    url = settings.odo_introspect_url if cluster == "odo" else settings.frontier_introspect_url
+    cached = cached_s3m_token_project(token, introspect_url=url)
+    if cached:
+        return cached
+    try:
+        return await asyncio.wait_for(
+            get_s3m_token_project(token, introspect_url=url),
+            timeout=PREVIEW_INTROSPECT_TIMEOUT,
+        )
+    except (ToolError, TimeoutError) as e:
+        # An expired token is the submission's to report; the preview still answers.
+        logging.info("Preview could not name %s's S3M project: %s", cluster, e)
+        return ACCOUNT_UNKNOWN
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False))
+async def preview_hpc_job(
+    ctx: Context,
+    job: str,
+    cluster: Cluster | None = None,
+    node_count: int | None = None,
+    duration: str | None = None,
+    script_args: str | None = None,
+) -> str:
+    """
+    What submit_hpc_job would submit with these arguments, without submitting
+    or contacting the cluster (S3M may be asked, for a few seconds, which
+    project the token charges): the system, account, nodes, walltime and script,
+    after the job's defaults are applied. Takes the same arguments as
+    submit_hpc_job and rejects the same mistakes.
+    """
+    meta = get_vista_meta(ctx)
+    job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
+    cluster = _resolve_cluster(cluster, meta.user)
+    defaults = getattr(job_info.cluster_defaults, cluster)
+    if defaults is None:
+        raise ToolError(f'Job {job!r} has no "{cluster}" section in cluster_defaults.json')
+    nodes = node_count or defaults.resources.node_count or 1
+    seconds = duration_int or defaults.duration
+    script = _CLUSTER_SCRIPTS[cluster]
+    command = f"{script} {shlex.join(shlex.split(script_args or ''))}".strip()
+    return "\n".join([
+        f"cluster: {cluster}",
+        f"account: {await _account_for_preview(meta.user, cluster)}",
+        f"nodes: {nodes}",
+        f"duration: {_hms(seconds)} ({seconds}s)",
+        f"script: {job}/{command}",
+    ])
+
+
 @mcp.tool(
     annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True),
     description=textwrap.dedent(f"""
@@ -488,12 +588,7 @@ async def submit_hpc_job(
     script_args: str | None = None,
 ) -> str:
     meta = get_vista_meta(ctx)
-    job_info = resolve_job(job, meta.project_paths.skills_dir)
-    if node_count and (node_count > MAX_NODES or node_count <= 0):
-        raise ValueError(f"node_count out of range (max {MAX_NODES})")
-    duration_int = int(parse_time_limit(duration).total_seconds()) if duration else None
-    if duration_int and (duration_int > MAX_TIME or duration_int < 1):
-        raise ValueError(f"Time limit too large (max: {MAX_TIME})")
+    job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
 
     cfg = meta.user
     cluster = _resolve_cluster(cluster, cfg)
@@ -1701,6 +1796,51 @@ async def _get_olcf_job_outputs(
     sandbox_paths = [str(sandbox_path) for _, _, sandbox_path in targets]
 
     return "Downloaded files:\n" + "\n".join(sandbox_paths)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True))
+async def get_hpc_queue_status(ctx: Context, cluster: Cluster) -> str:
+    """
+    Whether a cluster is up, any incident affecting it now, and the
+    researcher's own jobs queued or running on it.
+
+    The facility's status and active incidents come from its public IRI status
+    feed, and the jobs from IRI's job listing for the researcher's token. IRI
+    does not say how deep the queue is, so the answer says so rather than
+    guessing.
+
+    Args:
+        cluster: "odo", "frontier", "perlmutter" or "lux".
+    """
+    return await _iri_queue_status(_iri_for(get_vista_meta(ctx).user, cluster), cluster)
+
+
+async def _iri_queue_status(iri_client: IriClient, cluster: Cluster) -> str:
+    facility = await iri_client.facility_status()
+    lines = [f"cluster: {cluster}", f"status: {facility.get('status') or 'unknown'}"]
+    incidents = facility.get("incidents") or []
+    if incidents:
+        lines.append("open incidents:")
+        for incident in incidents:
+            span = " to ".join(t for t in (incident.get("start"), incident.get("end")) if t)
+            lines.append(f"- {incident['name']} ({incident.get('type')}, {incident.get('status')}) {span}".rstrip())
+    else:
+        lines.append("open incidents: none")
+    lines.append("queue depth: not available from IRI")
+    try:
+        jobs = await iri_client.list_jobs()
+    except Exception as e:
+        logging.info(f"IRI could not list jobs on {cluster}: {e}")
+        lines.append(f"your jobs: IRI could not list them ({e})")
+    else:
+        live = [j for j in jobs if j["state"] not in TERMINAL_STATES]
+        if live:
+            lines.append("your jobs queued or running:")
+            lines += [f"- {j['id']} {j['name']} {j['state']}".replace("  ", " ") for j in live]
+        else:
+            lines.append("your jobs: none queued or running")
+    return "\n".join(lines)
+
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True))

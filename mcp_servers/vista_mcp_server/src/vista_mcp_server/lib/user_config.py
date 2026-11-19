@@ -35,6 +35,8 @@ class MissingCredential(ToolError):
 
 
 class UserConfig(BaseModel):
+    id: str | None = None
+    """ The researcher's VISTA user id: what their SSH logins are cached under. """
     odo_s3m_token: str | None = None
     frontier_s3m_token: str | None = None
     lux_s3m_token: str | None = None

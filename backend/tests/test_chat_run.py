@@ -540,6 +540,37 @@ async def test_a_watcher_that_sees_run_finished_finds_the_outcome_saved(env):
             assert [e["event"] for e in saved.run_events or []][-1] == "run_finished"
 
 
+async def test_the_channel_holds_for_its_run_only(env):
+    row, key = await env.conversation([call("quick"), say("done")])
+    agent = env.agents[row.id]
+    seen: list[str] = []
+    real = agent.run_stream
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("channel", "app"))
+        return real(*args, **kwargs)
+
+    agent.run_stream = spy  # type: ignore[method-assign]
+    run = await env.registry.start(
+        chat_session_id=row.id,
+        project_id=env.project.id,
+        agent_key=key,
+        user_prompt="go",
+        prior_history=[],
+        channel="slack",
+    )
+    # `quick` is not read-only, so in a Slack run it waits for Confirm.
+    async for event in run.subscribe():
+        if event.kind == "mcp_tool_approval":
+            assert event.prompt_id is not None
+            await chat_run.resolve_prompt(event.prompt_id, "accept")
+    await run.wait()
+
+    assert run.channel == "slack"
+    assert seen == ["slack"]
+    assert agent.channel == "app", "the agent is back on the app channel between runs"
+
+
 # ─── Record of displayed files (files-tab-artifacts-feed 2.3) ────────────────
 
 
@@ -783,6 +814,82 @@ async def test_the_startup_sweep_leaves_the_conversation_quiet(env, monkeypatch)
     assert saved.run_state == "interrupted" and saved.quiet is True
     async with AsyncSession(env.engine) as db:
         assert await inbox.list_queued(db, row.id) == []
+
+
+async def _from_slack(env, row) -> None:
+    async with AsyncSession(env.engine) as db:
+        saved = await db.get(ChatSessionTable, row.id)
+        saved.origin = "slack"
+        await db.commit()
+
+
+async def test_a_quit_keeps_a_slack_conversations_queued_messages(env):
+    """Slack shows nothing withdrawn, so a message waits to be answered after the restart."""
+    row, key = await env.conversation([call("hang"), say("unreachable")])
+    await _from_slack(env, row)
+    await env.registry.start(
+        chat_session_id=row.id,
+        project_id=env.project.id,
+        agent_key=key,
+        user_prompt="go",
+        prior_history=[],
+        channel="slack",
+    )
+    await _until(env.hang_started.is_set)
+    await _put(env, row, kind="message", text="queued at quit")
+
+    await env.registry.stop_all(reason="interrupted")
+
+    async with AsyncSession(env.engine) as db:
+        assert [i.text for i in await inbox.list_queued(db, row.id)] == [
+            "queued at quit"
+        ]
+
+
+async def test_the_startup_sweep_keeps_a_slack_conversations_queued_messages(
+    env, monkeypatch
+):
+    row, _ = await env.conversation([])
+    await _from_slack(env, row)
+    async with AsyncSession(env.engine) as db:
+        saved = await db.get(ChatSessionTable, row.id)
+        saved.run_state = "running"
+        await db.commit()
+    monkeypatch.setattr(inbox, "_listeners", [])  # nothing may start yet
+    await _put(env, row, kind="message", text="sent before the crash")
+
+    assert await chat_run.sweep_interrupted_runs() == 1
+
+    async with AsyncSession(env.engine) as db:
+        assert [i.text for i in await inbox.list_queued(db, row.id)] == [
+            "sent before the crash"
+        ]
+
+
+async def test_a_turn_vista_starts_runs_in_the_conversations_channel(env):
+    slack_row, _ = await env.conversation([say("seen in Slack")])
+    await _from_slack(env, slack_row)
+    app_row, _ = await env.conversation([say("seen in the app")])
+
+    for row, channel in [(slack_row, "slack"), (app_row, "app")]:
+        await _put(env, row, kind="task_event", text="job 42 COMPLETED")
+        run = env.registry.get(row.id)
+        assert run is not None and run.origin == "task"
+        assert run.channel == channel
+        await run.wait()
+
+
+async def test_run_listeners_hear_every_start(env):
+    row, key = await env.conversation([say("by hand"), say("from the inbox")])
+    heard: list[str] = []
+    remove = chat_run.on_run_started(lambda run: heard.append(run.origin))
+    try:
+        await (await env.start(row, key)).wait()
+        await _put(env, row, kind="task_event", text="job 42 COMPLETED")
+        await env.registry.get(row.id).wait()
+    finally:
+        remove()
+    assert heard == ["researcher", "task"]
 
 
 async def test_a_message_left_queued_at_the_end_starts_the_next_turn_first(

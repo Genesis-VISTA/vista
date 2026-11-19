@@ -8,6 +8,7 @@ from ..db.db import SessionDep
 from ..db.schemas import HpcCluster, LocalSettingsPublic, LocalSettingsUpdate
 from ..services import globus_auth, hpc_status, local_settings
 from ..services.local_settings import LocalSettingsDep
+from ..utils.misc import now_iso
 
 router = APIRouter(prefix="/settings", tags=["settings"])
 
@@ -164,6 +165,12 @@ async def complete_globus_login(
             }
         ),
     )
+    # When the High Assurance session started, for Slack's expiry reminders
+    # (`slack/credentials.py`): refreshing a token does not extend it.
+    row = await local_settings.get(session)
+    setattr(row, f"{owner}_globus_connected_at", now_iso())
+    session.add(row)
+    await session.commit()
     return GlobusConnected(
         cluster=cluster, connected=owner, identity=connection.identity
     )

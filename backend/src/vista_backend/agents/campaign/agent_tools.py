@@ -26,6 +26,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ...db.schemas import CampaignRunTable, InferenceProvider, LocalSettingsPublic
 from ...services import campaign as campaign_service
 from ..inference import build_model_for, resolve_inference_target
+from ...slack.gate import READ_ONLY
 from .planner import CampaignPlanner
 
 logger = logging.getLogger(__name__)
@@ -177,7 +178,7 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             "The user will be emailed as each completes; results appear on the steps."
         )
 
-    @agent.tool_plain
+    @agent.tool_plain(metadata=READ_ONLY)
     async def get_campaign_status(run_id: str) -> str:
         """Summarize the campaign: overall status, per-step state, and per-job state."""
         session = _session()

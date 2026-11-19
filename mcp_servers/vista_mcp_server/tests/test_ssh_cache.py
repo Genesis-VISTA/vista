@@ -1,4 +1,4 @@
-"""Tests for the per-session SSH connection cache in lib/ssh.
+"""Tests for the per-researcher SSH connection cache in lib/ssh.
 
 A login costs the user an RSA passcode per hop (two for a jump chain: hub, then
 login node), so the cache must reuse live connections, serialize concurrent first
@@ -28,10 +28,14 @@ class FakeConn:
 
 
 class FakeCtx:
-    def __init__(self, session_id="s1", action="accept"):
+    def __init__(self, session_id="s1", action="accept", user_id=None):
         self.session_id = session_id
         self.action = action
         self.prompts: list[str] = []
+        vista = {"user": {"id": user_id}} if user_id else None
+        self.request_context = types.SimpleNamespace(
+            meta=types.SimpleNamespace(vista=vista)
+        )
 
     async def elicit(self, message, response_type):
         self.prompts.append(message)
@@ -104,6 +108,29 @@ async def test_cache_is_per_session_and_per_chain(connects):
         FakeCtx("s1"), "m", "andes.olcf.ornl.gov"
     )
     assert len({id(a), id(b), id(c)}) == 3
+
+
+@pytest.mark.unit
+@pytest.mark.anyio
+async def test_a_new_mcp_session_reuses_the_researchers_login(connects):
+    # The backend opens a new MCP session when it rebuilds the agent (a
+    # settings save, 30 idle minutes); the researcher's login must survive it.
+    first = FakeCtx("s1", user_id="alice")
+    later = FakeCtx("s2", user_id="alice")
+    a = await ssh.get_ssh_conn_mcp_elicitation(first, "submit", LUX)
+    b = await ssh.get_ssh_conn_mcp_elicitation(later, "submit", LUX)
+    assert b is a
+    assert later.prompts == []
+
+
+@pytest.mark.unit
+@pytest.mark.anyio
+async def test_researchers_never_share_a_login(connects):
+    a = await ssh.get_ssh_conn_mcp_elicitation(FakeCtx("s1", user_id="alice"), "m", LUX)
+    bob = FakeCtx("s1", user_id="bob")
+    b = await ssh.get_ssh_conn_mcp_elicitation(bob, "m", LUX)
+    assert b is not a
+    assert len(bob.prompts) == 2
 
 
 @pytest.mark.unit

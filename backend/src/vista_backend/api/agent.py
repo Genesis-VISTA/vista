@@ -14,7 +14,7 @@ from ..db.schemas import InboxItemPublic, ProjectPublic
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
 from ..services import inbox as inbox_service
-from ..services.chat_run import chat_run_registry
+from ..services.chat_run import ELSEWHERE, channel_of, chat_run_registry
 from ..services.project_agent import ProjectAgentKey, project_agent_pool
 from ..agents.inference import require_inference_credential
 from ..services.local_settings import LocalSettingsDep
@@ -102,6 +102,9 @@ async def agent_run(
     # is committed the moment `EventSourceResponse` is returned, so a raise
     # from inside the generator could only surface as a truncated stream.
     # The chat's own model counts, so it can send on a provider with no default.
+    # A conversation from Slack is answered in Slack only (read-only here).
+    if chat_row is not None and channel_of(chat_row) != "app":
+        raise HTTPException(status_code=409, detail=ELSEWHERE)
     require_inference_credential(local, chat_row.inference_model if chat_row else None)
     agent_key: ProjectAgentKey = (
         chat_row.id if chat_row else None,

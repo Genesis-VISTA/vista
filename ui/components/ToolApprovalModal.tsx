@@ -33,6 +33,10 @@ type Props = {
   args?: Record<string, unknown> | null;
   decisionMetadata?: DecisionMetadata | null;
   onSubmit: (id: string, action: "accept" | "decline") => void;
+  /** Answered elsewhere (a Slack conversation's prompt): this note instead of the buttons. */
+  elsewhere?: string;
+  /** Closes the read-only view; required with `elsewhere`. */
+  onClose?: () => void;
 };
 
 function Check({ ok, label }: { ok: boolean; label: string }) {
@@ -56,6 +60,8 @@ export default function ToolApprovalModal({
   args,
   decisionMetadata,
   onSubmit,
+  elsewhere,
+  onClose,
 }: Props) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -68,7 +74,7 @@ export default function ToolApprovalModal({
   const isG5 = m?.gate === "G5";
 
   return (
-    <div className="modal-backdrop" onClick={() => submit("decline")}>
+    <div className="modal-backdrop" onClick={() => (elsewhere ? onClose?.() : submit("decline"))}>
       <div className="modal elicitation-modal" onClick={(e) => e.stopPropagation()}>
         <div className="panel-header">
           <div className="panel-title">Approve tool call</div>
@@ -121,6 +127,16 @@ export default function ToolApprovalModal({
             <pre className="g5-script-body">{JSON.stringify(args, null, 2)}</pre>
           )}
 
+          {elsewhere ? (
+            <>
+              <p className="user-settings-hint">{elsewhere}</p>
+              <div className="elicitation-actions">
+                <button type="button" className="button ghost" onClick={() => onClose?.()}>
+                  Close
+                </button>
+              </div>
+            </>
+          ) : (
           <div className="elicitation-actions">
             <button
               type="button"
@@ -139,6 +155,7 @@ export default function ToolApprovalModal({
               Decline
             </button>
           </div>
+          )}
         </div>
       </div>
     </div>

@@ -7,10 +7,12 @@ from fastmcp import Context
 import tenacity
 from pydantic import BaseModel, Field, create_model
 
+from .user_config import get_vista_meta
 
-# Per-(session_id, hosts) cache of live SSH connections. Lets the user
-# elicit credentials ONCE per chat-session/host and then reuse the same
-# connection for every subsequent tool call — crucial for the multi-worker
+
+# Per-(owner, hosts) cache of live SSH connections, where the owner is the
+# researcher (see `_ssh_owner`). Lets the user elicit credentials ONCE per
+# host chain and then reuse the same connection for every subsequent tool call — crucial for the multi-worker
 # agenthpc pool, which would otherwise re-prompt for every worker's first
 # submit, and for jump-host chains (e.g. hub -> login node), where each
 # hop costs the user a fresh RSA passcode. TTL matches agenthpc's per-session
@@ -19,33 +21,48 @@ from pydantic import BaseModel, Field, create_model
 _ssh_connections: TTLCache[tuple[str, tuple[str, ...]], asyncssh.SSHClientConnection] = TTLCache(maxsize=64, ttl=3600)
 
 
-# Per-(session_id, hosts) lock so that concurrent first-time callers don't
+# Per-(owner, hosts) lock so that concurrent first-time callers don't
 # all race past the cache miss into the elicitation. The first caller wins
 # the lock, prompts the user, and stores the connection; subsequent
 # callers wait, re-check the cache, and find a hit.
 _ssh_login_locks: TTLCache[tuple[str, tuple[str, ...]], asyncio.Lock] = TTLCache(maxsize=64, ttl=3600)
 
 
-def _ssh_login_lock(session_id: str, hosts: tuple[str, ...]) -> asyncio.Lock:
-    key = (session_id, hosts)
+def _ssh_owner(ctx: Context) -> str:
+    """
+    Whose SSH logins these are: the researcher's VISTA user id when the backend
+    sends it (HPC tools do), else the MCP session. Not the session alone: the
+    backend opens a new MCP session whenever it rebuilds the agent (a settings
+    save, or 30 idle minutes), and a login cached under the old one was lost
+    with it, so Lux asked for a passcode again well within the hour.
+    """
+    try:
+        user_id = get_vista_meta(ctx).user.id
+    except Exception:
+        user_id = None
+    return f"user:{user_id}" if user_id else f"session:{ctx.session_id}"
+
+
+def _ssh_login_lock(owner: str, hosts: tuple[str, ...]) -> asyncio.Lock:
+    key = (owner, hosts)
     if key not in _ssh_login_locks:
         _ssh_login_locks[key] = asyncio.Lock()
     return _ssh_login_locks[key]
 
 
 def _cached_ssh_connection(
-    session_id: str, hosts: tuple[str, ...],
+    owner: str, hosts: tuple[str, ...],
 ) -> asyncssh.SSHClientConnection | None:
-    """Return the cached SSH connection for (session, hosts) if it is still
+    """Return the cached SSH connection for (owner, hosts) if it is still
     open; otherwise evict the stale entry and return None."""
-    cached = _ssh_connections.get((session_id, hosts))
+    cached = _ssh_connections.get((owner, hosts))
     if cached is None:
         return None
     if cached.is_closed():
-        _ssh_connections.pop((session_id, hosts), None)
+        _ssh_connections.pop((owner, hosts), None)
         return None
     # Re-inserting restarts the entry's TTL (sliding expiry).
-    _ssh_connections[(session_id, hosts)] = cached
+    _ssh_connections[(owner, hosts)] = cached
     return cached
 
 
@@ -211,15 +228,15 @@ async def get_ssh_conn_mcp_elicitation(
     ctx: Context, message: str, host: str | list[str],
 ) -> asyncssh.SSHClientConnection:
     """
-    Get an SSH connection for ``(ctx.session_id, host)``, prompting for
+    Get an SSH connection for ``(_ssh_owner(ctx), host)``, prompting for
     credentials via MCP elicitation if no live connection is cached.
 
     ``host`` may be a single host or a list of jump hosts ending at the
     target. ``message`` is included in the final-host login prompt so the
     user sees which tool call is about to run.
 
-    Caching: per-session, per-host-chain. The first call for a given
-    ``(session_id, hosts)`` pair elicits credentials and stores the live
+    Caching: per-researcher, per-host-chain. The first call for a given
+    ``(owner, hosts)`` pair elicits credentials and stores the live
     connection in ``_ssh_connections``. Subsequent calls return the same
     connection — critical for the multi-worker agenthpc pool, which would
     otherwise prompt for credentials N times. A concurrent stampede of
@@ -233,16 +250,17 @@ async def get_ssh_conn_mcp_elicitation(
     hosts_tuple = (host,) if isinstance(host, str) else tuple(host)
     hosts = list(hosts_tuple)
     final_host = hosts[-1]
+    owner = _ssh_owner(ctx)
 
     # Fast path: cache hit.
-    cached = _cached_ssh_connection(ctx.session_id, hosts_tuple)
+    cached = _cached_ssh_connection(owner, hosts_tuple)
     if cached is not None:
         return cached
 
     # Slow path: serialize first-time logins so concurrent workers share
     # the elicitation. The second worker waits, then re-checks the cache.
-    async with _ssh_login_lock(ctx.session_id, hosts_tuple):
-        cached = _cached_ssh_connection(ctx.session_id, hosts_tuple)
+    async with _ssh_login_lock(owner, hosts_tuple):
+        cached = _cached_ssh_connection(owner, hosts_tuple)
         if cached is not None:
             return cached
 
@@ -283,5 +301,5 @@ async def get_ssh_conn_mcp_elicitation(
                 c.close()
             raise
 
-        _ssh_connections[(ctx.session_id, hosts_tuple)] = conn
+        _ssh_connections[(owner, hosts_tuple)] = conn
         return conn

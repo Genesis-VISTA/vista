@@ -987,6 +987,13 @@ class LocalSettingsTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ Frontier collection's HTTPS refresh token. Encrypted at rest. """
+    odo_globus_connected_at: str | None = None
+    frontier_globus_connected_at: str | None = None
+    """
+    When the researcher last connected Globus for the cluster. OLCF's High
+    Assurance session lasts three days from that login and refreshing does not
+    extend it, so this is how its expiry is estimated (`slack/credentials.py`).
+    """
     github_token: str | None = Field(
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
@@ -1132,6 +1139,14 @@ class ChatSessionBase(SQLModel):
         Field(default=None, sa_column=Column(String, nullable=True)),
     ]
     """ This chat's own `provider:name` model; null follows the researcher's default. """
+    origin: A[
+        str,
+        Field(
+            default="app",
+            sa_column=Column(String, nullable=False, server_default="app"),
+        ),
+    ]
+    """ Where the conversation was started: "app" or "slack". """
 
 
 class ChatSessionCreate(BaseModel):
@@ -1154,6 +1169,7 @@ class ChatSessionSummary(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
     title: str
+    origin: str = "app"
     created_at: str
     updated_at: str
 
@@ -1899,3 +1915,213 @@ class DebateStatePublic(BaseModel):
     campaign side — so without this a reader has a job id and no way to find out
     what happened to it, which is the state the record was in.
     """
+
+
+# ---------------------------------------------------------------------------
+# Jobs submitted through VISTA (openspec change slack-channel)
+#
+# Every successful `submit_hpc_job` a researcher makes, from any channel. This
+# is the agent's "my last job" and the source the Slack job monitor notifies
+# from. Campaign jobs keep their own `hpc_job` table.
+# ---------------------------------------------------------------------------
+
+
+class HpcJobRecordTable(SQLModel, table=True):
+    __tablename__: str = "hpc_job_record"
+    __table_args__ = (UniqueConstraint("cluster", "job_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    chat_session_id: uuid.UUID | None = Field(
+        default=None, foreign_key="chat_session.id", ondelete="SET NULL"
+    )
+    origin: str = "app"
+    """ "app" or "slack". """
+    slack_team_id: str | None = None
+    slack_channel_id: str | None = None
+    slack_thread_ts: str | None = None
+    slack_user_id: str | None = None
+    cluster: str
+    job_id: str
+    job: str
+    """ The job folder name, e.g. `lux-hello` or `<skill>/<job>`. """
+    node_count: int | None = None
+    duration: str | None = None
+    script_args: str | None = None
+    submitted_at: str
+    state: str | None = None
+    """ The last state seen; set once the job is terminal. """
+    finished_at: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Slack (openspec change slack-channel)
+#
+# Tokens are not here: they live in the OS secret store (`slack/secrets.py`).
+# ---------------------------------------------------------------------------
+
+
+class SlackConfigTable(SQLModel, table=True):
+    """The install's Slack settings; one row, id 1."""
+
+    __tablename__: str = "slack_config"
+
+    id: int = Field(default=1, primary_key=True)
+    enabled: bool = False
+    allowed_team_ids: A[list[str], Field(default_factory=list, sa_column=Column(JSON))]
+    allowed_channel_ids: A[
+        list[str], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    """ Empty means every channel the bot is in; DMs are always allowed. """
+    max_nodes: int = 4
+    max_walltime_minutes: int = 120
+    max_jobs_per_day: int = 5
+    locked: bool = False
+    locked_at: str | None = None
+    locked_by: str | None = None
+    online_since: str | None = None
+    """ When Slack last connected, for the App Home. """
+
+
+class SlackLinkTable(SQLModel, table=True):
+    """
+    A Slack user who may act through this installation, as its researcher.
+
+    VISTA has one researcher per installation, so a link names no VISTA user:
+    it admits a Slack account to this install. `collab_sub` is who the
+    researcher was on the collaboration server when the link was made (the
+    Keycloak `sub`), recorded so a hosted router can later route a Slack user
+    to their own VISTA by it. Nothing here decides access by it.
+    """
+
+    __tablename__: str = "slack_link"
+    __table_args__ = (UniqueConstraint("team_id", "slack_user_id"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    team_id: str
+    slack_user_id: str
+    collab_sub: str | None = None
+    """ The researcher's collaboration-server identity when linked; None if not signed in. """
+    collab_name: str | None = None
+    """ Their name (or email) there, for showing only. """
+    project_id: uuid.UUID | None = Field(
+        default=None, foreign_key="project.id", ondelete="SET NULL"
+    )
+    """ The project Slack conversations run in; None asks in each new thread (unless there is only one). """
+    dm_channel_id: str | None = None
+    created_at: str
+
+
+class SlackLinkCodeTable(SQLModel, table=True):
+    """A pending link: the code shown in Slack, waiting to be entered in the app."""
+
+    __tablename__: str = "slack_link_code"
+
+    code_hash: str = Field(primary_key=True)
+    team_id: str
+    slack_user_id: str
+    dm_channel_id: str | None = None
+    expires_at: str
+
+
+class SlackThreadTable(SQLModel, table=True):
+    """One Slack thread is one conversation."""
+
+    __tablename__: str = "slack_thread"
+    __table_args__ = (UniqueConstraint("team_id", "channel_id", "thread_ts"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    team_id: str
+    channel_id: str
+    thread_ts: str
+    chat_session_id: uuid.UUID = Field(
+        foreign_key="chat_session.id", ondelete="CASCADE"
+    )
+    slack_user_id: str
+    created_at: str
+
+
+class SlackProjectAskTable(SQLModel, table=True):
+    """
+    A new thread waiting for its researcher to pick a project. Its messages are
+    held here until then, and go into the new conversation's inbox in order.
+    """
+
+    __tablename__: str = "slack_project_ask"
+    __table_args__ = (UniqueConstraint("team_id", "channel_id", "thread_ts"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    team_id: str
+    channel_id: str
+    thread_ts: str
+    slack_user_id: str
+    prompts: A[
+        list[dict[str, str]], Field(default_factory=list, sa_column=Column(JSON))
+    ]
+    """ Each held message: `{"text", "ts"}`, in arrival order. """
+    message_ts: str | None = None
+    """ The picker's message, edited once a project is picked. """
+    created_at: str
+
+
+class SlackPendingTable(SQLModel, table=True):
+    """A confirmation or choice posted in Slack and waiting for the requester."""
+
+    __tablename__: str = "slack_pending"
+
+    elicitation_id: str = Field(primary_key=True)
+    kind: str
+    """ "confirm" or "choice". """
+    team_id: str
+    channel_id: str
+    message_ts: str | None = None
+    slack_user_id: str
+    chat_session_id: uuid.UUID | None = None
+    tool_name: str | None = None
+    summary: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON))]
+    created_at: str
+    expires_at: str
+    outcome: str | None = None
+    """ None while open, then "confirmed", "cancelled", "expired", "refused", "chosen". """
+
+
+class SlackDetailTable(SQLModel, table=True):
+    """The rest of an answer, posted when "Show more" is tapped."""
+
+    __tablename__: str = "slack_detail"
+
+    id: str = Field(primary_key=True)
+    slack_user_id: str
+    text: str
+    created_at: str
+
+
+class SlackReminderTable(SQLModel, table=True):
+    """A credential-expiry reminder already sent, so it is sent once."""
+
+    __tablename__: str = "slack_reminder"
+    __table_args__ = (UniqueConstraint("cluster", "kind", "expires_at"),)
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    cluster: str
+    kind: str
+    """ "24h", "2h" or "expired". """
+    expires_at: str
+    sent_at: str
+
+
+class SlackAuditTable(SQLModel, table=True):
+    """One Slack-initiated action. Never holds a credential."""
+
+    __tablename__: str = "slack_audit"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    at: str
+    team_id: str | None = None
+    slack_user_id: str | None = None
+    collab_sub: str | None = None
+    """ The researcher's collaboration-server identity, from the link; None if unknown. """
+    chat_session_id: uuid.UUID | None = None
+    event: str
+    tool_name: str | None = None
+    detail: A[dict[str, Any] | None, Field(default=None, sa_column=Column(JSON))]
+    job_id: str | None = None

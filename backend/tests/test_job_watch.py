@@ -15,7 +15,7 @@ import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import seed_project
-from vista_backend.db.schemas import LocalSettingsUpdate
+from vista_backend.db.schemas import ChatSessionTable, LocalSettingsUpdate
 from vista_backend.services import background_tasks, chat_run, inbox, local_settings
 from vista_backend.services import chat_session as chat_session_service
 
@@ -309,7 +309,8 @@ async def test_lost_access_pauses_without_a_word_to_the_agent(
     registry.watch_job(record, read=Script(LOST), clock=clock)
 
     async def paused():
-        return (await _record(records, record)).state == "paused"
+        # The pause is saved before the watch sleeps: wait for both.
+        return (await _record(records, record)).state == "paused" and bool(clock.sleeps)
 
     await _until(paused)
     saved = await _record(records, record)
@@ -353,7 +354,10 @@ async def test_reconnecting_in_settings_resumes_the_watch_and_later_changes_are_
     await session.commit()
 
     async def resumed():
-        return (await _record(records, record)).state == "watching"
+        # "watching" is saved before the "started" event is put: wait for both.
+        return (await _record(records, record)).state == "watching" and bool(
+            await _events(records, chat[0])
+        )
 
     await _until(resumed)
     saved = await _record(records, record)
@@ -563,12 +567,40 @@ async def test_a_job_that_finished_while_vista_was_closed_is_reported(
     await registry.wait(watching.id)
     assert (await _record(records, watching)).state == "ended"
 
+    async def events_by_job():
+        return {
+            e.payload["job_id"]: e.payload["event"]
+            for e in await _events(records, chat[0])
+        }
+
     async def resumed_watch():
-        return (await _record(records, paused)).state == "watching"
+        # The state is written before the "started" event: wait for both.
+        return (await _record(records, paused)).state == "watching" and (
+            "222" in await events_by_job()
+        )
 
     await _until(resumed_watch)
     assert sorted(read_at[:2]) == ["111", "222"], "each read at once"
-    events = {
-        e.payload["job_id"]: e.payload["event"] for e in await _events(records, chat[0])
-    }
+    events = await events_by_job()
     assert events == {"111": "ended", "222": "started"}
+
+
+async def test_outside_the_app_only_the_end_is_reported(registry, records, chat):
+    """In a Slack conversation each report is a turn that pings the researcher: one per job."""
+    async with AsyncSession(records) as db:
+        row = await db.get(ChatSessionTable, chat[0])
+        row.origin = "slack"
+        await db.commit()
+    record = await _watch(records, chat)
+
+    await _run(
+        registry,
+        record,
+        Script(state("RUNNING"), state("COMPLETED", exit_code=0)),
+    )
+
+    events = await _events(records, chat[0])
+    assert [e.payload["event"] for e in events] == ["ended"]
+    assert (await _record(records, record)).started_reported, (
+        "still known to have started"
+    )

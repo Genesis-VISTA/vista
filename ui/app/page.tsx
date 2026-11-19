@@ -79,6 +79,7 @@ import {
 } from "@/lib/run-renderer";
 import { readRefusedSend } from "@/lib/refused-send";
 import MessageQueue from "@/components/MessageQueue";
+import { ANSWER_IN_SLACK, CONTINUES_IN_SLACK } from "@/lib/slack";
 import {
   deleteQueued,
   editQueued,
@@ -236,6 +237,16 @@ function ChatPage() {
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [chatSessions, setChatSessions] = useState<PersistedChatSessionSummary[]>([]);
+  /**
+   * Where the open conversation started, from the conversation itself: the list
+   * is only loaded on the list view, so it is empty when VISTA opens straight
+   * into a conversation.
+   */
+  const [activeChatOrigin, setActiveChatOrigin] = useState<"app" | "slack" | null>(null);
+  /** The open conversation was started from Slack: read-only here (openspec change slack-channel). */
+  const isFromSlack =
+    isConversationOpen &&
+    (activeChatOrigin ?? chatSessions.find((c) => c.id === activeChatSessionId)?.origin) === "slack";
   const [chatSessionsLoading, setChatSessionsLoading] = useState(false);
   const [chatSessionsError, setChatSessionsError] = useState<string | null>(null);
   const [activeChatSessionTitle, setActiveChatSessionTitle] = useState<string | null>(null);
@@ -367,6 +378,7 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       setIsSessionHydrated(false);
       return;
     }
@@ -375,6 +387,7 @@ function ChatPage() {
       lastPersistedSnapshotRef.current = null;
       setActiveChatSessionTitle(null);
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       setMessages([]);
       setMessageHistory([]);
       setLatestResult(null);
@@ -394,6 +407,7 @@ function ChatPage() {
     if (activeChatSessionId && activeChatSessionId === locallyCreatedSessionIdRef.current) {
       locallyCreatedSessionIdRef.current = null;
       setActiveChatModel(null);
+      setActiveChatOrigin(null);
       hydratedSessionKeyRef.current = sessionKey;
       // Nothing is persisted for it yet, so the next change must save.
       lastPersistedSnapshotRef.current = null;
@@ -403,6 +417,7 @@ function ChatPage() {
 
     let cancelled = false;
     setIsSessionHydrated(false);
+    setActiveChatOrigin(null);
     setAgentLogs([]);
 
     void (async () => {
@@ -416,6 +431,7 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(persisted.title);
         setActiveChatModel(persisted.inference_model ?? null);
+        setActiveChatOrigin(persisted.origin ?? "app");
         const restoredMessages = Array.isArray(persisted.messages) ? persisted.messages : [];
         const restoredHistory = Array.isArray(persisted.message_history) ? persisted.message_history : [];
         const restoredLatestResult = persisted.latest_result ?? null;
@@ -437,6 +453,7 @@ function ChatPage() {
         }
         setActiveChatSessionTitle(null);
         setActiveChatModel(null);
+        setActiveChatOrigin(null);
         setMessages([]);
         setMessageHistory([]);
         setLatestResult(null);
@@ -737,6 +754,8 @@ function ChatPage() {
   const [isRunActive, setIsRunActive] = useState(false);
   /** The researcher's messages queued for the running turn, shown as chips. */
   const [queue, setQueue] = useState<InboxItem[]>([]);
+  /** A Slack conversation's prompt the researcher closed here; it is answered in Slack. */
+  const [closedPromptId, setClosedPromptId] = useState<string | null>(null);
   const [pendingElicitation, setPendingElicitation] = useState<{
     id: string;
     message: string;
@@ -1787,6 +1806,11 @@ function ChatPage() {
                       onClick={() => handleOpenConversation(chatSession)}
                     >
                       <span className="conversation-list-title">{chatSession.title}</span>
+                      {chatSession.origin === "slack" && (
+                        <span className="conversation-origin-badge" title="Started in Slack">
+                          Slack
+                        </span>
+                      )}
                       <span className="conversation-list-date">
                         {new Date(chatSession.updated_at).toLocaleString()}
                       </span>
@@ -1929,7 +1953,37 @@ function ChatPage() {
             </div>
           )}
         </div>
-        {(isConversationOpen || isConversationListView) && (
+        {isFromSlack && (
+          // Read-only here: sent and answered in Slack, but its turn can be stopped.
+          <div className="chat-input-row">
+            <MessageQueue
+              items={queue}
+              onEdit={editQueuedMessage}
+              onDelete={deleteQueuedMessage}
+              readOnly
+            />
+            <p className="user-settings-hint" role="note">
+              {CONTINUES_IN_SLACK}
+            </p>
+            <div className="composer-actions">
+              {isRunActive && <span className="composer-status">Agent working…</span>}
+              <div className="composer-spacer" />
+              {isRunActive && (
+                <button
+                  className="composer-send composer-stop"
+                  onClick={() => void stopRun()}
+                  title="Stop the agent"
+                  aria-label="Stop"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                    <rect x="5" y="5" width="14" height="14" rx="2" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+        {(isConversationOpen || isConversationListView) && !isFromSlack && (
           // The tour's anchor is the box and Send together, so the starter
           // question can be edited before it is sent.
           <div className="chat-input-row" data-tour="first-question:send">
@@ -2329,16 +2383,18 @@ function ChatPage() {
         </div>
       )}
 
-      {pendingElicitation && (
+      {pendingElicitation && !(isFromSlack && closedPromptId === pendingElicitation.id) && (
         <ElicitationModal
           id={pendingElicitation.id}
           message={pendingElicitation.message}
           schema={pendingElicitation.schema}
           onSubmit={handleElicitationSubmit}
+          elsewhere={isFromSlack ? ANSWER_IN_SLACK : undefined}
+          onClose={() => setClosedPromptId(pendingElicitation.id)}
         />
       )}
 
-      {pendingToolApproval && (
+      {pendingToolApproval && !(isFromSlack && closedPromptId === pendingToolApproval.id) && (
         <ToolApprovalModal
           id={pendingToolApproval.id}
           toolName={pendingToolApproval.toolName}
@@ -2346,6 +2402,8 @@ function ChatPage() {
           args={pendingToolApproval.args}
           decisionMetadata={pendingToolApproval.decisionMetadata}
           onSubmit={handleElicitationSubmit}
+          elsewhere={isFromSlack ? ANSWER_IN_SLACK : undefined}
+          onClose={() => setClosedPromptId(pendingToolApproval.id)}
         />
       )}
 

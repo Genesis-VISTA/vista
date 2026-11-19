@@ -63,6 +63,8 @@ from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
 from ..db.schemas import LocalSettingsPublic, ProjectPublic, SkillTable
+from ..services.job_records import describe as describe_jobs
+from ..services.job_records import recent_jobs
 from ..services.repo_tokens import settings_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
 from ..utils.misc import json_dump_if, tool_allowed
@@ -79,6 +81,8 @@ from palisade.quarantine import (
     build_quarantine_agent,
 )
 from .eval_metrics import EvalMetricsCapability
+from ..slack.choices import choice_of, choice_schema, register_choice_tool
+from ..slack.gate import READ_ONLY, SLACK_INSTRUCTIONS, SlackGateCapability, args_dict
 from . import source_fetch
 from .kb_fetch import copy_kb_file, kb_prompt_block
 from .skills import to_prompt
@@ -181,6 +185,14 @@ class McpUrlElicitationEvent(BaseModel):
     elicitation_id: str
     message: str
     url: str
+
+
+Channel = Literal["app", "slack"]
+"""
+Where a turn was started from. One pooled agent serves every channel; the
+channel only changes how prompts are answered and what the agent is told (see
+`ProjectAgent.channel`).
+"""
 
 
 class McpToolApprovalEvent(BaseModel):
@@ -505,7 +517,18 @@ class ProjectAgent:
         # that streams planner/subagent progress into this run's event stream.
         self._cur_db_session: AsyncSession | None = None
         self._cur_progress_emitter: Callable[[str], None] | None = None
+        # The current run's channel, read by capabilities through `channel`.
+        self._cur_channel: Channel = "app"
+        # Asks the researcher to tap one of a few options (`offer_choices`).
+        self._cur_choice_ask: (
+            Callable[[str, list[str]], Awaitable[str | None]] | None
+        ) = None
         self.agent = self._build_agent()
+
+    @property
+    def channel(self) -> Channel:
+        """The channel of the run in progress; "app" between runs."""
+        return self._cur_channel
 
     @property
     def sidecar(self) -> PalisadeSidecar:
@@ -617,6 +640,14 @@ class ProjectAgent:
         capabilities.append(
             PalisadeApprovalCapability(request_approval=self._request_tool_approval)
         )
+        # A Slack turn's side effects wait for the requester's Confirm, through
+        # the approval path above. Inert on every other channel.
+        capabilities.append(
+            SlackGateCapability(
+                channel=lambda: self._cur_channel,
+                chat_session_id=lambda: self.session_id,
+            )
+        )
 
         agent = Agent(
             model=model,
@@ -647,9 +678,39 @@ class ProjectAgent:
 
             return "\n\n".join([p for p in parts if p])
 
-        register_campaign_tools(agent, self._campaign_driver_deps())
+        @agent.instructions
+        def channel_instructions() -> str | None:
+            # Instructions, not the system prompt: they are read on every turn
+            # and kept out of the history, so they hold for Slack turns only.
+            if self._cur_channel != "slack":
+                return None
+            # Imported here: `slack.credentials` reaches `chat_run`, which imports this.
+            from ..slack.credentials import prompt_note
 
-        @agent.tool_plain
+            note = prompt_note()
+            return f"{SLACK_INSTRUCTIONS}\n{note}" if note else SLACK_INSTRUCTIONS
+
+        register_campaign_tools(agent, self._campaign_driver_deps())
+        register_choice_tool(
+            agent, channel=lambda: self._cur_channel, ask=lambda: self._cur_choice_ask
+        )
+
+        @agent.tool_plain(metadata=READ_ONLY)
+        async def list_my_recent_jobs(
+            cluster: str | None = None, limit: int = 10
+        ) -> str:
+            """
+            The HPC jobs this researcher submitted from a chat (here or in Slack),
+            newest first: job id, cluster, job folder, when, and what was asked
+            for. Use it to resolve "my last job" or "the job I submitted this
+            morning" before checking a status, reading logs or cancelling, rather
+            than guessing a job id. `cluster` narrows it to one system.
+            """
+            async with AsyncSession(get_engine()) as session:
+                jobs = await recent_jobs(session, cluster=cluster, limit=limit)
+                return describe_jobs(jobs)
+
+        @agent.tool_plain(metadata=READ_ONLY)
         async def list_tasks() -> str:
             """
             List this conversation's background tasks (commands started with
@@ -666,7 +727,7 @@ class ProjectAgent:
                 return "No background tasks in this conversation."
             return "\n".join(background_tasks.describe(r) for r in records)
 
-        @agent.tool_plain
+        @agent.tool_plain(metadata=READ_ONLY)
         async def watch_hpc_job(
             job_id: str, cluster: Literal["odo", "frontier", "lux", "perlmutter"]
         ) -> str:
@@ -932,6 +993,8 @@ class ProjectAgent:
             "read_hpc_job_state",
             "get_hpc_job_outputs",
             "cancel_hpc_job",
+            "get_hpc_queue_status",
+            "preview_hpc_job",
             "hpc_list_files",
             "hpc_download_files",
             "hpc_upload_files",
@@ -1079,6 +1142,14 @@ class ProjectAgent:
             ],
             params: mcp.types.ElicitRequestParams,
         ) -> mcp.types.ElicitResult | mcp.types.ErrorData:
+            if self._cur_channel == "slack" and not (
+                isinstance(params, mcp.types.ElicitRequestFormParams)
+                and choice_of(params.requestedSchema) is not None
+            ):
+                # Other forms ask for logins and secrets, and a URL needs a
+                # browser: neither goes through Slack. A choice among fixed
+                # answers (a transfer's Approve/Decline) is shown as buttons.
+                return mcp.types.ElicitResult(action="decline")
             if isinstance(params, mcp.types.ElicitRequestFormParams):
                 event = McpFormElicitationEvent(
                     elicitation_id=str(uuid.uuid4()),
@@ -1163,7 +1234,7 @@ class ProjectAgent:
                 elicitation_id=tool_call_id,
                 tool_name=tool_name,
                 message=f"Approve call to {tool_name!r}?",
-                args=args if isinstance(args, dict) else None,
+                args=args_dict(args),
                 decision_metadata=decision_metadata,
             )
             future: asyncio.Future[mcp.types.ElicitResult] = (
@@ -1202,6 +1273,36 @@ class ProjectAgent:
 
         return request_approval
 
+    def _make_choice_ask(
+        self, stream_merger: StreamMerger[ProjectAgentStreamEvent]
+    ) -> Callable[[str, list[str]], Awaitable[str | None]]:
+        async def ask(question: str, options: list[str]) -> str | None:
+            # A form with one enum field, which Slack shows as buttons.
+            event = McpFormElicitationEvent(
+                elicitation_id=str(uuid.uuid4()),
+                message=question,
+                requested_schema=choice_schema(options),  # type: ignore[arg-type]
+            )
+            future: asyncio.Future[mcp.types.ElicitResult] = (
+                asyncio.get_running_loop().create_future()
+            )
+            self._elicitations[event.elicitation_id] = future
+            try:
+                stream_merger.send(event)
+            except StreamClosedError:
+                self._elicitations.pop(event.elicitation_id, None)
+                return None
+            try:
+                result = await future
+            finally:
+                self._elicitations.pop(event.elicitation_id, None)
+            chosen = (result.content or {}).get("choice")
+            if result.action != "accept" or chosen not in options:
+                return None
+            return chosen
+
+        return ask
+
     async def run(
         self,
         user_prompt: str,
@@ -1227,6 +1328,7 @@ class ProjectAgent:
         enable_elicitation: bool = False,
         db_session: AsyncSession | None = None,
         capture: RunCapture | None = None,
+        channel: Channel = "app",
         capabilities: Sequence[AbstractCapability[Any]] | None = None,
     ) -> AsyncIterator[ProjectAgentStreamEvent]:
         """
@@ -1244,6 +1346,9 @@ class ProjectAgent:
         their progress streams into this run's events. Without it, the campaign tools are unavailable.
 
         Pass capture to read the turn's messages after it is cancelled or fails (see `RunCapture`).
+
+        Pass channel for a turn started from somewhere other than the in-app chat; it holds for
+        this run only.
 
         Pass capabilities to add PydanticAI capabilities to this turn only, such as the inbox's
         `InboxDelivery`, which hands queued items to the agent between its steps.
@@ -1312,6 +1417,10 @@ class ProjectAgent:
                 )
                 self._cur_db_session = db_session
                 self._cur_progress_emitter = progress
+                self._cur_channel = channel
+                self._cur_choice_ask = (
+                    self._make_choice_ask(merger) if enable_elicitation else None
+                )
                 try:
                     # SEV1 termination (PALISADE incident playbook): once
                     # the trust scorer is terminated, refuse every request
@@ -1436,6 +1545,8 @@ class ProjectAgent:
                     self._cur_approval_emit = None
                     self._cur_db_session = None
                     self._cur_progress_emitter = None
+                    self._cur_channel = "app"
+                    self._cur_choice_ask = None
 
         merger.add_stream(agent_stream())
         return aiter(merger)

@@ -50,6 +50,55 @@ class CampaignSettings(BaseModel):
     monitor_interval: float = 300.0
 
 
+class SlackSettings(BaseModel):
+    """
+    Timings for the Slack integration (`vista_backend.slack`, `docs/slack.md`).
+
+    Whether Slack is on, its tokens, allowlists and limits are the researcher's
+    and are set in the desktop app (the `slack_config` row and the OS secret
+    store), not here. These are the install's fixed behaviour; override via
+    `VISTA_BACKEND_SLACK__<FIELD>=...`, mostly so tests can shorten them.
+    """
+
+    confirmation_ttl: float = 600.0
+    """ Seconds a Confirm/Cancel prompt stays usable before it expires. """
+
+    link_code_ttl: float = 600.0
+    """ Seconds a link code shown in Slack can be entered in the desktop app. """
+
+    progress_edit_interval: float = 1.5
+    """ Least seconds between edits of a reply's progress message. """
+
+    reconnect_interval: float = 60.0
+    """ Seconds between attempts to connect again while the connection is down. """
+
+    reminder_interval: float = 900.0
+    """ Seconds between checks for HPC credentials about to expire. """
+
+    home_refresh_interval: float = 300.0
+    """ Seconds between republishing the App Home tab. """
+
+    unlinked_reply_interval: float = 3600.0
+    """ An unlinked user is told how to link at most this often. """
+
+
+class SecretSettings(BaseModel):
+    """
+    Where secrets kept out of the database live (`utils/secret_store.py`): Slack's
+    tokens. Override via `VISTA_BACKEND_SECRETS__BACKEND=...`.
+    """
+
+    backend: Literal["auto", "os", "directory"] = "auto"
+    """
+    `os`: the OS secret store (Keychain, Credential Manager, Secret Service).
+    `directory`: one file per secret in `directory`, for a hosted VISTA with no
+    OS store. `auto`: `directory` when `deployment` is `hosted`, else `os`.
+    """
+
+    directory: Path | None = None
+    """ For the `directory` backend; must be mode 0700. Defaults to `<data_dir>/secrets`. """
+
+
 class UpdateSettings(BaseModel):
     """
     Where the backend looks for newer releases (`services/update_check.py`).
@@ -260,6 +309,15 @@ class Settings(BaseSettings):
     )
 
     env: A[Literal["dev", "prod"], Field(validation_alias="VISTA_ENV")] = "dev"
+
+    deployment: Literal["desktop", "hosted"] = "desktop"
+    """
+    Where this VISTA runs. `desktop`: a researcher's own computer, the only kind
+    packaged today. `hosted`: a headless instance serving one researcher on a
+    facility service (a container), which keeps secrets in a directory rather
+    than an OS store and has no window. Override via
+    `VISTA_BACKEND_DEPLOYMENT=hosted`.
+    """
 
     host: str = "127.0.0.1"
     port: int = 8001
@@ -546,6 +604,12 @@ class Settings(BaseSettings):
     Agent-forum (debate) settings; see `ForumSettings`. Disabled by default,
     so the backend runs unchanged without git installed.
     """
+
+    slack: SlackSettings = Field(default_factory=SlackSettings)
+
+    secrets: SecretSettings = Field(default_factory=SecretSettings)
+    """ Where secrets kept out of the database live; see `SecretSettings`. """
+    """ Slack integration timings; see `SlackSettings`. Slack itself is off until enabled. """
 
     palisade: PalisadeSettings = Field(default_factory=PalisadeSettings)
     """

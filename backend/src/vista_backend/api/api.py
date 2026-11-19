@@ -53,6 +53,7 @@ from .projects import router as projects_router
 from .reports import router as reports_router
 from .settings import router as settings_router
 from .skills import router as skills_router
+from .slack import router as slack_router
 from .updates import router as updates_router
 
 
@@ -85,6 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except DatabaseIncompatible as refusal:
         _report_database_incompatible(refusal)
         raise
+    # Slack connects last; until then it holds the turns startup begins in Slack
+    # conversations, so their answers still reach the thread.
+    from ..slack import service as slack_service
+
+    slack_service.watch_runs()
     # No run survives a restart: a row still `running` died with the last process.
     if await sweep_interrupted_runs():
         logging.getLogger(__name__).info(
@@ -146,10 +152,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     update_task = asyncio.create_task(update_checker.run())
     # A cached download of the version now running is the update that worked.
     await asyncio.to_thread(clean_cache, settings.version)
+    # Slack, when it is on; otherwise nothing starts. A failure here costs only
+    # Slack, never the app.
+    try:
+        await slack_service.start()
+    except Exception:
+        logging.getLogger("vista.slack").exception("Slack did not start.")
 
     try:
         yield
     finally:
+        # First, while the connection is still up: the App Home's offline view.
+        with contextlib.suppress(Exception):
+            await slack_service.stop()
         update_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await update_task
@@ -263,6 +278,7 @@ app.include_router(models_router)
 app.include_router(projects_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(reports_router)
 app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
+app.include_router(slack_router)
 app.include_router(files_router)
 app.include_router(settings_router)
 app.include_router(updates_router)

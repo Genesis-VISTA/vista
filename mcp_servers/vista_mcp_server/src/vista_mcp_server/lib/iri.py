@@ -21,6 +21,7 @@ import binascii
 import time
 from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 
@@ -213,7 +214,8 @@ def wire_job_spec(spec: dict[str, Any], *, name: str) -> dict[str, Any]:
     return body
 
 
-_TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELED", "TIMEOUT"}
+TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELED", "TIMEOUT"}
+""" Upper-cased IRI job states after which a job no longer runs. """
 
 
 def normalize_job_status(job: dict[str, Any]) -> dict[str, Any]:
@@ -228,7 +230,7 @@ def normalize_job_status(job: dict[str, Any]) -> dict[str, Any]:
     status = job.get("status") or {}
     state = str(status.get("state") or "UNKNOWN").upper()
     out: dict[str, Any] = {"state": state}
-    if state in _TERMINAL_STATES and status.get("exit_code") is not None:
+    if state in TERMINAL_STATES and status.get("exit_code") is not None:
         out["exit_code"] = status["exit_code"]
     message = status.get("message")
     if message is not None and str(message).strip() not in ("", "None"):
@@ -383,6 +385,86 @@ class IriClient:
             "GET", f"compute/status/{self.compute_resource_id}/{job_id}", what="Job status",
         )
         return normalize_job_status(response.json() or {})
+
+    async def list_jobs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        """
+        The jobs IRI lists for this token on the compute resource, each
+        `{id, name, state}` with the state upper-cased. `POST compute/status/{id}`
+        with no filters; the name comes from the job's spec, or from S3M's Slurm
+        record where the spec is not returned.
+        """
+        response = await self._request(
+            "POST", f"compute/status/{self.compute_resource_id}", what="Job list",
+            params={"limit": limit, "include_spec": "true"},
+        )
+        body = response.json() or []
+        jobs = []
+        for job in body if isinstance(body, list) else []:
+            if not isinstance(job, dict) or not job.get("id"):
+                continue
+            status = job.get("status") or {}
+            spec = job.get("job_spec") or {}
+            slurm = ((status.get("meta_data") or {}).get("s3m") or {})
+            jobs.append({
+                "id": str(job["id"]),
+                "name": spec.get("name") or slurm.get("name") or "",
+                "state": str(status.get("state") or "UNKNOWN").upper(),
+            })
+        return jobs
+
+    async def facility_status(self) -> dict[str, Any]:
+        """
+        The compute resource's status ("up", "down", "degraded", "unknown") and
+        its incidents active now, from the facility's public IRI status feed.
+
+        The same reading as the backend's HPC cards (`services/hpc_status.py`):
+        the `status/resources` list, matched by the resource id jobs go to
+        (`status/resources/{id}` answers `unknown` at OLCF, and the moderate
+        enclave lists Lux beside Frontier, so never by name), and
+        `status/incidents` at the current time (unfiltered, NERSC returns its
+        oldest; OLCF answers "none active" with a 404). Public: sent without
+        the researcher's token, so an expired one cannot hide the status. The
+        queue's depth is not part of IRI.
+        """
+        now = datetime.now(UTC)
+        async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as http:
+            try:
+                resources, incidents = await asyncio.gather(
+                    http.get(self.target.url("status/resources")),
+                    http.get(
+                        self.target.url("status/incidents"),
+                        params={"time": now.strftime("%Y-%m-%dT%H:%M:%SZ")},
+                    ),
+                )
+            except httpx.HTTPError as e:
+                raise IriError(f"{self.target.cluster}'s status feed did not answer: {e}") from e
+        if resources.status_code >= 300:
+            raise IriError(
+                f"{self.target.cluster}'s status feed failed: HTTP {resources.status_code}"
+            )
+        rows = resources.json()
+        # A failed incidents feed costs only the incidents, not the status.
+        active = incidents.json() if incidents.status_code < 300 else []
+        rid = self.compute_resource_id
+        row = next(
+            (r for r in rows or [] if isinstance(r, dict) and r.get("id") == rid), None
+        )
+        found = []
+        for raw in active if isinstance(active, list) else []:
+            if not isinstance(raw, dict):
+                continue
+            uris = raw.get("resource_uris") or []
+            if not any(str(u).rstrip("/").endswith(f"/{rid}") for u in uris):
+                continue
+            found.append({
+                "name": raw.get("name") or "incident",
+                "status": raw.get("status"),
+                "type": raw.get("type"),
+                "start": raw.get("start"),
+                "end": raw.get("end"),
+            })
+        status = str(row.get("current_status") or "unknown") if row else "not listed"
+        return {"status": status, "incidents": found}
 
     async def cancel_job(self, job_id: str) -> None:
         await self._request(
