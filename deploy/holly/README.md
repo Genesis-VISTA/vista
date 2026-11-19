@@ -28,7 +28,7 @@ Then:
 ```bash
 export BUILD_INPUTS_DIR=/scratch/baumannsk/vista-build-inputs CONTAINER_RUNTIME=podman
 ./deploy/image/build-image.sh            # builds vista-sandbox, then vista-server
-sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
+podman save vista-server:latest | sudo podman load
 mkdir -p /scratch/baumannsk/vista-holly/data
 cp deploy/holly/vista.env.example /scratch/baumannsk/vista-holly/vista.env
 sudo cp deploy/holly/vllm-beam.service /etc/systemd/system/
@@ -37,7 +37,8 @@ sudo systemctl daemon-reload
 ```
 
 `build-image.sh` builds into your own (rootless) image store; the service runs
-rootful podman, so the second line copies the image into root's.
+rootful podman, so `podman save | sudo podman load` copies the image into root's (`podman image scp`
+would need `machinectl`, which Holly lacks).
 
 ## Run
 
@@ -49,13 +50,14 @@ sudo systemctl stop vllm-beam            # frees the GPUs; stops VISTA too
 
 Beam takes a while to load; until it answers, VISTA is up but its turns fail.
 
-On your laptop, `ssh -L 3000:localhost:3000 holly` and open http://localhost:3000
+On your laptop, `ssh -N -L 3000:127.0.0.1:3000 -J baumannsk@hub.ccs.ornl.gov baumannsk@holly`
+and open http://localhost:3000
 to sign in to the model's settings, the clusters, and Slack.
 
 ## Update
 
 ```bash
 git pull && BUILD_INPUTS_DIR=/scratch/baumannsk/vista-build-inputs CONTAINER_RUNTIME=podman ./deploy/image/build-image.sh
-sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
+podman save vista-server:latest | sudo podman load
 sudo systemctl restart vista
 ```
