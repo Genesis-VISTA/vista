@@ -70,4 +70,5 @@ ENV VISTA_DATA_DIR=/data
 ENV MSB_HOME=/data/msb
 
 EXPOSE 3000 8001
-ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build"]
+# Headless: launch.sh opens the Electron window by default in logs mode and exits without a display.
+ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build", "--no-electron"]
