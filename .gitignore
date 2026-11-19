@@ -1,6 +1,6 @@
-# Prebuilt sandbox image export (created by aws/build-image.sh)
-aws/vista-sandbox.tar
-aws/vista-sandbox.tar.digest
+# Prebuilt sandbox image export (created by deploy/image/build-image.sh)
+deploy/image/vista-sandbox.tar
+deploy/image/vista-sandbox.tar.digest
 
 /data/**
 

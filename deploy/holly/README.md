@@ -13,10 +13,21 @@ Two system services, neither started at boot:
 ## Install
 
 From a checkout of this branch at `/scratch/baumannsk/vista` (`vllm-beam.service` runs
-`deploy/holly/vllm-beam.sh` from there, and that sources `/scratch/baumannsk/env.sh`):
+`deploy/holly/vllm-beam.sh` from there, and that sources `/scratch/baumannsk/env.sh`).
+
+The image bakes in the olcf-docs corpus from `Genesis-VISTA/vista-build-inputs`, the
+private repository CI's release builds take it from, at the commit CI pins:
 
 ```bash
-CONTAINER_RUNTIME=podman ./aws/build-image.sh   # builds vista-sandbox, then vista-server
+git clone https://github.com/Genesis-VISTA/vista-build-inputs.git /scratch/baumannsk/vista-build-inputs
+git -C /scratch/baumannsk/vista-build-inputs checkout "$(sed -n 's/^BUILD_INPUTS_COMMIT=//p' .github/build-inputs.env)"
+```
+
+Then:
+
+```bash
+export BUILD_INPUTS_DIR=/scratch/baumannsk/vista-build-inputs CONTAINER_RUNTIME=podman
+./deploy/image/build-image.sh            # builds vista-sandbox, then vista-server
 sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
 mkdir -p /scratch/baumannsk/vista-holly/data
 cp deploy/holly/vista.env.example /scratch/baumannsk/vista-holly/vista.env
@@ -44,7 +55,7 @@ to sign in to the model's settings, the clusters, and Slack.
 ## Update
 
 ```bash
-git pull && CONTAINER_RUNTIME=podman ./aws/build-image.sh
+git pull && BUILD_INPUTS_DIR=/scratch/baumannsk/vista-build-inputs CONTAINER_RUNTIME=podman ./deploy/image/build-image.sh
 sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
 sudo systemctl restart vista
 ```

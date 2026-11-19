@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.19
-# VISTA "all-in-one" server image for the EKS beta deployment.
+# VISTA's "all-in-one" server image: the MCP server, backend and UI, headless,
+# with the code sandbox's image and the olcf-docs corpus baked in. Holly runs it
+# as a service (deploy/holly/).
 #
-# Use ./aws/build-image.sh to build this with the correct context
-# Can run directly with:
-#     docker run --env-file .env --rm -it --device /dev/kvm \
-#         --group-add "$(getent group kvm | cut -d: -f3)" \
-#         -p 3000:3000 -p 8001:8001 -v /path/to/data:/data vista-server:latest
+# Build it with ./deploy/image/build-image.sh, which builds the sandbox image
+# first and passes the build inputs (the corpus) as a second build context.
+# Run it with /dev/kvm (the sandbox is a MicroVM) and a volume at /data:
+#     podman run --env-file vista.env --rm -it --device /dev/kvm \
+#         --network host -v /path/to/data:/data:U vista-server:latest
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,19 +51,28 @@ RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm ci
 COPY --chown=ubuntu:ubuntu ui/package.json ui/package-lock.json ui/
 RUN cd ui && npm ci
 
-# NOTE: the prebuilt sandbox image tar will be included under ./aws/
-# Since MSB_HOME is under the data volume, we'll load the tar as a msb image at runtime
-COPY --chown=ubuntu:ubuntu aws/vista-sandbox.tar /app/aws/vista-sandbox.tar
+# The sandbox image, exported by build-image.sh. MSB_HOME is on the data volume,
+# so entrypoint.sh loads it into microsandbox at startup, as the package
+# launcher does; the dev MCP server then uses it rather than building one,
+# which it could not do here (there is no podman or docker in the container).
+COPY --chown=ubuntu:ubuntu deploy/image/vista-sandbox.tar deploy/image/vista-sandbox.tar.digest /app/sandbox/
 ENV VISTA_DEV_MCP_DOCKERFILE=
-ENV VISTA_DEV_MCP_OCI_IMAGE_TAR=/app/aws/vista-sandbox.tar
+ENV VISTA_DEV_MCP_IMAGE=vista-sandbox:latest
 
-COPY --chown=ubuntu:ubuntu --exclude=aws/vista-sandbox.tar . .
+COPY --chown=ubuntu:ubuntu --exclude=deploy/image/vista-sandbox.tar* . .
 
 RUN cd mcp_servers/vista_mcp_server/mcp-apps && npm run build
 RUN cd mcp_servers/vista_mcp_server && uv sync --frozen
 RUN cd mcp_servers/dev_mcp_server && uv sync --frozen
 RUN cd backend && uv sync --frozen
 RUN cd ui && npm run build
+
+# The olcf-docs corpus and its prebuilt index, from the build inputs (laid out as
+# in CI: vista-data/olcf-docs/ and rag_db/). As a payload, hello-olcf's first
+# start copies them to /data and installs the index; nothing is embedded.
+COPY --from=build-inputs --chown=ubuntu:ubuntu vista-data/olcf-docs /app/payload/olcf-docs
+COPY --from=build-inputs --chown=ubuntu:ubuntu rag_db /app/payload/olcf-docs/rag_db
+ENV VISTA_DATA_PAYLOAD_DIR=/app/payload
 
 ENV VISTA_MCP_DISABLE_SERVERS=agenthpc
 ENV VISTA_DATA_DIR=/data
@@ -70,5 +81,5 @@ ENV VISTA_DATA_DIR=/data
 ENV MSB_HOME=/data/msb
 
 EXPOSE 3000 8001
-# Headless: launch.sh opens the Electron window by default in logs mode and exits without a display.
-ENTRYPOINT ["/app/launch.sh", "logs", "--prod", "--no-build", "--no-electron"]
+# Loads the sandbox image, then runs launch.sh headless.
+ENTRYPOINT ["/app/deploy/image/entrypoint.sh"]

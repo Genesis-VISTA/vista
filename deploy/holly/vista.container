@@ -17,8 +17,6 @@ AddDevice=/dev/kvm
 # :U gives the folder to the container's user (ubuntu).
 Volume=/scratch/baumannsk/vista-holly/data:/data:U
 EnvironmentFile=/scratch/baumannsk/vista-holly/vista.env
-# Appended to the image's entrypoint (launch.sh logs --prod --no-build).
-Exec=--no-electron
 
 [Service]
 Restart=on-failure
