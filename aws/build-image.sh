@@ -11,13 +11,17 @@ SERVER_IMAGE="${1:-vista-server:latest}"
 TAR_FILE="$REPO_ROOT/aws/vista-sandbox.tar"
 DIGEST_FILE="$TAR_FILE.digest"
 
-RUNTIME=""
-for candidate in docker podman; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    RUNTIME="$candidate"
-    break
-  fi
-done
+# CONTAINER_RUNTIME=podman picks podman where a docker CLI is also on PATH
+# (on Holly, one talking to podman's socket without buildx).
+RUNTIME="${CONTAINER_RUNTIME:-}"
+if [[ -z "$RUNTIME" ]]; then
+  for candidate in docker podman; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      RUNTIME="$candidate"
+      break
+    fi
+  done
+fi
 [[ -n "$RUNTIME" ]] || { echo "error: neither docker nor podman found on PATH" >&2; exit 1; }
 export DOCKER_BUILDKIT=1
 

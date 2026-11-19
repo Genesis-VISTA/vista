@@ -16,7 +16,7 @@ From a checkout of this branch at `/scratch/baumannsk/vista` (`vllm-beam.service
 `deploy/holly/vllm-beam.sh` from there, and that sources `/scratch/baumannsk/env.sh`):
 
 ```bash
-./aws/build-image.sh                     # builds vista-sandbox, then vista-server
+CONTAINER_RUNTIME=podman ./aws/build-image.sh   # builds vista-sandbox, then vista-server
 sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
 mkdir -p /scratch/baumannsk/vista-holly/data
 cp deploy/holly/vista.env.example /scratch/baumannsk/vista-holly/vista.env
@@ -44,7 +44,7 @@ to sign in to the model's settings, the clusters, and Slack.
 ## Update
 
 ```bash
-git pull && ./aws/build-image.sh
+git pull && CONTAINER_RUNTIME=podman ./aws/build-image.sh
 sudo podman image scp baumannsk@localhost::vista-server:latest root@localhost::
 sudo systemctl restart vista
 ```
