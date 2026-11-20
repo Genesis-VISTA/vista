@@ -31,9 +31,17 @@ class AppSettings(BaseSettings):
     )
     image: str = "vista-sandbox:latest"
 
-    volumes: list[tuple[ResolvedPath, PurePosixPath, Literal["r", "w"]]] = []
+    volumes: list[
+        tuple[ResolvedPath, PurePosixPath, Literal["r", "w"]]
+        | tuple[ResolvedPath, PurePosixPath, Literal["r", "w"], bool]
+    ] = []
     """
-    List of volumes to mount into the sandbox as (host_path, sandbox_path, r/w) tuples
+    Volumes to mount into the sandbox, as (host_path, sandbox_path, r/w[, owned]).
+
+    `owned` (default true) says VISTA owns the host folder: it is created when missing. A
+    folder VISTA does not own (a linked folder) is never created, and is left out when it is
+    not an existing folder. Host paths are resolved, symlinks included, as they are read:
+    microsandbox fails the whole start on a host path through a symlink.
     """
 
     tasks_dir: PurePosixPath = PurePosixPath("/mnt/data/tasks")

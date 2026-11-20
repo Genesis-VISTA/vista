@@ -4,6 +4,8 @@ MCP Server to run basic shell and file commands
 
 import argparse
 import asyncio
+import logging
+from pathlib import Path, PurePosixPath
 
 from .config import settings  # import before fastmcp so fastmcp reads our env vars
 
@@ -11,7 +13,7 @@ from typing import Annotated as A, Callable, Awaitable
 from fastmcp import FastMCP, Context
 from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
-from .lib.sandbox import Sandbox
+from .lib.sandbox import Sandbox, Volume
 from .lib.container_sandbox import ContainerSandbox
 from .lib.microsandbox_sandbox import MicrosandboxSandbox
 from .lib.view import view_path
@@ -74,13 +76,40 @@ sandbox: Sandbox
 """ I should be able to use ctx.lifespan_context for this, but it doesn't work when mounted. """
 
 
+logger = logging.getLogger(__name__)
+
+
+def mountable_volumes(
+    volumes: list[
+        tuple[Path, PurePosixPath, str] | tuple[Path, PurePosixPath, str, bool]
+    ],
+) -> list[Volume]:
+    """
+    The volumes to mount, as (host, sandbox, mode). A folder VISTA owns is created first, so
+    docker doesn't create it owned by the container user. One it does not own is never
+    created: missing, or not a folder, it is left out (its drive may have gone since the
+    backend checked), rather than failing the start.
+    """
+    out: list[Volume] = []
+    for host_path, sandbox_path, mode, *rest in volumes:
+        owned = rest[0] if rest else True
+        if owned:
+            host_path.mkdir(parents=True, exist_ok=True)
+        elif not host_path.is_dir():
+            logger.warning(
+                "Not mounting %s at %s: not an existing folder", host_path, sandbox_path
+            )
+            continue
+        out.append((host_path, sandbox_path, mode))  # type: ignore[arg-type]
+    return out
+
+
 @lifespan
 async def app_lifespan(server):
     global sandbox
-    # Create the volume directories first so they don't get created by docker and owned by the container user
-    for host_path, container_path, mode in settings.volumes:
-        host_path.mkdir(parents=True, exist_ok=True)
-    sandbox = await SANDBOX_SPAWN_FUNCS[settings.sandbox_mode](volumes=settings.volumes)
+    sandbox = await SANDBOX_SPAWN_FUNCS[settings.sandbox_mode](
+        volumes=mountable_volumes(settings.volumes)
+    )
     try:
         yield
     finally:

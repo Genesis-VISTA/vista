@@ -64,6 +64,11 @@ from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
 from ..db.schemas import LocalSettingsPublic, ProjectPublic, SkillTable
 from ..services.job_records import describe as describe_jobs
+from ..services.linked_folders import (
+    LinkedFolder,
+    clear_leftover_mount_points,
+    resolve_linked_volumes,
+)
 from ..services.job_records import recent_jobs
 from ..services.repo_tokens import settings_repo_token
 from ..utils.streams import StreamMerger, StreamClosedError
@@ -400,7 +405,9 @@ def get_vista_mcp_server(
 
 
 def get_dev_mcp_server(
-    volumes: list[tuple[str, str, Literal["r", "w"]]],
+    volumes: Sequence[
+        tuple[str, str, Literal["r", "w"]] | tuple[str, str, Literal["r", "w"], bool]
+    ],
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
     log_handler: mcp.client.session.LoggingFnT | None = None,
@@ -470,6 +477,7 @@ class ProjectAgent:
         local: LocalSettingsPublic,
         session_id: uuid.UUID | None = None,
         model_override: str | None = None,
+        linked_folders: Sequence[LinkedFolder] = (),
     ):
         self.project = project
         self.local = local
@@ -484,6 +492,9 @@ class ProjectAgent:
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
+        # Checked once, here: the sandbox's mounts and what the agent is told about them
+        # both come from this, so they agree (openspec change linked-folders).
+        self.linked = resolve_linked_volumes(linked_folders)
         self._elicitations: dict[str, asyncio.Future] = {}
         # PALISADE is a package and cannot import this host, so the gate
         # timing probe is inverted: we hand it our recorder. Idempotent, and
@@ -580,6 +591,8 @@ class ProjectAgent:
                 # here could add a cluster job to a loaded skill with no
                 # import by the researcher.
                 (str(self.skills_volume_dir), "/mnt/skills", "r"),
+                # Read-only and never created by the dev server: the researcher's own.
+                *self.linked.available,
             ],
             elicitation_callback=elicitation_callback,
             process_tool_call=process_tool_call,
@@ -1032,6 +1045,7 @@ class ProjectAgent:
         evictions.
         """
         self.volume_root.mkdir(parents=True, exist_ok=True)
+        clear_leftover_mount_points(self.volume_root, keep=self.linked.available_names)
 
         # Set up skill volume
         async with AsyncSession(get_engine()) as session:
