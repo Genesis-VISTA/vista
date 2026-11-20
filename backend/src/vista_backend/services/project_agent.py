@@ -11,7 +11,7 @@ from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
 from ..db.schemas import ChatSessionTable, ProjectPublic, ProjectTable
 from ..utils.ttl_pool import TTLPool
-from . import chat_session as chat_session_service, local_settings
+from . import chat_session as chat_session_service, linked_folders, local_settings
 
 
 ProjectAgentKey = tuple[uuid.UUID | None, uuid.UUID]
@@ -66,12 +66,15 @@ async def _build_project_agent(
         if project_row is None:
             raise RuntimeError(f"Project {project_id} not found")
         project = ProjectPublic.model_validate(project_row)
+        links = await linked_folders.list_links(session, project_id)
         local = await local_settings.get_public(session)
         model_override = None
         if session_id is not None:
             chat_row = await session.get(ChatSessionTable, session_id)
             model_override = chat_row.inference_model if chat_row else None
-    agent = ProjectAgent(project, local, session_id, model_override)
+    agent = ProjectAgent(
+        project, local, session_id, model_override, linked_folders=links
+    )
     await agent.__aenter__()
     return agent
 

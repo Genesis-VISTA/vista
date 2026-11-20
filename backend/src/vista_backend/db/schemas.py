@@ -1343,6 +1343,29 @@ class DisplayedFileTable(SQLModel, table=True):
     mtime_ns: int
 
 
+class ProjectLinkedFolderTable(SQLModel, table=True):
+    """
+    A folder on this computer linked to a project, mounted read-only into its sandboxes at
+    `/mnt/linked/<name>` (openspec change linked-folders). A table of its own, not a
+    `ProjectCreate` field, so a link is never project content: never published, never
+    brought or changed by an import, never marking the project modified.
+    """
+
+    __tablename__: str = "project_linked_folder"
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_linked_folder_name"),
+        UniqueConstraint("project_id", "host_path", name="uq_linked_folder_path"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
+    name: str
+    """ The folder's name in the sandbox, `/mnt/linked/<name>`. """
+    host_path: str
+    """ The folder's resolved absolute path, as it was when linked. """
+    created_at: str
+
+
 # ---------------------------------------------------------------------------
 # Multi-agent campaigns
 #

@@ -165,6 +165,17 @@ async def test_a_missing_table_is_created(start):
 
 
 @pytest.mark.anyio
+async def test_a_database_from_before_linked_folders_gets_the_table(start):
+    """openspec change linked-folders: an existing vista.db starts and gains the table."""
+    _build(start.path)
+    _sql(start.path, "DROP TABLE project_linked_folder")
+
+    await start()
+
+    assert "project_linked_folder" in _tables(start.path)
+
+
+@pytest.mark.anyio
 async def test_an_extra_nullable_column_starts(start):
     _build(start.path)
     _sql(start.path, "ALTER TABLE project ADD COLUMN legacy TEXT")

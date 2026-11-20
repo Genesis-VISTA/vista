@@ -1343,3 +1343,80 @@ async def test_a_reimport_keeps_the_hosted_forum_when_the_lookup_fails(
             assert "down" in second.forum_error
     finally:
         await bob.close()
+
+
+# ---------------------------------------------------------------------------
+# Linked folders stay on this computer (openspec change linked-folders, task 3.5)
+# ---------------------------------------------------------------------------
+
+
+def _linkable(tmp_path, name: str = "salt-data-7f3e") -> str:
+    folder = tmp_path / "Research" / name
+    folder.mkdir(parents=True)
+    return str(folder.resolve())
+
+
+async def test_publishing_a_linked_project_sends_no_link(
+    collab_server, session, tmp_path
+):
+    import json
+
+    await _use_server(session)
+    await seed_project(session, name="salt")
+    folder = _linkable(tmp_path)
+    with api_client(session) as (client, _):
+        linked = await client.post(
+            "/projects/salt/linked-folders", json={"path": folder, "name": "msr-9b1d"}
+        )
+        assert linked.status_code == 201, linked.text
+        await session.commit()
+        res = await client.post("/projects/salt/publish", json={})
+    assert res.status_code == 200, res.text
+    async with _other_install() as other:
+        item_id = uuid.UUID(res.json()["project"]["remote_id"])
+        manifest = json.dumps((await other.get_version(item_id, 1)).manifest)
+    for leak in ("msr-9b1d", "salt-data-7f3e", folder, "/mnt/linked", "linked_folder"):
+        assert leak not in manifest
+
+
+async def test_importing_a_newer_version_keeps_the_links(
+    collab_server, session, tmp_path
+):
+    await _use_server(session)
+    item_id = await _publish_project_elsewhere(system_prompt="One.")
+    url = f"/collaboration/projects/{item_id}/import"
+    links = "/projects/salt-lab/linked-folders"
+    with api_client(session) as (client, _):
+        first = await client.post(url, json={})
+        assert first.status_code == 200, first.text
+        assert (await client.get(links)).json() == [], "an import brings no link"
+        await client.post(links, json={"path": _linkable(tmp_path)})
+        await session.commit()
+
+        await _republish_project_elsewhere(item_id, 1, system_prompt="Two.")
+        updated = await client.post(url, json={})
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["status"] == "updated"
+        await session.commit()
+        listed = (await client.get(links)).json()
+    assert [r["name"] for r in listed] == ["salt-data-7f3e"]
+
+
+async def test_linking_does_not_mark_a_published_project_modified(
+    collab_server, session, tmp_path
+):
+    await _use_server(session)
+    await seed_project(session, name="salt")
+    links = "/projects/salt/linked-folders"
+    with api_client(session) as (client, _):
+        await client.post("/projects/salt/publish", json={})
+        await session.commit()
+        await client.post(links, json={"path": _linkable(tmp_path)})
+        await session.commit()
+        assert (await client.get("/projects/salt")).json()["modified"] is False
+        await client.patch(f"{links}/salt-data-7f3e", json={"name": "renamed"})
+        await session.commit()
+        await client.delete(f"{links}/renamed")
+        await session.commit()
+        after = (await client.get("/projects/salt")).json()
+    assert after["modified"] is False

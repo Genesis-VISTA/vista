@@ -50,6 +50,8 @@ from .mcp import router as mcp_router
 from .models import router as models_router
 from .palisade import router as palisade_router
 from .projects import router as projects_router
+from .linked_folders import router as linked_folders_router
+from ..services.linked_folders import LinkRefused
 from .reports import router as reports_router
 from .settings import router as settings_router
 from .skills import router as skills_router
@@ -249,6 +251,15 @@ async def _not_in_team(request: Request, exc: NotInTeam) -> JSONResponse:
     )
 
 
+@app.exception_handler(LinkRefused)
+async def _link_refused(request: Request, exc: LinkRefused) -> JSONResponse:
+    """A link, rename or unlink refused, with the reason and a `code` the UI tells apart."""
+    return JSONResponse(
+        status_code=exc.status,
+        content={"detail": exc.detail, "code": exc.code, **exc.extra},
+    )
+
+
 @app.exception_handler(SharingConflict)
 async def _sharing_conflict(request: Request, exc: SharingConflict) -> JSONResponse:
     """A publish or import that needs the researcher's choice: 409 with `code`."""
@@ -276,6 +287,7 @@ app.include_router(mcp_router)
 app.include_router(knowledge_bases_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(models_router)
 app.include_router(projects_router, dependencies=[Depends(_server_in_effect)])
+app.include_router(linked_folders_router)
 app.include_router(reports_router)
 app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
 app.include_router(slack_router)

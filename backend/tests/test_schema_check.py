@@ -120,3 +120,10 @@ def test_a_database_from_before_background_tasks_passes(conn):
     conn.execute("ALTER TABLE chat_session DROP COLUMN quiet")
 
     assert schema_problems(conn, assume_additive=True) == []
+
+
+def test_a_database_from_before_linked_folders_passes(conn):
+    """openspec change linked-folders: the link table is additive."""
+    conn.execute("DROP TABLE project_linked_folder")
+
+    assert schema_problems(conn, assume_additive=True) == []
