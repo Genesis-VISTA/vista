@@ -1,7 +1,7 @@
 ## 1. Prove the mount on every host
 
 - [ ] 1.1 On a Windows host (Sam), start a microsandbox VM with a host folder bind-mounted read-only, read a file in it from the guest, confirm a write fails, and record the result here and against windows-support task 6.7. If reading fails, note it and plan 3.4's Windows refusal
-- [ ] 1.2 Add a `-m sandbox` test in `mcp_servers/dev_mcp_server` for "Read-only mount refuses writes": host folder with `a.txt` mounted read-only, the guest reads it, `touch`/`echo >`/`rm` all fail, host unchanged; also time a read of a 1 GB file and log it. Verify with `VISTA_RUN_SANDBOX=1 uv run pytest -m sandbox -k read_only` on macOS and Linux
+- [x] 1.2 Add a `-m sandbox` test in `mcp_servers/dev_mcp_server` for "Read-only mount refuses writes": host folder with `a.txt` mounted read-only, the guest reads it, `touch`/`echo >`/`rm` all fail, host unchanged; also time a read of a 1 GB file and log it. Verify with `VISTA_RUN_SANDBOX=1 uv run pytest -m sandbox -k read_only` on macOS and Linux
 
 ## 2. Sandbox volumes for linked folders (Sam's carve-out)
 

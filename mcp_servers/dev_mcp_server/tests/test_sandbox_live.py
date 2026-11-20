@@ -166,6 +166,94 @@ async def test_writable_mount_round_trip(sandbox, volume_dir):
     assert (volume_dir / "from_guest.txt").read_text(encoding="utf-8") == "from guest\n"
 
 
+# ─── Read-only mounts (openspec/changes/linked-folders, task 1.2) ──────────────────────────
+#
+# Mounted the way a linked folder is: read-only at /mnt/linked/<name>, nested inside the
+# writable project volume at /mnt.
+
+_BIG = 1024**3
+
+
+@pytest.fixture(scope="module")
+def linked_dir(tmp_path_factory) -> Path:
+    linked = tmp_path_factory.mktemp("linked")
+    (linked / "a.txt").write_text("linked contents\n", encoding="utf-8")
+    chunk = b"\xa5" * (16 * 1024 * 1024)
+    with open(linked / "big.bin", "wb") as f:
+        for _ in range(_BIG // len(chunk)):
+            f.write(chunk)
+    return linked
+
+
+def _snapshot(folder: Path) -> dict[str, tuple[int, bytes | None]]:
+    return {
+        str(p.relative_to(folder)): (
+            p.stat().st_size,
+            p.read_bytes() if p.stat().st_size < 1024 else None,
+        )
+        for p in sorted(folder.rglob("*"))
+    }
+
+
+@pytest.fixture(scope="module")
+async def read_only_sandbox(tmp_path_factory, linked_dir):
+    if "MSB_HOME" not in os.environ:
+        pytest.skip("set MSB_HOME so the live tests don't migrate ~/.microsandbox")
+    project = tmp_path_factory.mktemp("project")
+    sb = await MicrosandboxSandbox.spawn(
+        volumes=[(project, "/mnt", "w"), (linked_dir, "/mnt/linked/salt-data", "r")],
+        dockerfile=settings.dockerfile,
+        image=settings.image,
+    )
+    yield sb
+    await sb.close()
+
+
+async def _guest_status(sb, script: str) -> tuple[int, str]:
+    proc = await sb.exec("bash", args=["-c", script])
+    stdout, stderr = await asyncio.wait_for(proc.communicate(), 120)
+    return proc.returncode, (stdout + stderr).decode()
+
+
+async def test_read_only_mount_refuses_writes(read_only_sandbox, linked_dir):
+    before = _snapshot(linked_dir)
+    status, out = await _guest_status(
+        read_only_sandbox, "cat /mnt/linked/salt-data/a.txt"
+    )
+    assert status == 0 and out == "linked contents\n"
+    for write in (
+        "touch /mnt/linked/salt-data/new",
+        "echo changed > /mnt/linked/salt-data/a.txt",
+        "echo more >> /mnt/linked/salt-data/a.txt",
+        "rm /mnt/linked/salt-data/a.txt",
+        "mkdir /mnt/linked/salt-data/sub",
+        "mv /mnt/linked/salt-data/a.txt /mnt/linked/salt-data/b.txt",
+    ):
+        status, out = await _guest_status(read_only_sandbox, write)
+        assert status != 0, f"{write!r} succeeded: {out}"
+    assert _snapshot(linked_dir) == before
+
+
+async def test_read_only_mount_copy_to_work(read_only_sandbox):
+    status, out = await _guest_status(
+        read_only_sandbox,
+        "mkdir -p /mnt/data/work && cp /mnt/linked/salt-data/a.txt /mnt/data/work/ "
+        "&& echo edited >> /mnt/data/work/a.txt && cat /mnt/data/work/a.txt",
+    )
+    assert status == 0 and out == "linked contents\nedited\n"
+
+
+async def test_read_only_mount_large_read(read_only_sandbox, record_property):
+    t0 = time.monotonic()
+    status, out = await _guest_status(
+        read_only_sandbox, "cat /mnt/linked/salt-data/big.bin | wc -c"
+    )
+    elapsed = time.monotonic() - t0
+    assert status == 0 and int(out) == _BIG
+    record_property("read_1gb_seconds", round(elapsed, 2))
+    print(f"\nread 1 GiB through a read-only mount in {elapsed:.2f}s")
+
+
 async def test_dns_resolves(sandbox):
     out = await asyncio.wait_for(
         server.run_bash("getent hosts pypi.org && echo DNS_OK", _Ctx()), 60
