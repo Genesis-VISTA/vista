@@ -141,9 +141,9 @@ when `window.vistaApp?.pickFolder` exists, and always shows the typed-path field
 
 ## Risks / Trade-offs
 
-- [Windows guest cannot read a host bind mount (windows-support task 6.7)] → checked as the
-  first task, by Sam on a Windows host. If it fails, the backend refuses to link on Windows
-  with the reason, and the rest ships.
+- [Windows guest cannot read a host bind mount (windows-support task 6.7)] → Checked in task
+  1.1 on Windows 11 with native microsandbox: read-only mounts are readable by root and a
+  non-root user and refuse every write, so Windows links like the other hosts.
 - [Absolute symlinks inside a linked folder] A link `current -> /Users/me/data/salt/runs`
   that points inside the folder by absolute host path is followed by the backend but resolves
   to nothing in the guest. → Documented; relative symlinks work in both. Not worth rewriting

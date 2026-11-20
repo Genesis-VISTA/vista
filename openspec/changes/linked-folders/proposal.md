@@ -61,5 +61,5 @@ hint in a published project of the folders it expects.
 - **Electron:** `window.vistaApp.pickFolder()` through the main window's preload and an IPC
   handler calling `dialog.showOpenDialog`.
 - **Windows:** depends on a read-only host bind mount being readable in the guest, an open
-  question from windows-support (its task 6.7); checked first here.
+  question from windows-support (its task 6.7); checked first here, and it is (task 1.1).
 - **Docs:** a researcher-facing page on linked folders, listed in `docs/site.toml`.
