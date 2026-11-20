@@ -97,6 +97,34 @@ def resolve_linked_volumes(links: Sequence[LinkedFolder]) -> LinkedVolumes:
     return out
 
 
+def linked_folders_instructions(linked: LinkedVolumes) -> str | None:
+    """
+    What the agent is told about its linked folders: each sandbox path, that they are
+    read-only, how to change a file, and which are unavailable. Never a host path. None for
+    a project with no links.
+    """
+    if not linked.available and not linked.unavailable:
+        return None
+    lines = [
+        "## Linked folders",
+        "",
+        "The researcher linked these folders on their computer to this project. They are "
+        "read-only: nothing in the sandbox can create, change or delete a file in them. To "
+        "change a file, copy it into /mnt/data/work first and change the copy.",
+        "",
+    ]
+    lines += [f"- {sandbox} (read-only)" for _, sandbox, _, _ in linked.available]
+    if linked.unavailable:
+        lines += [
+            "",
+            "These linked folders are unavailable, and are not in this sandbox; tell the "
+            "researcher if a task needs one:",
+            "",
+        ]
+        lines += [f"- {name} ({reason})" for name, reason in linked.unavailable]
+    return "\n".join(lines)
+
+
 def clear_leftover_mount_points(volume_root: Path, keep: set[str]) -> None:
     """
     Remove the empty mount points a sandbox left in the project volume for links that are no

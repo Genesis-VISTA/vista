@@ -20,8 +20,8 @@
 
 ## 4. What the agent is told
 
-- [ ] 4.1 Append the "Linked folders" section to the project agent's instructions from 2.2's result: each sandbox path, read-only, copy to `/mnt/data/work` to change, each unavailable name; nothing when there are no links; never a host path. Verify with a unit test on the built instructions for a project with two links and one unavailable, and for one with none
-- [ ] 4.2 Verify the next-turn behaviour end to end with `harness.FakeSandbox`: link a folder after a finished turn, send a message, and assert the new agent's volumes and instructions include it
+- [x] 4.1 Append the "Linked folders" section to the project agent's instructions from 2.2's result: each sandbox path, read-only, copy to `/mnt/data/work` to change, each unavailable name; nothing when there are no links; never a host path. Verify with a unit test on the built instructions for a project with two links and one unavailable, and for one with none
+- [x] 4.2 Verify the next-turn behaviour end to end with `harness.FakeSandbox`: link a folder after a finished turn, send a message, and assert the new agent's volumes and instructions include it. *Done through the real agent pool and `_build_project_agent` instead, with only the MCP servers' start skipped: `FakeSandbox` fakes background commands, not mounts. The section is an `@agent.instructions`, not part of the system prompt, because a conversation keeps the system prompt in its history*
 
 ## 5. The `linked` file kind
 

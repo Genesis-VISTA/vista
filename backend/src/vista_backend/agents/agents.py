@@ -67,6 +67,7 @@ from ..services.job_records import describe as describe_jobs
 from ..services.linked_folders import (
     LinkedFolder,
     clear_leftover_mount_points,
+    linked_folders_instructions,
     resolve_linked_volumes,
 )
 from ..services.job_records import recent_jobs
@@ -690,6 +691,14 @@ class ProjectAgent:
             parts.append(skills_block)
 
             return "\n\n".join([p for p in parts if p])
+
+        @agent.instructions
+        def linked_instructions() -> str | None:
+            # Instructions, not the system prompt: a conversation's system prompt is the
+            # one in its history, while these are read for every turn, so a folder linked
+            # mid-conversation is described from the next message. Built from the same
+            # check as the mounts, so it says exactly what this sandbox has.
+            return linked_folders_instructions(self.linked)
 
         @agent.instructions
         def channel_instructions() -> str | None:
