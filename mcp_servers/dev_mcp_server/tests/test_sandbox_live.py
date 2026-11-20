@@ -195,15 +195,22 @@ def _snapshot(folder: Path) -> dict[str, tuple[int, bytes | None]]:
     }
 
 
-@pytest.fixture(scope="module")
-async def read_only_sandbox(tmp_path_factory, linked_dir):
-    if "MSB_HOME" not in os.environ:
-        pytest.skip("set MSB_HOME so the live tests don't migrate ~/.microsandbox")
-    project = tmp_path_factory.mktemp("project")
-    sb = await MicrosandboxSandbox.spawn(
-        volumes=[(project, "/mnt", "w"), (linked_dir, "/mnt/linked/salt-data", "r")],
-        dockerfile=settings.dockerfile,
-        image=settings.image,
+@pytest.fixture(scope="module", params=["microsandbox", "container"])
+async def read_only_sandbox(request, tmp_path_factory, linked_dir):
+    project = tmp_path_factory.mktemp(f"project-{request.param}")
+    volumes = [(project, "/mnt", "w"), (linked_dir, "/mnt/linked/salt-data", "r")]
+    if request.param == "microsandbox":
+        if "MSB_HOME" not in os.environ:
+            pytest.skip("set MSB_HOME so the live tests don't migrate ~/.microsandbox")
+        spawn = MicrosandboxSandbox.spawn
+    else:
+        try:
+            resolve_container_runtime()
+        except RuntimeError as e:
+            pytest.skip(str(e))
+        spawn = ContainerSandbox.spawn
+    sb = await spawn(
+        volumes=volumes, dockerfile=settings.dockerfile, image=settings.image
     )
     yield sb
     await sb.close()
@@ -243,7 +250,7 @@ async def test_read_only_mount_copy_to_work(read_only_sandbox):
     assert status == 0 and out == "linked contents\nedited\n"
 
 
-async def test_read_only_mount_large_read(read_only_sandbox, record_property):
+async def test_read_only_mount_large_read(read_only_sandbox, request, record_property):
     t0 = time.monotonic()
     status, out = await _guest_status(
         read_only_sandbox, "cat /mnt/linked/salt-data/big.bin | wc -c"
@@ -251,7 +258,45 @@ async def test_read_only_mount_large_read(read_only_sandbox, record_property):
     elapsed = time.monotonic() - t0
     assert status == 0 and int(out) == _BIG
     record_property("read_1gb_seconds", round(elapsed, 2))
-    print(f"\nread 1 GiB through a read-only mount in {elapsed:.2f}s")
+    backend = request.node.callspec.params["read_only_sandbox"]
+    print(f"\n{backend}: read 1 GiB through a read-only mount in {elapsed:.2f}s")
+
+
+@pytest.mark.parametrize("backend", ["microsandbox", "container"])
+async def test_removing_mount_point_keeps_running_mount(backend, tmp_path, linked_dir):
+    """2.3 removes leftover mount points, and one may still be in use by a held sandbox.
+
+    Whether the host lets it go or refuses, the running sandbox's mount must stay readable.
+    """
+    if backend == "microsandbox":
+        if "MSB_HOME" not in os.environ:
+            pytest.skip("set MSB_HOME so the live tests don't migrate ~/.microsandbox")
+        spawn = MicrosandboxSandbox.spawn
+    else:
+        try:
+            resolve_container_runtime()
+        except RuntimeError as e:
+            pytest.skip(str(e))
+        spawn = ContainerSandbox.spawn
+    project = tmp_path / "project"
+    project.mkdir()
+    sb = await spawn(
+        volumes=[(project, "/mnt", "w"), (linked_dir, "/mnt/linked/salt-data", "r")],
+        dockerfile=settings.dockerfile,
+        image=settings.image,
+    )
+    try:
+        mount_point = project / "linked" / "salt-data"
+        try:
+            mount_point.rmdir()
+            outcome = "removed"
+        except OSError as e:  # Docker Desktop on macOS refuses it while in use
+            outcome = f"refused ({e.strerror})"
+        print(f"\n{backend}: rmdir of an in-use mount point: {outcome}")
+        status, out = await _guest_status(sb, "cat /mnt/linked/salt-data/a.txt")
+        assert status == 0 and out == "linked contents\n"
+    finally:
+        await sb.close()
 
 
 async def test_dns_resolves(sandbox):

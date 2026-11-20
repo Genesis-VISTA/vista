@@ -56,7 +56,11 @@ still rides along in `ProjectPublic` to every consumer, and uniqueness becomes h
 ### Availability is checked when a sandbox's volumes are built, and when listed
 
 A single helper resolves a project's links into `available: [(host, /mnt/linked/<name>, "r")]`
-and `unavailable: [(name, reason)]` (missing, not a folder, unreadable). `ProjectAgent` uses
+and `unavailable: [(name, reason)]` (missing, not a folder, unreadable). It resolves each stored
+path again (`Path.resolve()`) and mounts the result: a path stored resolved can still come to
+pass through a symlink later (a folder on the way replaced by one), and microsandbox fails the
+whole sandbox start, not just that mount, on a host path through a symlink (`mount …: Not a
+directory`, found in group 1). `ProjectAgent` uses
 it for its volumes and for the agent's instructions; the settings and Files page use it for
 their status. No background polling: a link's status is whatever it was when last asked.
 
@@ -68,11 +72,28 @@ disagree with what the agent actually has.
 Each volume gains an `owned` flag in `VISTA_DEV_MCP_VOLUMES` (default true, so older callers
 behave as today). The dev server creates owned host paths as now, and drops an unowned volume
 whose host path is not an existing directory, logging it, rather than creating it or failing
-the start. Linked folders are sent unowned.
+the start. It resolves an unowned volume's host path before mounting it, for the same
+symlink reason as above. Linked folders are sent unowned.
 
 *Why:* the backend already filtered unavailable links, but a drive can vanish between that
 check and the VM's start; the dev server is the last line that would otherwise `mkdir` an
-empty folder where the researcher's data was.
+empty folder where the researcher's data was. It is also the last line before a symlinked
+path would stop the sandbox from starting at all.
+
+### Leftover mount points are removed before each sandbox starts
+
+A linked folder is mounted at `/mnt/linked/<name>`, inside the writable project volume at
+`/mnt`, so both backends create an empty `linked/<name>` folder in the host's project volume
+as its mount point and leave it there after the sandbox closes (found in group 1). Left alone,
+an unlinked, renamed or unavailable link would still appear to the next sandbox as an empty
+`/mnt/linked/<name>`, which the "Drive unplugged" scenario rules out. So when `ProjectAgent`
+builds its volumes, it removes every *empty* folder directly under `<volume>/linked/` that is
+not an available link's name, with `rmdir` only (never recursive, so anything the agent wrote
+there is kept), skipping any the host refuses. The dev server creates the mount points again as it mounts.
+
+*Why:* a sandbox path outside the project volume (`/linked/<name>`) would avoid mount points
+in the volume altogether, but changes the path everywhere it is named (specs, instructions,
+`uri_map`, transfer tools). Removing empty folders keeps every path as specified.
 
 ### The agent is told through its instructions, built per agent
 
@@ -135,6 +156,11 @@ when `window.vistaApp?.pickFolder` exists, and always shows the typed-path field
   is promised.
 - [A displayed linked file changes outside VISTA] → It is the researcher's folder, so it will.
   Shown-in already treats size or mtime changes as changed; nothing new.
+- [Removing a mount point on the host while another conversation's sandbox still has it
+  mounted (a held agent, e.g. a running background command)] → Checked live in task 1.3: under
+  microsandbox the `rmdir` succeeds and the guest's mount stays readable; Docker Desktop
+  refuses the `rmdir` while the container runs, which 2.3 skips. Either way the running mount
+  is untouched, so no held-agent check is needed.
 - [Renaming a link breaks the agent's earlier references to `/mnt/linked/<old>`] → Accepted;
   the next turn's instructions name the new path.
 

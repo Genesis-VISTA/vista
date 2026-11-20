@@ -56,7 +56,7 @@ is `.` or `..`, or holds any other character SHALL be refused.
 #### Scenario: Rename
 
 - **WHEN** the researcher renames link `data-2` to `msr-2025`
-- **THEN** the project lists `msr-2025` with the same path, and the next sandbox mounts it at `/mnt/linked/msr-2025`
+- **THEN** the project lists `msr-2025` with the same path, and the next sandbox mounts it at `/mnt/linked/msr-2025` and has no `/mnt/linked/data-2`
 
 #### Scenario: Invalid name
 
@@ -141,6 +141,11 @@ change takes effect on each conversation's next message.
 
 - **WHEN** a conversation has finished a turn and the researcher links `salt-data` to its project, then sends a message
 - **THEN** the agent in that turn can read `/mnt/linked/salt-data`
+
+#### Scenario: Unlinked during a conversation
+
+- **WHEN** a conversation has finished a turn with `salt-data` mounted, and the researcher unlinks it, then sends a message
+- **THEN** the sandbox in that turn has no `/mnt/linked/salt-data`
 
 #### Scenario: Running command keeps its mounts
 

@@ -2,7 +2,7 @@
 
 ### Requirement: Sandbox volumes
 
-Host directories mounted into the sandbox SHALL appear at their configured sandbox path, with the configured access mode, on every supported host. Writes to a writable mount SHALL be visible on the host. A read-only mount SHALL refuse every write from inside the sandbox. A mount's host directory SHALL be created when missing only for a directory VISTA owns (the project volume and the folders inside it); a missing host directory VISTA does not own SHALL NOT be created, and SHALL NOT be mounted.
+Host directories mounted into the sandbox SHALL appear at their configured sandbox path, with the configured access mode, on every supported host. Writes to a writable mount SHALL be visible on the host. A read-only mount SHALL refuse every write from inside the sandbox. A mount's host directory SHALL be created when missing only for a directory VISTA owns (the project volume and the folders inside it); a missing host directory VISTA does not own SHALL NOT be created, and SHALL NOT be mounted. A host directory VISTA does not own SHALL be mounted when reached through a symlink, and a mount of one that cannot be made SHALL NOT stop the sandbox from starting.
 
 #### Scenario: Writable mount round-trip
 
@@ -18,3 +18,8 @@ Host directories mounted into the sandbox SHALL appear at their configured sandb
 
 - **WHEN** a sandbox is started with a read-only mount of a host directory that does not exist and that VISTA does not own
 - **THEN** the sandbox starts without that mount, and the host directory still does not exist
+
+#### Scenario: A folder reached through a symlink is mounted
+
+- **WHEN** a sandbox is started with a read-only mount of a host directory VISTA does not own, given by a path that passes through a symlink
+- **THEN** the sandbox starts, and the mount shows that directory's contents
