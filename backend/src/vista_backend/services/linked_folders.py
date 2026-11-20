@@ -188,18 +188,23 @@ def _overlaps(a: Path, b: Path) -> bool:
     return _same_folder(a, b) or path_is_under(a, b) or path_is_under(b, a)
 
 
-def is_broad(path: Path) -> bool:
-    """The home folder or a filesystem root (`/`, `C:\\`): the agent could read everything."""
-    return path.parent == path or _same_folder(path, Path.home().resolve())
+def is_root(path: Path) -> bool:
+    """A filesystem root: `/`, or a drive such as `C:\\`. A mounted volume is not one."""
+    return path.parent == path
 
 
-def check_linkable(
-    path: str, existing: Sequence[LinkedFolder], confirm_broad: bool = False
-) -> Path:
+def is_home(path: Path) -> bool:
+    return _same_folder(path, Path.home().resolve())
+
+
+def check_linkable(path: str, existing: Sequence[LinkedFolder]) -> Path:
     """
     The folder to link, resolved, or why it can't be: not an existing folder, already
-    linked, VISTA's own data (or a folder inside or holding it), or a broad folder the
-    researcher hasn't confirmed.
+    linked, the home folder or a filesystem root, or VISTA's own data (or a folder inside
+    or holding it).
+
+    Home folders and roots are refused outright, not confirmed: they hold far more secrets
+    than VISTA's (`~/.ssh`, cloud credentials), and the sandbox has network access.
     """
     raw = Path(path).expanduser()
     if not raw.is_absolute():
@@ -220,20 +225,21 @@ def check_linkable(
                 f"This folder is already linked as “{link.name}”.",
                 link=link.name,
             )
+    # Before VISTA's data: a home folder holds `~/.vista` too, and this says what to do.
+    if is_home(folder) or is_root(folder):
+        what = "your home folder" if is_home(folder) else "a whole drive"
+        raise LinkRefused(
+            400,
+            "broad_folder",
+            f"{folder} is {what}, which can't be linked: link the folder inside it that "
+            "holds your data.",
+        )
     if _overlaps(folder, settings.data_dir.resolve()):
         raise LinkRefused(
             400,
             "vista_data",
             "VISTA's own data can't be linked: this folder is, holds, or is inside "
             "VISTA's data folder.",
-        )
-    if is_broad(folder) and not confirm_broad:
-        raise LinkRefused(
-            409,
-            "broad_folder",
-            f"{folder} is your home folder or a whole drive: the agent will be able to "
-            "read everything in it. Link it anyway?",
-            path=str(folder),
         )
     return folder
 
@@ -293,10 +299,9 @@ async def add_link(
     project_id: uuid.UUID,
     path: str,
     name: str | None = None,
-    confirm_broad: bool = False,
 ) -> ProjectLinkedFolderTable:
     existing = await list_links(session, project_id)
-    folder = check_linkable(path, existing, confirm_broad)
+    folder = check_linkable(path, existing)
     names = [row.name for row in existing]
     if name is None:
         name = default_name(folder.name, names)

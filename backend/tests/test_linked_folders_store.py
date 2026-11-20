@@ -93,9 +93,9 @@ def test_a_good_name_passes():
 # ---------------------------------------------------------------------------
 
 
-def _refused(path, existing=(), confirm_broad=False) -> LinkRefused:
+def _refused(path, existing=()) -> LinkRefused:
     with pytest.raises(LinkRefused) as e:
-        check_linkable(str(path), list(existing), confirm_broad)
+        check_linkable(str(path), list(existing))
     return e.value
 
 
@@ -127,27 +127,27 @@ def test_vistas_data_folder_inside_it_or_holding_it(tmp_path):
         assert (e.status, e.code) == (400, "vista_data"), path
 
 
-def test_a_home_folder_holding_vistas_data_is_refused_outright(tmp_path, monkeypatch):
-    """Packaged installs keep VISTA's data in `~/.vista`: no confirmation can link it."""
+def test_the_home_folder_is_refused(_data_dir):
+    e = _refused(_data_dir)
+    assert (e.status, e.code) == (400, "broad_folder")
+    assert "home folder" in e.detail and "folder inside it" in e.detail
+
+
+def test_a_home_folder_holding_vistas_data_says_it_is_home(monkeypatch):
+    """Packaged installs keep VISTA's data in `~/.vista`: the reason is still "home"."""
     home = Path.home()
     monkeypatch.setattr(settings, "data_dir", _folder(home, ".vista"))
-    e = _refused(home, confirm_broad=True)
-    assert e.code == "vista_data"
+    assert _refused(home).code == "broad_folder"
 
 
-def test_the_home_folder_needs_confirming(_data_dir):
-    e = _refused(_data_dir)
-    assert (e.status, e.code, e.extra) == (
-        409,
-        "broad_folder",
-        {"path": str(_data_dir)},
-    )
-    assert check_linkable(str(_data_dir), [], confirm_broad=True) == _data_dir
+def test_a_filesystem_root_is_refused():
+    e = _refused(Path(Path.cwd().anchor))
+    assert (e.code, "a whole drive" in e.detail) == ("broad_folder", True)
 
 
-def test_a_filesystem_root_is_broad():
-    assert linked_folders.is_broad(Path(Path.cwd().anchor))
-    assert not linked_folders.is_broad(Path.cwd())
+def test_a_folder_inside_home_or_a_mounted_volume_is_not_broad(_data_dir, tmp_path):
+    assert check_linkable(str(_folder(_data_dir, "Research")), []).name == "Research"
+    assert not linked_folders.is_root(Path("/Volumes/External"))
 
 
 # ---------------------------------------------------------------------------
@@ -259,13 +259,12 @@ async def test_refusals_name_the_reason(session, tmp_path, _data_dir):
         data = await client.post(url, json={"path": str(settings.data_dir)})
         assert (data.status_code, data.json()["code"]) == (400, "vista_data")
 
-        broad = await client.post(url, json={"path": str(_data_dir)})
-        assert (broad.status_code, broad.json()["code"]) == (409, "broad_folder")
-        assert "read everything" in broad.json()["detail"]
-        confirmed = await client.post(
+        home = await client.post(url, json={"path": str(_data_dir)})
+        assert (home.status_code, home.json()["code"]) == (400, "broad_folder")
+        ignored = await client.post(
             url, json={"path": str(_data_dir), "confirm_broad": True}
         )
-        assert confirmed.status_code == 201, confirmed.text
+        assert ignored.status_code == 400, "there is no way past it"
         unknown = await client.get("/projects/nope/linked-folders")
     assert unknown.status_code == 404
 

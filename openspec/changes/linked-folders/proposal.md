@@ -12,7 +12,8 @@ drift apart. The agent should be able to read that folder where it is.
   defaulting to the folder's own and editable by the researcher.
 - **Linking.** In the project's settings: a native folder picker in the VISTA window, and a
   typed path for the browser-only dev UI. VISTA's own data folder (or one inside or holding
-  it) is refused; a home folder or a filesystem root asks for confirmation first.
+  it) is refused, and so are a home folder and a filesystem root; the settings warn that the
+  agent can read every file in a linked folder, credentials included.
 - **The agent is told.** Its instructions list each linked folder and say that they are
   read-only, so a file to be changed is copied into `/mnt/data/work` first. A folder that is
   missing when a sandbox starts is left out, never created, and named to the agent and in the

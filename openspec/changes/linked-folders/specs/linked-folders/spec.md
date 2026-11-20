@@ -66,18 +66,24 @@ is `.` or `..`, or holds any other character SHALL be refused.
 ### Requirement: Folders that cannot be linked
 
 VISTA SHALL refuse to link its own data folder, any folder inside it, and any folder that
-contains it. Linking the researcher's home folder or a filesystem root SHALL ask the
-researcher to confirm first, saying that the agent can read everything in it.
+contains it. VISTA SHALL refuse to link the researcher's home folder or a filesystem root
+(`/`, or a drive such as `C:\`), saying to link the folder inside it that holds the data.
+Wherever the researcher links a folder, the settings SHALL warn: "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
 
 #### Scenario: VISTA's data folder
 
 - **WHEN** the researcher links VISTA's data folder, a project volume inside it, or a folder that contains it
 - **THEN** nothing is linked and the settings say that VISTA's own data cannot be linked
 
-#### Scenario: Home folder asks first
+#### Scenario: Home folder or root
 
-- **WHEN** the researcher links their home folder
-- **THEN** VISTA asks them to confirm before linking it, and links it only if they do
+- **WHEN** the researcher links their home folder, `/`, or a drive such as `D:\`
+- **THEN** nothing is linked and the settings say to link the folder inside it that holds the data
+
+#### Scenario: Warned before linking
+
+- **WHEN** the researcher opens Link folder in a project's settings
+- **THEN** the settings show "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
 
 ### Requirement: Linked folders are mounted read-only
 

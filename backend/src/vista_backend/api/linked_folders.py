@@ -31,8 +31,6 @@ class LinkFolderRequest(BaseModel):
     """ The folder's absolute path on this computer, picked or typed. """
     name: str | None = None
     """ Its name in the sandbox; by default, made from the folder's own. """
-    confirm_broad: bool = False
-    """ The researcher confirmed linking their home folder or a whole drive. """
 
 
 class RenameLinkRequest(BaseModel):
@@ -56,9 +54,7 @@ async def link_folder(
     project_name: str, body: LinkFolderRequest, session: SessionDep
 ) -> LinkedFolderPublic:
     project = await project_service.get_project_by_name(session, project_name)
-    row = await linked_folders.add_link(
-        session, project.id, body.path, body.name, body.confirm_broad
-    )
+    row = await linked_folders.add_link(session, project.id, body.path, body.name)
     invalidate_agents(session, project_id=project.id)
     return _public(row)
 
