@@ -46,5 +46,5 @@
 
 ## 9. Docs and closing checks
 
-- [ ] 9.1 Write `docs/linked-folders.md` (what linking grants the agent, including credentials in a linked folder, and why home folders and roots are refused, read-only and the copy rule, unavailable folders, relative vs absolute symlinks, links stay on this computer) and list it in `docs/site.toml`. Verify with `./scripts/ci-local.sh docs`
+- [x] 9.1 Write `docs/linked-folders.md` (what linking grants the agent, including credentials in a linked folder, and why home folders and roots are refused, read-only and the copy rule, unavailable folders, relative vs absolute symlinks, links stay on this computer) and list it in `docs/site.toml`. Verify with `./scripts/ci-local.sh docs`
 - [ ] 9.2 Run `./scripts/ci-local.sh` (all lint and test) and the `-m sandbox` suite on macOS, and try the whole flow in `./launch.sh logs`: link a multi-GB folder, ask the agent to summarize a file in it, display a plot from it, and upload a file from it to a cluster in dry-run
