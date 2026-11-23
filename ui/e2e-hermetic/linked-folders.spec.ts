@@ -163,11 +163,11 @@ test.describe("linked folders", () => {
     const linked = page.getByTestId("files-linked");
     await expect(linked).toContainText("/mnt/linked/salt-data");
     await expect(linked).toContainText("Unavailable: missing");
-    await expect(linked.getByRole("button", { name: /msr-runs/ })).toBeDisabled();
+    await expect(linked.getByRole("button", { name: /^msr-runs/ })).toBeDisabled();
     // Nothing is listed until a folder is opened.
     await expect(linked.getByText("README.md")).toHaveCount(0);
 
-    await linked.getByRole("button", { name: /salt-data/ }).click();
+    await linked.getByRole("button", { name: /^salt-data/ }).click();
     await expect(linked.getByText("README.md")).toBeVisible();
     await linked.getByRole("button", { name: "runs", exact: true }).click();
     await linked.getByRole("button", { name: "2026-11", exact: true }).click();
