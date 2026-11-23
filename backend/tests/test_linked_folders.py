@@ -211,3 +211,7 @@ def test_display_file_can_reach_each_mounted_link(tmp_path, monkeypatch):
         "/api/files/linked/salt-data/{path}?project_name=molten-salt"
     )
     assert not any("msr-runs" in key for key in uri_map)
+
+    # Task 6.1: the transfer tools upload from a mounted link where it is.
+    paths = agent._build_vista_metadata("hpc_upload_files")["vista"]["project_paths"]  # noqa: SLF001
+    assert paths["linked"] == {"salt-data": str(real.resolve())}

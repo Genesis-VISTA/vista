@@ -31,7 +31,7 @@
 
 ## 6. Uploading linked files to a cluster
 
-- [ ] 6.1 Add `linked: {name: host_path}` for available links to the per-call project paths, and accept `/mnt/linked/<name>/…` in `transfer_mcp._local_source`, resolving symlinks before the confinement check. Verify with the dry-run transfer tests: upload from a linked folder succeeds without copying into the volume; `/mnt/linked/salt-data/../../etc/hosts`, an outward symlink and an unknown link are refused before anything is uploaded
+- [x] 6.1 Add `linked: {name: host_path}` for available links to the per-call project paths, and accept `/mnt/linked/<name>/…` in `transfer_mcp._local_source`, resolving symlinks before the confinement check. Verify with the dry-run transfer tests: upload from a linked folder succeeds without copying into the volume; `/mnt/linked/salt-data/../../etc/hosts`, an outward symlink and an unknown link are refused before anything is uploaded
 
 ## 7. Folder picker in the VISTA window
 

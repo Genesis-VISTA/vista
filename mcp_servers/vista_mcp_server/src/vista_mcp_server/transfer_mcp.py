@@ -50,6 +50,7 @@ TRANSFERS = "transfers"
 """ The folder name for transfers: in the project's output folder, and in the sources folder on the cluster. """
 
 SANDBOX_UPLOADS_DIR = PurePosixPath("/mnt/data/uploads")
+SANDBOX_LINKED_DIR = PurePosixPath("/mnt/linked")
 """ Where the researcher's uploaded files appear inside the sandbox. """
 
 
@@ -385,11 +386,17 @@ def _transfer_subdir(remote_dir: str) -> str:
 
 
 def _local_source(paths: ProjectPaths, path: str) -> Path:
-    """ The host file behind a sandbox path in the project's output or uploads folder. """
+    """
+    The host file behind a sandbox path in the project's output or uploads folder, or in
+    one of its linked folders, read where it is. `_confined_paths` resolves symlinks before
+    its check, so one leading out of its folder is refused.
+    """
     posix = PurePosixPath(path)
-    for sandbox_root, host_root in (
+    roots = [
         (SANDBOX_OUTPUT_DIR, paths.output_dir), (SANDBOX_UPLOADS_DIR, paths.uploads_dir),
-    ):
+        *((SANDBOX_LINKED_DIR / name, host) for name, host in paths.linked.items()),
+    ]
+    for sandbox_root, host_root in roots:
         if host_root and posix.is_relative_to(sandbox_root):
             try:
                 local, _ = _confined_paths(
@@ -400,9 +407,14 @@ def _local_source(paths: ProjectPaths, path: str) -> Path:
             if not local.is_file():
                 raise ToolError(f'Cannot upload "{path}": it is not a file.')
             return local
+    if posix.is_relative_to(SANDBOX_LINKED_DIR) and len(posix.parts) > 3:
+        raise ToolError(
+            f'Cannot upload "{path}": this project has no available linked folder '
+            f'"{posix.parts[3]}".'
+        )
     raise ToolError(
-        f'Cannot upload "{path}": only files under {SANDBOX_OUTPUT_DIR} or '
-        f"{SANDBOX_UPLOADS_DIR} can be uploaded."
+        f'Cannot upload "{path}": only files under {SANDBOX_OUTPUT_DIR}, '
+        f"{SANDBOX_UPLOADS_DIR} or a linked folder in {SANDBOX_LINKED_DIR} can be uploaded."
     )
 
 

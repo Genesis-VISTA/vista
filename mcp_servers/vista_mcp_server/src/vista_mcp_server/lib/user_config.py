@@ -170,6 +170,8 @@ class ProjectPaths(BaseModel):
     skills_dir: str | None = None
     output_dir: str | None = None
     uploads_dir: str | None = None
+    linked: dict[str, str] = Field(default_factory=dict)
+    """ Each linked folder the agent's sandbox mounted, `/mnt/linked/<name>`: name -> host path. """
 
     def require_output_dir(self) -> str:
         if not self.output_dir:

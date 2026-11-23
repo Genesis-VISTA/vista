@@ -989,6 +989,11 @@ class ProjectAgent:
                     "skills_dir": str(self.skills_volume_dir),
                     "output_dir": str(self.output_dir),
                     "uploads_dir": str(self.uploads_dir),
+                    # The transfer tools upload from a mounted link where it is.
+                    "linked": {
+                        PurePosixPath(sandbox).name: host
+                        for host, sandbox, _, _ in self.linked.available
+                    },
                 },
                 # `display_file` turns a path inside the sandbox into something
                 # the browser can fetch. Without this map it has nothing to

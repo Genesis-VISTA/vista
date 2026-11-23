@@ -576,6 +576,67 @@ async def test_a_source_outside_the_project_or_not_a_file_is_refused(
     assert approver.messages == []
 
 
+# --- uploading from a linked folder (openspec change linked-folders, task 6.1) ---
+
+
+@pytest.fixture
+def linked(tmp_path, project) -> Path:
+    """`salt-data` linked, holding `big/traj.nc`, `escape` (a symlink out) and `inside`."""
+    root = tmp_path / "Research" / "salt-data"
+    (root / "big").mkdir(parents=True)
+    (root / "big" / "traj.nc").write_bytes(b"netcdf")
+    (tmp_path / "secret.txt").write_text("secret", encoding="utf-8")
+    (root / "escape").symlink_to(tmp_path / "secret.txt")
+    (root / "inside").symlink_to(Path("big") / "traj.nc")
+    project.linked = {"salt-data": str(root)}
+    return root
+
+
+async def test_an_upload_from_a_linked_folder_reads_it_where_it_is(
+    globus, project, linked, approver
+):
+    text = await t._upload_files(
+        CFG,
+        project,
+        "frontier",
+        ["/mnt/linked/salt-data/big/traj.nc"],
+        "inputs",
+        approver,
+    )
+    assert globus.files["/r.jdoe.jobs/transfers/inputs/traj.nc"] == b"netcdf"
+    assert text.splitlines()[-1] == "/r.jdoe.jobs/transfers/inputs/traj.nc"
+    assert list(Path(project.output_dir).iterdir()) == []
+    assert list(Path(project.uploads_dir).iterdir()) == [], "no copy in the volume"
+
+
+async def test_a_symlink_inside_a_linked_folder_uploads(
+    globus, project, linked, approver
+):
+    await t._upload_files(
+        CFG, project, "odo", ["/mnt/linked/salt-data/inside"], "", approver
+    )
+    assert globus.files["/r.jdoe.jobs/transfers/inside"] == b"netcdf"
+
+
+@pytest.mark.parametrize(
+    ("path", "says"),
+    [
+        ("/mnt/linked/salt-data/../../etc/hosts", "Invalid path"),
+        ("/mnt/linked/salt-data/escape", "Invalid path"),
+        ("/mnt/linked/salt-data/big", "not a file"),
+        ("/mnt/linked/nope/a.txt", 'no available linked folder "nope"'),
+        ("/mnt/linked/salt-data", "not a file"),
+    ],
+)
+async def test_a_bad_linked_source_is_refused_before_anything_is_uploaded(
+    globus, project, linked, approver, path, says
+):
+    with pytest.raises(ToolError, match=says):
+        await t._upload_files(CFG, project, "odo", [path], "", approver)
+    assert globus.clients == 0
+    assert approver.messages == []
+
+
 async def test_two_sources_with_one_name_are_refused(globus, project, approver):
     (Path(project.uploads_dir) / "a.txt").write_text("1", encoding="utf-8")
     (Path(project.output_dir) / "a.txt").write_text("2", encoding="utf-8")
