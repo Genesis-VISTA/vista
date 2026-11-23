@@ -9,7 +9,7 @@ computer, so it can work with data far larger than an upload without copying it 
 
 A project SHALL hold any number of linked folders, each an absolute folder path on this
 computer and a name. The researcher SHALL link, rename and unlink folders in the project's
-settings. In the VISTA window, linking SHALL offer the system's folder picker; a typed or
+settings, and SHALL also be able to link one from the Files page. In the VISTA window, linking SHALL offer the system's folder picker; a typed or
 pasted path SHALL be accepted everywhere. A linked path SHALL be stored as the folder's
 resolved absolute path, and SHALL be refused when it is not an existing folder or is already
 linked to the project.
@@ -18,6 +18,11 @@ linked to the project.
 
 - **WHEN** the researcher, in the VISTA window, chooses Link folder in a project's settings and picks `~/Research/salt-data`
 - **THEN** the project lists a linked folder named `salt-data` with that folder's absolute path
+
+#### Scenario: Link from the Files page
+
+- **WHEN** the researcher, on the Files page, chooses Link folder and picks or types `~/Research/salt-data`
+- **THEN** the Linked section lists `salt-data`, and the project's settings list it too
 
 #### Scenario: Link by typed path
 

@@ -3606,6 +3606,14 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--panel-2);
 }
 
+/* Linking a folder, in a project's settings and on the Files page. */
+.link-folder-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
 /* A project's linked folders, in its settings (openspec change linked-folders). */
 .linked-folders-list {
   list-style: none;

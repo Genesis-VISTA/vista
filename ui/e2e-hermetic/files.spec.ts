@@ -75,7 +75,8 @@ test.describe("files page", () => {
     await expect(page).toHaveURL(/\/files$/);
 
     const titles = page.locator(".files-section-title");
-    await expect(titles).toHaveText(["Outputs", "Uploads"]);
+    // Linked is always there, empty here, so a folder can be linked from this page.
+    await expect(titles).toHaveText(["Outputs", "Uploads", "Linked"]);
 
     const outputs = page.locator(".files-section").filter({ hasText: "Outputs" });
     const uploads = page.locator(".files-section").filter({ hasText: "Uploads" });

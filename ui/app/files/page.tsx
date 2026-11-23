@@ -7,6 +7,7 @@ import { useActiveProject } from "@/lib/projects";
 import { AppTopBar } from "@/components/AppTopBar";
 import { ProjectRequired } from "@/components/ProjectRequired";
 import FilePreview from "@/components/FilePreview";
+import { LinkFolderControl } from "@/components/LinkFolderControl";
 import { useTour } from "@/components/TourProvider";
 import { EXAMPLE_FILES, exampleAt } from "@/lib/onboarding-examples";
 import type { TourEvent } from "@/lib/onboarding";
@@ -145,6 +146,15 @@ function FilesPageInner() {
   const selected =
     isKind(kindParam) && pathParam ? { kind: kindParam, path: pathParam } : null;
 
+  const loadLinks = useCallback(async () => {
+    if (!projectName) return;
+    try {
+      setLinks(await listLinkedFolders(projectName));
+    } catch {
+      setLinks([]);
+    }
+  }, [projectName]);
+
   const loadListing = useCallback(async () => {
     if (!projectName) {
       setListing(EMPTY);
@@ -155,9 +165,7 @@ function FilesPageInner() {
     // makes the open ones load again.
     loadingDirs.current = new Set();
     setLinkedDirs({});
-    listLinkedFolders(projectName)
-      .then(setLinks)
-      .catch(() => setLinks([]));
+    void loadLinks();
     try {
       const [uploadsRes, outputsRes] = await Promise.all([
         fetch(`/api/files/uploads${projectQuery}`),
@@ -177,7 +185,7 @@ function FilesPageInner() {
       setIsLoading(false);
       setLoaded(true);
     }
-  }, [projectName, projectQuery]);
+  }, [projectName, projectQuery, loadLinks]);
 
   useEffect(() => {
     void loadListing();
@@ -664,15 +672,25 @@ function FilesPageInner() {
                       )}
                     </div>
                   ))}
-                  {links.length > 0 && (
-                    <div className="files-section" data-testid="files-linked">
-                      <div className="files-section-head">
-                        <h2 className="files-section-title">Linked</h2>
-                        <span className="tag">/mnt/linked</span>
-                      </div>
-                      <span className="muted" style={{ fontSize: 11 }}>
-                        Folders on this computer, read-only. Link and unlink them in the project&apos;s settings.
-                      </span>
+                  <div className="files-section" data-testid="files-linked">
+                    <div className="files-section-head">
+                      <h2 className="files-section-title">Linked</h2>
+                      <span className="tag">/mnt/linked</span>
+                    </div>
+                    <span className="muted" style={{ fontSize: 11 }}>
+                      Folders on this computer the agent reads, read-only. Rename and unlink them in the
+                      project&apos;s settings.
+                    </span>
+                    <LinkFolderControl
+                      projectName={projectName}
+                      onLinked={async (made) => {
+                        await loadLinks();
+                        if (made.available) toggleFolder("linked", made.name);
+                      }}
+                    />
+                    {links.length === 0 ? (
+                      <div className="chat-bubble">No linked folders yet.</div>
+                    ) : (
                       <ul className="files-tree" aria-label="Linked">
                         {links.map((l) => {
                           const open = l.available && isOpen("linked", l.name);
@@ -701,8 +719,8 @@ function FilesPageInner() {
                           );
                         })}
                       </ul>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
                 <div className="files-preview-pane" data-tour="files:preview">
                   {selected && selectedFile ? (

@@ -173,6 +173,34 @@ test.describe("linked folders", () => {
     await expect(preview.locator(".file-preview-markdown")).toContainText("Salt data");
   });
 
+  test("a folder is linked from the Files page, which shows it at once", async ({ page }) => {
+    const when = "2026-11-20T10:00:00+00:00";
+    stub = await installStub(page, {
+      "GET /api/files/outputs": [],
+      "GET /api/files/uploads": [],
+      [`GET ${LINKS}`]: [],
+      [`POST ${LINKS}`]: SALT,
+      [`GET ${LINKS}/salt-data/entries`]: [
+        { name: "README.md", path: "README.md", type: "file", size: 120, modified: when, shown_in: null },
+      ],
+    });
+    await openMoltenSalt(page);
+    await page.goto("/files");
+    const linked = page.getByTestId("files-linked");
+    await expect(linked).toContainText("No linked folders yet.");
+    await expect(linked).toContainText(WARNING);
+
+    await stub.setRoute(`GET ${LINKS}`, [SALT]);
+    await linked.getByLabel("Folder path to link").fill("/Users/ada/Research/salt-data");
+    await linked.getByRole("button", { name: "Link", exact: true }).click();
+    // Linked, listed, and opened, so its top level shows straight away.
+    await expect(linked).toContainText("/mnt/linked/salt-data");
+    await expect(linked.getByText("README.md")).toBeVisible();
+    expect(await stub.bodies(`POST ${LINKS}`)).toEqual([{ path: "/Users/ada/Research/salt-data" }]);
+    // Renaming and unlinking stay in the project's settings.
+    await expect(linked.getByRole("button", { name: /^(Rename|Unlink)/ })).toHaveCount(0);
+  });
+
   test("a link to a linked file opens its folders and previews it", async ({ page }) => {
     const when = "2026-11-20T10:00:00+00:00";
     stub = await installStub(page, {

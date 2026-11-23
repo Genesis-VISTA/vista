@@ -4,8 +4,7 @@
 
 The project-scoped Files page SHALL list the project's outputs (`/mnt/data/output`) and
 uploads (`/mnt/data/uploads`) as two folder trees, Outputs first, each naming its sandbox
-path, followed by a Linked section when the project has linked folders (see Linked folders
-on the Files page). Files SHALL be ordered newest first within a folder. The page SHALL offer
+path, followed by a Linked section (see Linked folders on the Files page). Files SHALL be ordered newest first within a folder. The page SHALL offer
 upload, download and delete as before for outputs and uploads, and SHALL NOT offer a dataset
 catalog.
 
@@ -30,10 +29,10 @@ catalog.
 - **WHEN** the Files page renders
 - **THEN** it SHALL NOT render a dataset catalog selector
 
-#### Scenario: No links, no Linked section
+#### Scenario: No links yet
 
 - **WHEN** the project has no linked folders
-- **THEN** the Files page SHALL show no Linked section
+- **THEN** the Files page SHALL show an empty Linked section that offers Link folder
 
 ### Requirement: Record of displayed files
 
@@ -75,7 +74,9 @@ unavailable with the reason and no contents. A linked folder's contents SHALL be
 directory at a time, a folder's entries being fetched when it is expanded. Selecting a linked
 file SHALL preview it as Typed previews describes and SHALL offer download, and its responses
 SHALL follow Project files never run outside a sandbox. The page SHALL NOT offer upload,
-delete or rename in a linked folder.
+delete or rename in a linked folder. The Linked section SHALL offer Link folder (the system's
+folder picker in the VISTA window, a typed path everywhere) with the same warning as the
+project's settings; renaming and unlinking stay in the project's settings.
 
 #### Scenario: Browsing a large folder
 

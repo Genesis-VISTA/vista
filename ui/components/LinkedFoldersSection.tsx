@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { LinkFolderControl } from "@/components/LinkFolderControl";
 import {
-  LINK_WARNING,
-  folderPicker,
-  linkFolder,
   listLinkedFolders,
   renameLinkedFolder,
   unlinkFolder,
@@ -19,11 +17,9 @@ import {
  */
 export function LinkedFoldersSection({ projectName }: { projectName: string }) {
   const [links, setLinks] = useState<LinkedFolder[] | null>(null);
-  const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [renaming, setRenaming] = useState<{ link: string; name: string } | null>(null);
-  const pick = folderPicker();
 
   const load = useCallback(async () => {
     try {
@@ -51,17 +47,6 @@ export function LinkedFoldersSection({ projectName }: { projectName: string }) {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function link(path: string) {
-    if (!path.trim()) return;
-    if (await act(() => linkFolder(projectName, path.trim()))) setTyped("");
-  }
-
-  async function choose() {
-    if (!pick) return;
-    const path = await pick();
-    if (path) await link(path);
   }
 
   async function rename() {
@@ -155,38 +140,7 @@ export function LinkedFoldersSection({ projectName }: { projectName: string }) {
           ))}
         </ul>
       )}
-      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-        {pick && (
-          <button type="button" className="button ghost button-sm" onClick={() => void choose()} disabled={busy}>
-            Link folder…
-          </button>
-        )}
-        <input
-          className="input"
-          style={{ flex: 1, minWidth: 200 }}
-          aria-label="Folder path to link"
-          placeholder={pick ? "or type a folder's path" : "Folder path, e.g. /Users/you/Research/salt-data"}
-          value={typed}
-          onChange={(e) => setTyped(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              void link(typed);
-            }
-          }}
-        />
-        <button
-          type="button"
-          className="button button-sm"
-          onClick={() => void link(typed)}
-          disabled={busy || !typed.trim()}
-        >
-          Link
-        </button>
-      </div>
-      <span role="note" style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
-        {LINK_WARNING}
-      </span>
+      <LinkFolderControl projectName={projectName} onLinked={() => load()} />
       {error && (
         <span className="error" role="alert" style={{ fontSize: 12, fontWeight: 400 }}>
           {error}
