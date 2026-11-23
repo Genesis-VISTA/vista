@@ -30,6 +30,7 @@ import { resolvePackage } from './package-root.js';
 import { DEFAULT_BACKEND_PORT, resetData } from './data-reset.js';
 import { formatDiagnostics, resetAllowed, StartupStateMachine, updateFailureNotice } from './startup-protocol.js';
 import { checkRestartRequest, handOff, helperCommand, helperName, takeUpdateFailure } from './update-bridge.js';
+import { pickFolder } from './folder-picker.js';
 import {
   copyWindow, dismissStatusWindow, markerPresent, POLL_MS, readStatus, shouldClose, statusView,
 } from './update-status.js';
@@ -625,6 +626,13 @@ function helperStarted(child) {
     });
   });
 }
+
+ipcMain.handle('app:pick-folder', (event) => pickFolder({
+  dialog,
+  window: mainWindow && !mainWindow.isDestroyed() ? mainWindow : null,
+  fromMainWindow: Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents),
+  fromMainFrame: Boolean(event.senderFrame && event.senderFrame === event.sender.mainFrame),
+}));
 
 ipcMain.handle('app:restart-to-update', async (event, version) => {
   if (restartingToUpdate) return { ok: false, reason: 'VISTA is already restarting into an update.' };

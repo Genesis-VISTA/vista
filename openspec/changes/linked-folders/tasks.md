@@ -35,7 +35,7 @@
 
 ## 7. Folder picker in the VISTA window
 
-- [ ] 7.1 Add `pickFolder()` to `window.vistaApp` in `electron/src/main-preload.cjs` and an `app:pick-folder` handler in `main.js` calling `dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })`, returning the path or null. Verify with `cd electron && npm test` (a unit test of the handler with `dialog` stubbed) and a manual pick in `./launch.sh logs`
+- [x] 7.1 Add `pickFolder()` to `window.vistaApp` in `electron/src/main-preload.cjs` and an `app:pick-folder` handler in `main.js` calling `dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] })`, returning the path or null. Verify with `cd electron && npm test` (a unit test of the handler with `dialog` stubbed) and a manual pick in `./launch.sh logs`
 
 ## 8. UI
 
