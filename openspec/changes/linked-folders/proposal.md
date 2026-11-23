@@ -10,9 +10,10 @@ drift apart. The agent should be able to read that folder where it is.
 - **Linked folders.** A project can link any number of folders on this computer. Each is
   mounted **read-only** into every conversation's sandbox at `/mnt/linked/<name>`, the name
   defaulting to the folder's own and editable by the researcher.
-- **Linking.** In the project's settings: a native folder picker in the VISTA window, and a
+- **Linking.** On the project's Files page, beside Upload, where links are also renamed and
+  unlinked: a native folder picker in the VISTA window, and a
   typed path for the browser-only dev UI. VISTA's own data folder (or one inside or holding
-  it) is refused, and so are a home folder and a filesystem root; the settings warn that the
+  it) is refused, and so are a home folder and a filesystem root; the page warns that the
   agent can read every file in a linked folder, credentials included.
 - **The agent is told.** Its instructions list each linked folder and say that they are
   read-only, so a file to be changed is copied into `/mnt/data/work` first. A folder that is

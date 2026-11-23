@@ -76,7 +76,9 @@ file SHALL preview it as Typed previews describes and SHALL offer download, and 
 SHALL follow Project files never run outside a sandbox. The page SHALL NOT offer upload,
 delete or rename in a linked folder. The page SHALL offer Link folder beside Upload, which
 opens the system's folder picker in the VISTA window and a typed path everywhere, with the
-same warning as the project's settings; renaming and unlinking stay in the project's settings.
+warning of Folders that cannot be linked (see linked-folders), and SHALL offer Rename and
+Unlink on each linked folder; unlinking SHALL NOT touch the folder's files. Linked folders
+SHALL NOT be managed anywhere else, the project's settings included.
 
 #### Scenario: Browsing a large folder
 
@@ -87,6 +89,11 @@ same warning as the project's settings; renaming and unlinking stay in the proje
 
 - **WHEN** the researcher selects `salt-data/README.md`
 - **THEN** it is rendered as markdown, and can be downloaded
+
+#### Scenario: Rename and unlink
+
+- **WHEN** the researcher renames linked folder `salt-data` to `msr-2025` on the Files page, then unlinks it
+- **THEN** the Linked section lists it as `msr-2025` at `/mnt/linked/msr-2025`, then not at all, and the folder on disk is unchanged
 
 #### Scenario: Read-only
 

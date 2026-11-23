@@ -8,21 +8,16 @@ computer, so it can work with data far larger than an upload without copying it 
 ### Requirement: Linking a folder to a project
 
 A project SHALL hold any number of linked folders, each an absolute folder path on this
-computer and a name. The researcher SHALL link, rename and unlink folders in the project's
-settings, and SHALL also be able to link one from the Files page. In the VISTA window, linking SHALL offer the system's folder picker; a typed or
+computer and a name. The researcher SHALL link, rename and unlink folders on the project's
+Files page, and nowhere else. In the VISTA window, linking SHALL offer the system's folder picker; a typed or
 pasted path SHALL be accepted everywhere. A linked path SHALL be stored as the folder's
 resolved absolute path, and SHALL be refused when it is not an existing folder or is already
 linked to the project.
 
 #### Scenario: Link through the picker
 
-- **WHEN** the researcher, in the VISTA window, chooses Link folder in a project's settings and picks `~/Research/salt-data`
+- **WHEN** the researcher, in the VISTA window, chooses Link folder on a project's Files page and picks `~/Research/salt-data`
 - **THEN** the project lists a linked folder named `salt-data` with that folder's absolute path
-
-#### Scenario: Link from the Files page
-
-- **WHEN** the researcher, on the Files page, chooses Link folder beside Upload and picks or types `~/Research/salt-data`
-- **THEN** the Linked section lists `salt-data`, and the project's settings list it too
 
 #### Scenario: Link by typed path
 
@@ -32,12 +27,12 @@ linked to the project.
 #### Scenario: Not a folder
 
 - **WHEN** the researcher links a path that does not exist, or that is a file
-- **THEN** nothing is linked and the settings say why
+- **THEN** nothing is linked and the Files page says why
 
 #### Scenario: Already linked
 
 - **WHEN** the researcher links a folder whose resolved path is already linked to the project
-- **THEN** nothing is linked and the settings name the existing link
+- **THEN** nothing is linked and the Files page names the existing link
 
 ### Requirement: Linked folder names
 
@@ -73,22 +68,22 @@ is `.` or `..`, or holds any other character SHALL be refused.
 VISTA SHALL refuse to link its own data folder, any folder inside it, and any folder that
 contains it. VISTA SHALL refuse to link the researcher's home folder or a filesystem root
 (`/`, or a drive such as `C:\`), saying to link the folder inside it that holds the data.
-Wherever the researcher links a folder, the settings SHALL warn: "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
+Where the researcher links a folder, the Files page SHALL warn: "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
 
 #### Scenario: VISTA's data folder
 
 - **WHEN** the researcher links VISTA's data folder, a project volume inside it, or a folder that contains it
-- **THEN** nothing is linked and the settings say that VISTA's own data cannot be linked
+- **THEN** nothing is linked and the Files page says that VISTA's own data cannot be linked
 
 #### Scenario: Home folder or root
 
 - **WHEN** the researcher links their home folder, `/`, or a drive such as `D:\`
-- **THEN** nothing is linked and the settings say to link the folder inside it that holds the data
+- **THEN** nothing is linked and the Files page says to link the folder inside it that holds the data
 
 #### Scenario: Warned before linking
 
-- **WHEN** the researcher opens Link folder in a project's settings
-- **THEN** the settings show "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
+- **WHEN** the researcher opens Link folder on a project's Files page
+- **THEN** the page shows "The agent can read every file in this folder. If any files contain credentials, it may see them, be careful!"
 
 ### Requirement: Linked folders are mounted read-only
 
@@ -127,13 +122,13 @@ linked folders SHALL have no such section. The instructions SHALL NOT give the h
 
 A linked folder whose path is missing or is not a folder when a sandbox starts SHALL be left
 out of that sandbox and SHALL NOT be created. It SHALL stay linked, and SHALL be shown as
-unavailable, with the reason, in the project's settings and on the Files page, and named as
+unavailable, with the reason, on the Files page, and named as
 unavailable to the agent. The rest of the conversation SHALL work as usual.
 
 #### Scenario: Drive unplugged
 
 - **WHEN** a project links `/Volumes/External/msr-runs` as `msr-runs`, the drive is not attached, and a conversation's sandbox starts
-- **THEN** the sandbox has no `/mnt/linked/msr-runs`, `/Volumes/External/msr-runs` is not created on the host, the agent's instructions name `msr-runs` as unavailable, and the settings show it unavailable
+- **THEN** the sandbox has no `/mnt/linked/msr-runs`, `/Volumes/External/msr-runs` is not created on the host, the agent's instructions name `msr-runs` as unavailable, and the Files page shows it unavailable
 - **AND** the project's other linked folders are mounted
 
 #### Scenario: Back again
@@ -145,7 +140,7 @@ unavailable to the agent. The rest of the conversation SHALL work as usual.
 
 Linking, renaming or unlinking a folder SHALL apply to each conversation of the project from
 its next turn, without the researcher restarting VISTA. A turn or background command already
-running SHALL keep the mounts it started with until it ends. The settings SHALL say that a
+running SHALL keep the mounts it started with until it ends. The Files page SHALL say that a
 change takes effect on each conversation's next message.
 
 #### Scenario: Linked during a conversation

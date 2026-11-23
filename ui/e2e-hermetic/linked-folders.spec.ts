@@ -3,9 +3,9 @@ import { SESSION_ID } from "./fixtures";
 import { by, installStub, type Stub } from "./stub";
 
 /**
- * Linked folders (openspec change linked-folders, tasks 8.1 and 8.2): linking,
- * renaming and unlinking one in a project's settings, and browsing one on the
- * Files page a directory at a time, read-only.
+ * Linked folders (openspec change linked-folders, tasks 8.2 and 8.3), all on the
+ * Files page: linking one beside Upload, renaming and unlinking it, and browsing it
+ * a directory at a time, read-only.
  */
 
 const LINKS = "/api/projects/molten-salt/linked-folders";
@@ -36,15 +36,15 @@ async function openMoltenSalt(page: Page) {
     .click();
 }
 
-async function editMoltenSalt(page: Page) {
-  await page.goto("/projects");
-  await page
-    .locator(".project-card")
-    .filter({ hasText: "molten-salt" })
-    .getByRole("button", { name: "Edit" })
-    .click();
-  return page.getByTestId("linked-folders");
+/** The Files page with Link folder's panel open: the panel, and the Linked section. */
+async function openLinking(page: Page) {
+  await openMoltenSalt(page);
+  await page.goto("/files");
+  await page.locator(".files-toolbar").getByRole("button", { name: "Link folder…" }).click();
+  return { panel: page.getByTestId("files-link-panel"), linked: page.getByTestId("files-linked") };
 }
+
+const EMPTY_FILES = { "GET /api/files/outputs": [], "GET /api/files/uploads": [] };
 
 test.describe("linked folders", () => {
   let stub: Stub | null = null;
@@ -56,38 +56,39 @@ test.describe("linked folders", () => {
     stub = null;
   });
 
-  test("a folder is linked by typed path, renamed and unlinked in the project's settings", async ({ page }) => {
+  test("a folder is linked by typed path, renamed and unlinked on the Files page", async ({ page }) => {
+    const renamed = { ...SALT, name: "msr-2025", sandbox_path: "/mnt/linked/msr-2025" };
     stub = await installStub(page, {
+      ...EMPTY_FILES,
       [`GET ${LINKS}`]: [],
       [`POST ${LINKS}`]: SALT,
-      [`PATCH ${LINKS}/salt-data`]: { ...SALT, name: "msr-2025", sandbox_path: "/mnt/linked/msr-2025" },
+      [`PATCH ${LINKS}/salt-data`]: renamed,
       [`DELETE ${LINKS}/msr-2025`]: {},
+      [`GET ${LINKS}/salt-data/entries`]: [],
     });
-    const section = await editMoltenSalt(page);
-    await expect(section).toContainText("No linked folders.");
-    await expect(section).toContainText(WARNING);
-    await expect(section).toContainText("Changes apply to each conversation from its next message.");
+    const { panel, linked } = await openLinking(page);
+    await expect(linked).toContainText("No linked folders yet.");
+    await expect(linked).toContainText("from its next message");
+    await expect(panel).toContainText(WARNING);
     // A browser has no folder picker: only the typed path.
-    await expect(section.getByRole("button", { name: "Link folder…" })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Link folder…" })).toHaveCount(0);
 
     await stub.setRoute(`GET ${LINKS}`, [SALT]);
-    await section.getByLabel("Folder path to link").fill("/Users/ada/Research/salt-data");
-    await section.getByRole("button", { name: "Link", exact: true }).click();
-    await expect(section.getByRole("list", { name: "Linked folders" })).toContainText("salt-data");
-    await expect(section).toContainText("/mnt/linked/salt-data");
+    await panel.getByLabel("Folder path to link").fill("/Users/ada/Research/salt-data");
+    await panel.getByRole("button", { name: "Link", exact: true }).click();
+    await expect(linked).toContainText("/mnt/linked/salt-data");
     expect(await stub.bodies(`POST ${LINKS}`)).toEqual([{ path: "/Users/ada/Research/salt-data" }]);
 
-    const renamed = { ...SALT, name: "msr-2025", sandbox_path: "/mnt/linked/msr-2025" };
     await stub.setRoute(`GET ${LINKS}`, [renamed]);
-    await section.getByRole("button", { name: "Rename salt-data" }).click();
-    await section.getByLabel("New name for salt-data").fill("msr-2025");
-    await section.getByRole("button", { name: "Save name" }).click();
-    await expect(section).toContainText("/mnt/linked/msr-2025");
+    await linked.getByRole("button", { name: "Rename salt-data" }).click();
+    await linked.getByLabel("New name for salt-data").fill("msr-2025");
+    await linked.getByRole("button", { name: "Save name" }).click();
+    await expect(linked).toContainText("/mnt/linked/msr-2025");
     expect(await stub.bodies(`PATCH ${LINKS}/salt-data`)).toEqual([{ name: "msr-2025" }]);
 
     await stub.setRoute(`GET ${LINKS}`, []);
-    await section.getByRole("button", { name: "Unlink msr-2025" }).click();
-    await expect(section).toContainText("No linked folders.");
+    await linked.getByRole("button", { name: "Unlink msr-2025" }).click();
+    await expect(linked).toContainText("No linked folders yet.");
     expect(await stub.requests()).toContain(`DELETE ${LINKS}/msr-2025`);
   });
 
@@ -99,12 +100,30 @@ test.describe("linked folders", () => {
         pickFolder: async () => "/Users/ada/Research/salt-data",
       };
     });
-    stub = await installStub(page, { [`GET ${LINKS}`]: [], [`POST ${LINKS}`]: SALT });
-    const section = await editMoltenSalt(page);
+    stub = await installStub(page, {
+      ...EMPTY_FILES,
+      [`GET ${LINKS}`]: [],
+      [`POST ${LINKS}`]: SALT,
+      [`GET ${LINKS}/salt-data/entries`]: [],
+    });
+    const { panel, linked } = await openLinking(page);
     await stub.setRoute(`GET ${LINKS}`, [SALT]);
-    await section.getByRole("button", { name: "Link folder…" }).click();
-    await expect(section).toContainText("/mnt/linked/salt-data");
+    await panel.getByRole("button", { name: "Link folder…" }).click();
+    await expect(linked).toContainText("/mnt/linked/salt-data");
     expect(await stub.bodies(`POST ${LINKS}`)).toEqual([{ path: "/Users/ada/Research/salt-data" }]);
+  });
+
+  test("the project's settings point to the Files page and manage no links", async ({ page }) => {
+    stub = await installStub(page);
+    await page.goto("/projects");
+    await page
+      .locator(".project-card")
+      .filter({ hasText: "molten-salt" })
+      .getByRole("button", { name: "Edit" })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Edit project" });
+    await expect(dialog).toContainText("linked, renamed and unlinked on the project’s Files page");
+    await expect(dialog.getByLabel("Folder path to link")).toHaveCount(0);
   });
 
   test("the Files page browses a linked folder a level at a time, read-only", async ({ page }) => {
@@ -203,8 +222,8 @@ test.describe("linked folders", () => {
     await expect(linked).toContainText("/mnt/linked/salt-data");
     await expect(linked.getByText("README.md")).toBeVisible();
     expect(await stub.bodies(`POST ${LINKS}`)).toEqual([{ path: "/Users/ada/Research/salt-data" }]);
-    // Renaming and unlinking stay in the project's settings.
-    await expect(linked.getByRole("button", { name: /^(Rename|Unlink)/ })).toHaveCount(0);
+    // Managed where it is listed.
+    await expect(linked.getByRole("button", { name: "Unlink salt-data" })).toBeVisible();
   });
 
   test("a link to a linked file opens its folders and previews it", async ({ page }) => {

@@ -26,6 +26,8 @@ import {
 import {
   listLinkedEntries,
   listLinkedFolders,
+  renameLinkedFolder,
+  unlinkFolder,
   type LinkedEntry,
   type LinkedFolder,
 } from "@/lib/linkedFolders";
@@ -123,6 +125,10 @@ function FilesPageInner() {
   const [links, setLinks] = useState<LinkedFolder[]>([]);
   /** Whether Link folder's panel, under the toolbar, is open. */
   const [linking, setLinking] = useState(false);
+  /** The link being renamed, and the name typed so far. */
+  const [renaming, setRenaming] = useState<{ link: string; name: string } | null>(null);
+  const [linkBusy, setLinkBusy] = useState("");
+  const [linkError, setLinkError] = useState("");
   const [linkedDirs, setLinkedDirs] = useState<LinkedDirs>({});
   /** Directories being fetched, so each is asked for once. */
   const loadingDirs = useRef<Set<string>>(new Set());
@@ -472,6 +478,42 @@ function FilesPageInner() {
     });
   }
 
+  async function renameLink() {
+    if (!projectName || !renaming) return;
+    const { link, name } = renaming;
+    if (!name.trim() || name.trim() === link) {
+      setRenaming(null);
+      return;
+    }
+    setLinkBusy(link);
+    setLinkError("");
+    try {
+      await renameLinkedFolder(projectName, link, name.trim());
+      setRenaming(null);
+      if (selected?.kind === "linked" && selected.path.startsWith(`${link}/`)) router.replace("/files");
+      await loadLinks();
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : "The folder was not renamed.");
+    } finally {
+      setLinkBusy("");
+    }
+  }
+
+  async function removeLink(link: string) {
+    if (!projectName) return;
+    setLinkBusy(link);
+    setLinkError("");
+    try {
+      await unlinkFolder(projectName, link);
+      if (selected?.kind === "linked" && selected.path.startsWith(`${link}/`)) router.replace("/files");
+      await loadLinks();
+    } catch (e) {
+      setLinkError(e instanceof Error ? e.message : "The folder was not unlinked.");
+    } finally {
+      setLinkBusy("");
+    }
+  }
+
   function renderNode(kind: TreeKind, node: TreeNode, depth: number) {
     const indent = { paddingLeft: 8 + depth * 16 };
     if (node.type === "folder") {
@@ -699,9 +741,14 @@ function FilesPageInner() {
                       <span className="tag">/mnt/linked</span>
                     </div>
                     <span className="muted" style={{ fontSize: 11 }}>
-                      Folders on this computer the agent reads, read-only. Rename and unlink them in the
-                      project&apos;s settings.
+                      Folders on this computer the agent reads, read-only. Linking, renaming and unlinking
+                      apply to each conversation from its next message; unlinking leaves the folder as it is.
                     </span>
+                    {linkError && (
+                      <div className="error" role="alert" style={{ fontSize: 12 }}>
+                        {linkError}
+                      </div>
+                    )}
                     {links.length === 0 ? (
                       <div className="chat-bubble">
                         No linked folders yet. Link folder&hellip;, above, links one from this computer.
@@ -712,21 +759,81 @@ function FilesPageInner() {
                           const open = l.available && isOpen("linked", l.name);
                           return (
                             <li key={`l:${l.name}`}>
-                              <button
-                                type="button"
-                                className="files-folder"
-                                style={{ paddingLeft: 8 }}
-                                aria-expanded={l.available ? open : undefined}
-                                disabled={!l.available}
-                                onClick={() => toggleFolder("linked", l.name)}
-                                title={l.host_path}
-                              >
-                                <span className="files-caret" aria-hidden="true">
-                                  {l.available ? (open ? "▾" : "▸") : "·"}
-                                </span>
-                                {l.name} <span className="tag">{l.sandbox_path}</span>
-                                {!l.available && <span className="tag">Unavailable: {l.reason}</span>}
-                              </button>
+                              <div className="files-row">
+                                {renaming?.link === l.name ? (
+                                  <input
+                                    className="input"
+                                    style={{ flex: 1, marginLeft: 8 }}
+                                    aria-label={`New name for ${l.name}`}
+                                    value={renaming.name}
+                                    autoFocus
+                                    onChange={(e) => setRenaming({ link: l.name, name: e.target.value })}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") void renameLink();
+                                      if (e.key === "Escape") setRenaming(null);
+                                    }}
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="files-folder"
+                                    style={{ paddingLeft: 8 }}
+                                    aria-expanded={l.available ? open : undefined}
+                                    disabled={!l.available}
+                                    onClick={() => toggleFolder("linked", l.name)}
+                                    title={l.host_path}
+                                  >
+                                    <span className="files-caret" aria-hidden="true">
+                                      {l.available ? (open ? "▾" : "▸") : "·"}
+                                    </span>
+                                    {l.name} <span className="tag">{l.sandbox_path}</span>
+                                    {!l.available && <span className="tag">Unavailable: {l.reason}</span>}
+                                  </button>
+                                )}
+                                <div className="files-row-actions">
+                                  {renaming?.link === l.name ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="button button-xs"
+                                        onClick={() => void renameLink()}
+                                        disabled={linkBusy === l.name}
+                                      >
+                                        Save name
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="button ghost button-xs"
+                                        onClick={() => setRenaming(null)}
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="button ghost button-xs"
+                                        onClick={() => setRenaming({ link: l.name, name: l.name })}
+                                        disabled={linkBusy === l.name}
+                                        aria-label={`Rename ${l.name}`}
+                                      >
+                                        Rename
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="button ghost button-xs"
+                                        onClick={() => void removeLink(l.name)}
+                                        disabled={linkBusy === l.name}
+                                        aria-label={`Unlink ${l.name}`}
+                                        title="Stop the agent reading this folder; its files stay as they are"
+                                      >
+                                        {linkBusy === l.name ? "Unlinking…" : "Unlink"}
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
                               <div className="muted" style={{ fontSize: 11, paddingLeft: 24, wordBreak: "break-all" }}>
                                 {l.host_path}
                               </div>

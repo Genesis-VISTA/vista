@@ -4,7 +4,7 @@ import { LINK_WARNING, folderPicker, linkFolder, type LinkedFolder } from "@/lib
 /**
  * Link a folder to a project (openspec change linked-folders): the system folder
  * picker in the VISTA window, a typed path everywhere, and the warning about what
- * linking grants. Used by the project's settings and the Files page alike.
+ * linking grants. In Link folder's panel on the Files page.
  */
 export function LinkFolderControl({
   projectName,

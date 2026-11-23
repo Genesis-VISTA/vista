@@ -29,7 +29,7 @@ See proposal.md for why. The pieces this touches, as they are today:
 **Goals:**
 - One mechanism, a `linked` file kind resolved by link name, serving the Files page,
   `display_file` and the transfer tools.
-- Host paths reach the sandbox only as mounts, the UI only from the project settings
+- Host paths reach the sandbox only as mounts, the UI only from the linked-folder
   endpoints, and the agent never.
 
 **Non-Goals:**
@@ -61,7 +61,7 @@ path again (`Path.resolve()`) and mounts the result: a path stored resolved can 
 pass through a symlink later (a folder on the way replaced by one), and microsandbox fails the
 whole sandbox start, not just that mount, on a host path through a symlink (`mount …: Not a
 directory`, found in group 1). `ProjectAgent` uses
-it for its volumes and for the agent's instructions; the settings and Files page use it for
+it for its volumes and for the agent's instructions; the Files page uses it for
 their status. No background polling: a link's status is whatever it was when last asked.
 
 *Why:* the sandbox's mounts are decided once, at start; checking anywhere else could
@@ -141,7 +141,7 @@ and packaged installs keep VISTA's data in `~/.vista`, so a home folder or root 
 holds it anyway. Hiding VISTA's data inside such a mount (an empty folder mounted over it)
 was considered and rejected: it would need the same exclusion in the Files page,
 `display_file` and the transfer tools, cannot hide a hard link, and would make linking a
-home folder look safer than it is. Every other folder is linked with the settings' warning
+home folder look safer than it is. Every other folder is linked with the Files page's warning
 that the agent can read every file in it, credentials included.
 
 ### Folder picker through the existing preload
@@ -161,7 +161,7 @@ when `window.vistaApp?.pickFolder` exists, and always shows the typed-path field
   mounts for.
 - [The agent can read, and over the sandbox's network send, anything in a linked folder] →
   Read-only stops damage, not disclosure. VISTA's own data folder, home folders and
-  filesystem roots are refused outright, the settings warn about credentials on every link,
+  filesystem roots are refused outright, the Files page warns about credentials on every link,
   and the docs say plainly what linking grants.
 - [Large-file read speed through the microsandbox mount] → Untested at multi-GB sizes. The
   sandbox test in group 1 times a read of a large file so a regression is visible; no target
