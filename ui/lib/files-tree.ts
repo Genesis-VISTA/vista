@@ -3,7 +3,10 @@
  * nested names. Pure, so the ordering rules can be tested without a page.
  */
 
-export type FileKind = "uploads" | "outputs";
+export type FileKind = "uploads" | "outputs" | "linked";
+
+/** The kinds listed whole, as one tree each; a linked folder is listed a directory at a time. */
+export type TreeKind = Exclude<FileKind, "linked">;
 
 export type ShownIn = {
   chat_session_id: string;

@@ -12,6 +12,7 @@ import { fetchSettings } from "@/lib/settings";
 import { hostedForumServer } from "@/lib/debates";
 import { publishAudience, usableInProject, useCollaboration, useTeams } from "@/lib/collaboration";
 import { TeamBadge } from "@/components/TeamBadge";
+import { LinkedFoldersSection } from "@/components/LinkedFoldersSection";
 import {
   importRemoteProject,
   importSummary,
@@ -898,6 +899,17 @@ function ProjectModal({
             </div>
             <TeamRuleNote hidden={kbCatalog.length - offeredKbs.length} noun={["knowledge base", "knowledge bases"]} projectTeam={projectTeam} />
           </div>
+
+          {mode === "edit" && initial ? (
+            <LinkedFoldersSection projectName={initial.name} />
+          ) : (
+            <div className="project-modal-label">
+              <div>Linked folders</div>
+              <span style={{ fontSize: 11, color: "var(--muted)", fontWeight: 400 }}>
+                Folders on this computer can be linked once the project is created, from its settings.
+              </span>
+            </div>
+          )}
 
           {hosted ? (
             <div className="project-modal-label" data-testid="forum-hosted">

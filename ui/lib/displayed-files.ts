@@ -31,7 +31,7 @@ export async function fetchDisplayedFiles(
   return Array.isArray(body) ? (body as DisplayedFile[]) : [];
 }
 
-const FILE_URL = /^\/api\/files\/(outputs|uploads)\/([^?#]+)/;
+const FILE_URL = /^\/api\/files\/(outputs|uploads|linked)\/([^?#]+)/;
 
 /**
  * A display that has just happened in a running turn, before the backend's record

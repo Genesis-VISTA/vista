@@ -13,12 +13,12 @@
 import { useTour } from "@/components/TourProvider";
 import type { CollaborationTeam } from "./collaboration";
 import type { TourEvent, TourPosition } from "./onboarding";
-import type { FileKind, ListedFile } from "./files-tree";
+import type { FileKind, ListedFile, TreeKind } from "./files-tree";
 import type { RemoteSkill } from "./skill-sharing";
 import type { SkillSummary } from "./types";
 
 export type ExampleFile = {
-  kind: FileKind;
+  kind: TreeKind;
   file: ListedFile;
   /** The content as a `data:` URL, which the previewer shows in place of a project file. */
   src: string;
@@ -75,7 +75,7 @@ function dataUrl(mime: string, text: string): string {
 
 const MODIFIED = "2026-01-01T00:00:00Z";
 
-function example(kind: FileKind, name: string, mime: string, text: string, opened?: TourEvent): ExampleFile {
+function example(kind: TreeKind, name: string, mime: string, text: string, opened?: TourEvent): ExampleFile {
   return {
     kind,
     file: { name, size: new TextEncoder().encode(text).length, modifiedAt: MODIFIED },

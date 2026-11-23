@@ -10,7 +10,7 @@ import { delimiterFor, parseDelimited } from "@/lib/csv-preview";
 import { fileLinkProps } from "@/lib/file-links";
 
 type Props = {
-  kind: "uploads" | "outputs";
+  kind: "uploads" | "outputs" | "linked";
   /** Path inside the kind, as listed (may be nested). */
   path: string;
   name: string;

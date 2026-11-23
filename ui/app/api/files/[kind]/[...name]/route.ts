@@ -4,7 +4,7 @@ import { backendUrl, backendHeaders } from "../../../_backend";
 export const runtime = "nodejs";
 
 /** File kinds the backend exposes under /projects/{name}/{kind}. */
-const FILE_KINDS = ["uploads", "outputs"] as const;
+const FILE_KINDS = ["uploads", "outputs", "linked"] as const;
 type FileKind = (typeof FILE_KINDS)[number];
 
 function parseKind(value: string): FileKind | null {
@@ -97,6 +97,9 @@ export async function DELETE(
   const kind = parseKind(rawKind);
   if (!kind) {
     return NextResponse.json({ ok: false, error: "Unknown file kind." }, { status: 404 });
+  }
+  if (kind === "linked") {
+    return NextResponse.json({ ok: false, error: "Linked folders are read-only." }, { status: 405 });
   }
 
   const resolved = requireProjectName(request);

@@ -19,8 +19,15 @@ import {
   writeOpenFolders,
   type FileKind,
   type ListedFile,
+  type TreeKind,
   type TreeNode,
 } from "@/lib/files-tree";
+import {
+  listLinkedEntries,
+  listLinkedFolders,
+  type LinkedEntry,
+  type LinkedFolder,
+} from "@/lib/linkedFolders";
 import { useOnChatRunFinished } from "@/lib/use-chat-run-finished";
 
 type UploadResponse = {
@@ -29,12 +36,30 @@ type UploadResponse = {
   error?: string;
 };
 
-type Listing = Record<FileKind, ListedFile[]>;
+type Listing = Record<TreeKind, ListedFile[]>;
+
+/** A linked folder's directory as loaded, keyed `<link>/<dir>` (`<link>/` for its top). */
+type LinkedDirs = Record<string, LinkedEntry[] | { error: string }>;
+
+/** `<link>/<path>` split into the link and the path within it. */
+function splitLinked(path: string): { link: string; rel: string } {
+  const at = path.indexOf("/");
+  return at < 0 ? { link: path, rel: "" } : { link: path.slice(0, at), rel: path.slice(at + 1) };
+}
+
+function dirKey(link: string, dir: string): string {
+  return `${link}/${dir}`;
+}
+
+function parentDir(rel: string): string {
+  const at = rel.lastIndexOf("/");
+  return at < 0 ? "" : rel.slice(0, at);
+}
 
 const EMPTY: Listing = { uploads: [], outputs: [] };
 
 /** The trees, top to bottom, with the sandbox path the agent sees each one at. */
-const SECTIONS: { kind: FileKind; title: string; sandboxPath: string; empty: string }[] = [
+const SECTIONS: { kind: TreeKind; title: string; sandboxPath: string; empty: string }[] = [
   {
     kind: "outputs",
     title: "Outputs",
@@ -62,7 +87,7 @@ function encodePath(path: string): string {
 }
 
 function isKind(value: string | null): value is FileKind {
-  return value === "uploads" || value === "outputs";
+  return value === "uploads" || value === "outputs" || value === "linked";
 }
 
 function formatTimestamp(value: string): string {
@@ -94,6 +119,10 @@ function FilesPageInner() {
   const activeProject = useActiveProject();
   const projectName = activeProject?.name ?? null;
   const [listing, setListing] = useState<Listing>(EMPTY);
+  const [links, setLinks] = useState<LinkedFolder[]>([]);
+  const [linkedDirs, setLinkedDirs] = useState<LinkedDirs>({});
+  /** Directories being fetched, so each is asked for once. */
+  const loadingDirs = useRef<Set<string>>(new Set());
   const [loaded, setLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -122,6 +151,13 @@ function FilesPageInner() {
       return;
     }
     setIsLoading(true);
+    // Linked folders are listed a directory at a time: forgetting the loaded ones
+    // makes the open ones load again.
+    loadingDirs.current = new Set();
+    setLinkedDirs({});
+    listLinkedFolders(projectName)
+      .then(setLinks)
+      .catch(() => setLinks([]));
     try {
       const [uploadsRes, outputsRes] = await Promise.all([
         fetch(`/api/files/uploads${projectQuery}`),
@@ -173,12 +209,26 @@ function FilesPageInner() {
     [shown],
   );
 
+  /** A linked file as the preview wants it, from its directory's listing once loaded. */
+  function linkedFile(path: string): ListedFile | null | undefined {
+    const { link, rel } = splitLinked(path);
+    const dir = linkedDirs[dirKey(link, parentDir(rel))];
+    if (dir === undefined) return undefined;
+    if (!Array.isArray(dir)) return null;
+    const entry = dir.find((e) => e.path === rel && e.type === "file");
+    return entry
+      ? { name: path, size: entry.size ?? 0, modifiedAt: entry.modified, shown_in: entry.shown_in ?? null }
+      : null;
+  }
+  const selectedLinked = selected?.kind === "linked" ? linkedFile(selected.path) : undefined;
   const selectedFile = selected
-    ? (shown[selected.kind].find((f) => f.name === selected.path) ?? null)
+    ? selected.kind === "linked"
+      ? (selectedLinked ?? null)
+      : (shown[selected.kind].find((f) => f.name === selected.path) ?? null)
     : null;
   /** The example `file` is, as opposed to a real file of the same name. */
   function exampleFor(kind: FileKind, file: ListedFile) {
-    const example = showExamples ? exampleAt(kind, file.name) : undefined;
+    const example = showExamples && kind !== "linked" ? exampleAt(kind, file.name) : undefined;
     return example?.file === file ? example : undefined;
   }
   const selectedExample = selected && selectedFile ? exampleFor(selected.kind, selectedFile) : undefined;
@@ -198,7 +248,7 @@ function FilesPageInner() {
     }
     if (!examplesWereShown.current) return;
     examplesWereShown.current = false;
-    if (!selectedKind || !selectedPath) return;
+    if (!selectedKind || !selectedPath || selectedKind === "linked") return;
     const isReal = listing[selectedKind].some((f) => f.name === selectedPath);
     if (!isReal && exampleAt(selectedKind, selectedPath)) router.replace("/files");
   }, [showExamples, selectedKind, selectedPath, listing, router]);
@@ -225,6 +275,27 @@ function FilesPageInner() {
   useEffect(() => {
     if (projectName && foldersFor === projectName) writeOpenFolders(projectName, openFolders);
   }, [projectName, foldersFor, openFolders]);
+
+  // Each open linked folder's directory is fetched once, when it is first open.
+  useEffect(() => {
+    if (!projectName) return;
+    const available = new Set(links.filter((l) => l.available).map((l) => l.name));
+    for (const key of openFolders) {
+      if (!key.startsWith("linked:")) continue;
+      const { link, rel } = splitLinked(key.slice("linked:".length));
+      const id = dirKey(link, rel);
+      if (!available.has(link) || id in linkedDirs || loadingDirs.current.has(id)) continue;
+      loadingDirs.current.add(id);
+      listLinkedEntries(projectName, link, rel)
+        .then((entries) => setLinkedDirs((prev) => ({ ...prev, [id]: entries })))
+        .catch((e: unknown) =>
+          setLinkedDirs((prev) => ({
+            ...prev,
+            [id]: { error: e instanceof Error ? e.message : "Could not list this folder." },
+          })),
+        );
+    }
+  }, [projectName, links, openFolders, linkedDirs]);
 
   function isOpen(kind: FileKind, path: string): boolean {
     return openFolders.has(`${kind}:${path}`);
@@ -275,7 +346,7 @@ function FilesPageInner() {
     }
   }
 
-  async function deleteFile(name: string, kind: FileKind) {
+  async function deleteFile(name: string, kind: TreeKind) {
     if (!projectName) {
       setUploadError("Select a project before deleting files.");
       return;
@@ -305,7 +376,93 @@ function FilesPageInner() {
     }
   }
 
-  function renderNode(kind: FileKind, node: TreeNode, depth: number) {
+  /** A linked folder's directory, a level at a time: read-only, no delete or rename. */
+  function renderLinkedDir(link: string, dir: string, depth: number) {
+    const loaded = linkedDirs[dirKey(link, dir)];
+    const indent = { paddingLeft: 8 + depth * 16 };
+    if (loaded === undefined) {
+      return (
+        <li className="muted" style={{ ...indent, fontSize: 12 }}>
+          Loading…
+        </li>
+      );
+    }
+    if (!Array.isArray(loaded)) {
+      return (
+        <li className="error" style={{ ...indent, fontSize: 12 }}>
+          {loaded.error}
+        </li>
+      );
+    }
+    if (loaded.length === 0) {
+      return (
+        <li className="muted" style={{ ...indent, fontSize: 12 }}>
+          Empty folder.
+        </li>
+      );
+    }
+    return loaded.map((entry) => {
+      const path = `${link}/${entry.path}`;
+      if (entry.type === "folder") {
+        const open = isOpen("linked", path);
+        return (
+          <li key={`d:${path}`}>
+            <button
+              type="button"
+              className="files-folder"
+              style={indent}
+              aria-expanded={open}
+              onClick={() => toggleFolder("linked", path)}
+            >
+              <span className="files-caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+              {entry.name}
+            </button>
+            {open && <ul className="files-children">{renderLinkedDir(link, entry.path, depth + 1)}</ul>}
+          </li>
+        );
+      }
+      const isSelected = selected?.kind === "linked" && selected.path === path;
+      return (
+        <li key={`f:${path}`}>
+          <div className={`files-row ${isSelected ? "selected" : ""}`}>
+            <button
+              type="button"
+              className="files-file"
+              style={indent}
+              aria-current={isSelected ? "true" : undefined}
+              onClick={() => select("linked", path)}
+            >
+              <span className="files-file-name">{entry.name}</span>
+              <span className="files-file-meta">
+                {((entry.size ?? 0) / 1024).toFixed(1)} KB · {formatTimestamp(entry.modified)}
+              </span>
+            </button>
+            <div className="files-row-actions">
+              {entry.shown_in && (
+                <Link
+                  className="button ghost button-xs"
+                  href={shownInHref(entry.shown_in)}
+                  title={`Shown in ${entry.shown_in.chat_title}`}
+                >
+                  Show in chat
+                </Link>
+              )}
+              <a
+                className="button ghost button-xs"
+                href={`/api/files/linked/${encodePath(path)}${projectQuery}`}
+                download={entry.name}
+                aria-label={`Download ${path}`}
+              >
+                Download
+              </a>
+            </div>
+          </div>
+        </li>
+      );
+    });
+  }
+
+  function renderNode(kind: TreeKind, node: TreeNode, depth: number) {
     const indent = { paddingLeft: 8 + depth * 16 };
     if (node.type === "folder") {
       const open = isOpen(kind, node.path);
@@ -507,6 +664,45 @@ function FilesPageInner() {
                       )}
                     </div>
                   ))}
+                  {links.length > 0 && (
+                    <div className="files-section" data-testid="files-linked">
+                      <div className="files-section-head">
+                        <h2 className="files-section-title">Linked</h2>
+                        <span className="tag">/mnt/linked</span>
+                      </div>
+                      <span className="muted" style={{ fontSize: 11 }}>
+                        Folders on this computer, read-only. Link and unlink them in the project&apos;s settings.
+                      </span>
+                      <ul className="files-tree" aria-label="Linked">
+                        {links.map((l) => {
+                          const open = l.available && isOpen("linked", l.name);
+                          return (
+                            <li key={`l:${l.name}`}>
+                              <button
+                                type="button"
+                                className="files-folder"
+                                style={{ paddingLeft: 8 }}
+                                aria-expanded={l.available ? open : undefined}
+                                disabled={!l.available}
+                                onClick={() => toggleFolder("linked", l.name)}
+                                title={l.host_path}
+                              >
+                                <span className="files-caret" aria-hidden="true">
+                                  {l.available ? (open ? "▾" : "▸") : "·"}
+                                </span>
+                                {l.name} <span className="tag">{l.sandbox_path}</span>
+                                {!l.available && <span className="tag">Unavailable: {l.reason}</span>}
+                              </button>
+                              <div className="muted" style={{ fontSize: 11, paddingLeft: 24, wordBreak: "break-all" }}>
+                                {l.host_path}
+                              </div>
+                              {open && <ul className="files-children">{renderLinkedDir(l.name, "", 1)}</ul>}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  )}
                 </div>
                 <div className="files-preview-pane" data-tour="files:preview">
                   {selected && selectedFile ? (
@@ -520,9 +716,11 @@ function FilesPageInner() {
                       version={selectedFile.modifiedAt}
                       src={selectedExample?.src}
                     />
-                  ) : selected && loaded && !isLoading ? (
+                  ) : selected && loaded && !isLoading && (selected.kind !== "linked" || selectedLinked === null) ? (
                     <div className="chat-bubble">
-                      {selected.path} is not in this project&apos;s {selected.kind}.
+                      {selected.kind === "linked"
+                        ? `${selected.path} is not in this project's linked folders.`
+                        : `${selected.path} is not in this project's ${selected.kind}.`}
                     </div>
                   ) : (
                     <div className="files-preview-empty muted">

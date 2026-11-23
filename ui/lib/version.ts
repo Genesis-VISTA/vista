@@ -57,6 +57,8 @@ export type Activity = {
 export type VistaAppBridge = {
   isVistaApp: true;
   restartToUpdate(version: string): Promise<{ ok: boolean; reason?: string }>;
+  /** The system folder picker (linked folders): the path picked, or null. Absent in older windows. */
+  pickFolder?(): Promise<string | null>;
 };
 
 declare global {

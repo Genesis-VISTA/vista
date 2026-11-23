@@ -280,6 +280,10 @@ export const ROUTES: Record<string, unknown> = {
   "GET /api/settings/hpc-status": HPC_STATUS,
   "GET /api/projects": PROJECTS,
   "GET /api/projects/molten-salt/models": MODELS,
+  // No project links a folder unless a test says so (openspec change linked-folders).
+  "GET /api/projects/molten-salt/linked-folders": [],
+  "GET /api/projects/alloy-design/linked-folders": [],
+  "GET /api/projects/salt-analysis/linked-folders": [],
   "GET /api/skills": SKILLS,
   "GET /api/knowledge-bases": KNOWLEDGE_BASES,
   "GET /api/chat/sessions": [CHAT_SESSION_SUMMARY],
