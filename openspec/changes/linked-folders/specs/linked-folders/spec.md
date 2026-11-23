@@ -21,7 +21,7 @@ linked to the project.
 
 #### Scenario: Link from the Files page
 
-- **WHEN** the researcher, on the Files page, chooses Link folder and picks or types `~/Research/salt-data`
+- **WHEN** the researcher, on the Files page, chooses Link folder beside Upload and picks or types `~/Research/salt-data`
 - **THEN** the Linked section lists `salt-data`, and the project's settings list it too
 
 #### Scenario: Link by typed path

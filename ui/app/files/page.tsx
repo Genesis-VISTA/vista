@@ -121,6 +121,8 @@ function FilesPageInner() {
   const projectName = activeProject?.name ?? null;
   const [listing, setListing] = useState<Listing>(EMPTY);
   const [links, setLinks] = useState<LinkedFolder[]>([]);
+  /** Whether Link folder's panel, under the toolbar, is open. */
+  const [linking, setLinking] = useState(false);
   const [linkedDirs, setLinkedDirs] = useState<LinkedDirs>({});
   /** Directories being fetched, so each is asked for once. */
   const loadingDirs = useRef<Set<string>>(new Set());
@@ -591,6 +593,13 @@ function FilesPageInner() {
                 </button>
                 <button
                   className="button ghost button-sm"
+                  onClick={() => setLinking((open) => !open)}
+                  aria-expanded={linking}
+                >
+                  Link folder…
+                </button>
+                <button
+                  className="button ghost button-sm"
                   onClick={() => {
                     setUploadMessage((prev) => (prev.startsWith("Deleted ") ? "" : prev));
                     void loadListing();
@@ -600,6 +609,18 @@ function FilesPageInner() {
                   {isLoading ? "Refreshing..." : "Refresh"}
                 </button>
               </div>
+              {linking && (
+                <div className="files-link-panel" data-testid="files-link-panel">
+                  <LinkFolderControl
+                    projectName={projectName}
+                    onLinked={async (made) => {
+                      await loadLinks();
+                      setLinking(false);
+                      if (made.available) toggleFolder("linked", made.name);
+                    }}
+                  />
+                </div>
+              )}
               <div
                 className={`dropzone files-dropzone ${isDragOver ? "active" : ""}`}
                 onDragOver={(event) => {
@@ -681,15 +702,10 @@ function FilesPageInner() {
                       Folders on this computer the agent reads, read-only. Rename and unlink them in the
                       project&apos;s settings.
                     </span>
-                    <LinkFolderControl
-                      projectName={projectName}
-                      onLinked={async (made) => {
-                        await loadLinks();
-                        if (made.available) toggleFolder("linked", made.name);
-                      }}
-                    />
                     {links.length === 0 ? (
-                      <div className="chat-bubble">No linked folders yet.</div>
+                      <div className="chat-bubble">
+                        No linked folders yet. Link folder&hellip;, above, links one from this computer.
+                      </div>
                     ) : (
                       <ul className="files-tree" aria-label="Linked">
                         {links.map((l) => {

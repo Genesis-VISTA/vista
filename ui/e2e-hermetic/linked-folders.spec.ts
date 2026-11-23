@@ -173,7 +173,7 @@ test.describe("linked folders", () => {
     await expect(preview.locator(".file-preview-markdown")).toContainText("Salt data");
   });
 
-  test("a folder is linked from the Files page, which shows it at once", async ({ page }) => {
+  test("a folder is linked from beside Upload on the Files page, and shown at once", async ({ page }) => {
     const when = "2026-11-20T10:00:00+00:00";
     stub = await installStub(page, {
       "GET /api/files/outputs": [],
@@ -188,11 +188,17 @@ test.describe("linked folders", () => {
     await page.goto("/files");
     const linked = page.getByTestId("files-linked");
     await expect(linked).toContainText("No linked folders yet.");
-    await expect(linked).toContainText(WARNING);
+    // Beside Upload, as a panel that says what linking grants before anything is linked.
+    const toolbar = page.locator(".files-toolbar");
+    await expect(toolbar.getByRole("button")).toHaveText(["Upload +", "Link folder…", "Refresh"]);
+    await toolbar.getByRole("button", { name: "Link folder…" }).click();
+    const panel = page.getByTestId("files-link-panel");
+    await expect(panel).toContainText(WARNING);
 
     await stub.setRoute(`GET ${LINKS}`, [SALT]);
-    await linked.getByLabel("Folder path to link").fill("/Users/ada/Research/salt-data");
-    await linked.getByRole("button", { name: "Link", exact: true }).click();
+    await panel.getByLabel("Folder path to link").fill("/Users/ada/Research/salt-data");
+    await panel.getByRole("button", { name: "Link", exact: true }).click();
+    await expect(panel).toHaveCount(0);
     // Linked, listed, and opened, so its top level shows straight away.
     await expect(linked).toContainText("/mnt/linked/salt-data");
     await expect(linked.getByText("README.md")).toBeVisible();

@@ -32,7 +32,7 @@ catalog.
 #### Scenario: No links yet
 
 - **WHEN** the project has no linked folders
-- **THEN** the Files page SHALL show an empty Linked section that offers Link folder
+- **THEN** the Files page SHALL show an empty Linked section, and Link folder beside Upload
 
 ### Requirement: Record of displayed files
 
@@ -74,9 +74,9 @@ unavailable with the reason and no contents. A linked folder's contents SHALL be
 directory at a time, a folder's entries being fetched when it is expanded. Selecting a linked
 file SHALL preview it as Typed previews describes and SHALL offer download, and its responses
 SHALL follow Project files never run outside a sandbox. The page SHALL NOT offer upload,
-delete or rename in a linked folder. The Linked section SHALL offer Link folder (the system's
-folder picker in the VISTA window, a typed path everywhere) with the same warning as the
-project's settings; renaming and unlinking stay in the project's settings.
+delete or rename in a linked folder. The page SHALL offer Link folder beside Upload, which
+opens the system's folder picker in the VISTA window and a typed path everywhere, with the
+same warning as the project's settings; renaming and unlinking stay in the project's settings.
 
 #### Scenario: Browsing a large folder
 

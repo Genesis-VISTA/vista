@@ -3606,6 +3606,15 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--panel-2);
 }
 
+/* Link folder's panel, under the Files page's toolbar. */
+.files-link-panel {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin-bottom: 8px;
+  background: var(--surface);
+}
+
 /* Linking a folder, in a project's settings and on the Files page. */
 .link-folder-control {
   display: flex;
