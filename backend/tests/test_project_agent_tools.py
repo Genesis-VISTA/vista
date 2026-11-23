@@ -92,6 +92,8 @@ def test_vista_metadata_includes_project_paths():
         "skills_dir": str(agent.skills_volume_dir),
         "output_dir": str(agent.output_dir),
         "uploads_dir": str(agent.uploads_dir),
+        # Each mounted linked folder, by name; none here (openspec change linked-folders).
+        "linked": {},
     }
 
 
