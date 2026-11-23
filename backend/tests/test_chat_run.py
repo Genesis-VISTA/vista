@@ -39,6 +39,7 @@ from vista_backend.db.schemas import (
 from vista_backend.services import chat_run, chat_session as chat_session_service
 from vista_backend.services import inbox
 from vista_backend.services.displayed_files import file_status
+from vista_backend.services.linked_folders import resolve_linked_volumes
 from vista_backend.services.chat_run import (
     ChatRunRegistry,
     resolve_prompt,
@@ -622,6 +623,36 @@ async def test_a_successful_display_is_recorded(env):
     assert (record.kind, record.path) == ("outputs", "run1/plot.png")
     assert (record.size, record.mtime_ns) == (stat.st_size, stat.st_mtime_ns)
     assert record.shown_at
+
+
+class _Link:
+    def __init__(self, name, host_path):
+        self.name, self.host_path = name, str(host_path)
+
+
+async def test_a_linked_display_is_recorded(env, tmp_path):
+    """openspec change linked-folders, task 5.3: against the folder the sandbox mounted."""
+    figs = tmp_path / "Research" / "salt-data" / "figs"
+    figs.mkdir(parents=True)
+    (figs / "phase.png").write_bytes(b"\x89PNG fake")
+    stat = (figs / "phase.png").stat()
+    row, key = await env.conversation(
+        [
+            call("display_file", uri="/mnt/linked/salt-data/figs/phase.png"),
+            call("display_file", uri="/mnt/linked/other/x.png"),
+            say("here"),
+        ]
+    )
+    env.agents[row.id].linked = resolve_linked_volumes(
+        [_Link("salt-data", figs.parent)]
+    )
+
+    run = await env.start(row, key)
+    await run.wait()
+
+    [record] = await _displays(env, row)
+    assert (record.kind, record.path) == ("linked", "salt-data/figs/phase.png")
+    assert (record.size, record.mtime_ns) == (stat.st_size, stat.st_mtime_ns)
 
 
 async def test_a_display_that_returns_an_error_is_not_recorded(env):

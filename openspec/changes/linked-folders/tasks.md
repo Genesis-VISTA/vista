@@ -25,9 +25,9 @@
 
 ## 5. The `linked` file kind
 
-- [ ] 5.1 Files API: kind `linked` with path `<name>/<rel>`, resolved through the project's links on every request and confined with `path_is_under` on resolved paths; same serving headers as uploads and outputs; no upload, delete or rename. Verify with tests for a preview, a download, `../` traversal, an outward symlink, an inward symlink, an unknown link name, and a refused `DELETE`
-- [ ] 5.2 One-level listing endpoint for a linked folder's directory, omitting outward symlinks, newest first. Verify with a test on a folder with nested directories that only one level is returned and an outward symlink is absent
-- [ ] 5.3 `display_file`: add a `uri_map` entry per available link and record `linked` displays in `displayed_files` (`_ROOTS` and kind). Verify with a vista MCP test that `/mnt/linked/<name>/x.png` maps to `/api/files/linked/<name>/x.png`, and a backend test that a successful display records kind `linked` and `<name>/x.png` and Shown-in finds it
+- [x] 5.1 Files API: kind `linked` with path `<name>/<rel>`, resolved through the project's links on every request and confined with `path_is_under` on resolved paths; same serving headers as uploads and outputs; no upload, delete or rename. Verify with tests for a preview, a download, `../` traversal, an outward symlink, an inward symlink, an unknown link name, and a refused `DELETE`
+- [x] 5.2 One-level listing endpoint for a linked folder's directory (`GET /projects/{p}/linked-folders/<name>/entries?dir=`), omitting outward symlinks, newest first. Verify with a test on a folder with nested directories that only one level is returned and an outward symlink is absent
+- [x] 5.3 `display_file`: add a `uri_map` entry per available link and record `linked` displays in `displayed_files` (`_ROOTS` and kind). Verify with a vista MCP test that `/mnt/linked/<name>/x.png` maps to `/api/files/linked/<name>/x.png`, and a backend test that a successful display records kind `linked` and `<name>/x.png` and Shown-in finds it
 
 ## 6. Uploading linked files to a cluster
 

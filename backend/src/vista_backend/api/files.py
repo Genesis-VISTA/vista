@@ -26,7 +26,7 @@ class FileKindConvertor(Convertor):
     in the project /project/{project_name}/{kind} routes. A custom converter fixes that.
     """
 
-    regex = "uploads|outputs"
+    regex = "uploads|outputs|linked"
 
     def convert(self, value: str):
         return value

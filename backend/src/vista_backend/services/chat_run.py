@@ -52,6 +52,7 @@ from . import chat_session as chat_session_service
 from .job_records import SubmitWatcher
 from . import inbox as inbox_service
 from .displayed_files import sandbox_path_to_file
+from .linked_folders import resolve_in
 from .project_agent import (
     ProjectAgentKey,
     project_agent_pool,
@@ -624,8 +625,17 @@ def _note_display(run: ChatRun, agent: ProjectAgent, event: object) -> None:
             if path_res is None:
                 return
             kind, rel_path = path_res
-            root_dir = agent.uploads_dir if kind == "uploads" else agent.output_dir
-            file_path = root_dir / rel_path
+            if kind == "linked":
+                # The folder this agent's sandbox mounted under that name, as it showed it.
+                link, within = rel_path.split("/", 1)
+                root = agent.linked.root_of(link)
+                found = resolve_in(root, within) if root is not None else None
+                if found is None:
+                    return
+                file_path = found
+            else:
+                root_dir = agent.uploads_dir if kind == "uploads" else agent.output_dir
+                file_path = root_dir / rel_path
             try:
                 file_stats = file_path.stat()
             except OSError:

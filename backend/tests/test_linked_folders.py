@@ -187,3 +187,27 @@ async def test_setup_volumes_clears_leftovers_and_survives_a_refusal(
     monkeypatch.setattr(Path, "rmdir", refuse)
     await agent._setup_volumes()  # noqa: SLF001
     assert (root / "old").is_dir()
+
+
+def test_display_file_can_reach_each_mounted_link(tmp_path, monkeypatch):
+    """openspec change linked-folders, task 5.3: a `uri_map` entry per mounted link."""
+    from harness import make_local_settings, make_project
+
+    from vista_backend.agents.agents import ProjectAgent
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path / "data")
+    real = tmp_path / "salt-data"
+    real.mkdir()
+    agent = ProjectAgent(
+        make_project(name="molten-salt"),
+        make_local_settings(),
+        linked_folders=[
+            Link("salt-data", str(real)),
+            Link("msr-runs", str(tmp_path / "gone")),
+        ],
+    )
+    uri_map = agent._build_vista_metadata("display_file")["vista"]["uri_map"]  # noqa: SLF001
+    assert uri_map["file:///mnt/linked/salt-data/{path}"] == (
+        "/api/files/linked/salt-data/{path}?project_name=molten-salt"
+    )
+    assert not any("msr-runs" in key for key in uri_map)

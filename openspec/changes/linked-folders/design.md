@@ -110,8 +110,10 @@ then confines the resolved real path under the link's resolved root with `path_i
 `Path.resolve()` results, so `..` and outward symlinks both fail the same check. The serving
 headers are the existing ones (inline allowlist, `nosniff`, sandboxing CSP).
 
-- **Listing** gets a new one-level endpoint for linked folders (`GET …/linked/<name>/<dir>`
-  returning that directory's entries, each a file or folder, with an outward symlink omitted);
+- **Listing** gets a new one-level endpoint for linked folders
+  (`GET /projects/{p}/linked-folders/<name>/entries?dir=<dir>`, not under `…/linked/`, where
+  the same URL would be a file's download) returning that directory's entries, each a file
+  or folder, with an outward symlink omitted;
   uploads and outputs keep their recursive listing. The UI's tree fetches a linked folder's
   children when it is expanded.
 - **`display_file`:** the backend adds `file:///mnt/linked/<name>/{path}` →

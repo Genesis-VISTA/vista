@@ -10,7 +10,12 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..db.db import SessionDep
-from ..services import linked_folders, project as project_service
+from ..services import (
+    files as files_service,
+    linked_folders,
+    project as project_service,
+)
+from ..services.files import LinkedEntry
 from ..services.linked_folders import UnavailableReason
 from ..services.project_agent import invalidate_agents
 
@@ -74,3 +79,16 @@ async def unlink_folder(project_name: str, link_name: str, session: SessionDep) 
     project = await project_service.get_project_by_name(session, project_name)
     await linked_folders.remove_link(session, project.id, link_name)
     invalidate_agents(session, project_id=project.id)
+
+
+@router.get("/{link_name}/entries")
+async def list_linked_entries(
+    project_name: str, link_name: str, session: SessionDep, dir: str = ""
+) -> list[LinkedEntry]:
+    """
+    One directory of a linked folder (`dir`, within it; the folder itself by default),
+    newest first. Its files are served as kind `linked`, path `<link>/<entry path>`.
+    """
+    return await files_service.list_linked_entries(
+        session, project_name, link_name, dir
+    )

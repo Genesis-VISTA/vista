@@ -20,17 +20,20 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..db.schemas import ChatSessionTable, DisplayedFileTable
 from ..utils.misc import path_is_under
 from . import chat_session as chat_session_service
+from . import linked_folders
 from . import project as project_service
 from .project_agent import get_project_agent_key, project_agent_pool
 
 
-FileKind = Literal["uploads", "outputs"]
+FileKind = Literal["uploads", "outputs", "linked"]
+""" A `linked` file's path is `<link name>/<path within it>` (openspec change linked-folders). """
 DisplayStatus = Literal["current", "changed", "missing"]
 
 # The sandbox roots `display_file` maps to the files API (the backend's `uri_map`).
 _ROOTS: tuple[tuple[str, FileKind], ...] = (
     ("/mnt/data/output/", "outputs"),
     ("/mnt/data/uploads/", "uploads"),
+    ("/mnt/linked/", "linked"),
 )
 
 
@@ -40,7 +43,8 @@ def sandbox_path_to_file(uri: str) -> tuple[FileKind, str] | None:
 
     Accepts what the MCP server's `resolve_uri` accepts (a bare absolute path or a `file:` URI
     with no host or `localhost`, percent-encoded or not) and refuses what it refuses. Returns
-    `None` for a path outside the two roots, a URI that does not normalise, or an empty rest.
+    `None` for a path outside the roots, a URI that does not normalise, or an empty rest (for
+    a linked file, one without both a link name and a path within it).
     Sandbox paths are POSIX whatever the host is, so this never goes through `Path`.
     """
     if uri.startswith("/"):
@@ -62,6 +66,8 @@ def sandbox_path_to_file(uri: str) -> tuple[FileKind, str] | None:
     for prefix, kind in _ROOTS:
         if decoded.startswith(prefix):
             rest = decoded[len(prefix) :]
+            if kind == "linked" and linked_folders.split_linked_path(rest) is None:
+                return None
             return (kind, rest) if rest else None
     return None
 
@@ -120,6 +126,22 @@ async def list_displayed_files(
     if not rows:
         return []
 
+    # A linked record is looked up through the project's links as they are now: one renamed
+    # or unlinked since simply finds no file.
+    link_roots: dict[str, Path | None] = {
+        row.name: linked_folders.link_status(row.host_path)[0]
+        for row in await linked_folders.list_links(session, project.id)
+    }
+
+    def status(row: DisplayedFileTable, dirs: dict[str, Path]) -> DisplayStatus:
+        if row.kind != "linked":
+            return file_status(dirs[row.kind], row.path, row.size, row.mtime_ns)
+        split = linked_folders.split_linked_path(row.path)
+        root = link_roots.get(split[0]) if split else None
+        if split is None or root is None:
+            return "missing"
+        return file_status(root, split[1], row.size, row.mtime_ns)
+
     agent_key = await get_project_agent_key(session, project_id=project.id)
     async with project_agent_pool.get(agent_key) as agent:
         dirs: dict[str, Path] = {
@@ -136,7 +158,7 @@ async def list_displayed_files(
                 run_id=row.run_id,
                 tool_call_id=row.tool_call_id,
                 shown_at=row.shown_at,
-                status=file_status(dirs[row.kind], row.path, row.size, row.mtime_ns),
+                status=status(row, dirs),
             )
             for row in rows
         ]

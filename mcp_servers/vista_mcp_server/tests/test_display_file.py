@@ -110,3 +110,31 @@ def test_sandbox_paths_are_not_host_paths():
 def test_filename_keeps_characters_a_bare_path_allows(uri, name):
     """`#` and `?` only mean fragment and query inside a URI, not in a bare path."""
     assert display_filename(uri) == name
+
+
+# Verbatim from `_build_vista_metadata` for a project linking a folder as `salt-data`
+# (openspec change linked-folders, task 5.3).
+LINKED_URI_MAP = {
+    **URI_MAP,
+    "file:///mnt/linked/salt-data/{path}": (
+        "/api/files/linked/salt-data/{path}?project_name=molten-salt"
+    ),
+}
+
+
+def test_a_linked_folder_resolves_to_the_linked_kind():
+    assert (
+        resolve_uri("/mnt/linked/salt-data/figs/x.png", LINKED_URI_MAP)
+        == "/api/files/linked/salt-data/figs/x.png?project_name=molten-salt"
+    )
+    assert (
+        resolve_uri("/mnt/linked/salt-data/a b.png", LINKED_URI_MAP)
+        == "/api/files/linked/salt-data/a%20b.png?project_name=molten-salt"
+    )
+
+
+def test_a_link_not_in_the_map_is_refused():
+    with pytest.raises(ValueError):
+        resolve_uri("/mnt/linked/other/x.png", LINKED_URI_MAP)
+    with pytest.raises(ValueError):
+        resolve_uri("/mnt/linked/salt-data/../other/x.png", LINKED_URI_MAP)

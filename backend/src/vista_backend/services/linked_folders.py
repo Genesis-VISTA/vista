@@ -54,6 +54,32 @@ class LinkedVolumes:
     def available_names(self) -> set[str]:
         return {PurePosixPath(sandbox).name for _, sandbox, _, _ in self.available}
 
+    def root_of(self, name: str) -> Path | None:
+        """The host folder mounted as link `name`, or None if it isn't mounted."""
+        for host, sandbox, _, _ in self.available:
+            if PurePosixPath(sandbox).name == name:
+                return Path(host)
+        return None
+
+
+def resolve_in(root: Path, rel: str) -> Path | None:
+    """
+    `rel` inside the linked folder `root` (resolved), by its real location, symlinks
+    included; None when that is outside `root`. `..`, an absolute `rel` and a symlink out
+    all fail the same check. An empty `rel` is `root` itself.
+    """
+    try:
+        target = (root / rel).resolve()
+    except OSError, RuntimeError:
+        return None
+    return target if target == root or path_is_under(root, target) else None
+
+
+def split_linked_path(path: str) -> tuple[str, str] | None:
+    """A `linked` file's path, `<link name>/<path within it>`, split; None if malformed."""
+    name, sep, rel = path.partition("/")
+    return (name, rel) if name and sep and rel else None
+
 
 def sandbox_path(name: str) -> str:
     return str(LINKED_SANDBOX_ROOT / name)
@@ -320,6 +346,24 @@ async def _get_link(
         if row.name == name:
             return row
     raise LinkRefused(404, "no_such_link", f"No linked folder is named “{name}”.")
+
+
+async def link_root(session: AsyncSession, project_id: uuid.UUID, name: str) -> Path:
+    """
+    The host folder of the project's link `name`, resolved now, for the files API: by
+    name, never from a path in the request. 404 when there is no such link or it is
+    unavailable.
+    """
+    row = await _get_link(session, project_id, name)
+    host, reason = link_status(row.host_path)
+    if host is None:
+        raise LinkRefused(
+            404,
+            "unavailable",
+            f"The linked folder “{name}” is {reason}.",
+            reason=reason,
+        )
+    return host
 
 
 async def add_link(

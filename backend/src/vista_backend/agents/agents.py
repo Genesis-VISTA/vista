@@ -13,7 +13,7 @@ import asyncio
 from contextlib import aclosing
 from typing import AsyncGenerator, AsyncIterator, Literal, Annotated as A, Any
 from collections.abc import Awaitable, Callable, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import quote
 
 from pydantic import BaseModel, Field, Discriminator
@@ -1006,6 +1006,15 @@ class ProjectAgent:
                     "file:///mnt/data/uploads/{path}": (
                         f"/api/files/uploads/{{path}}?project_name={project_name}"
                     ),
+                    # Each mounted link, as kind `linked`, path `<name>/<path>`. Names
+                    # are path-safe by construction, so they need no quoting.
+                    **{
+                        f"file://{sandbox}/{{path}}": (
+                            f"/api/files/linked/{PurePosixPath(sandbox).name}/{{path}}"
+                            f"?project_name={project_name}"
+                        )
+                        for _, sandbox, _, _ in self.linked.available
+                    },
                 },
             },
         }
