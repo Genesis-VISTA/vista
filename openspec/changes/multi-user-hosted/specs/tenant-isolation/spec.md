@@ -10,19 +10,33 @@ background task and running agent belongs to one user, and nobody else can see o
 Projects, chat sessions, chat runs, campaign runs, HPC jobs, debate runs, background tasks,
 Slack links, skills and knowledge bases the researcher makes or imports SHALL each belong to
 exactly one user. Names SHALL be unique per owner, not across the server, so two researchers
-may each have a project called `hello-olcf`. The OLCF docs corpus and the skills VISTA seeds
-or bundles SHALL be global and read-only for everyone.
+may each have a project or a knowledge base called `hello-olcf`, and nothing one researcher
+names reveals another's. The OLCF docs corpus and the skills VISTA seeds or bundles SHALL be
+global: readable by everyone and changed by no one. Editing a bundled skill SHALL give the
+editor their own copy, which takes its place for them alone; publishing a global skill SHALL
+publish the publisher's copy. The OLCF docs corpus SHALL stay read-only.
 
 #### Scenario: Same name, two owners
 
-- **GIVEN** Alice has a project `hello-olcf`
-- **WHEN** Bob creates a project `hello-olcf`
-- **THEN** both exist, and each sees only their own
+- **GIVEN** Alice has a project `hello-olcf` and a knowledge base `molten-salts`
+- **WHEN** Bob creates a project `hello-olcf` and a knowledge base `molten-salts`
+- **THEN** all four exist, each researcher sees only their own, and Bob was never told that the names were taken
 
-#### Scenario: A bundled skill is shared but read-only
+#### Scenario: Editing a bundled skill makes a copy
 
-- **WHEN** Bob tries to edit a skill VISTA bundles
-- **THEN** the edit is refused, as it is for Alice
+- **WHEN** Bob edits a skill VISTA bundles
+- **THEN** Bob's edit is saved as his own copy, which he sees in place of the bundled one, and Alice still sees the bundled skill unchanged
+
+#### Scenario: The docs corpus is read-only
+
+- **WHEN** Bob adds a PDF to the OLCF docs knowledge base
+- **THEN** it is refused with the reason, and he can make a knowledge base of his own instead
+
+#### Scenario: Existing desktop stores stay where they are
+
+- **GIVEN** a desktop install with knowledge bases on disk from before this change
+- **WHEN** the new version starts
+- **THEN** every store is found where it was, with nothing moved
 
 ### Requirement: Another user's things do not exist
 
