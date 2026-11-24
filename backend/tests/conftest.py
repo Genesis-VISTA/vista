@@ -11,7 +11,12 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness.memory_keyring import memory_keyring  # noqa: F401  (fixture)
-from vista_backend.db.schemas import LocalSettingsPublic, LocalSettingsTable
+from vista_backend.db.schemas import (
+    LOCAL_USER_ID,
+    LocalSettingsPublic,
+    LocalSettingsTable,
+    UserTable,
+)
 
 
 def pytest_collection_modifyitems(
@@ -113,9 +118,10 @@ async def engine(tmp_path_factory):
 
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
-    # Like `init_db`: every database has its one settings row.
+    # Like `init_db`: every database has its one settings row and the user `local`.
     async with AsyncSession(engine) as s:
         s.add(LocalSettingsTable())
+        s.add(UserTable(id=LOCAL_USER_ID, sub=None))
         await s.commit()
     yield engine
     await engine.dispose()
@@ -134,6 +140,34 @@ async def local(session) -> LocalSettingsPublic:
     from vista_backend.services import local_settings
 
     return await local_settings.get_public(session)
+
+
+@pytest.fixture
+def issuer():
+    """A stand-in Keycloak realm that mints access tokens (`harness/tokens.py`)."""
+    from harness.tokens import FakeIssuer
+
+    return FakeIssuer()
+
+
+@pytest.fixture
+def hosted(monkeypatch, issuer):
+    """
+    Run the backend as a hosted deployment that trusts `issuer`'s key, without
+    fetching it: `current_user.get_verifier` hands back a verifier built on its
+    JWKS.
+    """
+    from harness.tokens import AZP, ISSUER, ROLE
+    from vista_backend.config import settings
+    from vista_backend.services import current_user
+
+    monkeypatch.setattr(settings, "deployment", "hosted")
+    monkeypatch.setattr(settings, "oidc_issuer", ISSUER)
+    monkeypatch.setattr(settings, "oidc_allowed_azp", [AZP])
+    monkeypatch.setattr(settings, "oidc_required_role", ROLE)
+    verifier = current_user.TokenVerifier(ISSUER, [AZP], ROLE, keys=issuer.jwks())
+    monkeypatch.setattr(current_user, "get_verifier", lambda: verifier)
+    return issuer
 
 
 @pytest.fixture
