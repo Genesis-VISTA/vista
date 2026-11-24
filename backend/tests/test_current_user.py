@@ -161,6 +161,35 @@ async def test_local_never_matches_a_token(whoami, hosted):
     assert r.json()["id"] != LOCAL_USER_ID
 
 
+async def test_a_first_sign_in_is_committed_before_the_route_runs(session, hosted):
+    """
+    The request's session lives until the response is sent (a chat stream can
+    last minutes), so the user's write must not wait for it: another session
+    sees the row while the route is still running.
+    """
+    from sqlmodel.ext.asyncio.session import AsyncSession
+
+    app = FastAPI()
+
+    @app.get("/peek")
+    async def _peek(user: CurrentUser) -> dict:
+        async with AsyncSession(session.bind) as other:
+            seen = (
+                await other.exec(select(UserTable).where(UserTable.sub == "carol"))
+            ).first()
+        return {"seen": seen is not None}
+
+    async def override_session():
+        yield session
+
+    app.dependency_overrides[_get_session] = override_session
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://t"
+    ) as http:
+        r = await http.get("/peek", headers=bearer(hosted.token(sub="carol")))
+    assert r.json() == {"seen": True}
+
+
 # --- The real app: attached router-wide ------------------------------------------
 
 

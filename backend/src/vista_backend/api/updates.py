@@ -25,6 +25,8 @@ from ..services.update_check import (
 from ..services.update_download import update_downloader
 
 router = APIRouter(tags=["updates"])
+version_router = APIRouter(tags=["updates"])
+""" `/version` alone: it answers without a signed-in user, so the UI can learn the deployment before anyone signs in. """
 
 
 class VersionInfo(BaseModel):
@@ -90,7 +92,7 @@ async def _version_info(session: SessionDep) -> VersionInfo:
     return info
 
 
-@router.get("/version")
+@version_router.get("/version")
 async def get_version(session: SessionDep) -> VersionInfo:
     return await _version_info(session)
 

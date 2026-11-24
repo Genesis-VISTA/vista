@@ -30,7 +30,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 ## 4. CurrentUser: Sam's carve-out (wave 1; needs nothing; gate before waves 2–5)
 
 - [x] 4.1 Scaffold only (parent): `UserTable` (`app_user`) in `db/schemas.py`, `local` created in `init_db`, a stub `services/current_user.py` with `CurrentUser`'s signature, a token-minting fixture in `backend/tests/conftest.py`, failing `backend/tests/test_current_user.py` (desktop → `local`; hosted no/bad token → 401; ID token → 401; missing role → 403; new sub created once; JWKS down → 503), and a toolbox of PyJWT/`PyJWKClient` calls with examples from `collaboration_server/.../services/identity.py`
-- [ ] 4.2 Sam implements `CurrentUser` and the verifier, and attaches it router-wide in `api/api.py` (health/version outside it); verify with `cd backend && uv run --extra dev pytest tests/test_current_user.py`
+- [x] 4.2 Sam implements `CurrentUser` and the verifier, and attaches it router-wide in `api/api.py` (health/version outside it); verify with `cd backend && uv run --extra dev pytest tests/test_current_user.py`
 - [ ] 4.3 Parent reviews Sam's diff like a teammate's; gate passes when the review's findings are settled
 
 ## 5. Settings split (wave 2; needs 1, 4)
