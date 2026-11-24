@@ -84,7 +84,7 @@ def _planner(hpc) -> CampaignPlanner:
 
 
 async def _make_run(session):
-    project = ProjectTable(name="planner-project")
+    project = ProjectTable(user_id="local", name="planner-project")
     session.add(project)
     await session.flush()
     return await campaign_service.create_campaign(

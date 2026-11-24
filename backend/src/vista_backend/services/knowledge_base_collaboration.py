@@ -49,6 +49,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.skill_import import SkillImportError, clean_relpath
 from ..config import settings
+from ..db.ownership import owned, visible, uid
 from ..db.schemas import (
     KnowledgeBaseBuildStatus,
     KnowledgeBasePublic,
@@ -56,6 +57,7 @@ from ..db.schemas import (
     LocalSettingsPublic,
     SLUG_PATTERN,
     Publication,
+    UserTable,
     is_valid_slug,
 )
 from ..utils import indexer
@@ -75,7 +77,7 @@ from .collaboration import (
 from .teams import remembers_teams, require_still_in, require_team, team_of
 from .knowledge_base import (
     get_kb,
-    get_kb_optional,
+    slug_taken,
     kb_content,
     kb_folder,
     kb_lock,
@@ -242,14 +244,17 @@ def _version(text: str) -> tuple[int, int, int] | None:
 
 
 async def linked_knowledge_base(
-    session: AsyncSession, url: str | None, item_id: uuid.UUID
+    session: AsyncSession, url: str | None, item_id: uuid.UUID, user: UserTable
 ) -> KnowledgeBaseTable | None:
-    """The knowledge base here published as, or imported from, item `item_id` on `url`."""
+    """`user`'s knowledge base published as, or imported from, item `item_id` on `url`."""
     return (
         await session.exec(
-            select(KnowledgeBaseTable).where(
-                KnowledgeBaseTable.origin_server == url,
-                KnowledgeBaseTable.remote_id == item_id,
+            owned(
+                select(KnowledgeBaseTable).where(
+                    KnowledgeBaseTable.origin_server == url,
+                    KnowledgeBaseTable.remote_id == item_id,
+                ),
+                user,
             )
         )
     ).first()
@@ -410,18 +415,22 @@ def unpack_knowledge_base(archive: Path, dest: Path, *, has_index: bool) -> None
 
 
 async def list_remote_knowledge_bases(
-    session: AsyncSession, local: LocalSettingsPublic, *, manifests: bool = True
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    user: UserTable,
+    *,
+    manifests: bool = True,
 ) -> list[RemoteKnowledgeBase]:
     """The server's knowledge bases, each with any copy here and, with `manifests`, its head."""
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, KB_KIND, heads=manifests)
-    rows = list((await session.exec(select(KnowledgeBaseTable))).all())
+    rows = list((await session.exec(visible(select(KnowledgeBaseTable), user))).all())
     linked = {
         r.remote_id: LocalCopy(
             name=r.slug, remote_version=r.remote_version, modified=r.modified
         )
         for r in rows
-        if r.remote_id and r.origin_server == url
+        if r.remote_id and r.origin_server == url and r.user_id == uid(user)
     }
     slugs = {r.slug for r in rows}
     listed = []
@@ -469,6 +478,7 @@ async def publish_knowledge_base(
     *,
     on_top_of: int | None = None,
     as_new: bool = False,
+    user: UserTable,
 ) -> KnowledgeBasePublishResult:
     """
     Publish the knowledge base's files and index as the next version of its
@@ -486,7 +496,13 @@ async def publish_knowledge_base(
     url = required_url(local)
     async with kb_lock(slug):
         return await _publish(
-            session, local, url=url, slug=slug, on_top_of=on_top_of, as_new=as_new
+            session,
+            local,
+            url=url,
+            slug=slug,
+            on_top_of=on_top_of,
+            as_new=as_new,
+            user=user,
         )
 
 
@@ -498,8 +514,9 @@ async def _publish(
     slug: str,
     on_top_of: int | None,
     as_new: bool,
+    user: UserTable,
 ) -> KnowledgeBasePublishResult:
-    row = await get_kb(session, slug)
+    row = await get_kb(session, slug, user)
     require_idle(row, "publish it")
     public = KnowledgeBasePublic.model_validate(row)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
@@ -712,6 +729,7 @@ async def import_knowledge_base(
     rename_to: str | None = None,
     replace_modified: bool = False,
     planned: RemoteVersion | None = None,
+    user: UserTable,
 ) -> KnowledgeBaseImportResult:
     """
     Import a version (by default the head) of a knowledge base on the server
@@ -753,7 +771,7 @@ async def import_knowledge_base(
                 f"Version {number} of {item_name} on the collaboration server is "
                 "not a knowledge base this VISTA can import."
             )
-        first = await linked_knowledge_base(session, url, item_id)
+        first = await linked_knowledge_base(session, url, item_id, user)
         if first is not None:
             slug = first.slug
         else:
@@ -763,7 +781,7 @@ async def import_knowledge_base(
         async with kb_lock(slug):
             # What another request committed while this one waited.
             session.expire_all()
-            existing = await linked_knowledge_base(session, url, item_id)
+            existing = await linked_knowledge_base(session, url, item_id, user)
             if (existing is None) != (first is None) or (
                 existing is not None and existing.slug != slug
             ):
@@ -785,6 +803,7 @@ async def import_knowledge_base(
                 slug=slug,
                 existing=existing,
                 replace_modified=replace_modified,
+                user=user,
             )
 
 
@@ -802,6 +821,7 @@ async def _import(
     slug: str,
     existing: KnowledgeBaseTable | None,
     replace_modified: bool,
+    user: UserTable,
 ) -> KnowledgeBaseImportResult:
     """`import_knowledge_base` under the slug's lock."""
     if existing is not None:
@@ -816,7 +836,7 @@ async def _import(
         before = kb_content(existing)
         old = [Path(existing.pdfs_dir), Path(existing.rag_db_path)]
     else:
-        if await get_kb_optional(session, slug) is not None:
+        if await slug_taken(session, slug):
             raise _name_taken(slug)
         before, old = None, []
 
@@ -852,11 +872,12 @@ async def _import(
         if existing is None:
             # Asked again: a knowledge base created (not imported) here while
             # downloading takes no lock.
-            if await get_kb_optional(session, slug) is not None:
+            if await slug_taken(session, slug):
                 raise _name_taken(slug)
             # An id of its own, never one from elsewhere: the seeded knowledge
             # bases have fixed ids.
             row = KnowledgeBaseTable(
+                user_id=uid(user),
                 slug=slug,
                 name=manifest.name,
                 team_id=team_id,

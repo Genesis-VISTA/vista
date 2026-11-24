@@ -48,11 +48,13 @@ from ..db.schemas import (
     DebateRunPublic,
     DebateRunTable,
     ForumThreadTable,
+    UserTable,
     clean_role_models,
 )
 from ..services import debate as debate_service, local_settings
 from ..services import project as project_service
 from ..services import threads as thread_service
+from ..services.current_user import CurrentUser
 from ..services.forum_git import (
     POSTABLE_KINDS,
     ForumClient,
@@ -131,14 +133,16 @@ class ForumStatus(BaseModel):
 
 
 @router.get("/{project_name}/forum/status")
-async def forum_status(project_name: str, session: SessionDep) -> ForumStatus:
+async def forum_status(
+    project_name: str, session: SessionDep, user: CurrentUser
+) -> ForumStatus:
     """
     This project's forum state, for the page to explain itself with.
 
     Never raises on a forum that is off or unreachable: this endpoint exists to
     report bad states, so failing on one would defeat it.
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     git = git_status()
     if not await _has_lab(session, project):
         return ForumStatus(
@@ -502,9 +506,9 @@ THREAD_MISSING = "This thread is no longer on the forum."
 THREAD_CLOSED = "This thread is closed; it accepts no further posts."
 
 
-async def _lab(session: AsyncSession, project_name: str):
+async def _lab(session: AsyncSession, project_name: str, user: UserTable):
     """The project and its forum client, or 503 when it has no lab."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     # The client first: when git is missing it says so, which is the reason a
     # researcher can act on, rather than "has no lab".
     try:
@@ -530,14 +534,16 @@ async def _require(
 
 
 @router.get("/{project_name}/threads")
-async def list_threads(project_name: str, session: SessionDep) -> list[ThreadPublic]:
+async def list_threads(
+    project_name: str, session: SessionDep, user: CurrentUser
+) -> list[ThreadPublic]:
     """
     Every thread on the project's forum, newest first, whoever opened it.
 
     Fetches the forum at most every 30 seconds per project; the lab polls this
     while it is open, and nothing fetches while no lab is open (design D3).
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     project_id = project.id
     if not await _has_lab(session, project):
         return []
@@ -551,10 +557,14 @@ async def list_threads(project_name: str, session: SessionDep) -> list[ThreadPub
 
 @router.post("/{project_name}/threads")
 async def open_thread(
-    project_name: str, body: DebateCreate, session: SessionDep, local: LocalSettingsDep
+    project_name: str,
+    body: DebateCreate,
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> ThreadPublic:
     """Open a thread, attach this install's roster, and start arguing."""
-    project, client = await _lab(session, project_name)
+    project, client = await _lab(session, project_name, user=user)
     for role in ROSTER:
         require_inference_credential(local, body.models.get(role))
 
@@ -581,9 +591,9 @@ async def open_thread(
 
 @router.get("/{project_name}/threads/{thread_id}")
 async def get_thread(
-    project_name: str, thread_id: str, session: SessionDep
+    project_name: str, thread_id: str, session: SessionDep, user: CurrentUser
 ) -> ThreadStatePublic:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     project_id = project.id  # a refresh commits, which expires `project`
     client = (
         await _client(session, project) if await _has_lab(session, project) else None
@@ -603,13 +613,14 @@ async def post_to_thread(
     body: HumanPost,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> ThreadPost:
     """
     Say something into a thread, as this install's researcher: any thread that
     is not closed, whoever opened it and whoever's run is live. It starts no
     agent turn; a live run's agents read it at their next turn.
     """
-    project, client = await _lab(session, project_name)
+    project, client = await _lab(session, project_name, user=user)
     row = await _require(session, project.id, thread_id)
     if row.thread_missing:
         raise HTTPException(status_code=409, detail=THREAD_MISSING)
@@ -654,6 +665,7 @@ async def continue_thread(
     body: ContinueDebate,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> ThreadPublic:
     """
     Argue a thread for a few more rounds with this install's own agents.
@@ -663,7 +675,7 @@ async def continue_thread(
     install has not argued in is adopted first: it gets a run and roster of
     this install's own.
     """
-    project, client = await _lab(session, project_name)
+    project, client = await _lab(session, project_name, user=user)
     project_id = project.id
     row = await _require(session, project_id, thread_id)
     if row.thread_missing:
@@ -755,13 +767,13 @@ async def continue_thread(
 
 @router.post("/{project_name}/threads/{thread_id}/close")
 async def close_thread(
-    project_name: str, thread_id: str, session: SessionDep
+    project_name: str, thread_id: str, session: SessionDep, user: CurrentUser
 ) -> ThreadPublic:
     """
     End a thread early: write its CLOSED post. Only the install that opened
     the thread may (`created_by` is its host id); anyone else gets 403.
     """
-    project, client = await _lab(session, project_name)
+    project, client = await _lab(session, project_name, user=user)
     row = await _require(session, project.id, thread_id)
     if row.created_by != client.host_id:
         raise HTTPException(
@@ -787,7 +799,7 @@ async def close_thread(
 
 @router.get("/{project_name}/threads/{thread_id}/events")
 async def thread_events(
-    project_name: str, thread_id: str, session: SessionDep
+    project_name: str, thread_id: str, session: SessionDep, user: CurrentUser
 ) -> EventSourceResponse:
     """
     Follow a thread: its posts, this install's run's activity, and the thread
@@ -798,7 +810,7 @@ async def thread_events(
     closed, so a teammate's run streams in as well as ours; a reconnecting
     client gets everything again.
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     project_id = project.id
     await _require(session, project_id, thread_id)
     forum = (

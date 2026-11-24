@@ -262,11 +262,14 @@ async def test_a_project_with_knowledge_bases_gets_literature_search(tmp_path, s
     from vista_backend.agents.forum import wiring
     from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
-    project = ProjectTable(name="salts", knowledge_bases=["molten-salts"])
+    project = ProjectTable(
+        user_id="local", name="salts", knowledge_bases=["molten-salts"]
+    )
     session.add(project)
     await session.flush()
 
     run = DebateRunTable(
+        user_id="local",
         project_id=project.id,
         topic="t",
         thread_id="abc",
@@ -324,10 +327,11 @@ async def test_a_project_with_no_knowledge_bases_gets_no_search_tool(tmp_path, s
     from vista_backend.agents.forum import wiring
     from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
-    project = ProjectTable(name="bare", knowledge_bases=[])
+    project = ProjectTable(user_id="local", name="bare", knowledge_bases=[])
     session.add(project)
     await session.flush()
     run = DebateRunTable(
+        user_id="local",
         project_id=project.id,
         topic="t",
         thread_id="abc",
@@ -358,10 +362,13 @@ async def test_a_slug_the_project_does_not_list_is_refused(tmp_path, session):
     from vista_backend.agents.forum import wiring
     from vista_backend.db.schemas import DebateRunTable, ProjectTable
 
-    project = ProjectTable(name="salts2", knowledge_bases=["molten-salts"])
+    project = ProjectTable(
+        user_id="local", name="salts2", knowledge_bases=["molten-salts"]
+    )
     session.add(project)
     await session.flush()
     run = DebateRunTable(
+        user_id="local",
         project_id=project.id,
         topic="t",
         thread_id="abc",
@@ -517,6 +524,7 @@ async def test_a_role_cannot_read_outside_the_projects_uploads(tmp_path, monkeyp
     monkeypatch.setattr(wiring, "project_agent_pool", SimpleNamespace(get=fake_get))
 
     run = DebateRunTable(
+        user_id="local",
         project_id=uuid.uuid4(),
         topic="t",
         thread_id="abc",

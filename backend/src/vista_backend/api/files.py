@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile
 from fastapi.responses import FileResponse, Response
 from starlette.convertors import Convertor, register_url_convertor
 
+from ..services.current_user import CurrentUser
 from ..db.db import SessionDep
 from ..services import files as files_service
 from ..services.files import FileInfo, FileKind
@@ -43,8 +44,9 @@ async def list_files(
     project_name: str,
     kind: FileKind,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[FileInfo]:
-    return await files_service.list_files(session, project_name, kind)
+    return await files_service.list_files(session, project_name, kind, user=user)
 
 
 @router.post("/projects/{project_name}/uploads")
@@ -52,8 +54,9 @@ async def upload_files(
     project_name: str,
     files: list[UploadFile],
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[str]:
-    return await files_service.save_uploads(session, project_name, files)
+    return await files_service.save_uploads(session, project_name, files, user=user)
 
 
 @router.get("/projects/{project_name}/{kind:file_kind}/{name:path}")
@@ -62,9 +65,12 @@ async def download_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
+    user: CurrentUser,
     preview: bool = False,
 ) -> Response:
-    path = await files_service.get_file_path(session, project_name, kind, name)
+    path = await files_service.get_file_path(
+        session, project_name, kind, name, user=user
+    )
     extension = path.suffix.lstrip(".").lower()
     inline = preview and extension in INLINE_EXTENSIONS
     return FileResponse(
@@ -81,6 +87,7 @@ async def delete_file(
     kind: FileKind,
     name: str,
     session: SessionDep,
+    user: CurrentUser,
 ):
-    await files_service.delete_file(session, project_name, kind, name)
+    await files_service.delete_file(session, project_name, kind, name, user=user)
     return {"ok": True}

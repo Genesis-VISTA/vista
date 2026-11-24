@@ -8,6 +8,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import ProjectAgent
 from ..config import settings
+from ..db.schemas import UserTable
 from ..utils.misc import path_is_under, write_file_unique
 from . import project as project_service
 from .displayed_files import FileKind, ShownIn, newest_records, shown_in
@@ -57,10 +58,10 @@ def _get_file(files_dir: Path, name: str) -> Path:
 
 
 async def list_files(
-    session: AsyncSession, project_name: str, kind: FileKind
+    session: AsyncSession, project_name: str, kind: FileKind, user: UserTable
 ) -> list[FileInfo]:
-    project = await project_service.get_project_by_name(session, project_name)
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         if not files_dir.exists():
@@ -88,12 +89,12 @@ async def list_files(
 
 
 async def save_uploads(
-    session: AsyncSession, project_name: str, files: list[UploadFile]
+    session: AsyncSession, project_name: str, files: list[UploadFile], user: UserTable
 ) -> list[str]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
-    project = await project_service.get_project_by_name(session, project_name)
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     async with project_agent_pool.get(agent_key) as agent:
         uploads_dir = agent.uploads_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -119,10 +120,11 @@ async def get_file_path(
     project_name: str,
     kind: FileKind,
     name: str,
+    user: UserTable,
 ) -> Path:
     """Resolve a single file's path, raising 404 if it is missing or invalid."""
-    project = await project_service.get_project_by_name(session, project_name)
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     async with project_agent_pool.get(agent_key) as agent:
         return _get_file(_kind_dir(agent, kind), name)
 
@@ -132,9 +134,10 @@ async def delete_file(
     project_name: str,
     kind: FileKind,
     name: str,
+    user: UserTable,
 ) -> None:
-    project = await project_service.get_project_by_name(session, project_name)
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     async with project_agent_pool.get(agent_key) as agent:
         files_dir = _kind_dir(agent, kind)
         path = _get_file(files_dir, name)

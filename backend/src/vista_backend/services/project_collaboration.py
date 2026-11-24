@@ -33,6 +33,7 @@ from ..agents.forum.project_forum import (
     hosted_forum_id,
 )
 from ..agents.skills import SKILL_NAME_PATTERN
+from ..db.ownership import owned, visible, uid
 from ..db.schemas import (
     SLUG_PATTERN,
     KnowledgeBaseTable,
@@ -41,6 +42,7 @@ from ..db.schemas import (
     ProjectPublic,
     ProjectTable,
     SkillTable,
+    UserTable,
 )
 from . import hosted_forum, local_settings
 from .collaboration import (
@@ -259,12 +261,15 @@ def _project_manifest(version: RemoteVersion) -> ProjectManifest | None:
 
 
 async def _linked_project(
-    session: AsyncSession, url: str | None, item_id: uuid.UUID
+    session: AsyncSession, url: str | None, item_id: uuid.UUID, user: UserTable
 ) -> ProjectTable | None:
     return (
         await session.exec(
-            select(ProjectTable).where(
-                ProjectTable.origin_server == url, ProjectTable.remote_id == item_id
+            owned(
+                select(ProjectTable).where(
+                    ProjectTable.origin_server == url, ProjectTable.remote_id == item_id
+                ),
+                user,
             )
         )
     ).first()
@@ -276,12 +281,16 @@ async def _linked_project(
 
 
 async def list_remote_projects(
-    session: AsyncSession, local: LocalSettingsPublic, *, manifests: bool = True
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    user: UserTable,
+    *,
+    manifests: bool = True,
 ) -> list[RemoteProject]:
     """The server's projects, each with any copy here and, with `manifests`, its head."""
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, PROJECT_KIND, heads=manifests)
-    rows = list((await session.exec(select(ProjectTable))).all())
+    rows = list((await session.exec(owned(select(ProjectTable), user))).all())
     linked = {
         r.remote_id: LocalCopy(
             name=r.name, remote_version=r.remote_version, modified=r.modified
@@ -321,6 +330,7 @@ async def _publish_skills(
     local: LocalSettingsPublic,
     project: str,
     names: list[str],
+    user: UserTable,
 ) -> tuple[list[SkillRef], list[str]]:
     """
     A reference to each skill in `names`, publishing first each one that is not
@@ -328,7 +338,10 @@ async def _publish_skills(
     the names published. A skill that is not here, or one that needs the
     researcher's choice, stops the project's publish before it is sent.
     """
-    here = {name: await get_skill_optional(session, name) is not None for name in names}
+    here = {
+        name: await get_skill_optional(session, name, user) is not None
+        for name in names
+    }
     absent = [name for name in names if not here[name]]
     if absent:
         raise HTTPException(
@@ -343,10 +356,10 @@ async def _publish_skills(
         # Read in the loop: each publish ends the transaction, expiring rows.
         # A skill bundled with VISTA is published like any other: it is the
         # project's team's copy of it.
-        row = await get_skill(session, name)
+        row = await get_skill(session, name, user)
         was = (row.origin_server, row.remote_id, row.remote_version)
         try:
-            row = await publish_skill(session, local, name)
+            row = await publish_skill(session, local, name, user=user)
         except SkillConflict as e:
             raise ProjectConflict(
                 f"{project} was not published: its skill {name} needs a choice "
@@ -370,6 +383,7 @@ async def _check_knowledge_bases(
     project: str,
     slugs: list[str],
     carried: dict[str, KnowledgeBaseRef],
+    user: UserTable,
 ) -> None:
     """
     Refuse, before anything is published, a project that searches a knowledge
@@ -378,7 +392,7 @@ async def _check_knowledge_bases(
     """
     absent = []
     for slug in slugs:
-        kb = await get_kb_optional(session, slug)
+        kb = await get_kb_optional(session, slug, user)
         if kb is None:
             if slug not in carried:
                 absent.append(slug)
@@ -400,6 +414,7 @@ async def _publish_knowledge_bases(
     project: str,
     slugs: list[str],
     carried: dict[str, KnowledgeBaseRef],
+    user: UserTable,
 ) -> tuple[list[KnowledgeBaseRef], list[str]]:
     """
     A reference to each knowledge base in `slugs`, publishing first each one
@@ -412,11 +427,11 @@ async def _publish_knowledge_bases(
     refs: list[KnowledgeBaseRef] = []
     published: list[str] = []
     for slug in slugs:
-        if await get_kb_optional(session, slug) is None:
+        if await get_kb_optional(session, slug, user) is None:
             refs.append(carried[slug])
             continue
         try:
-            result = await publish_knowledge_base(session, local, slug)
+            result = await publish_knowledge_base(session, local, slug, user=user)
         except KnowledgeBaseConflict as e:
             raise ProjectConflict(
                 f"{project} was not published: its knowledge base {slug} needs a "
@@ -506,6 +521,7 @@ async def publish_project(
     *,
     on_top_of: int | None = None,
     as_new: bool = False,
+    user: UserTable,
 ) -> ProjectPublishResult:
     """
     Publish the project as the next version of its item on the server in
@@ -523,14 +539,14 @@ async def publish_project(
     the skill and knowledge base versions it uses can differ.
     A write to the project while it is published leaves it modified.
     """
-    row = await get_project_by_name(session, name)
+    row = await get_project_by_name(session, name, user)
     url = required_url(local)
     public = ProjectPublic.model_validate(row)
     before = project_content(row)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     team_id = require_team(team_of(row, url), name)
     await check_references(
-        session, name, team_id, public.skills, public.knowledge_bases
+        session, name, team_id, public.skills, public.knowledge_bases, user=user
     )
 
     async with client_for(local) as client:
@@ -556,12 +572,12 @@ async def publish_project(
 
         carried_kbs = {ref.slug: ref for ref in base.knowledge_bases} if base else {}
         slugs = list(dict.fromkeys(public.knowledge_bases))
-        await _check_knowledge_bases(session, name, slugs, carried_kbs)
+        await _check_knowledge_bases(session, name, slugs, carried_kbs, user=user)
         refs, published = await _publish_skills(
-            session, local, name, list(dict.fromkeys(public.skills))
+            session, local, name, list(dict.fromkeys(public.skills)), user=user
         )
         kb_refs, kbs_published = await _publish_knowledge_bases(
-            session, local, name, slugs, carried_kbs
+            session, local, name, slugs, carried_kbs, user=user
         )
         new = _build_manifest(
             public,
@@ -633,9 +649,11 @@ async def publish_project(
 # ---------------------------------------------------------------------------
 
 
-async def _free_skill_name(session: AsyncSession, base: str) -> str:
-    """`base`, or the first `<base>-<n>` from 2 that no skill here has."""
-    taken = set((await session.exec(select(SkillTable.name))).all())
+async def _free_skill_name(session: AsyncSession, base: str, user: UserTable) -> str:
+    """`base`, or the first `<base>-<n>` from 2 that `user` has no skill (or global one) called."""
+    taken = set(
+        (await session.exec(visible(select(SkillTable.name), user, SkillTable))).all()
+    )
     name, n = base, 2
     while name in taken:
         name, n = f"{base}-{n}", n + 1
@@ -659,6 +677,7 @@ async def _import_skills(
     url: str,
     project: str,
     refs: list[SkillRef],
+    user: UserTable,
 ) -> tuple[list[str], list[SkillOutcome]]:
     """
     Make each referenced skill available here, importing the versions that are
@@ -673,7 +692,7 @@ async def _import_skills(
     names: list[str] = []
     outcomes: list[SkillOutcome] = []
     for ref in refs:
-        copy = await linked_skill(session, url, ref.remote_id)
+        copy = await linked_skill(session, url, ref.remote_id, user)
         try:
             if copy is None:
                 row, _ = await import_skill(
@@ -681,7 +700,8 @@ async def _import_skills(
                     local,
                     ref.remote_id,
                     version=ref.version,
-                    rename_to=await _free_skill_name(session, ref.name),
+                    rename_to=await _free_skill_name(session, ref.name, user),
+                    user=user,
                 )
                 names.append(row.name)
                 outcomes.append(SkillOutcome(name=row.name, status="imported"))
@@ -691,7 +711,9 @@ async def _import_skills(
             if here == ref.version and not modified:
                 outcome = SkillOutcome(name=name, status="unchanged")
             elif here < ref.version and not modified:
-                await import_skill(session, local, ref.remote_id, version=ref.version)
+                await import_skill(
+                    session, local, ref.remote_id, version=ref.version, user=user
+                )
                 outcome = SkillOutcome(name=name, status="updated")
             else:
                 why = (
@@ -712,8 +734,11 @@ async def _import_skills(
     return list(dict.fromkeys(names)), outcomes
 
 
-async def _free_slug(session: AsyncSession, base: str) -> str:
-    """`base`, or the first `<base>-<n>` from 2 that no knowledge base here has."""
+async def _free_slug(session: AsyncSession, base: str, user: UserTable) -> str:
+    """`base`, or the first `<base>-<n>` from 2 that no knowledge base here has.
+
+    Any user's counts: a store is keyed on disk by its slug alone.
+    """
     taken = set((await session.exec(select(KnowledgeBaseTable.slug))).all())
     slug, n = base, 2
     while slug in taken:
@@ -731,6 +756,7 @@ async def _plan_knowledge_bases(
     url: str,
     project: str,
     refs: list[KnowledgeBaseRef],
+    user: UserTable,
 ) -> tuple[list[KbPlan], dict[uuid.UUID, RemoteVersion]]:
     """
     What the import will do about each knowledge base, checked before anything
@@ -744,7 +770,7 @@ async def _plan_knowledge_bases(
     fetch: list[KnowledgeBaseRef] = []
     fetched: dict[uuid.UUID, RemoteVersion] = {}
     for ref in refs:
-        copy = await linked_knowledge_base(session, url, ref.remote_id)
+        copy = await linked_knowledge_base(session, url, ref.remote_id, user)
         if copy is None:
             plan: KbPlan = "import"
         elif copy.remote_version == ref.version and not copy.modified:
@@ -790,6 +816,7 @@ async def _import_knowledge_bases(
     refs: list[KnowledgeBaseRef],
     plans: list[KbPlan],
     fetched: dict[uuid.UUID, RemoteVersion],
+    user: UserTable,
 ) -> tuple[list[str], list[KnowledgeBaseOutcome]]:
     """
     Make each referenced knowledge base available here, as `plans` says;
@@ -810,13 +837,14 @@ async def _import_knowledge_bases(
                         local,
                         ref.remote_id,
                         version=ref.version,
-                        rename_to=await _free_slug(session, ref.slug),
+                        rename_to=await _free_slug(session, ref.slug, user),
                         planned=fetched[ref.remote_id],
+                        user=user,
                     )
                 ).knowledge_base
                 outcome = KnowledgeBaseOutcome(slug=kb.slug, status="imported")
             else:
-                copy = await linked_knowledge_base(session, url, ref.remote_id)
+                copy = await linked_knowledge_base(session, url, ref.remote_id, user)
                 assert copy is not None  # planned from it
                 slug, here, modified = copy.slug, copy.remote_version, copy.modified
                 if plan == "update":
@@ -826,6 +854,7 @@ async def _import_knowledge_bases(
                         ref.remote_id,
                         version=ref.version,
                         planned=fetched[ref.remote_id],
+                        user=user,
                     )
                     outcome = KnowledgeBaseOutcome(slug=slug, status="updated")
                 elif plan == "unchanged":
@@ -904,6 +933,7 @@ async def import_project(
     version: int | None = None,
     rename_to: str | None = None,
     replace_modified: bool = False,
+    user: UserTable,
 ) -> ProjectImportResult:
     """
     Import a version (by default the head) of a project on the server in
@@ -944,7 +974,7 @@ async def import_project(
             "a project this VISTA can import."
         )
 
-    existing = await _linked_project(session, url, item_id)
+    existing = await _linked_project(session, url, item_id, user)
     if existing is not None:
         if existing.remote_version == number and not existing.modified:
             return ProjectImportResult(
@@ -961,7 +991,7 @@ async def import_project(
         chosen = (rename_to or "").strip()
         name = chosen or item.name
         _check_name(name, chosen=bool(chosen))
-        if await get_project_by_name_optional(session, name) is not None:
+        if await get_project_by_name_optional(session, name, user) is not None:
             raise _name_taken(name)
 
     try:
@@ -984,22 +1014,24 @@ async def import_project(
 
     kb_refs = list({ref.remote_id: ref for ref in manifest.knowledge_bases}.values())
     kb_plans, kb_fetched = await _plan_knowledge_bases(
-        session, local, url, name, kb_refs
+        session, local, url, name, kb_refs, user=user
     )
-    skills, outcomes = await _import_skills(session, local, url, name, manifest.skills)
+    skills, outcomes = await _import_skills(
+        session, local, url, name, manifest.skills, user=user
+    )
     fields.skills = skills
     fields.knowledge_bases, kb_outcomes = await _import_knowledge_bases(
-        session, local, url, name, kb_refs, kb_plans, kb_fetched
+        session, local, url, name, kb_refs, kb_plans, kb_fetched, user=user
     )
 
     if existing is None:
         # Asked again: the skills took a while, and project names are unique
         # only by this check.
-        if await get_project_by_name_optional(session, name) is not None:
+        if await get_project_by_name_optional(session, name, user) is not None:
             raise _name_taken(name)
         # An id of its own, never one from elsewhere: the seeded projects share
         # fixed ids across installations.
-        row = ProjectTable.model_validate(fields)
+        row = ProjectTable.model_validate(fields, update={"user_id": uid(user)})
         row.origin_server = url
         row.remote_id = item_id
         set_team(row, item.team_id, url)

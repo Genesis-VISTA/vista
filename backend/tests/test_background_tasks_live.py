@@ -26,6 +26,7 @@ from harness import (
     seed_project,
     step_model,
 )
+from harness.users import LOCAL
 from vista_backend.agents.agents import ProjectAgent, _hide_backend_args
 from vista_backend.config import settings
 from vista_backend.db.schemas import BackgroundTaskTable, ChatSessionTable
@@ -66,7 +67,9 @@ async def test_a_background_command_starts_a_turn_when_it_exits(
     monkeypatch.setattr(background_tasks, "background_task_registry", tasks)
 
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     chat_id = row.id
     await session.commit()
 

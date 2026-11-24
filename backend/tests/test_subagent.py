@@ -60,7 +60,7 @@ class FakeHpcTools:
 
 
 async def _make_run_and_step(session, *, kind="neutronics"):
-    project = ProjectTable(name=f"subagent-{kind}")
+    project = ProjectTable(user_id="local", name=f"subagent-{kind}")
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(

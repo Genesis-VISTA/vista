@@ -262,6 +262,11 @@ async def _resolve_user(session: AsyncSession, authorization: str | None) -> Use
             if row is None:
                 raise
             return row
+        # Only the request that made the user: the race's loser takes a row
+        # whose projects the winner is making.
+        from .user_provisioning import provision_new_user
+
+        await provision_new_user(session, row)
         return await _committed(session, row)
 
     if row.display_name != name or row.email != email or _stale(row.last_seen_at, now):

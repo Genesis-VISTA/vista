@@ -190,6 +190,22 @@ async def test_a_first_sign_in_is_committed_before_the_route_runs(session, hoste
     assert r.json() == {"seen": True}
 
 
+async def test_a_first_sign_in_gets_the_default_project_once(whoami, hosted, session):
+    """A hosted user's own hello-olcf arrives with their first request, and only then."""
+    from vista_backend.db.schemas import ProjectTable
+    from vista_backend.db.seed import HELLO_OLCF_PROJECT_NAME
+
+    token = hosted.token(sub="dana")
+    first = await whoami.get("/whoami", headers=bearer(token))
+    await whoami.get("/whoami", headers=bearer(token))
+    names = (
+        await session.exec(
+            select(ProjectTable.name).where(ProjectTable.user_id == first.json()["id"])
+        )
+    ).all()
+    assert names == [HELLO_OLCF_PROJECT_NAME]
+
+
 # --- The real app: attached router-wide ------------------------------------------
 
 

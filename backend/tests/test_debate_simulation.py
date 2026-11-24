@@ -61,7 +61,7 @@ class FakeHpc:
 
 async def _debate(client, session, *, status="debating"):
     """A debate with one attached role, ready to commission work."""
-    project = ProjectTable(name=f"sim-{uuid.uuid4().hex[:8]}")
+    project = ProjectTable(user_id="local", name=f"sim-{uuid.uuid4().hex[:8]}")
     session.add(project)
     await session.flush()
 
@@ -158,7 +158,7 @@ async def test_a_campaign_job_without_a_session_is_still_abandoned(session):
     """The exemption must not weaken the rule it is an exception to."""
     from vista_backend.services.campaign_monitor import CampaignMonitor
 
-    project = ProjectTable(name="ordinary-campaign")
+    project = ProjectTable(user_id="local", name="ordinary-campaign")
     session.add(project)
     await session.flush()
     campaign = await campaign_service.create_campaign(
@@ -251,6 +251,7 @@ def test_the_finding_leads_with_the_result():
     from vista_backend.db.schemas import HpcJobTable
 
     job = HpcJobTable(
+        user_id="local",
         job_id="j1",
         step_id=uuid.uuid4(),
         cluster="odo",
@@ -495,7 +496,7 @@ async def test_the_collector_still_sends_campaign_jobs_to_the_planner(session):
     """The debate branch must not swallow the path it was added beside."""
     from vista_backend.agents.campaign import wiring
 
-    project = ProjectTable(name="ordinary")
+    project = ProjectTable(user_id="local", name="ordinary")
     session.add(project)
     await session.flush()
     campaign = await campaign_service.create_campaign(
@@ -571,7 +572,7 @@ async def test_a_failed_campaign_job_keeps_its_log_on_the_step(session):
     """
     from vista_backend.agents.campaign import wiring
 
-    project = ProjectTable(name="ordinary-failure")
+    project = ProjectTable(user_id="local", name="ordinary-failure")
     session.add(project)
     await session.flush()
     campaign = await campaign_service.create_campaign(
@@ -749,7 +750,9 @@ async def _wired(session, monkeypatch, tmp_path, *, skills, tokens):
     for field, value in tokens.items():
         setattr(row, field, value)
 
-    project = ProjectTable(name=f"wired-{uuid.uuid4().hex[:8]}", skills=skills)
+    project = ProjectTable(
+        user_id="local", name=f"wired-{uuid.uuid4().hex[:8]}", skills=skills
+    )
     session.add(project)
     await session.flush()
 

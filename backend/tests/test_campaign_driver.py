@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from harness.users import LOCAL
 from vista_backend.agents.campaign.agent_tools import (
     CampaignDriverDeps,
     register_campaign_tools,
@@ -158,11 +159,11 @@ def _scripted_planner_llm():
 
 @pytest.mark.anyio
 async def test_function_model_drives_full_campaign(session):
-    project = ProjectTable(name="driver-project")
+    project = ProjectTable(user_id="local", name="driver-project")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
 
     progress: list[str] = []
@@ -209,7 +210,7 @@ async def _fake_planner_async() -> CampaignPlanner:
 @pytest.mark.anyio
 async def test_tools_reject_run_from_another_project(session):
     # A campaign in another project...
-    other_project = ProjectTable(name="other-driver")
+    other_project = ProjectTable(user_id="local", name="other-driver")
     session.add(other_project)
     await session.flush()
     other = await campaign_service.create_campaign(
@@ -220,7 +221,7 @@ async def test_tools_reject_run_from_another_project(session):
     )
 
     # ...is not addressable from this project's tools (project scope).
-    this_project = ProjectTable(name="this-driver")
+    this_project = ProjectTable(user_id="local", name="this-driver")
     session.add(this_project)
     await session.flush()
 
@@ -258,7 +259,7 @@ async def test_tools_reject_run_from_another_project(session):
 @pytest.mark.anyio
 async def test_start_campaign_requires_a_chat_session(session):
     # Multi-session: a stateless run (session_id=None) can't host a durable, resumable campaign.
-    project = ProjectTable(name="stateless-driver")
+    project = ProjectTable(user_id="local", name="stateless-driver")
     session.add(project)
     await session.flush()
 
@@ -307,11 +308,11 @@ async def test_start_campaign_records_the_launching_agents_model(session):
 
     from vista_backend.db.schemas import CampaignRunTable
 
-    project = ProjectTable(name="model-recording-driver")
+    project = ProjectTable(user_id="local", name="model-recording-driver")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
 
     def driver(messages, info: AgentInfo) -> ModelResponse:

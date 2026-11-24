@@ -160,7 +160,9 @@ def deployment_db(tmp_path):
     engine = create_engine(f"sqlite:///{db_path}")
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        project = ProjectTable(name="salt", skills=["salt-analysis", "salt-prediction"])
+        project = ProjectTable(
+            user_id="local", name="salt", skills=["salt-analysis", "salt-prediction"]
+        )
         session.add(project)
         session.flush()
         session.add_all(

@@ -15,6 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo
 
 from harness import agent_under_test, make_local_settings, make_project, scripted_model
+from harness.users import LOCAL
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.config import settings
 from vista_backend.metrics import get_recorder
@@ -323,7 +324,9 @@ async def background(engine, session, monkeypatch, tmp_path):
     monkeypatch.setattr(background_tasks, "background_task_registry", registry)
     monkeypatch.setattr(inbox, "_listeners", [])
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     chat_id = row.id
     await session.commit()
     sandbox = FakeSandbox()

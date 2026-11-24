@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sse_starlette.event import ServerSentEvent
 from sse_starlette.sse import EventSourceResponse
 
+from ..db.schemas import UserTable
 from ..db.db import SessionDep
 from ..agents.agents import agent_volume_root
 from ..db.schemas import BackgroundTaskPublic, InboxItemEdit, InboxItemPublic
@@ -17,6 +18,7 @@ from ..services import chat_session as chat_session_service
 from ..services import inbox as inbox_service
 from ..services import project as project_service
 from ..services.chat_run import ELSEWHERE, channel_of, chat_run_registry, row_status
+from ..services.current_user import CurrentUser
 
 router = APIRouter(prefix="/projects", tags=["chat-runs"])
 
@@ -33,6 +35,7 @@ async def watch_chat_run(
     project_name: str,
     chat_session_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
     after: int = 0,
 ):
     """
@@ -40,11 +43,9 @@ async def watch_chat_run(
     from the start), then live events until the run ends. The SSE `id:` is the event's seq.
     Answers 204 when the conversation has no active run.
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     await chat_session_service.get_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=chat_session_id,
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     run = chat_run_registry.get(chat_session_id)
     if run is None:
@@ -64,13 +65,12 @@ async def stop_chat_run(
     project_name: str,
     chat_session_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> dict[str, bool]:
     """Stop a conversation's active run. It is saved as stopped, keeping the tool calls that completed."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     await chat_session_service.get_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=chat_session_id,
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     if not await chat_run_registry.stop(chat_session_id, "stopped", wait=False):
         raise HTTPException(status_code=404, detail="No active run")
@@ -81,10 +81,13 @@ async def stop_chat_run(
 async def chat_runs_status(
     project_name: str,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[ChatRunStatus]:
     """Every conversation in the project that is working, needs the researcher, or has an unseen outcome."""
-    project = await project_service.get_project_by_name(session, project_name)
-    rows = await chat_session_service.list_chat_sessions(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    rows = await chat_session_service.list_chat_sessions(
+        session, project_id=project.id, user=user
+    )
     waiting = await inbox_service.waiting_on_researcher(session, [r.id for r in rows])
     statuses = []
     for row in rows:
@@ -140,11 +143,12 @@ async def list_inbox(
     project_name: str,
     chat_session_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[InboxItemPublic]:
     """What is queued for the conversation's agent, in arrival order."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     return [_item(i) for i in await inbox_service.list_queued(session, chat_session_id)]
 
@@ -159,12 +163,13 @@ async def edit_inbox_item(
     item_id: int,
     body: InboxItemEdit,
     session: SessionDep,
+    user: CurrentUser,
 ):
     """Change a queued message's text. 409 once the agent has taken it, with the item as delivered."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     _only_here(
         await chat_session_service.get_chat_session(
-            session, project_id=project.id, chat_session_id=chat_session_id
+            session, project_id=project.id, chat_session_id=chat_session_id, user=user
         )
     )
     _, refused = await _queued_message(session, chat_session_id, item_id)
@@ -188,12 +193,13 @@ async def delete_inbox_item(
     chat_session_id: uuid.UUID,
     item_id: int,
     session: SessionDep,
+    user: CurrentUser,
 ):
     """Delete a queued message so the agent never receives it. 409 once it has been taken."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     _only_here(
         await chat_session_service.get_chat_session(
-            session, project_id=project.id, chat_session_id=chat_session_id
+            session, project_id=project.id, chat_session_id=chat_session_id, user=user
         )
     )
     _, refused = await _queued_message(session, chat_session_id, item_id)
@@ -224,11 +230,15 @@ def _task(record) -> BackgroundTaskPublic:
 
 
 async def _conversation_task(
-    session, project_name: str, chat_session_id: uuid.UUID, task_id: uuid.UUID
+    session,
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    task_id: uuid.UUID,
+    user: UserTable,
 ):
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     record = await background_tasks.get(session, task_id)
     if record is None or record.chat_session_id != chat_session_id:
@@ -241,11 +251,12 @@ async def list_tasks(
     project_name: str,
     chat_session_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[BackgroundTaskPublic]:
     """The conversation's background commands and job watches, oldest first, finished ones too."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     return [
         _task(r) for r in await background_tasks.list_for_chat(session, chat_session_id)
@@ -258,6 +269,7 @@ async def stop_task(
     chat_session_id: uuid.UUID,
     task_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> BackgroundTaskPublic:
     """
     Stop a task, as the agent's `stop_task` does: a command ends with everything
@@ -265,7 +277,7 @@ async def stop_task(
     has already ended is returned as it is.
     """
     _, record = await _conversation_task(
-        session, project_name, chat_session_id, task_id
+        session, project_name, chat_session_id, task_id, user=user
     )
     if record.state in background_tasks.ENDED_STATES:
         return _task(record)
@@ -280,10 +292,11 @@ async def task_log(
     chat_session_id: uuid.UUID,
     task_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> PlainTextResponse:
     """The end of a command's log, at most 64 KiB, cut at a line start when cut."""
     project, record = await _conversation_task(
-        session, project_name, chat_session_id, task_id
+        session, project_name, chat_session_id, task_id, user=user
     )
     if record.kind != "command":
         raise HTTPException(status_code=404, detail="Only a command has a log")

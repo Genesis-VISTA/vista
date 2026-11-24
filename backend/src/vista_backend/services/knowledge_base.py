@@ -8,15 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
+from ..db.ownership import visible, uid
 from ..db.schemas import (
     KnowledgeBaseCreate,
     KnowledgeBaseTable,
     KnowledgeBaseUpdate,
     Publication,
+    UserTable,
     is_valid_slug,
 )
 from ..utils import indexer
@@ -114,29 +116,64 @@ def kb_content(kb: KnowledgeBaseTable) -> tuple[Any, ...]:
     return kb.name, kb.description, tuple(files)
 
 
-async def list_kbs(session: AsyncSession) -> list[KnowledgeBaseTable]:
-    return list((await session.exec(select(KnowledgeBaseTable))).all())
+async def list_kbs(session: AsyncSession, user: UserTable) -> list[KnowledgeBaseTable]:
+    """`user`'s knowledge bases and the global one (the OLCF docs corpus)."""
+    return list((await session.exec(visible(select(KnowledgeBaseTable), user))).all())
 
 
 async def get_kb_optional(
-    session: AsyncSession, slug: str
+    session: AsyncSession, slug: str, user: UserTable
 ) -> KnowledgeBaseTable | None:
-    return (
-        await session.exec(
-            select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == slug)
-        )
-    ).first()
+    """The knowledge base `user` means by `slug`: their own, else a global one."""
+    stmt = visible(
+        select(KnowledgeBaseTable).where(KnowledgeBaseTable.slug == slug), user
+    ).order_by(col(KnowledgeBaseTable.user_id).is_(None))
+    return (await session.exec(stmt)).first()
 
 
-async def get_kb(session: AsyncSession, slug: str) -> KnowledgeBaseTable:
-    kb = await get_kb_optional(session, slug)
+async def get_kb(
+    session: AsyncSession, slug: str, user: UserTable
+) -> KnowledgeBaseTable:
+    kb = await get_kb_optional(session, slug, user)
     if kb is None:
         raise HTTPException(status_code=404, detail=f"Knowledge base not found: {slug}")
     return kb
 
 
+async def slug_taken(session: AsyncSession, slug: str) -> bool:
+    """
+    Whether any user has a knowledge base called `slug`. Its store is keyed on disk
+    by the slug alone (`knowledge_bases_dir/<slug>`, which the MCP server also reads
+    by slug), so a slug another user holds cannot be reused without writing over
+    their files.
+    """
+    row = (
+        await session.exec(
+            select(KnowledgeBaseTable.id).where(KnowledgeBaseTable.slug == slug)
+        )
+    ).first()
+    return row is not None
+
+
+def require_writable(kb: KnowledgeBaseTable) -> KnowledgeBaseTable:
+    """409 for a global knowledge base (the OLCF docs corpus): readable by all, writable by none."""
+    if kb.user_id is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{kb.slug} comes with VISTA and is read-only.",
+        )
+    return kb
+
+
+async def get_kb_writable(
+    session: AsyncSession, slug: str, user: UserTable
+) -> KnowledgeBaseTable:
+    """`get_kb`, refusing a global one."""
+    return require_writable(await get_kb(session, slug, user))
+
+
 async def create_kb(
-    session: AsyncSession, payload: KnowledgeBaseCreate
+    session: AsyncSession, payload: KnowledgeBaseCreate, user: UserTable
 ) -> KnowledgeBaseTable:
     if not is_valid_slug(payload.slug):
         raise HTTPException(
@@ -146,8 +183,11 @@ async def create_kb(
                 "1-80 chars, must start and end with an alphanumeric character."
             ),
         )
-    existing = await get_kb_optional(session, payload.slug)
-    if existing is not None:
+    # Stores are keyed on disk by slug alone (`knowledge_bases_dir/<slug>`, which the
+    # MCP server also looks up by slug), so a slug another user holds cannot be
+    # reused without writing over their files: any owner's slug is taken, until
+    # storage is keyed per owner.
+    if await slug_taken(session, payload.slug):
         raise HTTPException(
             status_code=409, detail=f"Slug already in use: {payload.slug}"
         )
@@ -171,6 +211,7 @@ async def create_kb(
 
     now = _now_iso()
     row = KnowledgeBaseTable(
+        user_id=uid(user),
         slug=payload.slug,
         name=payload.name,
         description=payload.description,
@@ -188,7 +229,7 @@ async def create_kb(
         # Imported here: `project` reaches the agents, which reach this module.
         from .project import get_project_by_name
 
-        project = await get_project_by_name(session, payload.project)
+        project = await get_project_by_name(session, payload.project, user)
     set_team(row, *await team_for_new(session, project))
     session.add(row)
     await session.flush()
@@ -197,9 +238,9 @@ async def create_kb(
 
 
 async def update_kb(
-    session: AsyncSession, slug: str, updates: KnowledgeBaseUpdate
+    session: AsyncSession, slug: str, updates: KnowledgeBaseUpdate, user: UserTable
 ) -> KnowledgeBaseTable:
-    kb = await get_kb(session, slug)
+    kb = await get_kb_writable(session, slug, user)
     data = updates.model_dump(exclude_unset=True)
     if any(getattr(kb, key) != value for key, value in data.items()):
         kb.modified = True
@@ -212,13 +253,15 @@ async def update_kb(
     return kb
 
 
-async def delete_kb(session: AsyncSession, slug: str) -> tuple[str, str]:
+async def delete_kb(
+    session: AsyncSession, slug: str, user: UserTable
+) -> tuple[str, str]:
     """
     Deletes the KB row and clears in-memory indexer state.
     Returns (pdfs_dir, rag_db_path) for the caller to clean up on disk.
-    Raises 404 if not found.
+    Raises 404 if not found, and 409 for a global one.
     """
-    kb = await get_kb(session, slug)
+    kb = await get_kb_writable(session, slug, user)
 
     pdfs_dir = str(Path(kb.pdfs_dir).resolve())
     rag_db_path = str(Path(kb.rag_db_path).resolve())

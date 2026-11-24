@@ -25,11 +25,14 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from pydantic import BaseModel, Field
 
+from ..db.ownership import get_owned, inherited_owner
 from ..db.schemas import (
     DebateParticipantTable,
     DebatePostTable,
     DebateRunTable,
     DebateStatus,
+    ProjectTable,
+    UserTable,
 )
 from ..utils.misc import now_iso
 from .forum_git import ForumClient, Participant, Thread, ThreadMissing
@@ -66,6 +69,7 @@ async def create_debate(
     """Record a debate whose forum thread already exists."""
     now = now_iso()
     run = DebateRunTable(
+        user_id=await inherited_owner(session, ProjectTable, project_id),
         project_id=project_id,
         topic=topic,
         framing=framing,
@@ -100,10 +104,10 @@ async def require_debate(session: AsyncSession, run_id: uuid.UUID) -> DebateRunT
 
 
 async def require_debate_in_project(
-    session: AsyncSession, *, run_id: uuid.UUID, project_id: uuid.UUID
+    session: AsyncSession, *, run_id: uuid.UUID, project_id: uuid.UUID, user: UserTable
 ) -> DebateRunTable:
-    """Load a run and confirm it belongs to `project_id` (the API's access boundary)."""
-    run = await get_debate(session, run_id)
+    """Load `user`'s run and confirm it belongs to `project_id` (the API's access boundary)."""
+    run = await get_owned(session, DebateRunTable, run_id, user)
     if run is None or run.project_id != project_id:
         raise ValueError(f"Debate {run_id} not found in project {project_id}")
     return run

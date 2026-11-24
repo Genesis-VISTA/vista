@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from ..services.current_user import CurrentUser
 from ..db.db import SessionDep
 from ..services import (
     collaboration,
@@ -83,7 +84,10 @@ async def search_users(
 
 @router.get("/skills")
 async def list_skills(
-    session: SessionDep, local: LocalSettingsDep, manifests: bool = True
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
+    manifests: bool = True,
 ) -> list[skill_collaboration.RemoteSkill]:
     """
     The collaboration server's skills, oldest first, each with this
@@ -92,7 +96,7 @@ async def list_skills(
     instead of one per skill.
     """
     return await skill_collaboration.list_remote_skills(
-        session, local, manifests=manifests
+        session, local, manifests=manifests, user=user
     )
 
 
@@ -120,13 +124,14 @@ async def import_skill(
     body: RemoteSkillImportRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> RemoteSkillImportResult:
     """
     Import a skill from the collaboration server, updating the copy already
     here if there is one. 409 with `code` when the copy here has changes of its
     own (`modified`) or the name is another skill's (`name_taken`).
     """
-    project = await target_project(session, body.project)
+    project = await target_project(session, body.project, user=user)
     skill, status = await skill_collaboration.import_skill(
         session,
         local,
@@ -135,13 +140,17 @@ async def import_skill(
         rename_to=body.rename_to,
         replace_modified=body.replace_modified,
         project=project,
+        user=user,
     )
     return RemoteSkillImportResult(status=status, skill=list_item(skill))
 
 
 @router.get("/projects")
 async def list_projects(
-    session: SessionDep, local: LocalSettingsDep, manifests: bool = True
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
+    manifests: bool = True,
 ) -> list[project_collaboration.RemoteProject]:
     """
     The collaboration server's projects, oldest first, each with this
@@ -149,7 +158,7 @@ async def list_projects(
     (`manifests=false` leaves that out, for one request to the server).
     """
     return await project_collaboration.list_remote_projects(
-        session, local, manifests=manifests
+        session, local, manifests=manifests, user=user
     )
 
 
@@ -170,6 +179,7 @@ async def import_project(
     body: RemoteProjectImportRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> project_collaboration.ProjectImportResult:
     """
     Import a project from the collaboration server with the skill versions it
@@ -184,12 +194,16 @@ async def import_project(
         version=body.version,
         rename_to=body.rename_to,
         replace_modified=body.replace_modified,
+        user=user,
     )
 
 
 @router.get("/knowledge-bases")
 async def list_knowledge_bases(
-    session: SessionDep, local: LocalSettingsDep, manifests: bool = True
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
+    manifests: bool = True,
 ) -> list[knowledge_base_collaboration.RemoteKnowledgeBase]:
     """
     The collaboration server's knowledge bases, oldest first, each with this
@@ -197,7 +211,7 @@ async def list_knowledge_bases(
     (`manifests=false` leaves that out, for one request to the server).
     """
     return await knowledge_base_collaboration.list_remote_knowledge_bases(
-        session, local, manifests=manifests
+        session, local, manifests=manifests, user=user
     )
 
 
@@ -218,6 +232,7 @@ async def import_knowledge_base(
     body: RemoteKnowledgeBaseImportRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> knowledge_base_collaboration.KnowledgeBaseImportResult:
     """
     Import a knowledge base's PDFs and index from the collaboration server,
@@ -234,4 +249,5 @@ async def import_knowledge_base(
         version=body.version,
         rename_to=body.rename_to,
         replace_modified=body.replace_modified,
+        user=user,
     )

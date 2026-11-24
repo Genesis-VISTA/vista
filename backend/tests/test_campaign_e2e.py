@@ -12,6 +12,7 @@ email are faked) to prove the full loop:
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.agents.campaign.manifest import CampaignManifest
 from vista_backend.agents.campaign.planner import CampaignPlanner, build_subagents
 from vista_backend.agents.campaign.subagent import (
@@ -94,11 +95,11 @@ class _Emailer:
 async def test_campaign_end_to_end(session):
     # --- intake + plan -----------------------------------------------------
     user_email = await _set_email(session)
-    project = ProjectTable(name="e2e-project")
+    project = ProjectTable(user_id="local", name="e2e-project")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     run = await campaign_service.create_campaign(
         session,

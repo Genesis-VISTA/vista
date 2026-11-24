@@ -437,9 +437,9 @@ async def test_only_a_taken_name_is_a_name_clash(engine):
     from vista_backend.services.skills import is_name_clash
 
     async with AsyncSession(engine) as s:
-        s.add(SkillTable(name="a", description="d", path="p"))
+        s.add(SkillTable(name="a", description="d", path="p", user_id="local"))
         await s.commit()
-        s.add(SkillTable(name="a", description="d", path="q"))
+        s.add(SkillTable(name="a", description="d", path="q", user_id="local"))
         with pytest.raises(IntegrityError) as clash:
             await s.commit()
         await s.rollback()

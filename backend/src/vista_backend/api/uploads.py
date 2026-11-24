@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
+from ..services.current_user import CurrentUser
 from ..config import settings
 from ..db.db import SessionDep
 from ..services import project as project_service
@@ -40,8 +41,10 @@ class UploadInfo(BaseModel):
 
 
 @router.get("/projects/{project_name}/uploads")
-async def list_uploads(project_name: str, session: SessionDep) -> list[UploadInfo]:
-    project = await project_service.get_project_by_name(session, project_name)
+async def list_uploads(
+    project_name: str, session: SessionDep, user: CurrentUser
+) -> list[UploadInfo]:
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((None, project.id)) as agent:
         uploads_dir = agent.uploads_dir
         if not uploads_dir.exists():
@@ -69,10 +72,11 @@ async def upload_files(
     project_name: str,
     files: list[UploadFile],
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[str]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided")
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((None, project.id)) as agent:
         uploads_dir = agent.uploads_dir
         uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -97,8 +101,9 @@ async def download_upload(
     project_name: str,
     name: str,
     session: SessionDep,
+    user: CurrentUser,
 ) -> Response:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((None, project.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     return FileResponse(path, filename=path.name, content_disposition_type="attachment")
@@ -109,8 +114,9 @@ async def delete_upload(
     project_name: str,
     name: str,
     session: SessionDep,
+    user: CurrentUser,
 ):
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((None, project.id)) as agent:
         path = _get_upload(agent.uploads_dir, name)
     path.unlink()

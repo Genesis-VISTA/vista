@@ -48,7 +48,8 @@ from ..agents.skills import (
     skill_hpc_jobs,
 )
 from ..config import settings
-from ..db.schemas import LocalSettingsPublic, ProjectTable, SkillTable
+from ..db.ownership import owned, visible, uid
+from ..db.schemas import LocalSettingsPublic, ProjectTable, SkillTable, UserTable
 from ..utils.misc import now_iso
 from ._helpers import new_storage_path
 from .collaboration import (
@@ -279,7 +280,11 @@ def _manifest(version: RemoteVersion) -> SkillManifest | None:
 
 
 async def list_remote_skills(
-    session: AsyncSession, local: LocalSettingsPublic, *, manifests: bool = True
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    user: UserTable,
+    *,
+    manifests: bool = True,
 ) -> list[RemoteSkill]:
     """
     The server's skills, each with any copy here and, with `manifests`, what
@@ -293,8 +298,12 @@ async def list_remote_skills(
     url, _ = server_url(local)
     listed_items = await list_with_heads(local, SKILL_KIND, heads=manifests)
 
-    rows = list((await session.exec(select(SkillTable))).all())
-    linked = {r.remote_id: r for r in rows if r.remote_id and r.origin_server == url}
+    rows = list((await session.exec(visible(select(SkillTable), user))).all())
+    linked = {
+        r.remote_id: r
+        for r in rows
+        if r.remote_id and r.origin_server == url and r.user_id == uid(user)
+    }
     names = {r.name for r in rows}
     listed = []
     for item, fetched in listed_items:
@@ -336,6 +345,7 @@ async def publish_skill(
     *,
     on_top_of: int | None = None,
     as_new: bool = False,
+    user: UserTable,
 ) -> SkillTable:
     """
     Publish the skill's files as the next version of its item on the server in
@@ -352,7 +362,7 @@ async def publish_skill(
     content-addressed, so one a lost publish leaves behind is reused by its
     retry. A write to the skill while it is published leaves it modified.
     """
-    row = await get_skill(session, name)
+    row = await get_skill(session, name, user)
     url = required_url(local)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:
@@ -431,13 +441,16 @@ ImportStatus = Literal["imported", "updated", "unchanged"]
 
 
 async def linked_skill(
-    session: AsyncSession, url: str | None, item_id: uuid.UUID
+    session: AsyncSession, url: str | None, item_id: uuid.UUID, user: UserTable
 ) -> SkillTable | None:
-    """The skill here published as, or imported from, item `item_id` on `url`."""
+    """`user`'s skill published as, or imported from, item `item_id` on `url`."""
     return (
         await session.exec(
-            select(SkillTable).where(
-                SkillTable.origin_server == url, SkillTable.remote_id == item_id
+            owned(
+                select(SkillTable).where(
+                    SkillTable.origin_server == url, SkillTable.remote_id == item_id
+                ),
+                user,
             )
         )
     ).first()
@@ -470,6 +483,7 @@ async def import_skill(
     rename_to: str | None = None,
     replace_modified: bool = False,
     project: ProjectTable | None = None,
+    user: UserTable,
 ) -> tuple[SkillTable, ImportStatus]:
     """
     Import a version (by default the head) of a skill on the server in effect,
@@ -500,7 +514,7 @@ async def import_skill(
             )
         manifest = _manifest(remote)
 
-        existing = await linked_skill(session, url, item_id)
+        existing = await linked_skill(session, url, item_id, user)
         if existing is not None:
             if existing.remote_version == number and not existing.modified:
                 if project is not None:
@@ -513,7 +527,7 @@ async def import_skill(
             name, edited_at = existing.name, existing.updated_at
         else:
             name = (rename_to or "").strip() or item.name
-            if await get_skill_optional(session, name) is not None:
+            if await get_skill_optional(session, name, user) is not None:
                 raise _name_taken(name)
 
         async with work_dir() as tmp:
@@ -535,7 +549,9 @@ async def import_skill(
     repo_url = manifest.repo_url if manifest else None
     old_path: str | None = None
     if existing is None:
-        row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
+        row = build_skill_row(
+            skill, path=path, repo_url=repo_url, now=now_iso(), user=user
+        )
         row.origin_server = url
         row.remote_id = item_id
         set_team(row, item.team_id, url)

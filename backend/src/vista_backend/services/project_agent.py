@@ -9,7 +9,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.agents import ProjectAgent
 from ..db.db import get_engine
-from ..db.schemas import ChatSessionTable, ProjectPublic, ProjectTable
+from ..db.schemas import (
+    LOCAL_USER_ID,
+    ChatSessionTable,
+    ProjectPublic,
+    ProjectTable,
+    UserTable,
+)
 from ..utils.ttl_pool import TTLPool
 from . import chat_session as chat_session_service, local_settings
 
@@ -23,6 +29,7 @@ async def get_project_agent_key(
     *,
     project_id: uuid.UUID,
     chat_session_id: uuid.UUID | None = None,
+    user: UserTable,
 ) -> ProjectAgentKey:
     if chat_session_id is None:
         return (None, project_id)
@@ -30,6 +37,7 @@ async def get_project_agent_key(
         session,
         project_id=project_id,
         chat_session_id=chat_session_id,
+        user=user,
     )
     return (chat_session.id, project_id)
 
@@ -39,6 +47,7 @@ async def find_live_project_agent_key(
     *,
     project_id: uuid.UUID,
     chat_session_id: uuid.UUID | None = None,
+    user: UserTable,
 ) -> ProjectAgentKey | None:
     if chat_session_id is None:
         key = (None, project_id)
@@ -47,6 +56,7 @@ async def find_live_project_agent_key(
         session,
         project_id=project_id,
         chat_session_id=chat_session_id,
+        user=user,
     )
     if chat_session is None:
         return None
@@ -71,7 +81,13 @@ async def _build_project_agent(
         if session_id is not None:
             chat_row = await session.get(ChatSessionTable, session_id)
             model_override = chat_row.inference_model if chat_row else None
-    agent = ProjectAgent(project, local, session_id, model_override)
+    agent = ProjectAgent(
+        project,
+        local,
+        session_id,
+        model_override,
+        owner_id=project_row.user_id or LOCAL_USER_ID,
+    )
     await agent.__aenter__()
     return agent
 

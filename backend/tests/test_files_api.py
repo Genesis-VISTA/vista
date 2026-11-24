@@ -14,6 +14,7 @@ import pytest
 from sqlmodel import select
 from harness import FakeAgentPool, api_client, seed_project
 
+from harness.users import LOCAL
 from vista_backend.db.schemas import ChatSessionCreate, DisplayedFileTable
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import files as files_service
@@ -98,7 +99,10 @@ async def test_path_traversal_is_still_not_found(session, dirs, project, tmp_pat
 async def _display(session, project, file, *, title, shown_at, kind="outputs"):
     """Record `file` as displayed in a new chat, as the run driver will, stat taken now."""
     chat = await chat_session_service.create_chat_session(
-        session, project_id=project.id, payload=ChatSessionCreate(title=title)
+        session,
+        project_id=project.id,
+        payload=ChatSessionCreate(title=title),
+        user=LOCAL,
     )
     chat_id = chat.id
     stat = file.stat()

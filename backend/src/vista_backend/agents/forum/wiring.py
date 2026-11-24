@@ -15,6 +15,7 @@ from pathlib import Path
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ...db.schemas import UserTable
 from ...config import settings
 from ...db.db import get_engine
 from ...db.schemas import DebateRunTable, LocalSettingsPublic, ProjectTable
@@ -59,22 +60,30 @@ async def client_for_run(session: AsyncSession, run: DebateRunTable) -> ForumCli
     return build_client_for(project, await local_settings.get(session))
 
 
-async def _read_skill_body(name: str) -> str:
+def _skill_reader(owner_id: str | None):
     """
-    A domain skill's text, read through the skills service.
+    A reader of a domain skill's text, through the skills service, for the
+    debate's owner (`owner_id`; None sees only the global, bundled skills).
 
     Opens its own session: tools run inside an agent turn, which may outlive the
     request session that started the debate.
     """
-    async with AsyncSession(get_engine()) as session:
-        try:
-            _, body = await skills_service.get_skill_detail(session, name)
-        except Exception:  # noqa: BLE001 — a missing skill is an answer, not a crash
-            return f"No skill named {name!r} is installed."
-        return body
+
+    async def read_skill_body(name: str) -> str:
+        async with AsyncSession(get_engine()) as session:
+            try:
+                owner = await session.get(UserTable, owner_id) if owner_id else None
+                # No owner: nobody, so only a global skill matches.
+                user = owner or UserTable(id="")
+                _, body = await skills_service.get_skill_detail(session, name, user)
+            except Exception:  # noqa: BLE001 — a missing skill is an answer, not a crash
+                return f"No skill named {name!r} is installed."
+            return body
+
+    return read_skill_body
 
 
-def build_grounding(client: ForumClient) -> Grounding:
+def build_grounding(client: ForumClient, owner_id: str | None = None) -> Grounding:
     """
     What a debate may look at, with no run in hand.
 
@@ -83,7 +92,7 @@ def build_grounding(client: ForumClient) -> Grounding:
     exists: without it the Reviewer gets `prior_debates` and nothing else, which
     is a debate arguing from the model alone.
     """
-    return Grounding(skills=_read_skill_body, forum=client)
+    return Grounding(skills=_skill_reader(owner_id), forum=client)
 
 
 async def build_run_grounding(
@@ -103,7 +112,7 @@ async def build_run_grounding(
     than no search tool: it answers "nothing found" to every question, and the
     role reads that as evidence of absence.
     """
-    grounding = build_grounding(client)
+    grounding = build_grounding(client, run.user_id)
 
     project = await session.get(ProjectTable, run.project_id)
     if project is None:
@@ -157,11 +166,15 @@ def _upload_reader(run: DebateRunTable):
 
     async def read_upload(name: str | None) -> str:
         # Its own session: tools run inside an agent turn, which may outlive the
-        # request session that started the debate. Same reason as `_read_skill_body`.
+        # request session that started the debate. Same reason as `_skill_reader`.
         async with AsyncSession(get_engine()) as session:
             try:
+                # No chat session is named, so the key is the project's alone and the
+                # user is not consulted: the run's owner stands in for it.
                 agent_key = await get_project_agent_key(
-                    session, project_id=run.project_id
+                    session,
+                    project_id=run.project_id,
+                    user=UserTable(id=run.user_id or ""),
                 )
                 async with project_agent_pool.get(agent_key) as agent:
                     uploads_dir = _kind_dir(agent, "uploads")

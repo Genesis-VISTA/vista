@@ -31,6 +31,7 @@ from harness import (
     seed_project,
     step_model,
 )
+from harness.users import LOCAL
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.api import api as api_module
 from vista_backend.db.schemas import ChatSessionTable
@@ -105,7 +106,9 @@ def scripted_agent(project, model):
 
 
 async def _conversation(session, project) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     row_id = row.id
     await session.commit()
     return row_id

@@ -172,6 +172,8 @@ class ProjectTable(ProjectBase, ProjectSharing, table=True):
     """Project SQL model"""
 
     __tablename__: str = "project"
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
 
@@ -384,7 +386,13 @@ class KnowledgeBaseTable(KnowledgeBaseBase, KnowledgeBaseSharing, table=True):
     """Knowledge Base SQL model."""
 
     __tablename__: str = "knowledge_base"
-    __table_args__ = (UniqueConstraint("slug", name="uq_knowledge_base_slug"),)
+    # A desktop database made before multi-user keeps the global `uq_knowledge_base_slug`
+    # (create_all never alters a table); a new one is unique per owner.
+    __table_args__ = (
+        UniqueConstraint("user_id", "slug", name="uq_knowledge_base_owner_slug"),
+    )
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: str = Field(default="")
@@ -480,7 +488,11 @@ class SkillTable(SkillBase, table=True):
     """Skill SQL model."""
 
     __tablename__: str = "skill"
-    __table_args__ = (UniqueConstraint("name", name="uq_skill_name"),)
+    # A desktop database made before multi-user keeps the global `uq_skill_name`
+    # (create_all never alters a table); a new one is unique per owner.
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_skill_owner_name"),)
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     path: str
@@ -1359,6 +1371,8 @@ class ChatSessionPublic(ChatSessionBase):
 
 class ChatSessionTable(ChatSessionBase, table=True):
     __tablename__: str = "chat_session"
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
@@ -1423,6 +1437,8 @@ class BackgroundTaskTable(SQLModel, table=True):
 
     __tablename__: str = "background_task"
     __table_args__ = (Index("ix_background_task_chat", "chat_session_id"),)
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     """ Also the sandbox's task id: its `.pid`, `.exit` and log are named after it. """
@@ -1581,6 +1597,8 @@ class CampaignRunPublic(CampaignRunBase):
 
 class CampaignRunTable(CampaignRunBase, table=True):
     __tablename__: str = "campaign_run"
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")
@@ -1668,6 +1686,8 @@ class HpcJobPublic(HpcJobBase):
 
 class HpcJobTable(HpcJobBase, table=True):
     __tablename__: str = "hpc_job"
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     job_id: str = Field(primary_key=True)
     """ The HPC job id returned by submit_hpc_job; unique across clusters (matches the MCP registry key). """
@@ -1798,6 +1818,8 @@ class DebateRunPublic(DebateRunBase):
 
 class DebateRunTable(DebateRunBase, table=True):
     __tablename__: str = "debate_run"
+    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: uuid.UUID = Field(foreign_key="project.id", ondelete="CASCADE")

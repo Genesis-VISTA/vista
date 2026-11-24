@@ -889,7 +889,7 @@ async def test_posting_works_while_the_caller_holds_an_app_db_write(a, tmp_path)
     thread = await a.create_thread("t")
     try:
         async with AsyncSession(engine) as session:
-            session.add(ProjectTable(name="held"))
+            session.add(ProjectTable(user_id="local", name="held"))
             await session.flush()  # the app database's write lock is now held
             started = time.perf_counter()
             post = await a.post_as(PROPOSER, thread, "result", kind=PostKind.FINDING)

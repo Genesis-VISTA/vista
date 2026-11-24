@@ -25,6 +25,7 @@ from harness import (
     seed_project,
     step_model,
 )
+from harness.users import LOCAL
 from vista_backend.services import chat_session as chat_session_service
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
@@ -184,6 +185,7 @@ async def _history(session, project, chat_session_id) -> list[ModelMessage]:
         project_id=project.id,
         fallback_history=[],
         chat_session_id=chat_session_id,
+        user=LOCAL,
     )
 
 
@@ -192,7 +194,9 @@ def _history_text(history: list[ModelMessage]) -> str:
 
 
 async def _new_chat_session(session, project) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     return row.id
 
 
@@ -315,7 +319,7 @@ async def test_stateless_turn_does_not_create_a_session(session, local):
 
     assert response.status_code == 200
     sessions = await chat_session_service.list_chat_sessions(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     assert sessions == []
 

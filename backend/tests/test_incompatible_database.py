@@ -332,7 +332,9 @@ async def test_a_v0_1_4_database_is_refused_and_indexed(start):
 
     assert start.path.read_bytes() == before
     message = str(refused.value)
-    assert "chat_session.user_id" in message
+    # `user_id` is a column of the models now (nullable, the owner), so an old
+    # database that has one is no longer refused for it.
+    assert "chat_session.user_id" not in message
     assert "skill.is_public" in message
     index = _index(start.path)
     assert {p["name"] for p in index["projects"]} == {

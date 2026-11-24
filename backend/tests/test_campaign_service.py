@@ -7,7 +7,7 @@ from vista_backend.services import campaign as campaign_service
 
 
 async def _make_project(session) -> ProjectTable:
-    project = ProjectTable(name="svc-campaign-project")
+    project = ProjectTable(user_id="local", name="svc-campaign-project")
     session.add(project)
     await session.flush()
     return project
@@ -53,7 +53,7 @@ async def test_require_campaign_raises_when_missing(session):
 async def test_list_campaigns_filters(session):
     run_a = await _make_campaign(session)
     # A second campaign in a different project.
-    project_b = ProjectTable(name="other-project")
+    project_b = ProjectTable(user_id="local", name="other-project")
     session.add(project_b)
     await session.flush()
     run_b = await campaign_service.create_campaign(

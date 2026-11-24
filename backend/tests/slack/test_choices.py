@@ -132,7 +132,9 @@ def answers(engine, monkeypatch):
 
 async def _offer(slack, session) -> Confirmations:
     p = await project(session)
-    chat = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
+    chat = ChatSessionTable(
+        user_id="local", project_id=p.id, message_history=[], messages=[]
+    )
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
@@ -226,7 +228,9 @@ async def test_an_unanswered_choice_expires(answers, session, monkeypatch):
 async def test_a_transfer_approval_is_answered_under_its_own_field(answers, session):
     """FastMCP's Approve/Decline names its one field `value`, not `choice`."""
     p = await project(session)
-    chat = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
+    chat = ChatSessionTable(
+        user_id="local", project_id=p.id, message_history=[], messages=[]
+    )
     session.add(chat)
     await session.commit()
     await session.refresh(chat)

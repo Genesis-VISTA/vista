@@ -57,6 +57,7 @@ from .threads import (
     NotYourThread,
     conversation_for,
     held_ask,
+    local_owner,
     thread_of,
 )
 from .transport import SlackCallError, SlackTransport
@@ -599,7 +600,7 @@ class SlackService:
                     ephemeral=True,
                 )
                 return
-            projects = await project_service.list_projects(db)
+            projects = await project_service.list_projects(db, await local_owner(db))
             project = next((p for p in projects if p.id == project_key), None)
             if project is None:
                 await db.commit()

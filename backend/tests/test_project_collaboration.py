@@ -11,6 +11,7 @@ import shutil
 import uuid
 
 import pytest
+from harness.users import LOCAL
 from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
@@ -1170,7 +1171,10 @@ async def test_a_new_project_gets_a_hosted_forum_that_follows_it_to_a_teammate(
     try:
         async with bob.active() as bob_session:
             imported = await project_collaboration.import_project(
-                bob_session, await local_settings.get_public(bob_session), item_id
+                bob_session,
+                await local_settings.get_public(bob_session),
+                item_id,
+                user=LOCAL,
             )
             assert imported.forum_error is None
             assert imported.project.forum_repo_url == url
@@ -1323,7 +1327,7 @@ async def test_a_reimport_keeps_the_hosted_forum_when_the_lookup_fails(
         async with bob.active() as bob_session:
             local = await local_settings.get_public(bob_session)
             first = await project_collaboration.import_project(
-                bob_session, local, item_id, version=1
+                bob_session, local, item_id, version=1, user=LOCAL
             )
             assert first.project.forum_repo_url == url
 
@@ -1334,7 +1338,7 @@ async def test_a_reimport_keeps_the_hosted_forum_when_the_lookup_fails(
                 project_collaboration.hosted_forum, "forum_of_item", lookup_fails
             )
             second = await project_collaboration.import_project(
-                bob_session, local, item_id, version=2
+                bob_session, local, item_id, version=2, user=LOCAL
             )
             assert second.status == "updated"
             assert second.project.description == "v2"

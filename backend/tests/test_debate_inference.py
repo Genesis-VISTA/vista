@@ -155,7 +155,7 @@ async def test_a_continued_debate_keeps_its_roles_models(no_env_credential, sess
     from vista_backend.services import debate as debate_service
     from vista_backend.services.forum_git import Participant
 
-    project = ProjectTable(name="models-for")
+    project = ProjectTable(user_id="local", name="models-for")
     session.add(project)
     await session.flush()
     run = await debate_service.create_debate(

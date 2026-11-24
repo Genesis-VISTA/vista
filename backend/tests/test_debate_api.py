@@ -21,6 +21,7 @@ import pytest
 
 from harness.fake_forum import PEER_HOST_ID
 
+from harness.users import LOCAL
 from vista_backend.agents.forum.project_forum import build_client_for
 from vista_backend.config import ForumSettings, settings
 from vista_backend.db.schemas import ProjectCreate
@@ -98,7 +99,7 @@ async def _project(session, name="api-debate", forum_repo_url=FORUM_URL):
     about the API, and the setup path has its own file.
     """
     return await project_service.create_project(
-        session, ProjectCreate(name=name, forum_repo_url=forum_repo_url)
+        session, ProjectCreate(name=name, forum_repo_url=forum_repo_url), LOCAL
     )
 
 

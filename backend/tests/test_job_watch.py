@@ -15,6 +15,7 @@ import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import seed_project
+from harness.users import LOCAL
 from vista_backend.db.schemas import ChatSessionTable, LocalSettingsUpdate
 from vista_backend.services import background_tasks, chat_run, inbox, local_settings
 from vista_backend.services import chat_session as chat_session_service
@@ -86,7 +87,9 @@ async def registry(records, monkeypatch):
 @pytest.fixture
 async def chat(session) -> tuple[uuid.UUID, uuid.UUID]:
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     ids = (row.id, project.id)
     await session.commit()
     return ids
@@ -320,7 +323,7 @@ async def test_lost_access_pauses_without_a_word_to_the_agent(
     async with AsyncSession(records) as db:
         assert await inbox.waiting_on_researcher(db, [chat[0]]) == {chat[0]}
         row = await chat_session_service.get_chat_session(
-            db, project_id=chat[1], chat_session_id=chat[0]
+            db, project_id=chat[1], chat_session_id=chat[0], user=LOCAL
         )
         assert chat_run.row_status(row, waiting=True) == "needs_you"
 

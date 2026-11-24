@@ -15,6 +15,7 @@ import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import FakeSandbox, seed_project
+from harness.users import LOCAL
 from vista_backend.services import background_tasks, inbox
 from vista_backend.services import chat_session as chat_session_service
 
@@ -40,7 +41,9 @@ async def registry(records):
 @pytest.fixture
 async def chat(session) -> tuple[uuid.UUID, uuid.UUID]:
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     ids = (row.id, project.id)
     await session.commit()
     return ids
@@ -262,7 +265,7 @@ async def test_a_result_for_a_deleted_conversation_is_dropped(
     sandbox = FakeSandbox()
     await _watch(registry, record, sandbox, tmp_path)
     await chat_session_service.delete_chat_session(
-        session, project_id=chat[1], chat_session_id=chat[0]
+        session, project_id=chat[1], chat_session_id=chat[0], user=LOCAL
     )
     await session.commit()
 

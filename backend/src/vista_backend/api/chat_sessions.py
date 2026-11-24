@@ -17,6 +17,7 @@ from ..services import displayed_files as displayed_files_service
 from ..services import inbox as inbox_service
 from ..services import project as project_service
 from ..services.chat_run import chat_run_registry, live_status
+from ..services.current_user import CurrentUser
 from ..services.displayed_files import DisplayedFileInfo
 
 
@@ -36,11 +37,11 @@ async def _public(session, row) -> ChatSessionPublic:
 async def list_chat_sessions(
     project_name: str,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[ChatSessionSummary]:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     chat_sessions = await chat_session_service.list_chat_sessions(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=user
     )
     return [
         ChatSessionSummary.model_validate(row, from_attributes=True)
@@ -53,12 +54,11 @@ async def create_chat_session(
     project_name: str,
     body: ChatSessionCreate,
     session: SessionDep,
+    user: CurrentUser,
 ) -> ChatSessionPublic:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     chat_session = await chat_session_service.create_chat_session(
-        session,
-        project_id=project.id,
-        payload=body,
+        session, project_id=project.id, payload=body, user=user
     )
     return await _public(session, chat_session)
 
@@ -67,13 +67,12 @@ async def create_chat_session(
 async def get_chat_session(
     project_name: str,
     session: SessionDep,
+    user: CurrentUser,
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionPublic:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     chat_session = await chat_session_service.get_or_create_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=chat_session_id,
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     return await _public(session, chat_session)
 
@@ -83,14 +82,16 @@ async def put_chat_session(
     project_name: str,
     body: ChatSessionUpdate,
     session: SessionDep,
+    user: CurrentUser,
     chat_session_id: uuid.UUID | None = None,
 ) -> ChatSessionPublic:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     chat_session = await chat_session_service.update_chat_session(
         session,
         project_id=project.id,
         updates=body,
         chat_session_id=chat_session_id,
+        user=user,
     )
     return await _public(session, chat_session)
 
@@ -100,6 +101,7 @@ async def delete_chat_session(
     project_name: str,
     session: SessionDep,
     chat_session_id: uuid.UUID,
+    user: CurrentUser,
     confirm: bool = False,
 ):
     """
@@ -108,9 +110,9 @@ async def delete_chat_session(
     then they are stopped (a watched job is left as it is) and its commands'
     logs are removed with it.
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     row = await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     live = await background_tasks.live_tasks(session, chat_session_id)
     if live and not confirm:
@@ -144,9 +146,7 @@ async def delete_chat_session(
     # A run writes to the row it belongs to, so end it before the row goes.
     await chat_run_registry.stop(chat_session_id, "stopped")
     await chat_session_service.delete_chat_session(
-        session,
-        project_id=project_id,
-        chat_session_id=chat_session_id,
+        session, project_id=project_id, chat_session_id=chat_session_id, user=user
     )
     return Response(status_code=204)
 
@@ -156,7 +156,8 @@ async def list_displayed_files(
     project_name: str,
     chat_session_id: uuid.UUID,
     session: SessionDep,
+    user: CurrentUser,
 ) -> list[DisplayedFileInfo]:
     return await displayed_files_service.list_displayed_files(
-        session, project_name, chat_session_id
+        session, project_name, chat_session_id, user=user
     )

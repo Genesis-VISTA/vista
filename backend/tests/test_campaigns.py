@@ -13,7 +13,7 @@ from vista_backend.utils.misc import now_iso
 
 
 async def _make_project(session) -> ProjectTable:
-    project = ProjectTable(name="campaign-project")
+    project = ProjectTable(user_id="local", name="campaign-project")
     session.add(project)
     await session.flush()
     return project
@@ -22,6 +22,7 @@ async def _make_project(session) -> ProjectTable:
 async def _make_run(session, project, **overrides) -> CampaignRunTable:
     now = now_iso()
     run = CampaignRunTable(
+        user_id="local",
         domain="splash",
         planner_skill="splash-planner",
         project_id=project.id,
@@ -140,6 +141,7 @@ async def test_hpc_job_linked_to_step(session):
     await session.flush()
 
     job = HpcJobTable(
+        user_id="local",
         job_id="123456",
         step_id=step.id,
         cluster="frontier",
@@ -176,6 +178,7 @@ async def test_cascade_delete_run_removes_steps_and_jobs(session):
     await session.flush()
     session.add(
         HpcJobTable(
+            user_id="local",
             job_id="999",
             step_id=step.id,
             cluster="odo",

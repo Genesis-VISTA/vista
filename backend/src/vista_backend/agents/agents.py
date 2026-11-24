@@ -47,6 +47,7 @@ from pydantic_ai.messages import (
     RetryPromptPart,
     TextPart,
 )
+from ..db.schemas import LOCAL_USER_ID, UserTable
 from .inference import (
     RejectedInferenceCredential,
     build_model_for,
@@ -56,6 +57,7 @@ from .inference import (
 import mcp.client.session
 import mcp.shared.context
 import mcp.types
+from sqlalchemy import or_
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -478,8 +480,11 @@ class ProjectAgent:
         local: LocalSettingsPublic,
         session_id: uuid.UUID | None = None,
         model_override: str | None = None,
+        owner_id: str = LOCAL_USER_ID,
     ):
         self.project = project
+        self.owner_id = owner_id
+        """ The project's owner: the skills and knowledge bases this agent resolves by name are theirs (or global). """
         self.local = local
         """ The installation's settings, as they were when this agent was pooled. """
         self.session_id = session_id
@@ -834,12 +839,16 @@ class ProjectAgent:
             """
             work = self.output_dir.parent / "work"
             async with AsyncSession(get_engine()) as session:
+                owner = await session.get(UserTable, self.owner_id)
+                if owner is None:
+                    raise ModelRetry("This project has no owner to fetch for.")
                 dest, size = await copy_kb_file(
                     session,
                     attached=self.project.knowledge_bases,
                     kb_slug=kb_slug,
                     filename=filename,
                     work_dir=work,
+                    user=owner,
                 )
             _make_readable_by_others(work / "kb")
             rel = dest.relative_to(work).as_posix()
@@ -874,6 +883,7 @@ class ProjectAgent:
             emit_progress=emit_progress,
             model=target.model,
             provider=target.provider,
+            owner_id=self.owner_id,
         )
 
     async def _build_campaign_planner_for_run(
@@ -1045,9 +1055,16 @@ class ProjectAgent:
         async with AsyncSession(get_engine()) as session:
             rows = (
                 await session.exec(
-                    select(SkillTable).where(
-                        col(SkillTable.name).in_(self.project.skills)
+                    select(SkillTable)
+                    .where(
+                        col(SkillTable.name).in_(self.project.skills),
+                        or_(
+                            col(SkillTable.user_id) == self.owner_id,
+                            col(SkillTable.user_id).is_(None),
+                        ),
                     )
+                    # Global first, so the owner's own skill of a name wins below.
+                    .order_by(col(SkillTable.user_id).is_(None).desc())
                 )
             ).all()
         skill_dirs = {row.name: settings.data_dir / row.path for row in rows}

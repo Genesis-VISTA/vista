@@ -13,8 +13,10 @@ from sqlmodel import col, select
 
 from ..config import settings
 from ..db.db import SessionDep
+from ..db.ownership import owned, uid
 from ..db.schemas import ChatSessionTable, ProjectTable
 from ..services import campaign as campaign_service
+from ..services.current_user import CurrentUser
 from ..services import local_settings
 from ..services.chat_run import chat_run_registry
 from ..services.hosted import refuse_when_hosted
@@ -211,10 +213,21 @@ class Activity(BaseModel):
 
 
 @router.get("/activity")
-async def get_activity(session: SessionDep) -> Activity:
+async def get_activity(session: SessionDep, user: CurrentUser) -> Activity:
     from . import debate
 
-    runs = [run for run in chat_run_registry.active() if not run.finished]
+    # The registry holds every user's runs: keep the caller's, by their conversation's owner.
+    active = [run for run in chat_run_registry.active() if not run.finished]
+    mine = set(
+        (
+            await session.exec(
+                owned(select(ChatSessionTable.id), user, ChatSessionTable).where(
+                    col(ChatSessionTable.id).in_([r.chat_session_id for r in active])
+                )
+            )
+        ).all()
+    )
+    runs = [run for run in active if run.chat_session_id in mine]
     titles: dict[uuid.UUID, str] = {}
     projects: dict[uuid.UUID, str] = {}
     if runs:
@@ -256,5 +269,6 @@ async def get_activity(session: SessionDep) -> Activity:
                 state=job.state,
             )
             for job in await campaign_service.list_open_jobs(session)
+            if job.user_id == uid(user)
         ],
     )

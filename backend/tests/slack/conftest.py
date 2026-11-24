@@ -115,7 +115,7 @@ async def link(
 async def project(session, name: str = "molten-salts"):
     from vista_backend.db.schemas import ProjectTable
 
-    row = ProjectTable(name=name, skills=[], knowledge_bases=[])
+    row = ProjectTable(user_id="local", name=name, skills=[], knowledge_bases=[])
     session.add(row)
     await session.commit()
     await session.refresh(row)

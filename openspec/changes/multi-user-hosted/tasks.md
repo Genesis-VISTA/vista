@@ -41,14 +41,15 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 6. Ownership and data-layer filtering (wave 2; needs 4)
 
-- [ ] 6.1 Nullable `user_id` on project, chat_session, chat_run, campaign_run, hpc_job, debate_run, background_task, skill, knowledge_base; startup backfill to `local`; verify `db/schema_check.py` accepts a pre-change DB and the backfill test passes
-- [ ] 6.2 `db/ownership.py` (`owned`, `get_owned`); every owned query uses it, including the name lookup in `services/project.py:31`; per-owner unique constraints for new DBs; verify with `backend/tests/test_ownership.py`
-- [ ] 6.3 Bundled/seeded skills and the docs corpus readable by all, writable by none; verify with tests editing a bundled skill as two users
+- [x] 6.1 Nullable `user_id` on project, chat_session, chat_run, campaign_run, hpc_job, debate_run, background_task, skill, knowledge_base; startup backfill to `local`; verify `db/schema_check.py` accepts a pre-change DB and the backfill test passes
+- [x] 6.2 `db/ownership.py` (`owned`, `get_owned`); every owned query uses it, including the name lookup in `services/project.py:31`; per-owner unique constraints for new DBs; verify with `backend/tests/test_ownership.py`
+- [x] 6.3 Bundled/seeded skills and the docs corpus readable by all, writable by none; verify with tests editing a bundled skill as two users
 
 ## 7. Authorization and background owners (wave 3; needs 6)
 
 - [ ] 7.1 Chat-run streams, elicitations, project files and downloads check the owner and answer `404` (`api/chat_runs.py:31-58`, `services/project_agent.py:95`, `api/files.py`); verify with tests as two users
 - [ ] 7.2 `as_user(user_id)` and its use in job watches, campaign monitor, inbox wakes and startup recovery (`services/background_tasks.py:1050`, `campaign_monitor.py:213`, `api/api.py:84-135`); verify with tests driving each entry point for two users
+- [ ] 7.3 Background work that has no owner yet: `/activity`'s debate count (in-memory `debate._BACKGROUND`) and Slack's `slack/threads.local_owner` record and report their owner; verify `/activity` counts only the caller's debates in a two-user test
 
 ## 8. Runtime per user and sandbox caps (wave 3; needs 5, 6)
 

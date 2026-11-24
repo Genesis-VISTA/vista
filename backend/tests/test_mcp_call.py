@@ -27,7 +27,7 @@ async def test_desktop_still_reaches_the_project(session, monkeypatch):
     monkeypatch.setattr(settings, "deployment", "desktop")
     seen = []
 
-    async def get_project_by_name(_session, name):
+    async def get_project_by_name(_session, name, _user):
         seen.append(name)
         raise mcp_api.HTTPException(status_code=418, detail="reached")
 

@@ -172,7 +172,8 @@ async def make_install(tmp_path: Path, name: str, server_url: str | None) -> Ins
     row = LocalSettingsTable()
     install_id = row.install_id  # before the commit expires the row
     session.add(row)
-    session.add(UserTable(id=LOCAL_USER_ID, sub=None))  # `user_settings` belongs to it
+    # Like `init_db`: the user `local`, whom desktop-shaped rows and `user_settings` belong to.
+    session.add(UserTable(id=LOCAL_USER_ID, sub=None))
     await session.commit()
     install = Install(
         name=name,

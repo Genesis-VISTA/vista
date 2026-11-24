@@ -9,6 +9,7 @@ from ..config import settings
 from ..db.db import SessionDep
 from ..services import project as project_service
 from ..services.chat_run import ELSEWHERE, resolve_prompt, run_for_prompt
+from ..services.current_user import CurrentUser
 from ..services.project_agent import (
     get_project_agent_key,
     project_agent_pool,
@@ -22,13 +23,12 @@ router = APIRouter(tags=["mcp"])
 async def mcp_tools(
     project_name: str,
     session: SessionDep,
+    user: CurrentUser,
     chat_session_id: uuid.UUID | None = None,
 ) -> list[mcp.types.Tool]:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     agent_key = await get_project_agent_key(
-        session,
-        project_id=project.id,
-        chat_session_id=chat_session_id,
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     async with project_agent_pool.get(agent_key) as agent:
         return await agent.list_tools()
@@ -44,11 +44,12 @@ async def mcp_call(
     project_name: str,
     req: McpCallRequest,
     session: SessionDep,
+    user: CurrentUser,
 ) -> mcp.types.CallToolResult:
     if settings.deployment == "hosted":
         # Calls any tool with the server's own credentials and no confirmation.
         raise HTTPException(status_code=404, detail="Not found")
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     async with project_agent_pool.get((None, project.id)) as agent:
         try:
             return await agent.call_tool(req.name, req.arguments)
@@ -67,12 +68,12 @@ class ElicitationSubmit(BaseModel):
 
 @router.post("/projects/{project_name}/elicitation")
 async def mcp_elicitation(
-    project_name: str, submit: ElicitationSubmit, session: SessionDep
+    project_name: str, submit: ElicitationSubmit, session: SessionDep, user: CurrentUser
 ):
     """
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
-    await project_service.get_project_by_name(session, project_name)
+    await project_service.get_project_by_name(session, project_name, user)
     # A Slack conversation's prompts are answered in Slack, by its requester.
     run = run_for_prompt(submit.id)
     if run is not None and run.channel != "app":

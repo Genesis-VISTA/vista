@@ -216,7 +216,9 @@ async def test_the_sign_in_git_sends_to_a_hosted_forum_is_the_one_the_server_acc
     row = await get(session)
     assert str(hosted_forum_id(url, row)) == forum
 
-    config = forum_config_for(ProjectTable(name="p", forum_repo_url=url), row)
+    config = forum_config_for(
+        ProjectTable(user_id="local", name="p", forum_repo_url=url), row
+    )
     assert config is not None and config.remote_token is None
     assert config.remote_token_source == "collaboration"
     sent = {k: v.get_secret_value() for k, v in sign_in_headers(row).items()}

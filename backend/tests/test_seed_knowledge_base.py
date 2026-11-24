@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.db.seed import _build_knowledge_base
 from vista_backend.utils import indexer
 
@@ -90,19 +91,19 @@ async def test_nested_publication_opens_by_basename(tmp_path, monkeypatch):
     class _KB:
         pdfs_dir = str(pdfs)
 
-    async def _get_kb(_session, _slug):
+    async def _get_kb(_session, _slug, _user):
         return _KB()
 
     monkeypatch.setattr(kb_api.kb_service, "get_kb", _get_kb)
 
-    response = await kb_api.download_publication("any-slug", "paper.pdf", None)
+    response = await kb_api.download_publication("any-slug", "paper.pdf", None, LOCAL)
     assert Path(response.path) == nested
 
     # A name that is nowhere in the tree is still a 404, and a path separator is
     # still rejected outright.
     with pytest.raises(HTTPException) as absent:
-        await kb_api.download_publication("any-slug", "absent.pdf", None)
+        await kb_api.download_publication("any-slug", "absent.pdf", None, LOCAL)
     assert absent.value.status_code == 404
     with pytest.raises(HTTPException) as traversal:
-        await kb_api.download_publication("any-slug", "../escape.pdf", None)
+        await kb_api.download_publication("any-slug", "../escape.pdf", None, LOCAL)
     assert traversal.value.status_code == 400

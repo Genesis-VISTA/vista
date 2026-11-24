@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from harness.users import LOCAL
 from vista_backend.agents.inference import (
     PROVIDER_PRESETS,
     MissingInferenceCredential,
@@ -746,7 +747,7 @@ async def test_rejected_credential_is_reported_not_a_broken_stream(session):
     from vista_backend.services import chat_session as chat_session_service
 
     conversation = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     conversation_id = str(conversation.id)
     await session.commit()
