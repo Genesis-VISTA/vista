@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/api-url";
 import type { BackgroundTask } from "./background-tasks";
 import { useSyncExternalStore } from "react";
 import type { ModelMessage } from "./agent-events";
@@ -112,7 +113,7 @@ export async function listPersistedChatSessions(
   projectName: string
 ): Promise<PersistedChatSessionSummary[]> {
   const res = await fetch(
-    `/api/chat/sessions?project_name=${encodeURIComponent(projectName)}`,
+    apiUrl(`/api/chat/sessions?project_name=${encodeURIComponent(projectName)}`),
     {
       headers: { accept: "application/json" },
       cache: "no-store",
@@ -126,7 +127,7 @@ export async function createPersistedChatSession(
   projectName: string,
   payload: { title?: string } = {}
 ): Promise<PersistedChatSession> {
-  const res = await fetch("/api/chat/sessions", {
+  const res = await fetch(apiUrl("/api/chat/sessions"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -144,7 +145,7 @@ export async function fetchPersistedChatSession(
 ): Promise<PersistedChatSession> {
   const qs = new URLSearchParams({ project_name: projectName });
   if (chatSessionId) qs.set("chat_session_id", chatSessionId);
-  const res = await fetch(`/api/chat/session?${qs.toString()}`, {
+  const res = await fetch(apiUrl(`/api/chat/session?${qs.toString()}`), {
     headers: { accept: "application/json" },
     cache: "no-store",
   });
@@ -170,7 +171,7 @@ export async function savePersistedChatSession(
     inferenceModel?: string | null;
   }
 ): Promise<PersistedChatSession> {
-  const res = await fetch("/api/chat/session", {
+  const res = await fetch(apiUrl("/api/chat/session"), {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -213,7 +214,7 @@ export async function deletePersistedChatSession(
     chat_session_id: chatSessionId,
   });
   if (confirm) qs.set("confirm", "true");
-  const res = await fetch(`/api/chat/session?${qs.toString()}`, {
+  const res = await fetch(apiUrl(`/api/chat/session?${qs.toString()}`), {
     method: "DELETE",
   });
   if (res.status === 409) {
@@ -245,7 +246,7 @@ export function attachChatRun(
     chat_session_id: chatSessionId,
     after: String(after),
   });
-  return fetch(`/api/chat/run/events?${qs.toString()}`, {
+  return fetch(apiUrl(`/api/chat/run/events?${qs.toString()}`), {
     headers: { accept: "text/event-stream" },
     cache: "no-store",
     signal,
@@ -254,7 +255,7 @@ export function attachChatRun(
 
 /** Stop a conversation's run. Already being over is not an error. */
 export async function stopChatRun(projectName: string, chatSessionId: string): Promise<void> {
-  const res = await fetch("/api/chat/run/stop", {
+  const res = await fetch(apiUrl("/api/chat/run/stop"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ project_name: projectName, chat_session_id: chatSessionId }),

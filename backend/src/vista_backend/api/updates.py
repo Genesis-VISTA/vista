@@ -17,6 +17,7 @@ from ..db.schemas import ChatSessionTable, ProjectTable
 from ..services import campaign as campaign_service
 from ..services import local_settings
 from ..services.chat_run import chat_run_registry
+from ..services.hosted import refuse_when_hosted
 from ..services.update_check import (
     Release,
     is_dev_build,
@@ -32,6 +33,14 @@ class VersionInfo(BaseModel):
     """ The installed version, as the package's manifest and launcher carry it. """
     commit: str | None = None
     """ The commit it was built from, when known. """
+    deployment: Literal["desktop", "hosted"] = "desktop"
+    """
+    Where this VISTA runs (`VISTA_BACKEND_DEPLOYMENT`). The UI reads it at
+    runtime, so one build serves both: hosted shows the sign-out control and
+    hides in-app updates and the other desktop-only controls.
+    """
+    sign_out_url: str | None = None
+    """ Hosted only: the gateway's logout page, when one is configured. """
     checks: Literal["on", "off", "dev_build"]
     """
     Whether this install checks for updates: `dev_build` for a build no release
@@ -56,6 +65,8 @@ class VersionInfo(BaseModel):
 
 
 def _checks(row) -> Literal["on", "off", "dev_build"]:
+    if settings.deployment == "hosted":
+        return "off"
     if is_dev_build(settings.version):
         return "dev_build"
     return "on" if row.update_checks else "off"
@@ -76,7 +87,13 @@ def _offered(row) -> Release | None:
 async def _version_info(session: SessionDep) -> VersionInfo:
     row = await local_settings.get(session)
     info = VersionInfo(
-        version=settings.version, commit=settings.commit or None, checks=_checks(row)
+        version=settings.version,
+        commit=settings.commit or None,
+        deployment=settings.deployment,
+        sign_out_url=(settings.sign_out_url or None)
+        if settings.deployment == "hosted"
+        else None,
+        checks=_checks(row),
     )
     if info.checks != "on":
         return info
@@ -100,8 +117,9 @@ async def check_for_updates(session: SessionDep) -> VersionInfo:
     """
     Check now (About's "Check now"). Does nothing while checks are off or on a
     development build, and answers as `GET /version` either way; a check that
-    fails leaves the last result in place.
+    fails leaves the last result in place. Refused (`403`) when hosted.
     """
+    refuse_when_hosted("Checking for updates")
     await update_checker.check_now()
     return await _version_info(session)
 
@@ -138,8 +156,10 @@ async def start_download(
     """
     Download and verify the offered release into the cache, in the background;
     poll `GET /updates/download` for progress. 409 when that version is not the
-    one on offer (checks off, a dev build, or a newer check since).
+    one on offer (checks off, a dev build, or a newer check since). Refused
+    (`403`) when hosted.
     """
+    refuse_when_hosted("Installing updates")
     release = _offered(await local_settings.get(session))
     if release is None or release.version != request.version:
         raise HTTPException(409, f"VISTA {request.version} is not the update on offer.")

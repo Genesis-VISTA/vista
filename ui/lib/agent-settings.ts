@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useSyncExternalStore } from "react";
 
 /**
@@ -102,7 +103,7 @@ export async function refreshAgentSettings(): Promise<void> {
   const id = ++request;
   loaded = true;
   try {
-    const res = await fetch("/api/settings/inference", {
+    const res = await fetch(apiUrl("/api/settings/inference"), {
       headers: { accept: "application/json" },
       cache: "no-store",
     });

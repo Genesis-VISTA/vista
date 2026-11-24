@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/api-url";
 import { extractError } from "./settings";
 
 /**
@@ -51,7 +52,7 @@ export type SlackLink = {
 };
 
 async function call<T>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const res = await fetch(`/api/slack/${path}`, {
+  const res = await fetch(apiUrl(`/api/slack/${path}`), {
     method,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),

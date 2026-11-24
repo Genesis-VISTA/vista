@@ -4,6 +4,8 @@
  * /api/campaigns.
  */
 
+import { apiUrl } from "@/lib/api-url";
+
 export type CampaignStatus =
   | "gathering"
   | "planning"
@@ -63,7 +65,7 @@ export async function listCampaigns(
 ): Promise<CampaignRun[]> {
   const params = new URLSearchParams({ project_name: projectName });
   if (chatSessionId) params.set("chat_session_id", chatSessionId);
-  const res = await fetch(`/api/campaigns?${params.toString()}`, { signal });
+  const res = await fetch(apiUrl(`/api/campaigns?${params.toString()}`), { signal });
   if (!res.ok) throw new Error(`Failed to list campaigns (${res.status})`);
   return res.json();
 }
@@ -74,7 +76,7 @@ export async function fetchCampaignState(
   signal?: AbortSignal
 ): Promise<CampaignState> {
   const params = new URLSearchParams({ project_name: projectName, run_id: runId });
-  const res = await fetch(`/api/campaigns?${params.toString()}`, { signal });
+  const res = await fetch(apiUrl(`/api/campaigns?${params.toString()}`), { signal });
   if (!res.ok) throw new Error(`Failed to load campaign (${res.status})`);
   return res.json();
 }

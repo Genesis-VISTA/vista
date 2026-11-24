@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SkillSummary } from "@/lib/types";
 
@@ -106,7 +107,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
     if (!project) return;
     try {
       const resp = await fetch(
-        `/api/projects/${encodeURIComponent(project)}/skills/from-output`
+        apiUrl(`/api/projects/${encodeURIComponent(project)}/skills/from-output`)
       );
       const data = resp.ok ? await resp.json() : [];
       const list = Array.isArray(data) ? (data as OutputSkill[]) : [];
@@ -176,7 +177,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
         ? { path, on_conflict: c.on_conflict, rename_to: c.rename_to.trim() }
         : { path, on_conflict: c.on_conflict };
     });
-    const out = (await postJson("/api/skills/import/batch", {
+    const out = (await postJson(apiUrl("/api/skills/import/batch"), {
       url: found.url,
       commit: found.commit,
       project,
@@ -203,7 +204,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
       await importChosen(scan, [...selected]);
       return;
     }
-    const found = (await postJson("/api/skills/import/scan", {
+    const found = (await postJson(apiUrl("/api/skills/import/scan"), {
       url: url.trim(),
       token: token.trim() || undefined,
     })) as RepoScan;
@@ -226,7 +227,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
 
   function request(): Promise<Response> {
     if (source === "output") {
-      return fetch(`/api/projects/${encodeURIComponent(project ?? "")}/skills/from-output`, {
+      return fetch(apiUrl(`/api/projects/${encodeURIComponent(project ?? "")}/skills/from-output`), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ folder: outputFolder, replace: picked?.exists ?? false }),
@@ -238,7 +239,7 @@ export function SkillImportModal({ open, project, onCancel, onImported }: Props)
       form.append("paths", relativePath(file));
     }
     if (project) form.append("project", project);
-    return fetch("/api/skills/import/upload", { method: "POST", body: form });
+    return fetch(apiUrl("/api/skills/import/upload"), { method: "POST", body: form });
   }
 
   async function submit() {

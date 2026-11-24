@@ -89,7 +89,7 @@ export async function installStub(
   overrides: Record<string, unknown> = {},
 ): Promise<Stub> {
   await page.addInitScript(
-    ({ routes, streamPath }) => {
+    ({ routes, streamPath, base }) => {
       const encoder = new TextEncoder();
       const streams: Record<string, ReadableStreamDefaultController<Uint8Array> | null> = {};
 
@@ -154,6 +154,14 @@ export async function installStub(
               ? input.href
               : input.url;
         const url = new URL(href, location.origin);
+        // Under a base path every API call must carry it (`apiUrl()`); one that
+        // does not would 404 in a real deployment, so it is recorded as unstubbed.
+        if (base && url.pathname.startsWith("/api/")) {
+          window.__vista.unstubbed.push(`UNPREFIXED ${url.pathname}`);
+        }
+        if (base && url.pathname.startsWith(`${base}/api/`)) {
+          url.pathname = url.pathname.slice(base.length);
+        }
         if (!url.pathname.startsWith("/api/")) return realFetch(input, init);
 
         const method = (
@@ -208,7 +216,11 @@ export async function installStub(
         });
       };
     },
-    { routes: { ...ROUTES, ...overrides }, streamPath: STREAM_PATH },
+    {
+      routes: { ...ROUTES, ...overrides },
+      streamPath: STREAM_PATH,
+      base: process.env.HERMETIC_BASE_PATH ?? "",
+    },
   );
 
   await page.route("**/api/**", async (route) => {

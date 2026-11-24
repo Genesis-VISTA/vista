@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useDeployment } from "@/lib/deployment";
 import {
   activityLines,
   checkNow,
@@ -24,6 +25,10 @@ import {
  */
 export function UpdateControls({ info }: { info: VersionInfo }) {
   const { checking, error, download } = useVersion();
+  const { hosted } = useDeployment();
+
+  // A hosted VISTA is updated by whoever runs it; the backend refuses these too.
+  if (hosted) return null;
 
   if (!info.latest) {
     return (

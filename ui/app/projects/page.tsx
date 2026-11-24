@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -122,14 +123,14 @@ function ProjectsPageContent() {
   }, [collab.available, refreshHeads]);
 
   const refreshSkillCatalog = useCallback(() => {
-    fetch("/api/skills")
+    fetch(apiUrl("/api/skills"))
       .then((res) => res.json())
       .then((data) => setSkillCatalog(Array.isArray(data) ? data : []))
       .catch(() => setSkillCatalog([]));
   }, []);
 
   const refreshKbCatalog = useCallback(() => {
-    fetch("/api/knowledge-bases")
+    fetch(apiUrl("/api/knowledge-bases"))
       .then((res) => res.json())
       .then((data) => setKbCatalog(Array.isArray(data) ? data : []))
       .catch(() => setKbCatalog([]));

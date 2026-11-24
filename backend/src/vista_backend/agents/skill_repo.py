@@ -31,6 +31,7 @@ host, over https.
 """
 
 import io
+import ipaddress
 import json
 import os
 import posixpath
@@ -46,6 +47,7 @@ from pathlib import Path, PurePosixPath
 
 from pydantic import ValidationError
 
+from ..config import settings
 from .skill_import import (
     _IGNORED_DIRS as IGNORED_DIRS,
     _IGNORED_FILES as IGNORED_FILES,
@@ -182,12 +184,79 @@ def parse_repo_url(url: str) -> RepoUrl:
 # --------------------------------------------------------------------------- #
 
 
+def _resolve(host: str) -> list[str]:
+    """The addresses `host` resolves to. Replaced in tests."""
+    try:
+        infos = socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except OSError as e:
+        raise SkillRepoUnreachableError(f"Could not resolve {host}: {e}") from e
+    return sorted({str(info[4][0]) for info in infos})
+
+
+def _public(addr: str) -> bool:
+    ip = ipaddress.ip_address(addr.split("%")[0])
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    # `is_global` is false for private, loopback, link-local, carrier-grade NAT,
+    # reserved and unspecified addresses alike.
+    return ip.is_global and not ip.is_multicast
+
+
+def check_import_target(url: str) -> None:
+    """
+    Hosted only: refuse a URL that is not https on an allowed host
+    (`skill_import_allowed_hosts`) or that resolves to a loopback, link-local,
+    private or otherwise non-public address, whatever name it goes by. Desktop
+    accepts any https URL. Called for the first request and again for every
+    redirect, so a redirect cannot lead inside either.
+
+    Resolution here and the connection's own are separate lookups, so a name
+    that answers differently the second time is not caught; the allowlist is
+    what keeps that to hosts an operator chose.
+    """
+    if settings.deployment != "hosted":
+        return
+    parts = urllib.parse.urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme != "https" or not host:
+        raise SkillRepoError(f"A hosted VISTA imports skills over https only: {url!r}.")
+    try:
+        literal: str | None = str(ipaddress.ip_address(host))
+    except ValueError:
+        literal = None
+    if literal is not None and not _public(literal):
+        raise SkillRepoError(
+            f"Refusing {host}: it is a loopback, link-local or private address."
+        )
+    if host not in settings.skill_import_allowed_hosts:
+        raise SkillRepoError(
+            f"{host} is not an allowed skill import host on this VISTA "
+            "(VISTA_BACKEND_SKILL_IMPORT_ALLOWED_HOSTS)."
+        )
+    for addr in [literal] if literal else _resolve(host):
+        if not _public(addr):
+            raise SkillRepoError(
+                f"Refusing {host}: it resolves to {addr}, a loopback, link-local "
+                "or private address."
+            )
+
+
+class _GuardedRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        check_import_target(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_GuardedRedirects)
+
+
 def _open(
     url: str, token: str | None, accept: str | None
 ) -> tuple[int, dict[str, str], bytes]:
     """One GET, HTTP errors included: `(status, lower-cased headers, body)`."""
     if not url.startswith("https://"):
         raise SkillRepoError(f"Refusing to fetch non-HTTPS URL: {url}")
+    check_import_target(url)
     req = urllib.request.Request(url, headers={"User-Agent": "vista-backend"})
     if accept:
         req.add_header("Accept", accept)
@@ -198,7 +267,11 @@ def _open(
     host = urllib.parse.urlsplit(url).netloc
     try:
         # https only, by the guard above.
-        with urllib.request.urlopen(req, timeout=60) as resp:  # nosec B310
+        # Hosted checks every redirect too; desktop follows them as urllib does.
+        open_url = (
+            _opener.open if settings.deployment == "hosted" else urllib.request.urlopen
+        )
+        with open_url(req, timeout=60) as resp:  # nosec B310
             headers = {k.lower(): v for k, v in resp.headers.items()}
             return resp.status, headers, resp.read(MAX_ARCHIVE_BYTES + 1)
     except urllib.error.HTTPError as e:

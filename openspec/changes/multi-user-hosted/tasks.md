@@ -14,12 +14,12 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 2. Hosted flag and base path (wave 1; needs nothing)
 
-- [ ] 2.1 The version route reports `deployment`; verify with a backend test for both values
-- [ ] 2.2 `ui/lib/deployment.ts` `useDeployment()` and a sign-out/user menu shown only when hosted; verify with a UI unit test for both values
-- [ ] 2.3 Backend refusals when hosted: update check/install (`api/updates.py:93-160`), NERSC IRI fields, Custom provider save, linked folders; verify with `backend/tests/test_hosted_refusals.py`
-- [ ] 2.4 UI hides the same controls plus Electron-only actions (`UpdateControls.tsx`, `ui/lib/version.ts` callers, NERSC section, Custom provider option); verify with UI tests rendering under `hosted`
-- [ ] 2.5 Skill import when hosted: `https` on `VISTA_BACKEND_SKILL_IMPORT_ALLOWED_HOSTS` only, resolved addresses in private/loopback/link-local ranges refused (`agents/skill_repo.py:134`); verify with tests using a fake resolver
-- [ ] 2.6 `VISTA_BASE_PATH` read into `basePath` in `ui/next.config.*`; one `apiUrl()` helper for every client `fetch`/`EventSource`; an ESLint rule against `'/api/` literals in client code; read `ui/node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/basePath.md` first; verify with `VISTA_BASE_PATH=/vista/ui npm run build` and a Playwright smoke that opens a project and streams a chat under the path
+- [x] 2.1 The version route reports `deployment`; verify with a backend test for both values
+- [x] 2.2 `ui/lib/deployment.ts` `useDeployment()` and a sign-out/user menu shown only when hosted; verify with a UI unit test for both values
+- [x] 2.3 Backend refusals when hosted: update check/install (`api/updates.py:93-160`), NERSC IRI fields, Custom provider save, linked folders; verify with `backend/tests/test_hosted_refusals.py`
+- [x] 2.4 UI hides the same controls plus Electron-only actions (`UpdateControls.tsx`, `ui/lib/version.ts` callers, NERSC section, Custom provider option); verify with UI tests rendering under `hosted`
+- [x] 2.5 Skill import when hosted: `https` on `VISTA_BACKEND_SKILL_IMPORT_ALLOWED_HOSTS` only, resolved addresses in private/loopback/link-local ranges refused (`agents/skill_repo.py:134`); verify with tests using a fake resolver
+- [x] 2.6 `VISTA_BASE_PATH` read into `basePath` in `ui/next.config.*`; one `apiUrl()` helper for every client `fetch`/`EventSource`; an ESLint rule against `'/api/` literals in client code; read `ui/node_modules/next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/basePath.md` first; verify with `VISTA_BASE_PATH=/vista/ui npm run build` and a Playwright smoke that opens a project and streams a chat under the path
 
 ## 3. Dev gateway and identity through the UI (wave 1; needs nothing)
 

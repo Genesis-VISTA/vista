@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useMemo, useSyncExternalStore } from "react";
 import { extractError } from "@/lib/settings";
 
@@ -160,7 +161,7 @@ export async function refreshCollaborationStatus(
   const id = ++request;
   set(forget ? { checking: true, status: null, error: null } : { checking: true });
   try {
-    const res = await fetch("/api/collaboration/status", {
+    const res = await fetch(apiUrl("/api/collaboration/status"), {
       headers: { accept: "application/json" },
       cache: "no-store",
     });
@@ -445,7 +446,7 @@ async function teamRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
 
 /** Make a team, with the researcher as its first member. 409 when the name is taken, in any case. */
 export async function createTeam(name: string): Promise<CollaborationTeam> {
-  const team = await teamRequest<CollaborationTeam>("/api/collaboration/teams", {
+  const team = await teamRequest<CollaborationTeam>(apiUrl("/api/collaboration/teams"), {
     method: "POST",
     body: JSON.stringify({ name }),
   });
@@ -455,12 +456,12 @@ export async function createTeam(name: string): Promise<CollaborationTeam> {
 
 /** A team's members. Refused for the public team, which has no list. */
 export function listMembers(teamId: string): Promise<TeamMember[]> {
-  return teamRequest<TeamMember[]>(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members`);
+  return teamRequest<TeamMember[]>(apiUrl(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members`));
 }
 
 /** Add someone who has signed in to the server (`searchUsers`) to a team the researcher is in. */
 export function addMember(teamId: string, sub: string): Promise<TeamMember> {
-  return teamRequest<TeamMember>(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members`, {
+  return teamRequest<TeamMember>(apiUrl(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members`), {
     method: "POST",
     body: JSON.stringify({ sub }),
   });
@@ -471,7 +472,7 @@ export function addMember(teamId: string, sub: string): Promise<TeamMember> {
  * be published into another team, as private ones are.
  */
 export async function leaveTeam(teamId: string): Promise<void> {
-  await teamRequest<void>(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members/me`, {
+  await teamRequest<void>(apiUrl(`/api/collaboration/teams/${encodeURIComponent(teamId)}/members/me`), {
     method: "DELETE",
   });
   await refreshCollaborationStatus();
@@ -480,13 +481,13 @@ export async function leaveTeam(teamId: string): Promise<void> {
 /** Everyone who has signed in to the server whose name or email contains `q`, at most 20. */
 export function searchUsers(q: string, signal?: AbortSignal): Promise<CollaborationUser[]> {
   const query = q.trim() ? `?q=${encodeURIComponent(q.trim())}` : "";
-  return teamRequest<CollaborationUser[]>(`/api/collaboration/users${query}`, { signal });
+  return teamRequest<CollaborationUser[]>(apiUrl(`/api/collaboration/users${query}`), { signal });
 }
 
 const PUBLISH_BASE: Record<PublishKind, string> = {
-  project: "/api/projects",
-  skill: "/api/skills",
-  "knowledge-base": "/api/knowledge-bases",
+  project: apiUrl("/api/projects"),
+  skill: apiUrl("/api/skills"),
+  "knowledge-base": apiUrl("/api/knowledge-bases"),
 };
 
 /**

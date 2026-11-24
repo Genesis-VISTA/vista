@@ -1,4 +1,4 @@
-import { defaultUrlTransform } from "react-markdown";
+import { apiUrl, basePathUrlTransform } from "@/lib/api-url";
 
 /**
  * Sandbox paths a report may reference, and the file kind each is served as.
@@ -22,7 +22,7 @@ export function sandboxFileUrl(url: string, projectName: string): string | null 
     const segments = path.slice(prefix.length).split("/");
     if (segments.some((s) => !s || s === "." || s === "..")) return null;
     const encoded = segments.map((s) => encodeURIComponent(safeDecode(s))).join("/");
-    return `/api/files/${kind}/${encoded}?project_name=${encodeURIComponent(projectName)}`;
+    return apiUrl(`/api/files/${kind}/${encoded}?project_name=${encodeURIComponent(projectName)}`);
   }
   return null;
 }
@@ -33,7 +33,7 @@ export function sandboxFileUrl(url: string, projectName: string): string | null 
  * default sanitizer.
  */
 export function reportUrlTransform(projectName: string): (url: string) => string {
-  return (url) => sandboxFileUrl(url, projectName) ?? defaultUrlTransform(url);
+  return (url) => sandboxFileUrl(url, projectName) ?? basePathUrlTransform(url);
 }
 
 /** Markdown may already percent-encode a path (spaces as %20); don't double-encode. */

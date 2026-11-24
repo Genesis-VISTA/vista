@@ -8,6 +8,8 @@
  * each change (`inbox_changed`), and a view that opens the conversation reads it.
  */
 
+import { apiUrl } from "@/lib/api-url";
+
 export type InboxItem = {
   id: number;
   /** `message` from the researcher, or `task_event` from a background task. */
@@ -64,7 +66,7 @@ export type QueueChange =
 function inboxUrl(projectName: string, chatSessionId: string, itemId?: number): string {
   const params = new URLSearchParams({ project_name: projectName, chat_session_id: chatSessionId });
   if (itemId !== undefined) params.set("item_id", String(itemId));
-  return `/api/chat/inbox?${params}`;
+  return apiUrl(`/api/chat/inbox?${params}`);
 }
 
 /** What is queued for the conversation, in arrival order. */

@@ -306,7 +306,7 @@ class UpdateChecker:
         `False` when it could not be asked, `None` when checks are off or this is
         a development build (and nothing was requested).
         """
-        if is_dev_build(self.installed):
+        if settings.deployment == "hosted" or is_dev_build(self.installed):
             return None
         try:
             return await self._check_now()
@@ -352,6 +352,9 @@ class UpdateChecker:
 
     async def run(self, stop: asyncio.Event | None = None) -> None:
         """The schedule, until `stop` is set or the task is cancelled. Never raises."""
+        if settings.deployment == "hosted":
+            log.info("Update checks are off on a hosted deployment.")
+            return
         if is_dev_build(self.installed):
             log.info("Update checks are off for development build %s.", self.installed)
             return

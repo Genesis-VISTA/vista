@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl, basePathUrlTransform } from "@/lib/api-url";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import ReactMarkdown from "react-markdown";
@@ -55,7 +56,7 @@ export default function SkillsPage() {
   const [publishingToTeam, setPublishingToTeam] = useState<SkillSummary | null>(null);
 
   const loadSkills = useCallback(() => {
-    fetch("/api/skills")
+    fetch(apiUrl("/api/skills"))
       .then((res) => res.json())
       .then((data) => setSkills(Array.isArray(data) ? data : []))
       .catch(() => setSkills([]))
@@ -143,7 +144,7 @@ export default function SkillsPage() {
   async function deleteSkill(skill: SkillSummary) {
     setBusySlug(skill.slug);
     try {
-      const resp = await fetch(`/api/skills/${skill.slug}`, { method: "DELETE" });
+      const resp = await fetch(apiUrl(`/api/skills/${skill.slug}`), { method: "DELETE" });
       if (!resp.ok) {
         // The proxy wraps the backend's answer, `{"detail": …}`, as its `error`.
         const body = (await resp.json().catch(() => ({}))) as { error?: string };
@@ -164,7 +165,7 @@ export default function SkillsPage() {
 
   async function openDetail(slug: string) {
     try {
-      const resp = await fetch(`/api/skills/${slug}`);
+      const resp = await fetch(apiUrl(`/api/skills/${slug}`));
       if (!resp.ok) return;
       const detail = (await resp.json()) as SkillDetail;
       setSelected(detail);
@@ -487,7 +488,7 @@ export default function SkillsPage() {
               </button>
             </div>
             <div className="modal-body">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={basePathUrlTransform}>
                 {selected.markdown}
               </ReactMarkdown>
             </div>

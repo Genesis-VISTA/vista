@@ -1,6 +1,7 @@
 "use client";
 
 import ReactMarkdown from "react-markdown";
+import { basePathUrlTransform } from "@/lib/api-url";
 import remarkGfm from "remark-gfm";
 
 import {
@@ -254,7 +255,7 @@ export function DebatePostCard({
 
       {/* Below the fence: what the poster claimed. */}
       <div className="debate-post__body">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{post.body}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={basePathUrlTransform}>{post.body}</ReactMarkdown>
       </div>
 
       <Grounded post={post} />

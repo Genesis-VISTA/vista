@@ -11,6 +11,7 @@
  * first, so these are only reached with a server that answered.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import { refreshCollaborationStatus } from "@/lib/collaboration";
 import type { SkillSummary } from "@/lib/types";
 
@@ -141,7 +142,7 @@ export async function listRemoteSkills(
   { manifests = true }: { manifests?: boolean } = {},
 ): Promise<RemoteSkill[]> {
   const query = manifests ? "" : "?manifests=false";
-  const res = await fetch(`/api/collaboration/skills${query}`, {
+  const res = await fetch(apiUrl(`/api/collaboration/skills${query}`), {
     headers: { accept: "application/json" },
     cache: "no-store",
   });
@@ -158,7 +159,7 @@ export async function publishSkill(
   slug: string,
   { onTopOf, asNew }: { onTopOf?: number; asNew?: boolean } = {},
 ): Promise<Published | SharingRefusal> {
-  const res = await post(`/api/skills/${encodeURIComponent(slug)}/publish`, {
+  const res = await post(apiUrl(`/api/skills/${encodeURIComponent(slug)}/publish`), {
     on_top_of: onTopOf ?? null,
     as_new: asNew ?? false,
   });
@@ -180,7 +181,7 @@ export async function importRemoteSkill(
     project?: string | null;
   } = {},
 ): Promise<Imported | SharingRefusal> {
-  const res = await post(`/api/collaboration/skills/${encodeURIComponent(id)}/import`, {
+  const res = await post(apiUrl(`/api/collaboration/skills/${encodeURIComponent(id)}/import`), {
     version: opts.version ?? null,
     rename_to: opts.renameTo ?? null,
     replace_modified: opts.replaceModified ?? false,

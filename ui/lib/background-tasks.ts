@@ -4,6 +4,8 @@
  * `watch_hpc_job`, as the Background tab shows them.
  */
 
+import { apiUrl } from "@/lib/api-url";
+
 export type BackgroundTask = {
   id: string;
   /** What the agent and the researcher call it: `bg-3`, `watch-2`. */
@@ -94,7 +96,7 @@ export async function fetchTasks(
   chatSessionId: string,
   signal?: AbortSignal,
 ): Promise<BackgroundTask[]> {
-  const response = await fetch(`/api/chat/tasks?${query(projectName, chatSessionId)}`, {
+  const response = await fetch(apiUrl(`/api/chat/tasks?${query(projectName, chatSessionId)}`), {
     signal,
     cache: "no-store",
   });
@@ -109,7 +111,7 @@ export async function stopTask(
   chatSessionId: string,
   taskId: string,
 ): Promise<BackgroundTask | null> {
-  const response = await fetch(`/api/chat/tasks/stop?${query(projectName, chatSessionId, taskId)}`, {
+  const response = await fetch(apiUrl(`/api/chat/tasks/stop?${query(projectName, chatSessionId, taskId)}`), {
     method: "POST",
   });
   if (!response.ok) return null;
@@ -118,5 +120,5 @@ export async function stopTask(
 
 /** Where the end of a command's log is read from, for the file preview. */
 export function taskLogUrl(projectName: string, chatSessionId: string, taskId: string): string {
-  return `/api/chat/tasks/log?${query(projectName, chatSessionId, taskId)}`;
+  return apiUrl(`/api/chat/tasks/log?${query(projectName, chatSessionId, taskId)}`);
 }

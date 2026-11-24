@@ -13,6 +13,8 @@
  * a post claim an identity it does not have.
  */
 
+import { apiUrl } from "@/lib/api-url";
+
 export type DebateStatus =
   | "setting_up"
   | "debating"
@@ -577,7 +579,7 @@ export async function fetchForumStatus(
   signal?: AbortSignal
 ): Promise<ForumStatus> {
   const query = new URLSearchParams({ project_name: projectName });
-  return unwrap(await fetch(`/api/forum/status?${query}`, { signal }));
+  return unwrap(await fetch(apiUrl(`/api/forum/status?${query}`), { signal }));
 }
 
 /** Every thread on the project's forum, newest first, whoever opened it. */
@@ -586,7 +588,7 @@ export async function listDebates(
   signal?: AbortSignal
 ): Promise<ForumThread[]> {
   const params = new URLSearchParams({ project_name: projectName });
-  return unwrap(await fetch(`/api/debates?${params}`, { signal }));
+  return unwrap(await fetch(apiUrl(`/api/debates?${params}`), { signal }));
 }
 
 export async function fetchDebate(
@@ -595,7 +597,7 @@ export async function fetchDebate(
   signal?: AbortSignal
 ): Promise<DebateState> {
   const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
-  return unwrap(await fetch(`/api/debates?${params}`, { signal }));
+  return unwrap(await fetch(apiUrl(`/api/debates?${params}`), { signal }));
 }
 
 export async function openDebate(
@@ -610,7 +612,7 @@ export async function openDebate(
 ): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName });
   return unwrap(
-    await fetch(`/api/debates?${params}`, {
+    await fetch(apiUrl(`/api/debates?${params}`), {
       method: "POST",
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
@@ -625,7 +627,7 @@ export async function postToDebate(
 ): Promise<DebatePost> {
   const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
   return unwrap(
-    await fetch(`/api/debates/posts?${params}`, {
+    await fetch(apiUrl(`/api/debates/posts?${params}`), {
       method: "POST",
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
@@ -639,7 +641,7 @@ export async function closeDebate(
   threadId: string
 ): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
-  return unwrap(await fetch(`/api/debates/close?${params}`, { method: "POST" }));
+  return unwrap(await fetch(apiUrl(`/api/debates/close?${params}`), { method: "POST" }));
 }
 
 /**
@@ -655,7 +657,7 @@ export async function continueDebate(
   models: Partial<Record<DebateRoleName, string | null>> = {}
 ): Promise<ForumThread> {
   const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
-  const response = await fetch(`/api/debates/continue?${params}`, {
+  const response = await fetch(apiUrl(`/api/debates/continue?${params}`), {
     method: "POST",
     headers: JSON_HEADERS,
     body: JSON.stringify({ rounds, models }),

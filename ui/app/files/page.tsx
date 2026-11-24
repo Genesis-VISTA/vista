@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -124,8 +125,8 @@ function FilesPageInner() {
     setIsLoading(true);
     try {
       const [uploadsRes, outputsRes] = await Promise.all([
-        fetch(`/api/files/uploads${projectQuery}`),
-        fetch(`/api/files/outputs${projectQuery}`),
+        fetch(apiUrl(`/api/files/uploads${projectQuery}`)),
+        fetch(apiUrl(`/api/files/outputs${projectQuery}`)),
       ]);
       const [uploadsData, outputsData] = await Promise.all([
         uploadsRes.json(),
@@ -259,7 +260,7 @@ function FilesPageInner() {
       for (const file of Array.from(files)) {
         form.append("files", file, file.webkitRelativePath || file.name);
       }
-      const response = await fetch(`/api/files/uploads${projectQuery}`, { method: "POST", body: form });
+      const response = await fetch(apiUrl(`/api/files/uploads${projectQuery}`), { method: "POST", body: form });
       const data = (await response.json()) as UploadResponse;
       if (!response.ok || !data.ok) {
         setUploadError(data.error || "Upload failed.");
@@ -285,7 +286,7 @@ function FilesPageInner() {
     setUploadMessage("");
     try {
       const response = await fetch(
-        `/api/files/${kind}/${encodePath(name)}${projectQuery}`,
+        apiUrl(`/api/files/${kind}/${encodePath(name)}${projectQuery}`),
         { method: "DELETE" },
       );
       const data = (await response.json()) as UploadResponse;
@@ -332,7 +333,7 @@ function FilesPageInner() {
     const file = node.file;
     const isSelected = selected?.kind === kind && selected.path === node.path;
     const busy = deleting === `${kind}:${node.path}`;
-    const downloadHref = `/api/files/${kind}/${encodePath(node.path)}${projectQuery}`;
+    const downloadHref = apiUrl(`/api/files/${kind}/${encodePath(node.path)}${projectQuery}`);
     if (exampleFor(kind, file)) {
       // An example is not in the project: nothing to download, delete or show.
       return (

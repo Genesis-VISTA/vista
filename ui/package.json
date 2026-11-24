@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test -c playwright.config.ts",
-    "test:e2e:hermetic": "playwright test -c playwright.hermetic.config.ts"
+    "test:e2e:hermetic": "playwright test -c playwright.hermetic.config.ts",
+    "test:e2e:basepath": "playwright test -c playwright.basepath.config.ts"
   },
   "dependencies": {
     "@rjsf/core": "^6.4.1",
