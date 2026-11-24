@@ -295,6 +295,10 @@ effect (`services/collaboration.status`'s `default_server`).
 """
 
 
+DEV_ENCRYPTION_KEY = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+""" The development default; public, so a hosted deployment refuses it. """
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES,
@@ -384,6 +388,34 @@ class Settings(BaseSettings):
     takes precedence over this value.
     """
 
+    mcp_secret: A[SecretStr | None, Field(validation_alias="VISTA_MCP_SECRET")] = None
+    """
+    The secret the VISTA MCP server shares with this backend: sent as
+    `X-Vista-MCP-Secret` on every MCP request. The launchers generate one for
+    both processes. Unset, the MCP server accepts any request (so one started by
+    hand still works) and a hosted backend refuses to start.
+    """
+
+    @model_validator(mode="after")
+    def _hosted_needs_real_secrets(self) -> "Settings":
+        """
+        A hosted backend serves several people from one database, so it must not
+        run on the development key (public, in this file) or with no MCP secret.
+        Checked here, at import, so it exits before the database is opened.
+        """
+        if self.deployment != "hosted":
+            return self
+        if self.encryption_key.get_secret_value() == DEV_ENCRYPTION_KEY:
+            raise ValueError(
+                "A hosted deployment needs VISTA_BACKEND_ENCRYPTION_KEY set to its own "
+                "Fernet key, not the development key or none."
+            )
+        if self.mcp_secret is None or not self.mcp_secret.get_secret_value():
+            raise ValueError(
+                "A hosted deployment needs VISTA_MCP_SECRET, shared with the VISTA MCP server."
+            )
+        return self
+
     _ignored_openai_base_url: str | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
@@ -417,7 +449,7 @@ class Settings(BaseSettings):
     """
 
     mcp_url: str = Field(
-        default="http://localhost:8000/mcp", validation_alias="VISTA_MCP_URL"
+        default="http://127.0.0.1:8000/mcp", validation_alias="VISTA_MCP_URL"
     )
     """ HTTP URL for the vista_mcp_server (HPC, RAG, display_file tools). """
 
@@ -493,9 +525,7 @@ class Settings(BaseSettings):
         SecretStr,
         Field(
             default_factory=lambda data: (
-                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-                if data["env"] == "dev"
-                else None
+                DEV_ENCRYPTION_KEY if data["env"] == "dev" else None
             )
         ),
     ]

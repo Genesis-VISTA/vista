@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 import mcp.types
 from pydantic import BaseModel
 
+from ..config import settings
 from ..db.db import SessionDep
 from ..services import project as project_service
 from ..services.chat_run import ELSEWHERE, resolve_prompt, run_for_prompt
@@ -44,6 +45,9 @@ async def mcp_call(
     req: McpCallRequest,
     session: SessionDep,
 ) -> mcp.types.CallToolResult:
+    if settings.deployment == "hosted":
+        # Calls any tool with the server's own credentials and no confirmation.
+        raise HTTPException(status_code=404, detail="Not found")
     project = await project_service.get_project_by_name(session, project_name)
     async with project_agent_pool.get((None, project.id)) as agent:
         try:

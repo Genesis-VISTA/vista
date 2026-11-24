@@ -15,12 +15,13 @@ from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import (
     LOCAL_SETTINGS_ID,
+    SECRET_SETTINGS_FIELDS,
     LocalSettingsPublic,
     LocalSettingsTable,
     LocalSettingsUpdate,
 )
 
-WRITE_ONLY_TOKENS = ("github_token", "gitlab_token", "collaboration_token")
+WRITE_ONLY_TOKENS = SECRET_SETTINGS_FIELDS
 """Fields that are never read back, so a save that sends null keeps them."""
 
 AGENT_IRRELEVANT = {"update_checks", "update_prereleases", "collaboration_enabled"}

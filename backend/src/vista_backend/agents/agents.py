@@ -382,6 +382,13 @@ transfer approval, or the optional agenthpc server's SSH login) waits for the
 researcher, who may be away for hours. """
 
 
+def mcp_secret_headers() -> dict[str, str] | None:
+    """The shared secret the VISTA MCP server requires, when one is configured."""
+    if settings.mcp_secret is None:
+        return None
+    return {"X-Vista-MCP-Secret": settings.mcp_secret.get_secret_value()}
+
+
 def get_vista_mcp_server(
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
     process_tool_call: ProcessToolCallback | None = None,
@@ -390,6 +397,7 @@ def get_vista_mcp_server(
     """Connect to the VISTA MCP Server (HTTP) for HPC, RAG, and file display tools."""
     return MCPServerStreamableHTTP(
         url=settings.mcp_url,
+        headers=mcp_secret_headers(),
         elicitation_callback=elicitation_callback,
         process_tool_call=process_tool_call,
         log_handler=log_handler,

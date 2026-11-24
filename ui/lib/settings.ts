@@ -41,14 +41,14 @@ export type LocalSettings = {
   inference_model: string | null;
   /** Custom's endpoint; the other providers' come from the backend's presets. */
   inference_base_url: string | null;
-  /** The key for an endpoint set in the installation's configuration; no provider reads it. */
-  inference_api_key: string | null;
+  /** Whether a key is saved for an endpoint set in the installation's configuration; no provider reads it. */
+  has_inference_api_key?: boolean;
   /** `mag`, `olcf` or `custom`; null until chosen. See `lib/agent-settings.ts`. */
   inference_provider?: string | null;
-  inference_mag_api_key?: string | null;
+  has_inference_mag_api_key?: boolean;
   /** OLCF Inference's S3M token, kept apart from the Odo and Frontier ones. */
-  inference_olcf_api_key?: string | null;
-  inference_custom_api_key?: string | null;
+  has_inference_olcf_api_key?: boolean;
+  has_inference_custom_api_key?: boolean;
   /** Optional, user-authored scientific context used to personalize the main assistant. */
   research_role?: string | null;
   research_institution?: string | null;
@@ -73,19 +73,19 @@ export type LocalSettings = {
    * One S3M token per OLCF cluster: a token is scoped to a single project,
    * so one field could only ever authorize one of Odo, Frontier and Lux.
    */
-  odo_s3m_token: string | null;
-  frontier_s3m_token: string | null;
-  lux_s3m_token: string | null;
-  nersc_iri_token: string | null;
+  has_odo_s3m_token?: boolean;
+  has_frontier_s3m_token?: boolean;
+  has_lux_s3m_token?: boolean;
+  has_nersc_iri_token?: boolean;
   /**
-   * File-transfer credentials, read only to tell whether a cluster is
-   * connected. They are deliberately absent from `LocalSettingsUpdate`: a Globus
-   * credential arrives from an authorization, not from something typed into
-   * the form, so there is nothing here for the save diff to carry.
+   * File-transfer credentials, whether saved, to tell whether a cluster is
+   * connected. The values never reach the browser, and they are deliberately
+   * absent from `LocalSettingsUpdate`: a Globus credential arrives from an
+   * authorization, not from something typed into the form.
    */
-  globus_token: string | null;
-  odo_globus_token: string | null;
-  frontier_globus_token: string | null;
+  has_globus_token?: boolean;
+  has_odo_globus_token?: boolean;
+  has_frontier_globus_token?: boolean;
   /**
    * The second half of each credential: the OLCF collection's own token, which
    * is what reads and writes file contents over the Globus HTTPS interface.
@@ -93,9 +93,9 @@ export type LocalSettings = {
    * VISTA moved to that interface has the Transfer token alone and has to be
    * made again.
    */
-  globus_https_token: string | null;
-  odo_globus_https_token: string | null;
-  frontier_globus_https_token: string | null;
+  has_globus_https_token?: boolean;
+  has_odo_globus_https_token?: boolean;
+  has_frontier_globus_https_token?: boolean;
   /** Whether a GitHub token is saved. The token itself is never sent back. */
   has_github_token?: boolean;
   /** Whether a gitlab.com token is saved. The token itself is never sent back. */
@@ -137,6 +137,7 @@ export type LocalSettingsUpdate = {
   odo_remote_dir?: string | null;
   frontier_remote_dir?: string | null;
   lux_remote_dir?: string | null;
+  /** Credentials are write-only: `null` or absent keeps the saved one, `""` clears it. */
   odo_s3m_token?: string | null;
   frontier_s3m_token?: string | null;
   lux_s3m_token?: string | null;
@@ -296,8 +297,8 @@ export type GlobusCluster = "odo" | "frontier";
 
 /** Which settings field holds a cluster's credential. */
 export const GLOBUS_TOKEN_FIELD: Record<GlobusCluster, keyof LocalSettings> = {
-  odo: "odo_globus_token",
-  frontier: "frontier_globus_token",
+  odo: "has_odo_globus_token",
+  frontier: "has_frontier_globus_token",
 };
 
 /** Backend `GlobusLoginStarted`. */

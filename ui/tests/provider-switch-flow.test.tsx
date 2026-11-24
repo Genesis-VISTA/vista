@@ -64,6 +64,16 @@ function inferenceView() {
   };
 }
 
+/** `GET`/`PUT /settings` as the backend answers: every credential as a `has_*` flag only. */
+function publicRow() {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key.endsWith("_api_key")) out[`has_${key}`] = Boolean(value);
+    else out[key] = value;
+  }
+  return out;
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -89,7 +99,7 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      if (url === "/api/settings" && init?.method !== "PUT") return json(row);
+      if (url === "/api/settings" && init?.method !== "PUT") return json(publicRow());
       if (url === "/api/settings" && init?.method === "PUT") {
         const update = JSON.parse(String(init.body)) as Record<string, unknown>;
         puts.push(update);
@@ -102,7 +112,7 @@ beforeEach(() => {
           row.inference_model = null;
         }
         row = { ...row, ...update };
-        return json(row);
+        return json(publicRow());
       }
       if (url === "/api/settings/inference") return json(inferenceView());
       if (url === "/api/projects/molten-salt/models") return json({ supported: true, models: [] });
@@ -140,11 +150,13 @@ describe("switching provider in Settings", () => {
     const agent = await screen.findByRole("region", { name: "Models & providers" });
     await userEvent.click(within(agent).getByRole("radio", { name: /^Custom/ }));
     expect(await screen.findByRole("button", { name: /^Model: No model/ })).toBeInTheDocument();
-    expect(within(agent).getByLabelText(/^Custom endpoint API key/)).toHaveValue("custom-key");
+    // A saved key is never shown, only that it is saved.
+    expect(within(agent).getByLabelText(/^Custom endpoint API key/)).toHaveValue("");
+    expect(within(agent).getByLabelText(/^Custom endpoint API key/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
 
     await userEvent.click(within(agent).getByRole("radio", { name: /^AmSC MAG/ }));
     expect(await screen.findByRole("button", { name: /^Model: Default \(claude-sonnet\)/ })).toBeInTheDocument();
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
 
     // Only the choice was sent, never a key: switching leaves every key as it was.
     await waitFor(() => expect(puts).toEqual([{ inference_provider: "custom" }, { inference_provider: "mag" }]));

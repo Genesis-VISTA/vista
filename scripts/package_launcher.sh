@@ -292,6 +292,12 @@ export VISTA_DATA_PAYLOAD_DIR="$STATE/vista-data"
 export VISTA_MCP_URL="http://127.0.0.1:$MCP_PORT/mcp"
 export VISTA_BACKEND_URL="http://127.0.0.1:$BACKEND_PORT"
 export VISTA_BACKEND_PORT="$BACKEND_PORT"
+# The secret the backend and the MCP server share, new each start: the MCP server
+# refuses a request without it, so another process on this machine cannot use it.
+if [[ -z "${VISTA_MCP_SECRET:-}" ]]; then
+  VISTA_MCP_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
+export VISTA_MCP_SECRET
 export HF_HOME="$STATE/huggingface"
 # A cache miss must fail loudly rather than quietly reaching the network: the
 # weights ship inside the package precisely so this works offline.

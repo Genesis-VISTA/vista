@@ -5,7 +5,12 @@ from pydantic import BaseModel
 
 from ..agents.inference import PROVIDER_PRESETS, resolve_inference_target
 from ..db.db import SessionDep
-from ..db.schemas import HpcCluster, LocalSettingsPublic, LocalSettingsUpdate
+from ..db.schemas import (
+    SECRET_SETTINGS_FIELDS,
+    HpcCluster,
+    LocalSettingsPublic,
+    LocalSettingsUpdate,
+)
 from ..services import globus_auth, hpc_status, local_settings
 from ..services.local_settings import LocalSettingsDep
 from ..utils.misc import now_iso
@@ -13,13 +18,13 @@ from ..utils.misc import now_iso
 router = APIRouter(prefix="/settings", tags=["settings"])
 
 
-@router.get("")
+@router.get("", response_model_exclude=set(SECRET_SETTINGS_FIELDS))
 async def get_settings(local: LocalSettingsDep) -> LocalSettingsPublic:
-    """The installation's settings, including decrypted credentials."""
+    """The installation's settings. A credential is only ever a `has_*` flag."""
     return local
 
 
-@router.put("")
+@router.put("", response_model_exclude=set(SECRET_SETTINGS_FIELDS))
 async def update_settings(
     updates: LocalSettingsUpdate, session: SessionDep, local: LocalSettingsDep
 ) -> LocalSettingsPublic:
