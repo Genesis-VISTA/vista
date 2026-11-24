@@ -25,12 +25,17 @@ firewall admits only Obsidian's gateway addresses. *Alternatives:* Caddy or ngin
 (another component to patch); a private podman network (Beam on host loopback is then
 unreachable without more plumbing).
 
-### D2. Ansible owns the host side
+### D2. By hand now, Ansible as a follow-up
 
-Hand Lawrence: `vista.container` and `vllm-beam.service` with `[Install]`
-(`WantedBy=multi-user.target`), `/etc/containers/storage.conf` with `graphroot` on `/scratch`,
-the firewall rule, `nvidia-fabricmanager`, the `vista` service account, and the collaboration
-server's unit. VISTA's repo keeps the source of those files; Ansible copies them.
+This change installs on Holly by hand from `deploy/holly/README.md`: units copied to
+`/etc/containers/systemd/` and `/etc/systemd/system/`, podman's `graphroot` on `/scratch`
+through `/etc/containers/storage.conf`, the `vista` account, and the firewall rule (Lawrence
+opens `:8443` to Obsidian; it is one rule, needed for the route to work at all). Everything on
+the tmpfs root is listed in `deploy/holly/ANSIBLE-HANDOFF.md`: each file with its source in
+the repo and target path, the account, the firewall rule, `nvidia-fabricmanager`, and the
+collaboration server's unit. The README's reinstall steps cover a reboot until Lawrence's
+follow-up lands. *Alternative:* Ansible inside this change (rejected by Sam: it would gate the
+change on another team's queue; get it working first).
 
 ### D3. Service account and release image
 
@@ -64,14 +69,15 @@ copy to `/proj` for off-box restore. Restore steps in the README, rehearsed once
 ## Delivery plan
 
 ```
-needs multi-user-hosted G1, G2 ──► H1 unit + image ──► H2 TLS front ──► H3 Ansible handoff ◆ Lawrence
+needs multi-user-hosted G1, G2 ──► H1 unit + image ──► H2 TLS front (+ firewall rule ◆ Lawrence)
 ask now ───────────────────────────────────────────► H5 route ◆ Obsidian admins (O1, redirect URI, cert)
 H1 ──► H4 data + backups (◆ Lawrence for ZFS)      H1 ──► H6 runbook + metrics
 multi-user-hosted complete + H1–H6 ──► H7 two-user acceptance through Obsidian ◆ Sam
+H7 ──► H3 Ansible handoff note for Lawrence ──► ◆ change 2 done ──► follow-up: Ansible (Lawrence)
 ```
 
-External groups (H3, H5, parts of H4) are asked for as soon as the change is reviewed, not when
-H1 lands, because they are other people's queues.
+The route request (H5) and the firewall rule are asked for as soon as the change is approved,
+because they are other people's queues; the Ansible work waits for the handoff note.
 
 ## Risks / Trade-offs
 

@@ -37,17 +37,30 @@ not be buffered and SHALL stay open for at least an hour.
 - **WHEN** a chat turn streams for 20 minutes
 - **THEN** events arrive as they are produced and the stream is not cut by the gateway
 
-### Requirement: Survives a reboot
+### Requirement: Installed from a runbook, with a handoff for reboots
 
-After Holly reboots, VISTA SHALL start on its own, with the same image, settings and data,
-and with no step by hand. Its unit, image store, firewall rule and secrets SHALL come from
-Holly's configuration management, not from files on the tmpfs root.
+The deployment SHALL be installable on Holly by following `deploy/holly/README.md` alone, and
+everything it puts outside `/scratch` and `/proj` (units, podman storage settings, firewall
+rule, service account, secrets location) SHALL be listed in a handoff note for Holly's
+configuration management, so that a follow-up can make VISTA come back on its own after a
+reboot. Until then, a reboot SHALL need only the runbook's reinstall steps: data, secrets
+and the image SHALL survive it on `/scratch`.
 
-#### Scenario: Reboot
+#### Scenario: Fresh install from the runbook
+
+- **WHEN** an operator follows the README on Holly from a tagged release
+- **THEN** VISTA answers at its Obsidian address, with no step outside the README
+
+#### Scenario: Reboot before the follow-up
 
 - **GIVEN** researchers' projects and a watched Odo job
-- **WHEN** Holly reboots
-- **THEN** VISTA comes back at the same address, the projects are there, and the watch resumes
+- **WHEN** Holly reboots and the operator runs the README's reinstall steps
+- **THEN** the projects are there and the watch resumes
+
+#### Scenario: The handoff is complete
+
+- **WHEN** the handoff note's items are applied by configuration management and Holly reboots
+- **THEN** VISTA comes back at the same address with no step by hand
 
 ### Requirement: Runs from a release as a service account
 
