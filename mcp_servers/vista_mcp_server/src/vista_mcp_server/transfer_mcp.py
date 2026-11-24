@@ -129,7 +129,9 @@ async def hpc_list_files(
             but not looked inside, marked "not walked"; list one by its own
             path to see what it holds.
     """
-    return await _list_files(get_vista_meta(ctx).user, cluster, path, recursive)
+    cfg = get_vista_meta(ctx).user
+    cfg.require_cluster_allowed(cluster)
+    return await _list_files(cfg, cluster, path, recursive)
 
 
 async def _list_files(cfg: UserConfig, cluster: TransferCluster, path: str, recursive: bool) -> str:
@@ -183,6 +185,7 @@ async def hpc_download_files(
         already up to date and not fetched, and any path that is not on the cluster.
     """
     meta = get_vista_meta(ctx)
+    meta.user.require_cluster_allowed(cluster)
     output_dir = Path(meta.project_paths.require_output_dir())
     return await _download_files(
         meta.user, output_dir, cluster, remote_paths, _elicit_approver(ctx),
@@ -368,6 +371,7 @@ async def hpc_upload_files(
         The absolute path on the cluster of each uploaded file.
     """
     meta = get_vista_meta(ctx)
+    meta.user.require_cluster_allowed(cluster)
     return await _upload_files(
         meta.user, meta.project_paths, cluster, local_paths, remote_dir, _elicit_approver(ctx),
     )

@@ -65,6 +65,7 @@ from ..config import settings
 from ..db.db import get_engine
 from ..metrics import get_recorder, run_id_var
 from ..db.schemas import LocalSettingsPublic, ProjectPublic, SkillTable
+from ..services.hosted import allowed_clusters, restricted_clusters
 from ..services.job_records import describe as describe_jobs
 from ..services.job_records import recent_jobs
 from ..services.repo_tokens import settings_repo_token
@@ -97,6 +98,17 @@ from .campaign.hpc_tools import McpHpcTools
 from .campaign.manifest import load_manifest
 from .campaign.mcp_invoke import build_invoke
 from .campaign.planner import CampaignPlanner, build_subagents
+
+
+def clusters_rule() -> str | None:
+    """The one rule a deployment with an allow-list adds: only those clusters exist here."""
+    if restricted_clusters() is None:
+        return None
+    names = ", ".join(c.title() for c in allowed_clusters())
+    return (
+        f"## Clusters\n\nOnly these HPC clusters exist here: {names}. Do not offer, plan for "
+        "or submit to any other; if asked for one, say it is not available on this deployment."
+    )
 
 
 BASE_SYSTEM_PROMPT = (Path(__file__).parent / "base_system_prompt.md").read_text(
@@ -672,6 +684,8 @@ class ProjectAgent:
         @agent.system_prompt
         def system_prompt(ctx: RunContext[None]) -> str:
             parts = [BASE_SYSTEM_PROMPT]
+            if rule := clusters_rule():
+                parts.append(rule)
             profile = research_profile_prompt(self.local)
             if profile:
                 parts.append(profile)
@@ -1018,6 +1032,8 @@ class ProjectAgent:
             "hpc_upload_files",
         }
         if name in HPC_TOOLS:
+            if (allowed := restricted_clusters()) is not None:
+                metadata["vista"]["allowed_clusters"] = allowed
             # Still `user` on the wire: the MCP server's `VistaMeta` reads it.
             metadata["vista"]["user"] = self.local.model_dump(mode="json")
         if get_recorder().enabled:

@@ -530,8 +530,11 @@ async def preview_hpc_job(
     submit_hpc_job and rejects the same mistakes.
     """
     meta = get_vista_meta(ctx)
+    if cluster is not None:
+        meta.user.require_cluster_allowed(cluster)
     job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
     cluster = _resolve_cluster(cluster, meta.user)
+    meta.user.require_cluster_allowed(cluster)
     defaults = getattr(job_info.cluster_defaults, cluster)
     if defaults is None:
         raise ToolError(f'Job {job!r} has no "{cluster}" section in cluster_defaults.json')
@@ -588,10 +591,13 @@ async def submit_hpc_job(
     script_args: str | None = None,
 ) -> str:
     meta = get_vista_meta(ctx)
+    if cluster is not None:
+        meta.user.require_cluster_allowed(cluster)
     job_info, duration_int = _validate_submit(meta.project_paths.skills_dir, job, node_count, duration)
 
     cfg = meta.user
     cluster = _resolve_cluster(cluster, cfg)
+    cfg.require_cluster_allowed(cluster)
     target = {
         "odo": "odo",
         "frontier": "frontier",
@@ -1322,6 +1328,7 @@ async def get_hpc_job_status(ctx: Context, job_id: str, cluster: Cluster) -> str
     job_id = validate_job_id(job_id)
     meta = get_vista_meta(ctx)
     cfg = meta.user
+    cfg.require_cluster_allowed(cluster)
 
     # M7 fault injection (inert unless VISTA_MCP_FAULT__* is set): a poll
     # timeout or an expired credential mid-campaign (E7a / E7b 24h case).
@@ -1351,7 +1358,9 @@ async def read_hpc_job_state(ctx: Context, job_id: str, cluster: Cluster) -> dic
     pause, `{error: "access_lost", cluster, message}` when the researcher's
     token is missing or refused, and `{error: "failed", message}` for anything else.
     """
-    return await _read_job_state(get_vista_meta(ctx).user, validate_job_id(job_id), cluster)
+    cfg = get_vista_meta(ctx).user
+    cfg.require_cluster_allowed(cluster)
+    return await _read_job_state(cfg, validate_job_id(job_id), cluster)
 
 
 async def _read_job_state(cfg: UserConfig, job_id: str, cluster: Cluster) -> dict[str, Any]:
@@ -1658,6 +1667,7 @@ async def get_hpc_job_outputs(
     job_id = validate_job_id(job_id)
     meta = get_vista_meta(ctx)
     cfg = meta.user
+    cfg.require_cluster_allowed(cluster)
     host_output_dir = Path(meta.project_paths.require_output_dir())
 
     if PROFILES[cluster].facility == "nersc":
@@ -1812,7 +1822,9 @@ async def get_hpc_queue_status(ctx: Context, cluster: Cluster) -> str:
     Args:
         cluster: "odo", "frontier", "perlmutter" or "lux".
     """
-    return await _iri_queue_status(_iri_for(get_vista_meta(ctx).user, cluster), cluster)
+    cfg = get_vista_meta(ctx).user
+    cfg.require_cluster_allowed(cluster)
+    return await _iri_queue_status(_iri_for(cfg, cluster), cluster)
 
 
 async def _iri_queue_status(iri_client: IriClient, cluster: Cluster) -> str:
@@ -1861,6 +1873,7 @@ async def cancel_hpc_job(ctx: Context, job_id: str, cluster: Cluster) -> str:
     if dry_run.is_dry_job(job_id):
         return dry_run.cancel(job_id)
     cfg = get_vista_meta(ctx).user
+    cfg.require_cluster_allowed(cluster)
     await _iri_for(cfg, cluster).cancel_job(job_id)
     logging.info(f"Cancelled job {job_id} on {cluster}")
     return f"Cancellation requested for job {job_id} on {cluster}."

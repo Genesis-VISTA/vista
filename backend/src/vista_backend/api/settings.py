@@ -1,6 +1,7 @@
 from typing import Literal
 
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ..agents.inference import PROVIDER_PRESETS, resolve_inference_target
@@ -12,7 +13,11 @@ from ..db.schemas import (
     LocalSettingsUpdate,
 )
 from ..services import globus_auth, hpc_status, local_settings
-from ..services.hosted import is_hosted, refuse_when_hosted
+from ..services.hosted import (
+    is_hosted,
+    refuse_cluster,
+    refuse_when_hosted,
+)
 from ..services.local_settings import LocalSettingsDep
 from ..utils.misc import now_iso
 
@@ -42,11 +47,70 @@ def _refuse_hosted_fields(updates: LocalSettingsUpdate) -> None:
         refuse_when_hosted("The Custom inference provider")
 
 
+_CLUSTER_FIELDS = {
+    "odo": (
+        "odo_s3m_token",
+        "odo_remote_dir",
+        "odo_globus_token",
+        "odo_globus_https_token",
+    ),
+    "frontier": (
+        "frontier_s3m_token",
+        "frontier_remote_dir",
+        "frontier_globus_token",
+        "frontier_globus_https_token",
+    ),
+    "lux": ("lux_s3m_token", "lux_remote_dir"),
+    "perlmutter": ("nersc_account", "nersc_remote_dir", "nersc_iri_token"),
+}
+_SHARED_GLOBUS_FIELDS = ("globus_token", "globus_https_token")
+
+
+def _refuse_disallowed_clusters(updates: LocalSettingsUpdate) -> None:
+    """A value saved for a cluster this deployment does not support is refused (clearing is not)."""
+    for cluster, fields in _CLUSTER_FIELDS.items():
+        for name in fields:
+            if name in updates.model_fields_set and getattr(updates, name):
+                refuse_cluster(cluster)
+    if is_hosted():
+        for name in _SHARED_GLOBUS_FIELDS:
+            if name in updates.model_fields_set and getattr(updates, name):
+                refuse_when_hosted("A Globus connection shared by every cluster")
+
+
+async def _require_open_enclave(token: str) -> None:
+    """Hosted: an S3M token is kept only when S3M says its security enclave is the open one."""
+    service = hpc_status.hpc_status_service
+    async with httpx.AsyncClient(
+        timeout=hpc_status.HTTP_TIMEOUT, transport=service._transport
+    ) as client:
+        status, info = await service._introspect(
+            client, hpc_status.hpc_settings.odo_introspect_url, token
+        )
+    if info is None:
+        raise HTTPException(
+            422,
+            "The S3M token could not be checked, so it was not saved: S3M did not "
+            "answer, or rejected it.",
+        )
+    if str(info.get("securityEnclave", "")).lower() != "open":
+        raise HTTPException(
+            422,
+            "Only open-enclave S3M tokens are accepted on this deployment; "
+            "the token was not saved.",
+        )
+
+
 @router.put("", response_model_exclude=set(SECRET_SETTINGS_FIELDS))
 async def update_settings(
     updates: LocalSettingsUpdate, session: SessionDep, local: LocalSettingsDep
 ) -> LocalSettingsPublic:
     _refuse_hosted_fields(updates)
+    _refuse_disallowed_clusters(updates)
+    if is_hosted():
+        for name in ("odo_s3m_token", "frontier_s3m_token", "lux_s3m_token"):
+            if name in updates.model_fields_set and getattr(updates, name):
+                await _require_open_enclave(getattr(updates, name))
     # A model chosen from one provider means nothing to another, and sending
     # it there fails confusingly. Cleared here rather than by the client so
     # every client agrees, and no second request can race the first. Compared
@@ -132,6 +196,8 @@ async def get_hpc_status(
     reused for a minute; `fresh=true` reruns them, for every cluster or, with
     `cluster`, for that one. Never carries a token.
     """
+    if cluster is not None:
+        refuse_cluster(cluster)
     return await hpc_status.hpc_status_service.status(
         local, fresh=fresh, cluster=cluster
     )
@@ -169,6 +235,7 @@ class GlobusConnected(BaseModel):
 
 @router.post("/globus/{cluster}/login")
 async def start_globus_login(cluster: globus_auth.ConnectCluster) -> GlobusLoginStarted:
+    refuse_cluster(cluster)
     owner = globus_auth.credential_cluster(cluster)
     return GlobusLoginStarted(authorize_url=globus_auth.start_login(owner))
 
@@ -179,6 +246,7 @@ async def complete_globus_login(
     payload: GlobusLoginCode,
     session: SessionDep,
 ) -> GlobusConnected:
+    refuse_cluster(cluster)
     owner = globus_auth.credential_cluster(cluster)
     connection = globus_auth.complete_login(owner, payload.code)
     await local_settings.update(

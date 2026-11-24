@@ -48,7 +48,7 @@ import { CopyableLine } from "./CopyableLine";
 import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
-import { useDeployment } from "@/lib/deployment";
+import { clusterAllowed, useDeployment } from "@/lib/deployment";
 import { filledNote, remoteDirFill } from "@/lib/remote-dir";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
@@ -767,8 +767,8 @@ function SettingsNav({
   // model, and Custom also needs an endpoint.
   const providerReady = Boolean(savedCredential && settings?.model && settings.baseUrl.trim());
   const providerNote = settings ? (providerReady ? "Ready" : "Not ready") : null;
-  const { hosted } = useDeployment();
-  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && !(hosted && cluster === "perlmutter"));
+  const deployment = useDeployment();
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && clusterAllowed(deployment, cluster));
   const ready = visible.filter(
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
@@ -1353,8 +1353,8 @@ function ComputeSection({
   onChoose: (section: Section) => void;
 }) {
   const view = useHpcStatus();
-  const { hosted } = useDeployment();
-  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && !(hosted && cluster === "perlmutter"));
+  const deployment = useDeployment();
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && clusterAllowed(deployment, cluster));
   const ready = visible.filter(
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
@@ -1370,7 +1370,7 @@ function ComputeSection({
         <div className="settings-compute-list">
           {RESOURCE_TREE.flatMap((institution) =>
             institution.facilities.flatMap((facility) =>
-              facility.clusters.filter((cluster) => !(hosted && cluster === "perlmutter")).map((cluster) => (
+              facility.clusters.filter((cluster) => clusterAllowed(deployment, cluster)).map((cluster) => (
                 <ComputeResourceRow
                   key={cluster}
                   cluster={cluster}

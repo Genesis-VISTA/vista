@@ -52,6 +52,21 @@ class UserConfig(BaseModel):
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
     globus_https_token: str | None = None
+    allowed_clusters: list[str] | None = None
+    """
+    The clusters this deployment offers, from the backend's metadata
+    (`VistaMeta.allowed_clusters`, copied here by `get_vista_meta`). None: no
+    restriction. Present: a hosted or restricted deployment, which also has no
+    shared Globus pair to fall back on.
+    """
+
+    def require_cluster_allowed(self, cluster: str) -> None:
+        """Refuse a cluster this deployment does not offer; nothing is done for it."""
+        if self.allowed_clusters is not None and cluster not in self.allowed_clusters:
+            only = ", ".join(self.allowed_clusters) or "no cluster"
+            raise ToolError(
+                f"{cluster.title()} is not available: only {only} available here."
+            )
 
     def require_s3m_token(self, cluster: Literal["odo", "frontier", "lux"]) -> str:
         token = {
@@ -86,7 +101,13 @@ class UserConfig(BaseModel):
         to read anything in it. Skipping such a source lets the other one take
         over; when neither has both, the refusal below says to connect again.
         """
+        self.require_cluster_allowed(cluster)
         own = "odo" if cluster == "odo" else "frontier"
+        shared = (
+            ()
+            if self.allowed_clusters is not None
+            else ((self.globus_token, self.globus_https_token),)
+        )
         for transfer, https in (
             (
                 self.odo_globus_token if own == "odo" else self.frontier_globus_token,
@@ -94,7 +115,7 @@ class UserConfig(BaseModel):
                 if own == "odo"
                 else self.frontier_globus_https_token,
             ),
-            (self.globus_token, self.globus_https_token),
+            *shared,
         ):
             if transfer and https:
                 return GlobusTokens(transfer=transfer, https=https)
@@ -188,6 +209,8 @@ class VistaMeta(BaseModel):
     """
     Maps sandbox `file://` prefixes (e.g. `file:///mnt/data/output/`) to download URL templates
     """
+    allowed_clusters: list[str] | None = None
+    """ The clusters offered here; absent (an older backend, a desktop) means all. """
 
 
 def get_vista_meta(ctx: Context) -> VistaMeta:
@@ -197,4 +220,6 @@ def get_vista_meta(ctx: Context) -> VistaMeta:
     raw: Any = getattr(meta, "vista", None) if meta is not None else None
     if not isinstance(raw, dict):
         return VistaMeta()
-    return VistaMeta.model_validate(raw)
+    meta = VistaMeta.model_validate(raw)
+    meta.user.allowed_clusters = meta.allowed_clusters
+    return meta

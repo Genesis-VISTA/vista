@@ -47,6 +47,7 @@ from pydantic import BaseModel
 
 from ..config import HpcClusterSettings, hpc_settings
 from ..db.schemas import HpcCluster
+from .hosted import allowed_clusters, restricted_clusters
 
 log = logging.getLogger(__name__)
 
@@ -420,7 +421,13 @@ def globus_source(cluster: OlcfCluster, local: Any) -> _GlobusSource | None:
         if cluster == "odo"
         else (local.frontier_globus_token, local.frontier_globus_https_token)
     )
-    for transfer, https in (own, (local.globus_token, local.globus_https_token)):
+    # A deployment with an allow-list (hosted) has no shared pair to fall back on.
+    shared = (
+        ()
+        if restricted_clusters() is not None
+        else ((local.globus_token, local.globus_https_token),)
+    )
+    for transfer, https in (own, *shared):
         if transfer and https:
             return _GlobusSource(transfer, https)
     return None
@@ -480,7 +487,10 @@ class HpcStatusService:
         checked at all.
         """
         hidden: set[str] = set(local.hpc_hidden_clusters or [])
-        visible: list[HpcCluster] = [c for c in CLUSTERS if c not in hidden]
+        allowed = allowed_clusters()
+        visible: list[HpcCluster] = [
+            c for c in CLUSTERS if c not in hidden and c in allowed
+        ]
         async with httpx.AsyncClient(
             timeout=HTTP_TIMEOUT, transport=self._transport
         ) as client:
