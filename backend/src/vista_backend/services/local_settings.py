@@ -1,9 +1,10 @@
 """
-The installation's settings: one row, read and written here.
+The settings, read and written here: the installation's (one `local_settings`
+row, made at startup by `ensure`) and the current user's (a `user_settings` row,
+see `services/settings_view`), merged into a `SettingsView`.
 
-VISTA has one researcher per installation, so what used to be per user —
-inference keys, cluster credentials, repository tokens, the research profile —
-lives on `LocalSettingsTable`, made at startup by `ensure`.
+A desktop install has one researcher, `local`; a hosted deployment has one per
+user, and its server settings come from the environment, not the row.
 """
 
 from typing import Annotated as A
@@ -19,6 +20,15 @@ from ..db.schemas import (
     LocalSettingsPublic,
     LocalSettingsTable,
     LocalSettingsUpdate,
+)
+from .current_user import CurrentUser
+from .hosted import is_hosted
+from .settings_view import (
+    HOSTED_SERVER_VALUES,
+    SERVER_SETTINGS_REASON,
+    SettingsView,
+    load,
+    server_managed_fields,
 )
 
 WRITE_ONLY_TOKENS = SECRET_SETTINGS_FIELDS
@@ -38,22 +48,42 @@ async def ensure(session: AsyncSession) -> LocalSettingsTable:
     return row
 
 
-async def get(session: AsyncSession) -> LocalSettingsTable:
+async def get(session: AsyncSession, user_id: str | None = None) -> SettingsView:
     """
-    The settings row. Never creates one: `init_db` does, once, at startup, so
-    concurrent reads cannot race each other into making two.
+    The server's settings and a user's (`user_id`, else the current user's: see
+    `settings_view.load`). Never creates the server row: `init_db` does, once,
+    at startup, so concurrent reads cannot race each other into making two.
     """
-    row = await session.get(LocalSettingsTable, LOCAL_SETTINGS_ID)
-    if row is None:
+    return await load(session, user_id)
+
+
+async def get_server(session: AsyncSession) -> SettingsView:
+    """
+    The installation's settings alone, for code that has no user and reads no
+    user field (the update check's schedule). The view's user half is an empty
+    stand-in that is never saved.
+    """
+    from ..db.schemas import UserSettingsTable
+
+    server = await session.get(LocalSettingsTable, LOCAL_SETTINGS_ID)
+    if server is None:
         raise RuntimeError("The settings row is missing; init_db creates it.")
-    return row
+    return SettingsView(server, UserSettingsTable(user_id=""))
 
 
 async def update(
-    session: AsyncSession, updates: LocalSettingsUpdate
-) -> LocalSettingsTable:
-    row = await get(session)
+    session: AsyncSession, updates: LocalSettingsUpdate, user_id: str | None = None
+) -> SettingsView:
+    """
+    Save `updates`: the user's fields to their row, the server's to the
+    installation's. Hosted, the server's come from the environment, so they are
+    left out; the response's `set_by_server` says so.
+    """
+    row = await get(session, user_id)
     changes = updates.model_dump(exclude_unset=True)
+    if is_hosted():
+        for key in HOSTED_SERVER_VALUES:
+            changes.pop(key, None)
     changed = set(changes)
     if (
         "collaboration_server_url" in changes
@@ -70,9 +100,11 @@ async def update(
                 setattr(row, key, value or None)
     for key, value in changes.items():
         setattr(row, key, value)
-    session.add(row)
+    session.add(row.server_row)
+    session.add(row.user_row)
     await session.flush()
-    await session.refresh(row)
+    await session.refresh(row.server_row)
+    await session.refresh(row.user_row)
     # A job watch paused for lost cluster access tries again on every save.
     from .background_tasks import nudge_after_commit
 
@@ -87,21 +119,31 @@ async def update(
     return row
 
 
-def to_public(row: LocalSettingsTable) -> LocalSettingsPublic:
-    """The row as the API shows it, with what comes from configuration, not the row."""
+def to_public(row: SettingsView | LocalSettingsTable) -> LocalSettingsPublic:
+    """The settings as the API shows them, with what comes from configuration, not the row."""
     public = LocalSettingsPublic.model_validate(row)
     public.onboarding_tour_enabled = settings.onboarding_tour
+    managed = server_managed_fields()
+    public.set_by_server = managed
+    public.set_by_server_reason = SERVER_SETTINGS_REASON if managed else None
     return public
 
 
-async def get_public(session: SessionDep) -> LocalSettingsPublic:
+async def get_public(
+    session: AsyncSession, user_id: str | None = None
+) -> LocalSettingsPublic:
     """
-    The settings as agents and routes read them: no write-only tokens. Also the
-    dependency behind `LocalSettingsDep`; `SessionDep` is a plain `AsyncSession`
-    to any other caller.
+    The settings as agents and routes read them: no write-only tokens. A plain
+    `AsyncSession` caller acts as the current user (`current_user_id`).
     """
-    return to_public(await get(session))
+    return to_public(await get(session, user_id))
 
 
-LocalSettingsDep = A[LocalSettingsPublic, Depends(get_public)]
-"""The settings, for a route that reads them."""
+async def _public_for_request(
+    session: SessionDep, user: CurrentUser
+) -> LocalSettingsPublic:
+    return await get_public(session, user.id)
+
+
+LocalSettingsDep = A[LocalSettingsPublic, Depends(_public_for_request)]
+"""The settings (server's and the signed-in user's), for a route that reads them."""

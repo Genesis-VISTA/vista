@@ -25,12 +25,15 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 
-from ..db.schemas import LocalSettingsTable, SlackLinkTable, SlackReminderTable
+from ..db.schemas import SlackLinkTable, SlackReminderTable
+
+if TYPE_CHECKING:
+    from ..services.settings_view import SettingsView
 from ..services import chat_run as chat_run_module
 from ..services import local_settings
 from . import store
@@ -64,7 +67,7 @@ class Expiry:
         return f"{TITLES.get(self.cluster, self.cluster)} {self.what}"
 
 
-ExpiriesFn = Callable[[LocalSettingsTable], Awaitable[list[Expiry]]]
+ExpiriesFn = Callable[["SettingsView"], Awaitable[list[Expiry]]]
 """ The install's settings row → every credential expiry it implies. """
 
 
@@ -99,7 +102,7 @@ def globus_expiries(local: Any) -> list[Expiry]:
     return out
 
 
-async def known_expiries(local: LocalSettingsTable) -> list[Expiry]:
+async def known_expiries(local: "SettingsView") -> list[Expiry]:
     """Every expiry VISTA can know from the install's settings; the live source."""
     from ..services.hpc_status import hpc_status_service
 
@@ -226,7 +229,7 @@ class CredentialReminder:
             return 0
 
     async def _remind(
-        self, local: LocalSettingsTable, dm: str | None, slack_user_id: str
+        self, local: "SettingsView", dm: str | None, slack_user_id: str
     ) -> int:
         expiries = await self._expiries(local)
         set_known(expiries)

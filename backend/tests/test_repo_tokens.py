@@ -88,7 +88,9 @@ async def test_the_tokens_are_encrypted_at_rest(session):
 
     stored = (
         await session.exec(
-            text("SELECT github_token, gitlab_token FROM local_settings WHERE id = 1")
+            text(
+                "SELECT github_token, gitlab_token FROM user_settings WHERE user_id = 'local'"
+            )
         )
     ).one()
     assert all(value and value not in (GITHUB, GITLAB) for value in stored)

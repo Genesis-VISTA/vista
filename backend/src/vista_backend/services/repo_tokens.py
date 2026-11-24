@@ -19,12 +19,13 @@ The rules:
 import logging
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from urllib import parse
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import LocalSettingsTable
+if TYPE_CHECKING:
+    from .settings_view import SettingsView
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class RepoToken:
     source: TokenSource
 
 
-def repo_token(url: str, local: LocalSettingsTable) -> RepoToken | None:
+def repo_token(url: str, local: "SettingsView") -> RepoToken | None:
     """The token to send to url, or None to send none"""
     url_parts = parse.urlsplit(url)
 

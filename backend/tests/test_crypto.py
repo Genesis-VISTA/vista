@@ -12,7 +12,7 @@ from sqlalchemy import text
 from sqlmodel import select
 
 from vista_backend.config import settings
-from vista_backend.db.schemas import LocalSettingsTable
+from vista_backend.db.schemas import UserSettingsTable
 from vista_backend.services import local_settings
 from vista_backend.utils.crypto import EncryptedStr, get_fernet
 
@@ -95,9 +95,10 @@ TOKEN_FIELDS = (
 
 async def _raw(session, columns: str):
     """The settings row's stored values, as SQLite holds them."""
+    await local_settings.get(session)  # makes the user's row if it is missing
     return (
         await session.execute(
-            text(f"SELECT {columns} FROM local_settings WHERE id = 1")
+            text(f"SELECT {columns} FROM user_settings WHERE user_id = 'local'")
         )
     ).one()
 
@@ -108,11 +109,11 @@ async def test_settings_token_is_encrypted_at_rest(ephemeral_key, session, field
     plaintext = f"plaintext-{field}-value"
     row = await local_settings.get(session)
     setattr(row, field, plaintext)
-    session.add(row)
+    session.add(row.user_row)
     await session.flush()
 
     # ORM read returns plaintext.
-    loaded = (await session.exec(select(LocalSettingsTable))).one()
+    loaded = (await session.exec(select(UserSettingsTable))).one()
     assert getattr(loaded, field) == plaintext
 
     # Raw SQL sees ciphertext — never the plaintext token.
@@ -134,12 +135,12 @@ async def test_null_token_fields_stay_null_at_rest(ephemeral_key, session):
 async def test_updating_a_token_rewrites_ciphertext(ephemeral_key, session):
     row = await local_settings.get(session)
     row.odo_s3m_token = "first-token"
-    session.add(row)
+    session.add(row.user_row)
     await session.flush()
     (first_cipher,) = await _raw(session, "odo_s3m_token")
 
     row.odo_s3m_token = "second-token"
-    session.add(row)
+    session.add(row.user_row)
     await session.flush()
     (second_cipher,) = await _raw(session, "odo_s3m_token")
 

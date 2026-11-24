@@ -795,6 +795,13 @@ class LocalSettingsPublic(SQLModel):
     (`Settings.onboarding_tour`). Read-only: not on `LocalSettingsUpdate`, and
     not on the row; `services/local_settings.to_public` fills it.
     """
+    set_by_server: list[str] = []
+    """
+    The settings this deployment takes from its environment, which a save leaves
+    unchanged: empty on a desktop install. Read-only; `to_public` fills it.
+    """
+    set_by_server_reason: str | None = None
+    """ Why those cannot be changed, for showing; null when `set_by_server` is empty. """
 
     @field_validator("collaboration_enabled", mode="before")
     @classmethod
@@ -1166,6 +1173,68 @@ class LocalSettingsTable(SQLModel, table=True):
     When the last successful update check finished (ISO 8601, UTC), so the 24h
     schedule survives a restart. Not on the API models: the backend writes it.
     """
+
+
+class UserSettingsTable(SQLModel, table=True):
+    """
+    One user's settings: what used to be the researcher's fields on
+    `LocalSettingsTable` (openspec change multi-user-hosted, design D3). A desktop
+    install has one row, `local`'s, copied from `local_settings` the first time
+    it is read (`services/settings_view.ensure_user_settings`); a hosted
+    deployment makes one per user on first use.
+
+    The same columns stay on `LocalSettingsTable`, unread, because schema changes
+    stay additive. The server's fields (`install_id`, the collaboration server,
+    the Collaboration switch, the legacy configured-endpoint key, update checks)
+    stay there only. Each field's meaning is documented on `LocalSettingsTable`;
+    `services/settings_view.USER_FIELDS` is the list read from here.
+    """
+
+    __tablename__: str = "user_settings"
+    user_id: str = Field(
+        foreign_key="app_user.id", primary_key=True, ondelete="CASCADE"
+    )
+    display_name: str | None = None
+    email: str | None = None
+    inference_model: str | None = None
+    inference_provider: str | None = None
+    inference_base_url: str | None = None
+    research_role: str | None = None
+    research_institution: str | None = None
+    preferred_units: str | None = None
+    technical_depth: str | None = None
+    evidence_preference: str | None = None
+    nersc_account: str | None = None
+    nersc_remote_dir: str | None = None
+    odo_remote_dir: str | None = None
+    frontier_remote_dir: str | None = None
+    lux_remote_dir: str | None = None
+    lux_account: str | None = None
+    odo_globus_connected_at: str | None = None
+    frontier_globus_connected_at: str | None = None
+    inference_mag_api_key: str | None = Field(default=None, sa_type=EncryptedStr)
+    inference_olcf_api_key: str | None = Field(default=None, sa_type=EncryptedStr)
+    inference_custom_api_key: str | None = Field(default=None, sa_type=EncryptedStr)
+    odo_s3m_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    frontier_s3m_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    lux_s3m_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    nersc_iri_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    globus_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    odo_globus_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    frontier_globus_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    globus_https_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    odo_globus_https_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    frontier_globus_https_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    github_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    gitlab_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    collaboration_token: str | None = Field(default=None, sa_type=EncryptedStr)
+    research_interests: list[str] | None = Field(default=None, sa_type=JSON)
+    personalize_responses: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=true()),
+    )
+    hpc_hidden_clusters: list[str] | None = Field(default=None, sa_type=JSON)
+    onboarding_tour: dict[str, Any] | None = Field(default=None, sa_type=JSON)
 
 
 # ---------------------------------------------------------------------------

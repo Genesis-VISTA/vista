@@ -642,7 +642,6 @@ class TestHttpSurface:
         row.inference_provider = "custom"
         row.inference_custom_api_key = "custom-token"
         row.inference_base_url = "https://custom.example/v1"
-        session.add(row)
         await session.flush()
         project = await seed_project(session, name="the-project")
 
@@ -677,7 +676,6 @@ class TestHttpSurface:
         # The default provider's own key: a legacy `inference_api_key` is not
         # sent to it (`test_existing_key_is_not_sent_to_mag`).
         row.inference_mag_api_key = "row-key"
-        session.add(row)
         await session.flush()
         # Re-read: `ProjectAgent` snapshots the settings at construction, and in
         # production the pool is evicted on every settings write so the snapshot

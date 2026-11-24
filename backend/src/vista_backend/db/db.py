@@ -17,6 +17,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from .schema_check import schema_problems
+from .schemas import LOCAL_USER_ID
 from .seed import (
     AI_SAFETY_KB_ID,
     AI_SAFETY_PROJECT_ID,
@@ -166,6 +167,7 @@ def _retire_i2_choices(conn: Connection) -> None:
     log = logging.getLogger(__name__)
     for name, provider, model in (
         ("local_settings", "inference_provider", "inference_model"),
+        ("user_settings", "inference_provider", "inference_model"),
         ("campaign_run", "provider", "model"),
     ):
         table = SQLModel.metadata.tables[name]
@@ -373,11 +375,15 @@ async def init_db() -> None:
 
     await seed_db(engine)
     # After seeding, so seed_db's empty-database check still sees an empty one.
-    from ..services import current_user, local_settings
+    from ..services import current_user, local_settings, settings_view
 
     async with AsyncSession(engine) as session:
         await local_settings.ensure(session)
         await current_user.ensure_local(session)
+        if settings.deployment != "hosted":
+            # An installation from before the split: the researcher's fields are
+            # copied from `local_settings`, once.
+            await settings_view.ensure_user_settings(session, LOCAL_USER_ID)
         await session.commit()
     # The hello-olcf default reaches first runs and upgrades alike, after seed_db so
     # its empty-database check is unaffected.

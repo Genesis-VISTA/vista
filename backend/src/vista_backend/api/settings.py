@@ -194,7 +194,7 @@ async def complete_globus_login(
     # (`slack/credentials.py`): refreshing a token does not extend it.
     row = await local_settings.get(session)
     setattr(row, f"{owner}_globus_connected_at", now_iso())
-    session.add(row)
+    session.add(row.user_row)
     await session.commit()
     return GlobusConnected(
         cluster=cluster, connected=owner, identity=connection.identity

@@ -748,7 +748,6 @@ async def _wired(session, monkeypatch, tmp_path, *, skills, tokens):
     row = await local_settings.get(session)
     for field, value in tokens.items():
         setattr(row, field, value)
-    session.add(row)
 
     project = ProjectTable(name=f"wired-{uuid.uuid4().hex[:8]}", skills=skills)
     session.add(project)
