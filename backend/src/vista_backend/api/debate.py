@@ -54,7 +54,7 @@ from ..db.schemas import (
 from ..services import debate as debate_service, local_settings
 from ..services import project as project_service
 from ..services import threads as thread_service
-from ..services.current_user import CurrentUser
+from ..services.current_user import current_user_id, CurrentUser
 from ..services.forum_git import (
     POSTABLE_KINDS,
     ForumClient,
@@ -343,6 +343,13 @@ def stream_session_factory() -> AsyncSession:
 
 
 _BACKGROUND: set[asyncio.Task] = set()
+_OWNERS: dict[asyncio.Task, str] = {}
+""" Who started each background debate, so `/activity` counts only the caller's. """
+
+
+def running_for(user_id: str) -> int:
+    """How many background debates `user_id` started that are still running."""
+    return sum(1 for t in _BACKGROUND if not t.done() and _OWNERS.get(t) == user_id)
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -352,9 +359,16 @@ def _spawn(coro) -> asyncio.Task:
     asyncio keeps only a weak reference to a running task, so a task nobody
     holds can be garbage-collected mid-run.
     """
+    owner = current_user_id()
     task = asyncio.create_task(coro)
     _BACKGROUND.add(task)
-    task.add_done_callback(_BACKGROUND.discard)
+    _OWNERS[task] = owner
+
+    def _forget(t: asyncio.Task) -> None:
+        _BACKGROUND.discard(t)
+        _OWNERS.pop(t, None)
+
+    task.add_done_callback(_forget)
     return task
 
 

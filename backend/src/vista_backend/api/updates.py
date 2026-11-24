@@ -260,7 +260,7 @@ async def get_activity(session: SessionDep, user: CurrentUser) -> Activity:
             )
             for run in runs
         ],
-        debates=sum(1 for task in debate._BACKGROUND if not task.done()),
+        debates=debate.running_for(uid(user)),
         watched_jobs=[
             WatchedJob(
                 job_id=job.job_id,

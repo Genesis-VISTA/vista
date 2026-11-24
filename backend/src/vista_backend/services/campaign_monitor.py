@@ -23,6 +23,7 @@ from ..agents.forum.simulation import DEBATE_DOMAIN
 from ..db.schemas import CampaignRunTable, HpcJobTable
 from ..services import campaign as campaign_service, local_settings
 from ..services import email as email_service
+from ..services.current_user import as_user
 from ..utils.misc import now_iso
 
 
@@ -104,7 +105,8 @@ class CampaignMonitor:
         jobs = await campaign_service.list_open_jobs(session)
         for job in jobs:
             try:
-                await self._process(session, job)
+                with as_user(job.user_id):
+                    await self._process(session, job)
             except Exception:  # noqa: BLE001 - one bad job must not stall the rest
                 logger.exception("monitor failed processing job %s", job.job_id)
         return len(jobs)
