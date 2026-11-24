@@ -23,9 +23,9 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 3. Dev gateway and identity through the UI (wave 1; needs nothing)
 
-- [ ] 3.1 A catch-all proxy `ui/app/api/[...path]/route.ts` forwarding method, query, body, streamed responses and `Authorization: Bearer` (from `X-Access-Token` or `Authorization`) via `_backend.ts`; relay-only route files removed; verify existing relay/SSE tests pass and a new test shows the header reaches a fake backend
-- [ ] 3.2 `scripts/dev-gateway.py` (`uv run --script`): RSA key, JWKS at `/realms/dev/protocol/openid-connect/certs`, a name-picker login page and cookie, a reverse proxy to the UI injecting `X-Access-Token` (`azp=apisix`, role `apisix/vista`, `typ=Bearer`); verify with a script test that a minted token passes a copy of the verifier
-- [ ] 3.3 `./launch.sh --hosted`: starts the gateway on `:3100`, sets deployment, issuer, a generated encryption key and `VISTA_ENV=dev`; verify by launching and signing in (hands-on; until group 4 lands the backend ignores the token)
+- [x] 3.1 A catch-all proxy `ui/app/api/[...path]/route.ts` forwarding method, query, body, streamed responses and `Authorization: Bearer` (from `X-Access-Token` or `Authorization`) via `_backend.ts`; relay-only route files removed; verify existing relay/SSE tests pass and a new test shows the header reaches a fake backend
+- [x] 3.2 `scripts/dev-gateway.py` (`uv run --script`): RSA key, JWKS at `/realms/dev/protocol/openid-connect/certs`, a name-picker login page and cookie, a reverse proxy to the UI injecting `X-Access-Token` (`azp=apisix`, role `apisix/vista`, `typ=Bearer`); verify with a script test that a minted token passes a copy of the verifier
+- [x] 3.3 `./launch.sh --hosted`: starts the gateway on `:3100`, sets deployment, issuer, a generated encryption key and `VISTA_ENV=dev`; verify by launching and signing in (hands-on; until group 4 lands the backend ignores the token)
 
 ## 4. CurrentUser: Sam's carve-out (wave 1; needs nothing; gate before waves 2–5)
 

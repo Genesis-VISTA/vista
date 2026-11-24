@@ -25,6 +25,7 @@ NO_BUILD=false
 ELECTRON=''
 NO_ELECTRON=false
 COLLAB=false
+HOSTED=false
 for arg in "$@"; do
   case "$arg" in
     --prod) PROD=true ;;
@@ -32,8 +33,9 @@ for arg in "$@"; do
     --electron) ELECTRON=true ;; # The default in logs mode; kept so existing invocations still work.
     --no-electron) NO_ELECTRON=true ;; # Services only; open http://localhost:3000 in a browser.
     --collab) COLLAB=true ;; # Also a local collaboration server, for development and tests only.
+    --hosted) HOSTED=true ;; # A hosted stack behind a development sign-in (scripts/dev-gateway.py).
     tmux|terminal|logs) MODE="$arg" ;;
-    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron] [--collab]" >&2; exit 1 ;;
+    *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron] [--collab] [--hosted]" >&2; exit 1 ;;
   esac
 done
 
@@ -112,6 +114,30 @@ if [[ "$COLLAB" == true ]]; then
 fi
 
 
+# --hosted: the multi-user deployment on this machine. scripts/dev-gateway.py
+# stands in for Obsidian's gateway on :3100: a name-picker sign-in in front of
+# the UI that passes each researcher's access token on, and the issuer the
+# backend trusts. Development only; no package contains it. The backend gets its
+# settings inline, like --collab's, and a fresh encryption key (a Fernet key is
+# 32 random bytes, url-safe base64), so nothing is written to a settings row.
+GATEWAY_CMD=''
+GATEWAY_URL=''
+if [[ "$HOSTED" == true ]]; then
+  GATEWAY_PORT="${VISTA_GATEWAY_PORT:-3100}"
+  GATEWAY_URL="http://127.0.0.1:$GATEWAY_PORT"
+  HOSTED_KEY="$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '\n')"
+  BACKEND_ENV+="VISTA_ENV=dev VISTA_BACKEND_DEPLOYMENT=hosted "
+  BACKEND_ENV+="VISTA_BACKEND_OIDC_ISSUER='$GATEWAY_URL/realms/dev' "
+  BACKEND_ENV+="VISTA_BACKEND_ENCRYPTION_KEY='$HOSTED_KEY' "
+  GATEWAY_CMD="
+    cd '$REPO_ROOT' &&
+    echo 'Waiting for UI...' &&
+    until curl -s -o /dev/null 'http://localhost:3000'; do sleep 1; done &&
+    uv run --script scripts/dev-gateway.py --port '$GATEWAY_PORT' --upstream 'http://localhost:3000';
+  "
+fi
+
+
 # No Globus service here, and nothing to start: OLCF file operations are HTTPS
 # requests against the cluster's own collection, so VISTA no longer runs a
 # Globus endpoint of its own. The credential is the researcher's, connected in
@@ -144,6 +170,10 @@ UI_CMD="
 # localhost, not 127.0.0.1: that is where `next dev` answers. --dev keeps
 # DevTools and force-reload in the window's menu.
 UI_URL="http://localhost:3000"
+# Hosted, the window (if any) opens the sign-in in front of the UI.
+if [[ -n "$GATEWAY_URL" ]]; then
+  UI_URL="$GATEWAY_URL"
+fi
 # On Linux, the same sandbox decision the package makes (linux-desktop-window
 # D8): window-sandbox prints nothing or --no-sandbox, and says why on stderr,
 # which shows with the window's other output. Left for the window's own shell
@@ -198,6 +228,9 @@ case "$MODE" in
     if [[ -n "$COLLAB_CMD" ]]; then
       tmux split-window -v "$COLLAB_CMD; exec bash"
     fi
+    if [[ -n "$GATEWAY_CMD" ]]; then
+      tmux split-window -v "$GATEWAY_CMD; exec bash"
+    fi
     tmux attach -t vista-dev
     ;;
   terminal)
@@ -206,6 +239,9 @@ case "$MODE" in
     launch_terminal "MCP Server" "$MCP_CMD; exec bash"
     if [[ -n "$COLLAB_CMD" ]]; then
       launch_terminal "Collaboration Server" "$COLLAB_CMD; exec bash"
+    fi
+    if [[ -n "$GATEWAY_CMD" ]]; then
+      launch_terminal "Dev Gateway" "$GATEWAY_CMD; exec bash"
     fi
     ;;
   logs)
@@ -249,6 +285,9 @@ case "$MODE" in
     if [[ -n "$COLLAB_CMD" ]]; then
       echo "  Collab:     $LOG_DIR/collab.log ($COLLAB_URL)"
     fi
+    if [[ -n "$GATEWAY_CMD" ]]; then
+      echo "  Gateway:    $LOG_DIR/gateway.log -- open $GATEWAY_URL and sign in as a name"
+    fi
     echo "Press Ctrl-C to stop all services."
 
     run_service backend "$LOG_DIR/backend.log" "$BACKEND_CMD"
@@ -256,6 +295,9 @@ case "$MODE" in
     run_service mcp "$LOG_DIR/mcp.log" "$MCP_CMD"
     if [[ -n "$COLLAB_CMD" ]]; then
       run_service collab "$LOG_DIR/collab.log" "$COLLAB_CMD"
+    fi
+    if [[ -n "$GATEWAY_CMD" ]]; then
+      run_service gateway "$LOG_DIR/gateway.log" "$GATEWAY_CMD"
     fi
 
     if [[ -n "$ELECTRON" ]]; then
