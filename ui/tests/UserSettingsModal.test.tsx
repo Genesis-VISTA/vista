@@ -145,22 +145,11 @@ function settingsRow(overrides: Partial<LocalSettings> = {}): LocalSettings {
     email: "researcher@ornl.gov",
     inference_model: null,
     inference_base_url: null,
-    inference_api_key: null,
     nersc_account: null,
     nersc_remote_dir: null,
     odo_remote_dir: null,
     frontier_remote_dir: null,
     lux_remote_dir: null,
-    odo_s3m_token: null,
-    frontier_s3m_token: null,
-    lux_s3m_token: null,
-    nersc_iri_token: null,
-    globus_token: null,
-    odo_globus_token: null,
-    frontier_globus_token: null,
-    globus_https_token: null,
-    odo_globus_https_token: null,
-    frontier_globus_https_token: null,
     hpc_hidden_clusters: [],
     ...overrides,
   };
@@ -502,7 +491,7 @@ describe("UserSettingsModal collaboration", () => {
     render(<UserSettingsModal onClose={() => {}} />);
     const section = await openOn("Collaboration");
     expect(within(section).getByLabelText("Token")).toHaveAttribute("placeholder", "Saved. Paste a new one to replace it");
-    await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Clear" }));
     expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "" });
   });
 
@@ -721,7 +710,7 @@ describe("UserSettingsModal repositories", () => {
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves an untouched token alone, and only Remove sends a blank", async () => {
+  it("leaves an untouched token alone, and only Clear sends a blank", async () => {
     fetchSettingsMock.mockResolvedValue(settingsRow({ has_github_token: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const section = await openOn("Repositories");
@@ -731,7 +720,7 @@ describe("UserSettingsModal repositories", () => {
     await userEvent.tab();
     expect(updateSettingsMock).not.toHaveBeenCalled();
 
-    await userEvent.click(within(section).getByRole("button", { name: "Remove" }));
+    await userEvent.click(within(section).getByRole("button", { name: "Clear" }));
     await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ github_token: "" }));
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
@@ -755,8 +744,8 @@ describe("UserSettingsModal cluster sections", () => {
   it("keeps each field in its own cluster's section", async () => {
     fetchSettingsMock.mockResolvedValue(
       settingsRow({
-        odo_s3m_token: "odo-tok",
-        frontier_s3m_token: "fr-tok",
+        has_odo_s3m_token: true,
+        has_frontier_s3m_token: true,
         nersc_account: "m1234",
         odo_remote_dir: "/odo/proj/vista",
         frontier_remote_dir: "/frontier/proj/vista",
@@ -766,7 +755,8 @@ describe("UserSettingsModal cluster sections", () => {
     await region("Research profile");
 
     const odo = await openOn("Odo");
-    expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveValue("odo-tok");
+    expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveValue("");
+    expect(within(odo).getByLabelText(/Odo S3M token/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
     expect(within(odo).getByText("Odo", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
     expect(within(odo).queryByLabelText(/Frontier S3M token/)).toBeNull();
     expect(within(odo).getByLabelText(/Odo remote directory/)).toHaveValue("/odo/proj/vista");
@@ -776,7 +766,7 @@ describe("UserSettingsModal cluster sections", () => {
     expect(within(odo).getByRole("switch", { name: "Show Odo in sidebar" })).toBeChecked();
 
     const frontier = await openOn("Frontier");
-    expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("fr-tok");
+    expect(within(frontier).getByLabelText(/Frontier S3M token/)).toHaveValue("");
     expect(within(frontier).getByLabelText(/Frontier remote directory/)).toHaveValue("/frontier/proj/vista");
     expect(within(frontier).queryByLabelText(/Odo remote directory/)).toBeNull();
     expect(within(frontier).getByText("Orion", { selector: ".user-settings-globus-cluster" })).toBeInTheDocument();
@@ -944,7 +934,7 @@ describe("UserSettingsModal autosave", () => {
   });
 
   it("saves a pasted token once, and rechecks only that cluster", async () => {
-    fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_frontier_s3m_token: true }));
     render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     await userEvent.click(await screen.findByLabelText(/Odo S3M token/));
@@ -969,15 +959,17 @@ describe("UserSettingsModal autosave", () => {
     expect(updateSettingsMock).toHaveBeenCalledTimes(1);
   });
 
-  it("saves a cleared token as not set", async () => {
+  it("Clear removes a saved token, and an untouched field saves nothing", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ odo_s3m_token: "odo-tok", frontier_s3m_token: "fr-tok" }),
+      settingsRow({ has_odo_s3m_token: true, has_frontier_s3m_token: true }),
     );
     render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
-    await userEvent.clear(await screen.findByLabelText(/Frontier S3M token/));
+    await userEvent.click(await screen.findByLabelText(/Frontier S3M token/));
     await userEvent.tab();
-    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ frontier_s3m_token: null }));
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await waitFor(() => expect(updateSettingsMock).toHaveBeenCalledWith({ frontier_s3m_token: "" }));
     expect(recheckMock).toHaveBeenCalledWith("frontier");
   });
 
@@ -994,7 +986,7 @@ describe("UserSettingsModal autosave", () => {
   });
 
   it("hiding a cluster saves the list at once, leaves its token alone, and refreshes the rail", async () => {
-    fetchSettingsMock.mockResolvedValue(settingsRow({ nersc_iri_token: "iri-tok" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_nersc_iri_token: true }));
     render(<UserSettingsModal onClose={() => {}} initialSection="perlmutter" />);
 
     const toggle = await screen.findByRole("switch", { name: "Show Perlmutter in sidebar" });
@@ -1147,7 +1139,7 @@ describe("UserSettingsModal: Models & providers", () => {
   }
 
   it("offers the backend's providers in order, with MAG's token and no Model or endpoint field", async () => {
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_mag_api_key: "mag-token" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_inference_mag_api_key: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
@@ -1156,7 +1148,8 @@ describe("UserSettingsModal: Models & providers", () => {
       "AmSC MAG", "OLCF Inference", "Custom",
     ]);
     expect(provider(agent, "AmSC MAG")).toBeChecked();
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
     expect(agent).toHaveTextContent("Uses claude-sonnet");
     expect(within(agent).queryByLabelText(/^Model/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
@@ -1174,7 +1167,7 @@ describe("UserSettingsModal: Models & providers", () => {
 
   it("switching provider shows that provider's own key field", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ inference_mag_api_key: "mag-token", inference_olcf_api_key: "s3m" }),
+      settingsRow({ has_inference_mag_api_key: true, has_inference_olcf_api_key: true }),
     );
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
@@ -1185,7 +1178,7 @@ describe("UserSettingsModal: Models & providers", () => {
     await userEvent.keyboard("{ArrowRight}");
     expect(provider(agent, "OLCF Inference")).toBeChecked();
     expect(provider(agent, "OLCF Inference")).toHaveFocus();
-    expect(within(agent).getByLabelText(/^OLCF Inference S3M token/)).toHaveValue("s3m");
+    expect(within(agent).getByLabelText(/^OLCF Inference S3M token/)).toHaveValue("");
     expect(within(agent).queryByLabelText(/^AmSC MAG project access token/)).toBeNull();
     expect(within(agent).queryByLabelText(/^Inference endpoint/)).toBeNull();
     expect(agent).toHaveTextContent("separate from Odo's and Frontier's");
@@ -1194,7 +1187,8 @@ describe("UserSettingsModal: Models & providers", () => {
     expect(agent).toHaveTextContent("no default model");
 
     await userEvent.click(provider(agent, "AmSC MAG"));
-    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("mag-token");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveValue("");
+    expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
   });
 
   it("only Custom shows an endpoint field; the choice saves at once, then the endpoint and key", async () => {
@@ -1224,14 +1218,15 @@ describe("UserSettingsModal: Models & providers", () => {
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_inference_api_key: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     const agent = await providerRegion();
 
     expect(provider(agent, "Installation configuration")).toBeChecked();
     expect(agent).toHaveTextContent("https://dev.example/v1");
     // The configured endpoint uses the saved key.
-    expect(within(agent).getByLabelText(/^API key/)).toHaveValue("row-key");
+    expect(within(agent).getByLabelText(/^API key/)).toHaveValue("");
+    expect(within(agent).getByLabelText(/^API key/)).toHaveAttribute("placeholder", expect.stringMatching(/^Saved/));
 
     await userEvent.click(provider(agent, "AmSC MAG"));
     expect(within(agent).getByLabelText(/^AmSC MAG project access token/)).toBeInTheDocument();
@@ -1296,7 +1291,7 @@ describe("UserSettingsModal: Models & providers", () => {
       error: null,
       modelChoiceRequest: 0,
     });
-    fetchSettingsMock.mockResolvedValue(settingsRow({ inference_api_key: "row-key" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_inference_api_key: true }));
     render(<UserSettingsModal onClose={() => {}} />);
     await region("Research profile");
     expect(entry("Models and providers")).toHaveTextContent("Ready");
@@ -1353,14 +1348,14 @@ describe("UserSettingsModal: Globus address", () => {
 describe("UserSettingsModal: Lux", () => {
   it("opened from the Lux card, shows its S3M token, remote directory and the Orion Globus connection", async () => {
     fetchSettingsMock.mockResolvedValue(
-      settingsRow({ lux_remote_dir: "/lux/vista", lux_s3m_token: "lux-tok" }),
+      settingsRow({ lux_remote_dir: "/lux/vista", has_lux_s3m_token: true }),
     );
     render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
     const lux = await region("Lux");
     expect(entry("Compute")).toHaveAttribute("aria-current", "page");
     expect(lux).toHaveTextContent("Ready");
     expect(within(lux).getByRole("switch", { name: "Show Lux in sidebar" })).toBeChecked();
-    expect(within(lux).getByLabelText(/Lux S3M token/)).toHaveValue("lux-tok");
+    expect(within(lux).getByLabelText(/Lux S3M token/)).toHaveValue("");
     expect(within(lux).getByLabelText(/Lux remote directory/)).toHaveValue("/lux/vista");
     // No account any more: Lux jobs are charged to the token's project.
     expect(within(lux).queryByLabelText(/Lux account/)).toBeNull();
@@ -1428,7 +1423,7 @@ describe("UserSettingsModal: Lux", () => {
 
     it("a Frontier connection saved earlier shows as connected in Lux", async () => {
       fetchSettingsMock.mockResolvedValue(
-        settingsRow({ frontier_globus_token: "t", frontier_globus_https_token: "h" }),
+        settingsRow({ has_frontier_globus_token: true, has_frontier_globus_https_token: true }),
       );
       render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
       const lux = await region("Lux");
@@ -1438,7 +1433,7 @@ describe("UserSettingsModal: Lux", () => {
 
     it("Odo's connection is not Lux's", async () => {
       fetchSettingsMock.mockResolvedValue(
-        settingsRow({ odo_globus_token: "t", odo_globus_https_token: "h" }),
+        settingsRow({ has_odo_globus_token: true, has_odo_globus_https_token: true }),
       );
       render(<UserSettingsModal onClose={() => {}} initialSection="lux" />);
       const lux = await region("Lux");
@@ -1726,7 +1721,7 @@ describe("UserSettingsModal: remote directory from the S3M token's project", () 
 
   it("opening with a token saved before and an empty directory fills it", async () => {
     useHpcStatusMock.mockReturnValue(withProjects({ frontier: "chm243" }));
-    fetchSettingsMock.mockResolvedValue(settingsRow({ frontier_s3m_token: "fr-tok" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_frontier_s3m_token: true }));
     render(<UserSettingsModal onClose={() => {}} initialSection="frontier" />);
 
     await waitFor(() =>
@@ -1847,7 +1842,7 @@ describe("UserSettingsModal: remote directory from the S3M token's project", () 
 
   it("removing the token leaves the filled directory as it is", async () => {
     useHpcStatusMock.mockReturnValue(withProjects({ odo: "gen150-vista" }));
-    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150, odo_s3m_token: "odo-tok" }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ odo_remote_dir: ODO_GEN150, has_odo_s3m_token: true }));
     const { rerender } = render(<UserSettingsModal onClose={() => {}} initialSection="odo" />);
 
     const dir = await screen.findByLabelText(/Odo remote directory/);

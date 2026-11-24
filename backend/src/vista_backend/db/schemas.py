@@ -530,17 +530,14 @@ def _normalize_research_interests(v: list[str] | None) -> list[str] | None:
 
 
 # Treat "" the same as None for the optional config fields so a cleared frontend
-# input doesn't end up as a non-null-but-empty token/account in the DB
+# input doesn't end up as a non-null-but-empty account in the DB. Credentials are
+# not here: they are write-only (`SECRET_SETTINGS_FIELDS`), where "" removes.
 _SETTINGS_NULLABLE_FIELDS = (
     "display_name",
     "email",
     "inference_model",
     "inference_base_url",
-    "inference_api_key",
     "inference_provider",
-    "inference_mag_api_key",
-    "inference_olcf_api_key",
-    "inference_custom_api_key",
     "research_role",
     "research_institution",
     "preferred_units",
@@ -551,6 +548,14 @@ _SETTINGS_NULLABLE_FIELDS = (
     "odo_remote_dir",
     "frontier_remote_dir",
     "lux_remote_dir",
+)
+
+
+SECRET_SETTINGS_FIELDS = (
+    "inference_api_key",
+    "inference_mag_api_key",
+    "inference_olcf_api_key",
+    "inference_custom_api_key",
     "odo_s3m_token",
     "frontier_s3m_token",
     "lux_s3m_token",
@@ -561,7 +566,14 @@ _SETTINGS_NULLABLE_FIELDS = (
     "globus_https_token",
     "odo_globus_https_token",
     "frontier_globus_https_token",
+    "github_token",
+    "gitlab_token",
+    "collaboration_token",
 )
+"""
+Credentials `GET`/`PUT /settings` never return, only `has_<name>`. Agents and MCP
+tools still read the values from `LocalSettingsPublic`; only the API response drops them.
+"""
 
 
 def _empty_str_to_none(v):
@@ -733,6 +745,21 @@ class LocalSettingsPublic(SQLModel):
     globus_https_token: str | None = None
     odo_globus_https_token: str | None = None
     frontier_globus_https_token: str | None = None
+    # Whether each credential above is saved; the API sends these, not the values.
+    has_inference_api_key: bool = False
+    has_inference_mag_api_key: bool = False
+    has_inference_olcf_api_key: bool = False
+    has_inference_custom_api_key: bool = False
+    has_odo_s3m_token: bool = False
+    has_frontier_s3m_token: bool = False
+    has_lux_s3m_token: bool = False
+    has_nersc_iri_token: bool = False
+    has_globus_token: bool = False
+    has_odo_globus_token: bool = False
+    has_frontier_globus_token: bool = False
+    has_globus_https_token: bool = False
+    has_odo_globus_https_token: bool = False
+    has_frontier_globus_https_token: bool = False
     has_github_token: bool = False
     has_gitlab_token: bool = False
     """
@@ -1006,6 +1033,62 @@ class LocalSettingsTable(SQLModel, table=True):
         default=None, sa_column=Column(EncryptedStr, nullable=True)
     )
     """ gitlab.com token, used the same way as `github_token`. Encrypted at rest. """
+
+    @property
+    def has_inference_api_key(self) -> bool:
+        return bool(self.inference_api_key)
+
+    @property
+    def has_inference_mag_api_key(self) -> bool:
+        return bool(self.inference_mag_api_key)
+
+    @property
+    def has_inference_olcf_api_key(self) -> bool:
+        return bool(self.inference_olcf_api_key)
+
+    @property
+    def has_inference_custom_api_key(self) -> bool:
+        return bool(self.inference_custom_api_key)
+
+    @property
+    def has_odo_s3m_token(self) -> bool:
+        return bool(self.odo_s3m_token)
+
+    @property
+    def has_frontier_s3m_token(self) -> bool:
+        return bool(self.frontier_s3m_token)
+
+    @property
+    def has_lux_s3m_token(self) -> bool:
+        return bool(self.lux_s3m_token)
+
+    @property
+    def has_nersc_iri_token(self) -> bool:
+        return bool(self.nersc_iri_token)
+
+    @property
+    def has_globus_token(self) -> bool:
+        return bool(self.globus_token)
+
+    @property
+    def has_odo_globus_token(self) -> bool:
+        return bool(self.odo_globus_token)
+
+    @property
+    def has_frontier_globus_token(self) -> bool:
+        return bool(self.frontier_globus_token)
+
+    @property
+    def has_globus_https_token(self) -> bool:
+        return bool(self.globus_https_token)
+
+    @property
+    def has_odo_globus_https_token(self) -> bool:
+        return bool(self.odo_globus_https_token)
+
+    @property
+    def has_frontier_globus_https_token(self) -> bool:
+        return bool(self.frontier_globus_https_token)
 
     @property
     def has_github_token(self) -> bool:

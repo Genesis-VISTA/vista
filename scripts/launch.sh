@@ -79,8 +79,26 @@ fi
 cd "$REPO_ROOT/backend"
 uv run python scripts/seed_db.py
 
-export VISTA_MCP_URL="http://localhost:8000/mcp"
-export VISTA_BACKEND_URL="http://localhost:8001"
+# 127.0.0.1, not localhost: the backend and the MCP server listen on IPv4
+# loopback only, and localhost can resolve to ::1 first.
+export VISTA_MCP_URL="http://127.0.0.1:8000/mcp"
+export VISTA_BACKEND_URL="http://127.0.0.1:8001"
+
+# --- MCP shared secret (multi-user-hosted D13) -----------------------------
+# The MCP server refuses a request without the secret the backend sends, so
+# another process on this machine cannot use it. One is generated here unless
+# the environment brings one, and exported so both services inherit it. A tmux
+# pane or Terminal window does not inherit it, so those modes carry it inline
+# (visible in `ps`; the logs mode never puts it on a command line).
+if [[ -z "${VISTA_MCP_SECRET:-}" ]]; then
+  VISTA_MCP_SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+fi
+export VISTA_MCP_SECRET
+MCP_SECRET_ENV=''
+if [[ "$MODE" != logs ]]; then
+  MCP_SECRET_ENV="VISTA_MCP_SECRET='$VISTA_MCP_SECRET' "
+fi
+# --- end MCP shared secret -------------------------------------------------
 
 # --collab: a local collaboration server, and the backend pointed at it. Only
 # here, in a checkout: no package launcher, the Electron startup protocol or a
@@ -119,18 +137,20 @@ fi
 
 MCP_CMD="
   cd '$REPO_ROOT/mcp_servers/vista_mcp_server' &&
-  uv run vista-mcp-server --transport=http;
+  ${MCP_SECRET_ENV}uv run vista-mcp-server --transport=http;
 "
 
 BACKEND_CMD="
   cd '$REPO_ROOT/backend' &&
   echo 'Waiting for MCP server...' &&
   until curl -s -o /dev/null '$VISTA_MCP_URL'; do sleep 1; done &&
-  ${BACKEND_ENV}uv run vista-backend;
+  ${MCP_SECRET_ENV}${BACKEND_ENV}uv run vista-backend;
 "
 
 if [[ "$PROD" == true ]]; then
-  UI_RUN_CMD="npm start"
+  # Loopback only (VISTA_UI_HOST to override): a gateway or tunnel on this
+  # machine reaches it, nothing else on the network does.
+  UI_RUN_CMD="npm start -- -H '${VISTA_UI_HOST:-127.0.0.1}'"
 else
   UI_RUN_CMD="npm run dev"
 fi
@@ -144,6 +164,9 @@ UI_CMD="
 # localhost, not 127.0.0.1: that is where `next dev` answers. --dev keeps
 # DevTools and force-reload in the window's menu.
 UI_URL="http://localhost:3000"
+if [[ "$PROD" == true ]]; then
+  UI_URL="http://127.0.0.1:3000" # `next start` is bound to 127.0.0.1 above.
+fi
 # On Linux, the same sandbox decision the package makes (linux-desktop-window
 # D8): window-sandbox prints nothing or --no-sandbox, and says why on stderr,
 # which shows with the window's other output. Left for the window's own shell

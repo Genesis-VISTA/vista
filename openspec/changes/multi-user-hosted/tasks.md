@@ -5,12 +5,12 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 1. Fix-first hardening (wave 1; needs nothing)
 
-- [ ] 1.1 `GET`/`PUT /settings` return `has_*` flags for every credential instead of values (`api/settings.py`, `db/schemas.py` `LocalSettingsPublic`, `services/local_settings.to_public`); verify with a new `backend/tests/test_settings_no_secrets.py` that saves each credential and asserts no response body contains it
+- [x] 1.1 `GET`/`PUT /settings` return `has_*` flags for every credential instead of values (`api/settings.py`, `db/schemas.py` `LocalSettingsPublic`, `services/local_settings.to_public`); verify with a new `backend/tests/test_settings_no_secrets.py` that saves each credential and asserts no response body contains it
 - [ ] 1.2 The settings modal and `ui/lib/settings.ts` use the flags: a set credential shows as saved with Replace/Clear, never its value; verify with `cd ui && npm run lint` and the UI lane's settings tests, plus a hands-on check in the running app
-- [ ] 1.3 A hosted backend refuses to start without `VISTA_BACKEND_ENCRYPTION_KEY`, with the development key, or with a key file under the data folder (`config.py:491-499`); verify with `backend/tests/test_hosted_startup.py`
+- [x] 1.3 A hosted backend refuses to start without `VISTA_BACKEND_ENCRYPTION_KEY`, with the development key, or with a key file under the data folder (`config.py:491-499`); verify with `backend/tests/test_hosted_startup.py`
 - [ ] 1.4 Backend and VISTA MCP server bind `127.0.0.1`; the UI's `next start` binds loopback (`scripts/launch.sh` ~132); verify with a launch-script test or `ss -ltnp`/`lsof -iTCP -sTCP:LISTEN` on a dev stack (hands-on)
-- [ ] 1.5 MCP shared secret: `launch.sh` generates `VISTA_MCP_SECRET`; the backend sends `X-Vista-MCP-Secret`; the MCP HTTP app refuses requests without it; verify with `mcp_servers/vista_mcp_server/tests/test_shared_secret.py` and the backend's MCP health test
-- [ ] 1.6 `POST /projects/{name}/mcp/call` answers `404` when hosted (`api/mcp.py:41-58`); verify with a test in `backend/tests/test_mcp_call.py`
+- [x] 1.5 MCP shared secret: `launch.sh` generates `VISTA_MCP_SECRET`; the backend sends `X-Vista-MCP-Secret`; the MCP HTTP app refuses requests without it; verify with `mcp_servers/vista_mcp_server/tests/test_shared_secret.py` and the backend's MCP health test
+- [x] 1.6 `POST /projects/{name}/mcp/call` answers `404` when hosted (`api/mcp.py:41-58`); verify with a test in `backend/tests/test_mcp_call.py`
 
 ## 2. Hosted flag and base path (wave 1; needs nothing)
 

@@ -291,6 +291,13 @@ $env:VISTA_DATA_PAYLOAD_DIR = "$STATE\vista-data"
 $env:VISTA_MCP_URL = "http://127.0.0.1:$MCP_PORT/mcp"
 $env:VISTA_BACKEND_URL = "http://127.0.0.1:$BACKEND_PORT"
 $env:VISTA_BACKEND_PORT = $BACKEND_PORT
+# The secret the backend and the MCP server share, new each start: the MCP server
+# refuses a request without it, so another process on this machine cannot use it.
+if (-not $env:VISTA_MCP_SECRET) {
+  $secretBytes = New-Object byte[] 32
+  [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($secretBytes)
+  $env:VISTA_MCP_SECRET = ([System.BitConverter]::ToString($secretBytes) -replace '-', '').ToLower()
+}
 $env:HF_HOME = "$STATE\huggingface"
 # A cache miss must fail loudly rather than quietly reaching the network: the
 # weights ship inside the package precisely so this works offline.

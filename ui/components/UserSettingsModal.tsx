@@ -64,19 +64,32 @@ export type SettingsSection =
 type Section = SettingsSection;
 
 /**
- * The repository tokens and the collaboration server's, which unlike every
- * field in `TEXT_FIELDS` are write-only: the backend never sends them back, so
- * each starts empty, an empty field saves nothing, and only Remove sends `""`.
+ * Every credential, which unlike the fields in `TEXT_FIELDS` is write-only: the
+ * backend never sends one back, only `has_<name>`, so each starts empty, an
+ * empty field saves nothing, and only Clear sends `""`.
  */
-const TOKEN_FIELDS = ["github_token", "gitlab_token", "collaboration_token"] as const;
-type TokenField = (typeof TOKEN_FIELDS)[number];
-
-/** Every free-text field the modal edits, as named in `LocalSettingsUpdate`. */
-const TEXT_FIELDS = [
+const TOKEN_FIELDS = [
+  "github_token",
+  "gitlab_token",
+  "collaboration_token",
   "inference_api_key",
   "inference_mag_api_key",
   "inference_olcf_api_key",
   "inference_custom_api_key",
+  "odo_s3m_token",
+  "frontier_s3m_token",
+  "lux_s3m_token",
+  "nersc_iri_token",
+] as const;
+type TokenField = (typeof TOKEN_FIELDS)[number];
+
+/** Whether the backend holds a value for this credential. */
+function hasSecret(user: LocalSettings, field: TokenField): boolean {
+  return Boolean(user[`has_${field}` as const]);
+}
+
+/** Every free-text field the modal edits, as named in `LocalSettingsUpdate`. */
+const TEXT_FIELDS = [
   "inference_base_url",
   "display_name",
   "email",
@@ -88,10 +101,6 @@ const TEXT_FIELDS = [
   "odo_remote_dir",
   "frontier_remote_dir",
   "lux_remote_dir",
-  "odo_s3m_token",
-  "frontier_s3m_token",
-  "lux_s3m_token",
-  "nersc_iri_token",
 ] as const satisfies ReadonlyArray<keyof LocalSettingsUpdate & keyof LocalSettings>;
 
 type TextField = (typeof TEXT_FIELDS)[number];
@@ -102,7 +111,7 @@ type TextField = (typeof TEXT_FIELDS)[number];
  */
 type Draft = {
   text: Record<TextField, string>;
-  /** A repository token being typed; cleared once it saves. */
+  /** A credential being typed; cleared once it saves. */
   tokens: Record<TokenField, string>;
   /** Null until the researcher chooses one: the backend's choice stands. */
   provider: string | null;
@@ -120,9 +129,11 @@ type Draft = {
 function draftFrom(user: LocalSettings): Draft {
   const text = {} as Record<TextField, string>;
   for (const field of TEXT_FIELDS) text[field] = user[field] ?? "";
+  const tokens = {} as Record<TokenField, string>;
+  for (const field of TOKEN_FIELDS) tokens[field] = "";
   return {
     text,
-    tokens: { github_token: "", gitlab_token: "", collaboration_token: "" },
+    tokens,
     provider: user.inference_provider ?? null,
     interests: user.research_interests ?? [],
     preferredUnits: user.preferred_units ?? "si",
@@ -173,7 +184,7 @@ function sectionOf(field: string): Section {
   if (field.startsWith("inference_")) return "agent";
   if (field.startsWith("collaboration_")) return "collaboration";
   if (field.startsWith("update_")) return "about";
-  if ((TOKEN_FIELDS as readonly string[]).includes(field)) return "repositories";
+  if (field === "github_token" || field === "gitlab_token") return "repositories";
   if (
     field === "display_name" ||
     field === "email" ||
@@ -480,7 +491,7 @@ export function UserSettingsModal({
     };
   };
 
-  /** Like `bind`, for a write-only token: a blank field saves null, which keeps it. */
+  /** Like `bind`, for a write-only credential: a blank field saves null, which keeps it. */
   const bindToken = (field: TokenField): FieldBinding => {
     const error = autosave.errors[field];
     return {
@@ -592,7 +603,10 @@ export function UserSettingsModal({
     content = (
       <AgentSection
         draft={draft}
+        user={user}
         bind={bind}
+        bindToken={bindToken}
+        onClear={removeToken}
         setProvider={setProvider}
         providerMark={autosave.marks.inference_provider}
         providerError={autosave.errors.inference_provider}
@@ -643,7 +657,10 @@ export function UserSettingsModal({
       >
         <ClusterFields
           cluster={section}
+          user={user}
           bind={bind}
+          bindToken={bindToken}
+          onClear={removeToken}
           fill={fillRemoteDir}
           globus={(owner) => ({
             connected: globusConnected(user, owner) || owner in globusMade,
@@ -1402,7 +1419,7 @@ function ComputeResourceRow({
 }
 
 /** Which stored key each provider uses; see `PROVIDER_PRESETS` in the backend. */
-const PROVIDER_KEY_FIELDS: Record<string, TextField> = {
+const PROVIDER_KEY_FIELDS: Record<string, TokenField> = {
   mag: "inference_mag_api_key",
   olcf: "inference_olcf_api_key",
   custom: "inference_custom_api_key",
@@ -1464,13 +1481,19 @@ function keyFieldCopy(provider: string, configured: boolean): { label: string; h
  */
 function AgentSection({
   draft,
+  user,
   bind,
+  bindToken,
+  onClear,
   setProvider,
   providerMark,
   providerError,
 }: {
   draft: Draft;
+  user: LocalSettings;
   bind: Bind;
+  bindToken: (field: TokenField) => FieldBinding;
+  onClear: (field: TokenField) => void;
   setProvider: (provider: string) => void;
   providerMark?: FieldMark;
   providerError?: string;
@@ -1592,12 +1615,13 @@ function AgentSection({
 
         {keyField && copy && (
           <div data-tour="model:credential">
-            <SavedField
+            <TokenField
               key={keyField}
               label={copy.label}
               field={keyField}
-              binding={bind(keyField, "on-blur")}
-              secret
+              saved={hasSecret(user, keyField)}
+              binding={bindToken(keyField)}
+              onRemove={() => onClear(keyField)}
               placeholder="API key"
               hint={copy.hint}
             />
@@ -1698,6 +1722,7 @@ function TokenField({
   binding,
   onRemove,
   hint,
+  placeholder = "Not set",
 }: {
   label: string;
   field: TokenField;
@@ -1705,6 +1730,8 @@ function TokenField({
   binding: FieldBinding;
   onRemove: () => void;
   hint: ReactNode;
+  /** What an unsaved field says; a saved one always says it is saved. */
+  placeholder?: string;
 }) {
   return (
     <div className="project-modal-label">
@@ -1715,7 +1742,7 @@ function TokenField({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={saved ? "Saved. Paste a new one to replace it" : "Not set"}
+          placeholder={saved ? "Saved. Paste a new one to replace it" : placeholder}
           {...binding.inputProps}
         />
         <SaveMark mark={binding.mark} />
@@ -1724,7 +1751,7 @@ function TokenField({
         <span className="user-settings-hint">
           Saved and stored encrypted; it is never shown again.{" "}
           <button type="button" className="button ghost button-xs" onClick={onRemove}>
-            Remove
+            Clear
           </button>
         </span>
       )}
@@ -1899,12 +1926,18 @@ type GlobusState = {
 
 function ClusterFields({
   cluster,
+  user,
   bind,
+  bindToken,
+  onClear,
   fill,
   globus,
 }: {
   cluster: HpcCluster;
+  user: LocalSettings;
   bind: Bind;
+  bindToken: (field: TokenField) => FieldBinding;
+  onClear: (field: TokenField) => void;
   fill: FillRemoteDir;
   globus: (owner: GlobusCluster) => GlobusState;
 }) {
@@ -1915,7 +1948,9 @@ function ClusterFields({
           <S3mTokenField
             label="Odo S3M token"
             field="odo_s3m_token"
-            binding={bind("odo_s3m_token", "on-blur")}
+            saved={hasSecret(user, "odo_s3m_token")}
+            binding={bindToken("odo_s3m_token")}
+            onRemove={() => onClear("odo_s3m_token")}
             hint="From any OLCF project with S3M access. Odo jobs are charged to that project."
           />
           <RemoteDirField
@@ -1935,7 +1970,9 @@ function ClusterFields({
           <S3mTokenField
             label="Frontier S3M token"
             field="frontier_s3m_token"
-            binding={bind("frontier_s3m_token", "on-blur")}
+            saved={hasSecret(user, "frontier_s3m_token")}
+            binding={bindToken("frontier_s3m_token")}
+            onRemove={() => onClear("frontier_s3m_token")}
             hint="From any OLCF project with S3M access, and separate from Odo's token. Frontier jobs are charged to that project."
           />
           <RemoteDirField
@@ -1975,11 +2012,12 @@ function ClusterFields({
               </>
             }
           />
-          <SavedField
+          <TokenField
             label="NERSC IRI token"
             field="nersc_iri_token"
-            binding={bind("nersc_iri_token", "on-blur")}
-            secret
+            saved={hasSecret(user, "nersc_iri_token")}
+            binding={bindToken("nersc_iri_token")}
+            onRemove={() => onClear("nersc_iri_token")}
             placeholder="Globus access token"
             hint="Globus access token for NERSC IRI. Stored encrypted at rest."
           />
@@ -1991,7 +2029,9 @@ function ClusterFields({
           <S3mTokenField
             label="Lux S3M token"
             field="lux_s3m_token"
-            binding={bind("lux_s3m_token", "on-blur")}
+            saved={hasSecret(user, "lux_s3m_token")}
+            binding={bindToken("lux_s3m_token")}
+            onRemove={() => onClear("lux_s3m_token")}
             hint="From any OLCF project with S3M access to Lux, and separate from Frontier's token. Lux jobs are charged to that project."
           />
           <RemoteDirField
@@ -2167,20 +2207,25 @@ function GroupWritableHint({
 function S3mTokenField({
   label,
   field,
+  saved,
   binding,
+  onRemove,
   hint,
 }: {
   label: string;
-  field: TextField;
+  field: TokenField;
+  saved: boolean;
   binding: FieldBinding;
+  onRemove: () => void;
   hint: string;
 }) {
   return (
-    <SavedField
+    <TokenField
       label={label}
       field={field}
+      saved={saved}
       binding={binding}
-      secret
+      onRemove={onRemove}
       placeholder="Bearer token"
       hint={
         <>
@@ -2298,13 +2343,13 @@ function globusConnected(
   cluster: GlobusCluster,
 ): boolean {
   const transfer =
-    cluster === "odo" ? user.odo_globus_token : user.frontier_globus_token;
+    cluster === "odo" ? user.has_odo_globus_token : user.has_frontier_globus_token;
   const https =
     cluster === "odo"
-      ? user.odo_globus_https_token
-      : user.frontier_globus_https_token;
+      ? user.has_odo_globus_https_token
+      : user.has_frontier_globus_https_token;
   return Boolean(
-    (transfer && https) || (user.globus_token && user.globus_https_token),
+    (transfer && https) || (user.has_globus_token && user.has_globus_https_token),
   );
 }
 

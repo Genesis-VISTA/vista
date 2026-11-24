@@ -1,6 +1,6 @@
 import os, sys, logging
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, SecretStr
 from pathlib import Path
 from typing import Annotated as A, Literal
 from .lib.types import ResolvedPath, CommaSeparatedList
@@ -49,6 +49,13 @@ class AppSettings(BaseSettings):
     the startup guard (`assert_experiment_flags_allowed`) refuses the §2a
     Group 3 experiment flags (dry-run, queue delay, faults) so they can
     never be left on in production.
+    """
+
+    secret: SecretStr | None = None
+    """
+    `VISTA_MCP_SECRET`: the secret the backend sends as `X-Vista-MCP-Secret`. The
+    HTTP app refuses a request without it (`shared_secret.py`). Unset, every
+    request is accepted, so a server started by hand still works.
     """
 
     allowed_uris: list[str] = ["file://.*"]

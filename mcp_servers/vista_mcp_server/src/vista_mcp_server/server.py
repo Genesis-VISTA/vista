@@ -9,6 +9,7 @@ from .transfer_mcp import mcp as transfer_mcp
 from .rag_mcp import mcp as rag_mcp
 from .agenthpc.mcp import mcp as agenthpc_mcp
 from .metrics import MetricsMiddleware, get_recorder
+from .shared_secret import http_middleware
 
 
 # No lifespan. VISTA's OLCF file operations are HTTPS requests against the
@@ -44,7 +45,12 @@ def main(argv: list[str] | None = None):
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args(argv)
     if args.transport == "http":
-        mcp.run(transport="http", host=args.host, port=args.port)
+        mcp.run(
+            transport="http",
+            host=args.host,
+            port=args.port,
+            middleware=http_middleware(),
+        )
     else:
         mcp.run(transport="stdio")
 
