@@ -110,6 +110,7 @@ async def agent_run(
         raise HTTPException(status_code=409, detail=ELSEWHERE)
     require_inference_credential(local, chat_row.inference_model if chat_row else None)
     agent_key: ProjectAgentKey = (
+        user.id,
         chat_row.id if chat_row else None,
         project.id,
     )

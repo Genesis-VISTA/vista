@@ -26,6 +26,7 @@ from .hosted import is_hosted
 from .settings_view import (
     HOSTED_SERVER_VALUES,
     SERVER_SETTINGS_REASON,
+    SERVER_FIELDS,
     SettingsView,
     load,
     server_managed_fields,
@@ -115,7 +116,12 @@ async def update(
         # build an agent.
         from .project_agent import invalidate_agents
 
-        invalidate_agents(session)
+        # A user's own fields rebuild only that user's agents; a server field
+        # (what every agent read) rebuilds every user's.
+        invalidate_agents(
+            session,
+            user_id=None if changed & SERVER_FIELDS else row.user_row.user_id,
+        )
     return row
 
 

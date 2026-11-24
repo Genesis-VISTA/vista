@@ -177,7 +177,7 @@ async def env(engine, session, monkeypatch, tmp_path):
 
     @asynccontextmanager
     async def get(key):
-        yield holder.agents[key[0]]
+        yield holder.agents[key[-2]]
 
     class Pool:
         pass

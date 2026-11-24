@@ -96,7 +96,7 @@ class TestTheAuthorizationAddress:
         """The point of PKCE. A verifier the browser carried would make the code
         sufficient on its own."""
         url = globus_auth.start_login("odo")
-        verifier = globus_auth._pending["odo"].verifier
+        verifier = globus_auth._pending[("local", "odo")].verifier
 
         assert verifier not in url
         # Its hash is what travels, and only that.
@@ -153,10 +153,10 @@ class TestTheAuthorizationAddress:
         """Two live addresses differ only in their verifier, so a code from the
         older one fails in a way that describes nothing the researcher did."""
         globus_auth.start_login("odo")
-        first = globus_auth._pending["odo"].verifier
+        first = globus_auth._pending[("local", "odo")].verifier
         globus_auth.start_login("odo")
 
-        assert globus_auth._pending["odo"].verifier != first
+        assert globus_auth._pending[("local", "odo")].verifier != first
         assert len(globus_auth._pending) == 1
 
 
@@ -275,7 +275,7 @@ class TestOneFlowPerCluster:
 class TestExpiry:
     def test_an_old_address_is_refused_with_what_to_do(self, monkeypatch):
         globus_auth.start_login("odo")
-        pending = globus_auth._pending["odo"]
+        pending = globus_auth._pending[("local", "odo")]
         pending.started_at = time.time() - globus_auth.PENDING_TTL_SECONDS - 1
 
         with pytest.raises(HTTPException) as refusal:
@@ -284,13 +284,13 @@ class TestExpiry:
 
     def test_an_expired_flow_is_not_kept(self):
         globus_auth.start_login("odo")
-        globus_auth._pending["odo"].started_at = (
+        globus_auth._pending[("local", "odo")].started_at = (
             time.time() - globus_auth.PENDING_TTL_SECONDS - 1
         )
 
         globus_auth.start_login("frontier")
 
-        assert "odo" not in globus_auth._pending
+        assert ("local", "odo") not in globus_auth._pending
 
     def test_an_empty_code_says_so_before_asking_globus(self):
         globus_auth.start_login("odo")
@@ -299,7 +299,7 @@ class TestExpiry:
             globus_auth.complete_login("odo", "   ")
         assert "Paste the code" in refusal.value.detail
         # Not spent: the researcher still has the address open.
-        assert "odo" in globus_auth._pending
+        assert ("local", "odo") in globus_auth._pending
 
 
 class TestGlobusRefusals:
@@ -363,7 +363,7 @@ class TestGlobusRefusals:
         the researcher can paste the whole code into the address still on
         screen. Dropping it here would make a typo cost an entire login."""
         globus_auth.start_login("odo")
-        verifier = globus_auth._pending["odo"].verifier
+        verifier = globus_auth._pending[("local", "odo")].verifier
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,
             "oauth2_exchange_code_for_tokens",
@@ -373,7 +373,7 @@ class TestGlobusRefusals:
         with pytest.raises(HTTPException):
             globus_auth.complete_login("odo", "half-a-cod")
 
-        assert globus_auth._pending["odo"].verifier == verifier
+        assert globus_auth._pending[("local", "odo")].verifier == verifier
 
         # And the retry with the whole code goes through on that same flow.
         monkeypatch.setattr(
@@ -382,7 +382,7 @@ class TestGlobusRefusals:
             lambda self, code: FakeResponse(transfer_tokens()),
         )
         assert globus_auth.complete_login("odo", "half-a-code").refresh_token
-        assert "odo" not in globus_auth._pending
+        assert ("local", "odo") not in globus_auth._pending
 
 
 class TestLuxSharesFrontiersConnection:
@@ -399,7 +399,10 @@ class TestLuxSharesFrontiersConnection:
         assert query(started.authorize_url, "session_required_single_domain") == (
             "sso.ccs.ornl.gov"
         )
-        assert "frontier" in globus_auth._pending and "lux" not in globus_auth._pending
+        assert ("local", "frontier") in globus_auth._pending and (
+            "local",
+            "lux",
+        ) not in globus_auth._pending
 
         monkeypatch.setattr(
             globus_auth.globus_sdk.NativeAppAuthClient,

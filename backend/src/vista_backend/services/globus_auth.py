@@ -25,6 +25,8 @@ import globus_sdk
 from fastapi import HTTPException
 from globus_sdk.exc import GlobusAPIError
 
+from .current_user import current_user_id
+
 Cluster = Literal["odo", "frontier"]
 """ The clusters that hold a Globus connection of their own. """
 
@@ -168,8 +170,9 @@ class _Pending:
     started_at: float
 
 
-_pending: dict[Cluster, _Pending] = {}
-"""Flows waiting for a code, keyed by cluster.
+_pending: dict[tuple[str, Cluster], _Pending] = {}
+"""Flows waiting for a code, keyed by (user id, cluster): two users connecting
+the same cluster at once each keep their own flow.
 
 In memory, which ties a pending flow to one backend process: a second worker
 would not find it and the researcher would be told to start again. The desktop
@@ -204,7 +207,9 @@ def start_login(cluster: Cluster) -> str:
         refresh_tokens=True,
         prefill_named_grant=f"VISTA ({cluster})",
     )
-    _pending[cluster] = _Pending(verifier=flow.verifier, started_at=now)
+    _pending[(current_user_id(), cluster)] = _Pending(
+        verifier=flow.verifier, started_at=now
+    )
 
     return client.oauth2_get_authorize_url(
         session_required_single_domain=CLUSTER_SESSION_DOMAINS[cluster],
@@ -217,9 +222,10 @@ def complete_login(cluster: Cluster, code: str) -> Connection:
     if not code:
         raise HTTPException(400, "Paste the code Globus showed you after logging in.")
 
-    pending = _pending.get(cluster)
+    key = (current_user_id(), cluster)
+    pending = _pending.get(key)
     if pending is None or time.time() - pending.started_at > PENDING_TTL_SECONDS:
-        _pending.pop(cluster, None)
+        _pending.pop(key, None)
         raise HTTPException(
             400,
             "This connection attempt has expired. Start it again to get a fresh "
@@ -249,7 +255,7 @@ def complete_login(cluster: Cluster, code: str) -> Connection:
     # Accepted, so the code is spent and the flow it belonged to is finished
     # with -- including on the failures below, which are about what came back
     # rather than about the exchange.
-    _pending.pop(cluster, None)
+    _pending.pop(key, None)
 
     transfer = _refresh_token(
         response.data,
