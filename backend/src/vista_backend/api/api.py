@@ -33,6 +33,7 @@ from ..services.collaboration import (
     SharingConflict,
     server_url,
 )
+from ..services.current_user import get_current_user
 from ..services.local_settings import LocalSettingsDep
 from ..services.project_agent import project_agent_pool
 from ..services.teams import NotInTeam
@@ -54,7 +55,7 @@ from .reports import router as reports_router
 from .settings import router as settings_router
 from .skills import router as skills_router
 from .slack import router as slack_router
-from .updates import router as updates_router
+from .updates import router as updates_router, version_router
 
 
 def _report_database_incompatible(refusal: DatabaseIncompatible) -> None:
@@ -266,28 +267,36 @@ async def _server_in_effect(local: LocalSettingsDep) -> None:
     server_in_effect.set(server_url(local)[0])
 
 
-app.include_router(agent_router)
-app.include_router(campaign_router)
-app.include_router(debate_router)
-app.include_router(chat_sessions_router)
-app.include_router(chat_runs_router)
-app.include_router(collaboration_router, dependencies=[Depends(_server_in_effect)])
-app.include_router(mcp_router)
-app.include_router(knowledge_bases_router, dependencies=[Depends(_server_in_effect)])
-app.include_router(models_router)
-app.include_router(projects_router, dependencies=[Depends(_server_in_effect)])
-app.include_router(reports_router)
-app.include_router(skills_router, dependencies=[Depends(_server_in_effect)])
-app.include_router(slack_router)
-app.include_router(files_router)
-app.include_router(settings_router)
-app.include_router(updates_router)
+# Every route resolves who is asking first (`services/current_user.py`): the
+# user `local` on a desktop install, a verified token's user when hosted (401
+# without one). Only `/version` is open, so the UI can learn the deployment
+# before anyone signs in. Listed first, so it runs before the others.
+SIGNED_IN = Depends(get_current_user)
+TEAMS = Depends(_server_in_effect)
+
+app.include_router(version_router)
+app.include_router(agent_router, dependencies=[SIGNED_IN])
+app.include_router(campaign_router, dependencies=[SIGNED_IN])
+app.include_router(debate_router, dependencies=[SIGNED_IN])
+app.include_router(chat_sessions_router, dependencies=[SIGNED_IN])
+app.include_router(chat_runs_router, dependencies=[SIGNED_IN])
+app.include_router(collaboration_router, dependencies=[SIGNED_IN, TEAMS])
+app.include_router(mcp_router, dependencies=[SIGNED_IN])
+app.include_router(knowledge_bases_router, dependencies=[SIGNED_IN, TEAMS])
+app.include_router(models_router, dependencies=[SIGNED_IN])
+app.include_router(projects_router, dependencies=[SIGNED_IN, TEAMS])
+app.include_router(reports_router, dependencies=[SIGNED_IN])
+app.include_router(skills_router, dependencies=[SIGNED_IN, TEAMS])
+app.include_router(slack_router, dependencies=[SIGNED_IN])
+app.include_router(files_router, dependencies=[SIGNED_IN])
+app.include_router(settings_router, dependencies=[SIGNED_IN])
+app.include_router(updates_router, dependencies=[SIGNED_IN])
 
 # PALISADE trust-state + re-auth endpoints: mounted only when the master
 # flag is on, so they are absent from the API (and OpenAPI schema) when
 # PALISADE is disabled.
 if settings.palisade.enabled:
-    app.include_router(palisade_router)
+    app.include_router(palisade_router, dependencies=[SIGNED_IN])
 
 
 def main() -> None:

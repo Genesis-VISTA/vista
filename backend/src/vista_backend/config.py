@@ -346,6 +346,17 @@ class Settings(BaseSettings):
             return [h.strip().lower() for h in v.split(",") if h.strip()]
         return v
 
+    oidc_issuer: str = "https://obsidian.ccs.ornl.gov/auth/realms/obsidian"
+    """
+    When hosted: the Keycloak realm whose access tokens sign researchers in. Its
+    keys are fetched from `{issuer}/protocol/openid-connect/certs`. Override via
+    `VISTA_BACKEND_OIDC_ISSUER` (`./launch.sh --hosted` points it at the dev gateway).
+    """
+    oidc_allowed_azp: list[str] = ["apisix"]
+    """ When hosted: the clients (`azp`) whose tokens are accepted; Obsidian's gateway is `apisix`. """
+    oidc_required_role: str = "apisix/vista"
+    """ When hosted: `<client>/<role>` a token must carry in `resource_access`, as the collab server requires. """
+
     host: str = "127.0.0.1"
     port: int = 8001
 

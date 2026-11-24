@@ -9,11 +9,15 @@ from vista_backend.config import settings
 pytestmark = pytest.mark.anyio
 
 
-async def test_hosted_answers_404_before_looking_at_the_project(session, monkeypatch):
-    monkeypatch.setattr(settings, "deployment", "hosted")
+async def test_hosted_answers_404_before_looking_at_the_project(session, hosted):
+    """Signed in, so the 404 is the hosted gate's, not the sign-in's 401."""
+    from harness.tokens import bearer
+
     with api_client(session) as (client, _pool):
         response = await client.post(
-            "/projects/anything/mcp/call", json={"name": "view", "arguments": {}}
+            "/projects/anything/mcp/call",
+            json={"name": "view", "arguments": {}},
+            headers=bearer(hosted.token()),
         )
     assert response.status_code == 404
 

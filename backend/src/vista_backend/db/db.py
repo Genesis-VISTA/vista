@@ -373,10 +373,11 @@ async def init_db() -> None:
 
     await seed_db(engine)
     # After seeding, so seed_db's empty-database check still sees an empty one.
-    from ..services import local_settings
+    from ..services import current_user, local_settings
 
     async with AsyncSession(engine) as session:
         await local_settings.ensure(session)
+        await current_user.ensure_local(session)
         await session.commit()
     # The hello-olcf default reaches first runs and upgrades alike, after seed_db so
     # its empty-database check is unaffected.

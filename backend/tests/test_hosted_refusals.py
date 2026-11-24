@@ -11,16 +11,30 @@ from vista_backend.agents import skill_repo
 from vista_backend.config import settings
 
 
+_signed_in: dict[str, str] = {}
+""" The token every `_request` carries while `hosted` is in effect. """
+
+
 @pytest.fixture
-def hosted(monkeypatch):
-    monkeypatch.setattr(settings, "deployment", "hosted")
+def hosted(hosted):
+    """
+    conftest's hosted deployment (a fake realm the backend trusts), signed in:
+    every route needs a user when hosted, so the refusals below are reached only
+    with a token.
+    """
+    from harness.tokens import bearer
+
+    _signed_in.update(bearer(hosted.token()))
+    yield hosted
+    _signed_in.clear()
 
 
 async def _request(session, method, path, **kwargs):
     from harness import api_client
 
+    headers = {**_signed_in, **kwargs.pop("headers", {})}
     with api_client(session) as (client, _):
-        return await client.request(method, path, **kwargs)
+        return await client.request(method, path, headers=headers, **kwargs)
 
 
 # ---------------------------------------------------------------------------

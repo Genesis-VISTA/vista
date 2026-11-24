@@ -812,6 +812,28 @@ class LocalSettingsPublic(SQLModel):
         return [] if v is None else v
 
 
+LOCAL_USER_ID = "local"
+""" The implicit user of a desktop install: owns everything there, and matches no token. """
+
+
+class UserTable(SQLModel, table=True):
+    """
+    Someone VISTA serves. A desktop install has exactly one, `local`, made by
+    `init_db`. A hosted deployment adds one per Keycloak subject the first time
+    that subject makes a verified request (`services/current_user.py`).
+    """
+
+    __tablename__: str = "app_user"
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    sub: str | None = Field(default=None, unique=True, index=True)
+    """ The token's `sub`; `None` only for `local`. """
+    display_name: str | None = None
+    """ From the token's `name` (or `preferred_username`), refreshed on each sign-in. For showing only. """
+    email: str | None = None
+    created_at: str | None = None
+    last_seen_at: str | None = None
+
+
 LOCAL_SETTINGS_ID = 1
 """ The settings row's primary key. There is only ever this one row. """
 
