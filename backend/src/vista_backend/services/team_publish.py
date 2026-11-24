@@ -35,11 +35,13 @@ from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..db.ownership import owned
 from ..db.schemas import (
     KnowledgeBaseTable,
     LocalSettingsPublic,
     ProjectTable,
     SkillTable,
+    UserTable,
 )
 from .collaboration import client_for, required_url
 from .knowledge_base import get_kb
@@ -96,65 +98,71 @@ class _Kind:
     label: str
     key: Callable[[SkillTable | KnowledgeBaseTable], str]
     uses: Callable[[ProjectTable], list[str]]
-    get: Callable[[AsyncSession, str], Awaitable[SkillTable | KnowledgeBaseTable]]
-    publish: Callable[[AsyncSession, LocalSettingsPublic, str], Awaitable[None]]
-    import_as: Callable[
-        [AsyncSession, LocalSettingsPublic, uuid.UUID, str], Awaitable[str]
+    get: Callable[
+        [AsyncSession, str, UserTable], Awaitable[SkillTable | KnowledgeBaseTable]
     ]
-    free: Callable[[AsyncSession, str], Awaitable[str]]
-    delete: Callable[[AsyncSession, str], Awaitable[None]]
+    publish: Callable[
+        [AsyncSession, LocalSettingsPublic, str, UserTable], Awaitable[None]
+    ]
+    import_as: Callable[
+        [AsyncSession, LocalSettingsPublic, uuid.UUID, str, UserTable], Awaitable[str]
+    ]
+    free: Callable[[AsyncSession, str, UserTable], Awaitable[str]]
+    delete: Callable[[AsyncSession, str, UserTable], Awaitable[None]]
     """ Remove one here, its files too: a copy imported beside an original, on rollback. """
 
 
-async def _publish_skill(session, local, name) -> None:
+async def _publish_skill(session, local, name, user: UserTable) -> None:
     from .skill_collaboration import publish_skill
 
-    await publish_skill(session, local, name, as_new=True)
+    await publish_skill(session, local, name, as_new=True, user=user)
 
 
-async def _import_skill(session, local, item_id, name) -> str:
+async def _import_skill(session, local, item_id, name, user: UserTable) -> str:
     from .skill_collaboration import import_skill
 
-    row, _ = await import_skill(session, local, item_id, rename_to=name)
+    row, _ = await import_skill(session, local, item_id, rename_to=name, user=user)
     return row.name
 
 
-async def _publish_kb(session, local, slug) -> None:
+async def _publish_kb(session, local, slug, user: UserTable) -> None:
     from .knowledge_base_collaboration import publish_knowledge_base
 
-    await publish_knowledge_base(session, local, slug, as_new=True)
+    await publish_knowledge_base(session, local, slug, as_new=True, user=user)
 
 
-async def _import_kb(session, local, item_id, slug) -> str:
+async def _import_kb(session, local, item_id, slug, user: UserTable) -> str:
     from .knowledge_base_collaboration import import_knowledge_base
 
-    result = await import_knowledge_base(session, local, item_id, rename_to=slug)
+    result = await import_knowledge_base(
+        session, local, item_id, rename_to=slug, user=user
+    )
     return result.knowledge_base.slug
 
 
-async def _free_skill(session, base) -> str:
+async def _free_skill(session, base, user: UserTable) -> str:
     from .project_collaboration import _free_skill_name
 
-    return await _free_skill_name(session, base)
+    return await _free_skill_name(session, base, user)
 
 
-async def _free_kb(session, base) -> str:
+async def _free_kb(session, base, user: UserTable) -> str:
     from .project_collaboration import _free_slug
 
-    return await _free_slug(session, base)
+    return await _free_slug(session, base, user)
 
 
-async def _delete_skill(session, name) -> None:
+async def _delete_skill(session, name, user: UserTable) -> None:
     from .skills import delete_skill
 
-    await delete_skill(session, name)
+    await delete_skill(session, name, user)
 
 
-async def _delete_kb(session, slug) -> None:
+async def _delete_kb(session, slug, user: UserTable) -> None:
     # The route's deletion: the row, its PDFs and its store, under its lock.
     from ..api.knowledge_bases import delete_knowledge_base
 
-    await delete_knowledge_base(slug, session)
+    await delete_knowledge_base(slug, session, user=user)
 
 
 SKILL = _Kind(
@@ -257,6 +265,7 @@ async def _other_teams_users(
     key: str,
     url: str | None,
     team_id: uuid.UUID,
+    user: UserTable,
     *,
     besides: set[uuid.UUID],
 ) -> list[str]:
@@ -265,7 +274,7 @@ async def _other_teams_users(
     a team other than `team_id`: those `key` joining `team_id` would break.
     A private project may use it there.
     """
-    projects = (await session.exec(select(ProjectTable))).all()
+    projects = (await session.exec(owned(select(ProjectTable), user))).all()
     return sorted(
         p.name
         for p in projects
@@ -281,6 +290,7 @@ async def _place(
     kind: _Kind,
     key: str,
     team_id: uuid.UUID,
+    user: UserTable,
     *,
     kept_for: list[str] | None,
 ) -> PublishedResource:
@@ -290,7 +300,7 @@ async def _place(
     team's item is imported beside it; with None, the row joins the team.
     """
     url = required_url(local)
-    row = await kind.get(session, key)
+    row = await kind.get(session, key, user)
     was = _link(row)
 
     async def restore() -> None:
@@ -304,7 +314,7 @@ async def _place(
     session.add(row)
     await session.commit()
     try:
-        await kind.publish(session, local, key)
+        await kind.publish(session, local, key, user)
     except BaseException:
         await restore()
         raise
@@ -316,7 +326,9 @@ async def _place(
     item_id = row.remote_id
     assert item_id is not None
     await restore()
-    name = await kind.import_as(session, local, item_id, await kind.free(session, key))
+    name = await kind.import_as(
+        session, local, item_id, await kind.free(session, key, user), user
+    )
     return PublishedResource(
         kind=kind.kind, name=key, local_name=name, how="imported", kept_for=kept_for
     )
@@ -328,6 +340,7 @@ async def _kept_for(
     key: str,
     url: str | None,
     team_id: uuid.UUID,
+    user: UserTable,
     *,
     besides: set[uuid.UUID],
 ) -> list[str] | None:
@@ -336,10 +349,12 @@ async def _kept_for(
     projects of another team it stays for, [] for a bundled skill, or None
     when it can join `team_id`.
     """
-    row = await kind.get(session, key)
+    row = await kind.get(session, key, user)
     if _stays(row):
         return []
-    users = await _other_teams_users(session, kind, key, url, team_id, besides=besides)
+    users = await _other_teams_users(
+        session, kind, key, url, team_id, user, besides=besides
+    )
     return users or None
 
 
@@ -349,35 +364,50 @@ async def _publish_one(
     kind: _Kind,
     key: str,
     team_id: uuid.UUID,
+    user: UserTable,
 ) -> TeamPublishResult:
-    row = await kind.get(session, key)
+    row = await kind.get(session, key, user)
     url = required_url(local)
     mine = await _my_teams(local, team_id)
     _require_private(f"The {kind.label} {key}", row, url, mine)
-    kept_for = await _kept_for(session, kind, key, url, team_id, besides=set())
-    published = await _place(session, local, kind, key, team_id, kept_for=kept_for)
+    kept_for = await _kept_for(session, kind, key, url, team_id, user, besides=set())
+    published = await _place(
+        session, local, kind, key, team_id, user, kept_for=kept_for
+    )
     return TeamPublishResult(team_id=team_id, published=[published])
 
 
 @remembers_teams
 async def publish_skill_to_team(
-    session: AsyncSession, local: LocalSettingsPublic, name: str, team_id: uuid.UUID
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    name: str,
+    team_id: uuid.UUID,
+    user: UserTable,
 ) -> TeamPublishResult:
     """Publish private skill `name` into `team_id`; imported beside it when it is bundled, or a project of another team here uses it."""
-    return await _publish_one(session, local, SKILL, name, team_id)
+    return await _publish_one(session, local, SKILL, name, team_id, user)
 
 
 @remembers_teams
 async def publish_knowledge_base_to_team(
-    session: AsyncSession, local: LocalSettingsPublic, slug: str, team_id: uuid.UUID
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    slug: str,
+    team_id: uuid.UUID,
+    user: UserTable,
 ) -> TeamPublishResult:
     """Publish private knowledge base `slug` into `team_id`; imported beside it when a project of another team here uses it."""
-    return await _publish_one(session, local, KNOWLEDGE_BASE, slug, team_id)
+    return await _publish_one(session, local, KNOWLEDGE_BASE, slug, team_id, user)
 
 
 @remembers_teams
 async def publish_project_to_team(
-    session: AsyncSession, local: LocalSettingsPublic, name: str, team_id: uuid.UUID
+    session: AsyncSession,
+    local: LocalSettingsPublic,
+    name: str,
+    team_id: uuid.UUID,
+    user: UserTable,
 ) -> TeamPublishResult:
     """
     Publish private project `name` and everything it uses into `team_id`, the
@@ -398,7 +428,7 @@ async def publish_project_to_team(
     from .knowledge_base_collaboration import require_idle
     from .project_collaboration import publish_project
 
-    project = await get_project_by_name(session, name)
+    project = await get_project_by_name(session, name, user)
     url = required_url(local)
     # Read now: every publish below commits, expiring the row.
     project_id = project.id
@@ -412,7 +442,7 @@ async def publish_project_to_team(
     for kind in (SKILL, KNOWLEDGE_BASE):
         for key in dict.fromkeys(kind.uses(project)):
             try:
-                row = await kind.get(session, key)
+                row = await kind.get(session, key, user)
             except HTTPException:
                 raise HTTPException(
                     status_code=400,
@@ -442,10 +472,12 @@ async def publish_project_to_team(
     try:
         for kind, key in plan:
             kept_for = await _kept_for(
-                session, kind, key, url, team_id, besides={project_id}
+                session, kind, key, url, team_id, user, besides={project_id}
             )
-            was = _link(await kind.get(session, key))
-            result = await _place(session, local, kind, key, team_id, kept_for=kept_for)
+            was = _link(await kind.get(session, key, user))
+            result = await _place(
+                session, local, kind, key, team_id, user, kept_for=kept_for
+            )
             published.append(result)
             if result.how == "imported":
                 imported.append((kind, result.local_name))
@@ -453,14 +485,14 @@ async def publish_project_to_team(
                 moved.append((kind, key, was))
     except BaseException:
         for kind, key, was in moved:
-            row = await kind.get(session, key)
+            row = await kind.get(session, key, user)
             _restore_link(row, was)
             session.add(row)
         await session.commit()
         # Nothing uses them yet, and a retry would import them again.
         for kind, local_name in imported:
             try:
-                await kind.delete(session, local_name)
+                await kind.delete(session, local_name, user)
             except Exception:  # noqa: BLE001 - the publish's own error is the one to raise
                 logger.warning(
                     "Could not remove %s %s, imported for a publish that failed",
@@ -471,7 +503,7 @@ async def publish_project_to_team(
         raise
 
     renamed = {(c.kind, c.name): c.local_name for c in published}
-    project = await get_project_by_name(session, name)
+    project = await get_project_by_name(session, name, user)
     project.skills = [renamed.get(("skill", s), s) for s in project.skills]
     project.knowledge_bases = [
         renamed.get(("knowledge-base", k), k) for k in project.knowledge_bases
@@ -485,7 +517,7 @@ async def publish_project_to_team(
     session.add(project)
     invalidate_agents(session, project_id=project.id)
     await session.commit()
-    done = await publish_project(session, local, name, as_new=True)
+    done = await publish_project(session, local, name, as_new=True, user=user)
     published.append(
         PublishedResource(kind="project", name=name, local_name=name, how="published")
     )

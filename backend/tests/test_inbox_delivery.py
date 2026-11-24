@@ -30,6 +30,7 @@ from harness import (
     scripted_model,
     seed_project,
 )
+from harness.users import LOCAL
 from vista_backend.agents.agents import ProjectAgent, ProjectAgentResultEvent
 from vista_backend.services import chat_session as chat_session_service
 from vista_backend.services import inbox
@@ -46,7 +47,9 @@ def no_listeners(monkeypatch):
 @pytest.fixture
 async def chat_id(session) -> uuid.UUID:
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     chat_session_id = row.id
     await session.commit()
     return chat_session_id

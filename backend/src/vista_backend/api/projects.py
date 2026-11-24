@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..services.current_user import CurrentUser
 from ..agents.forum.project_forum import ForumSetupError, ensure_forum
 from ..db.db import SessionDep
 from ..db.schemas import ProjectCreate, ProjectPublic, ProjectTable
@@ -19,14 +20,16 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 @router.get("")
-async def list_projects(session: SessionDep) -> list[ProjectPublic]:
-    projects = await project_service.list_projects(session)
+async def list_projects(session: SessionDep, user: CurrentUser) -> list[ProjectPublic]:
+    projects = await project_service.list_projects(session, user)
     return [ProjectPublic.model_validate(p) for p in projects]
 
 
 @router.get("/{project_name}")
-async def get_project(project_name: str, session: SessionDep) -> ProjectPublic:
-    project = await project_service.get_project_by_name(session, project_name)
+async def get_project(
+    project_name: str, session: SessionDep, user: CurrentUser
+) -> ProjectPublic:
+    project = await project_service.get_project_by_name(session, project_name, user)
     return ProjectPublic.model_validate(project)
 
 
@@ -61,7 +64,10 @@ class ProjectCreated(ProjectPublic):
 
 @router.post("", status_code=201)
 async def create_project(
-    payload: ProjectCreate, session: SessionDep, hosted_forum_wanted: bool = True
+    payload: ProjectCreate,
+    session: SessionDep,
+    user: CurrentUser,
+    hosted_forum_wanted: bool = True,
 ) -> ProjectCreated:
     """
     Create a project. With no forum URL in the payload, and unless
@@ -70,7 +76,7 @@ async def create_project(
     never fails the creation: `forum_notice` says why there is none.
     """
     wants_hosted = hosted_forum_wanted and not (payload.forum_repo_url or "").strip()
-    project = await project_service.create_project(session, payload)
+    project = await project_service.create_project(session, payload, user)
     notice = None
     if wants_hosted:
         notice = await hosted_forum.give_new_project_a_forum(session, project)
@@ -83,21 +89,23 @@ async def create_project(
 
 @router.put("/{project_name}")
 async def update_project(
-    project_name: str, updates: ProjectCreate, session: SessionDep
+    project_name: str, updates: ProjectCreate, session: SessionDep, user: CurrentUser
 ) -> ProjectPublic:
-    project = await project_service.update_project(session, project_name, updates)
+    project = await project_service.update_project(session, project_name, updates, user)
     await _open_the_lab(session, project)
     return ProjectPublic.model_validate(project)
 
 
 @router.post("/{project_name}/forum/host")
-async def host_forum(project_name: str, session: SessionDep) -> ProjectPublic:
+async def host_forum(
+    project_name: str, session: SessionDep, user: CurrentUser
+) -> ProjectPublic:
     """
     Move the project's forum onto the collaboration server: every thread of its
     current forum, with its history, then the project uses the hosted one. Any
     failure leaves it on the forum it had (400, with the reason).
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     return ProjectPublic.model_validate(
         await hosted_forum.move_to_hosted(session, project)
     )
@@ -105,11 +113,11 @@ async def host_forum(project_name: str, session: SessionDep) -> ProjectPublic:
 
 @router.delete("/{project_name}", status_code=204)
 async def delete_project(
-    project_name: str, session: SessionDep, local: LocalSettingsDep
+    project_name: str, session: SessionDep, local: LocalSettingsDep, user: CurrentUser
 ) -> None:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     forum_url = project.forum_repo_url
-    await project_service.delete_project(session, project_name)
+    await project_service.delete_project(session, project_name, user)
     await hosted_forum.delete_for_project(local, forum_url)
 
 
@@ -131,6 +139,7 @@ async def publish_project_to_team(
     body: TeamPublishRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> team_publish.TeamPublishResult:
     """
     Publish a private project, and every skill and knowledge base it uses,
@@ -140,7 +149,7 @@ async def publish_project_to_team(
     this project switched to that.
     """
     return await team_publish.publish_project_to_team(
-        session, local, project_name, body.team_id
+        session, local, project_name, body.team_id, user=user
     )
 
 
@@ -150,6 +159,7 @@ async def publish_project(
     body: ProjectPublishRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> project_collaboration.ProjectPublishResult:
     """
     Publish the project to the collaboration server, after the skills it loads
@@ -158,5 +168,10 @@ async def publish_project(
     (`remote_missing`), or a skill needs a choice first (`skill_conflict`).
     """
     return await project_collaboration.publish_project(
-        session, local, project_name, on_top_of=body.on_top_of, as_new=body.as_new
+        session,
+        local,
+        project_name,
+        on_top_of=body.on_top_of,
+        as_new=body.as_new,
+        user=user,
     )

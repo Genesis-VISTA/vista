@@ -32,7 +32,12 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.config import ForumSettings, settings
-from vista_backend.db.schemas import LocalSettingsTable, LocalSettingsUpdate
+from vista_backend.db.schemas import (
+    LOCAL_USER_ID,
+    LocalSettingsTable,
+    LocalSettingsUpdate,
+    UserTable,
+)
 from vista_backend.services import local_settings
 
 DISPLAY_NAME_HEADER = "X-Vista-Display-Name"
@@ -167,6 +172,8 @@ async def make_install(tmp_path: Path, name: str, server_url: str | None) -> Ins
     row = LocalSettingsTable()
     install_id = row.install_id  # before the commit expires the row
     session.add(row)
+    # Like `init_db`: the user `local`, whom desktop-shaped rows belong to.
+    session.add(UserTable(id=LOCAL_USER_ID, sub=None))
     await session.commit()
     install = Install(
         name=name,

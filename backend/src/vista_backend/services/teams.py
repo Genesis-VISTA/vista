@@ -32,7 +32,8 @@ from fastapi import HTTPException
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable
+from ..db.ownership import visible
+from ..db.schemas import KnowledgeBaseTable, ProjectTable, SkillTable, UserTable
 
 if TYPE_CHECKING:
     from .collaboration import CollaborationClient
@@ -211,6 +212,7 @@ async def check_references(
     team_id: uuid.UUID | None,
     skills: list[str],
     knowledge_bases: list[str],
+    user: UserTable,
 ) -> None:
     """
     Refuse a project of `team_id` (its team on the server in effect) that
@@ -222,7 +224,9 @@ async def check_references(
     if skills:
         rows = (
             await session.exec(
-                select(SkillTable).where(col(SkillTable.name).in_(skills))
+                visible(
+                    select(SkillTable).where(col(SkillTable.name).in_(skills)), user
+                )
             )
         ).all()
         foreign = sorted(
@@ -233,8 +237,11 @@ async def check_references(
     if knowledge_bases:
         rows = (
             await session.exec(
-                select(KnowledgeBaseTable).where(
-                    col(KnowledgeBaseTable.slug).in_(knowledge_bases)
+                visible(
+                    select(KnowledgeBaseTable).where(
+                        col(KnowledgeBaseTable.slug).in_(knowledge_bases)
+                    ),
+                    user,
                 )
             )
         ).all()

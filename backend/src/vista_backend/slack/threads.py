@@ -17,11 +17,13 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import (
+    LOCAL_USER_ID,
     ChatSessionCreate,
     ChatSessionTable,
     ProjectTable,
     SlackProjectAskTable,
     SlackThreadTable,
+    UserTable,
 )
 from ..services import chat_session as chat_session_service
 from ..services import project as project_service
@@ -53,6 +55,18 @@ class Conversation:
     is_new: bool
 
 
+async def local_owner(session: AsyncSession) -> UserTable:
+    """
+    Whose projects a Slack message reaches. Slack is the desktop's, so the
+    implicit user `local`.
+
+    TODO(multi-user-hosted, group 12): the user the Slack link belongs to.
+    """
+    row = await session.get(UserTable, LOCAL_USER_ID)
+    assert row is not None, "init_db makes the local user"
+    return row
+
+
 async def project_for(
     session: AsyncSession, project_id: uuid.UUID | None
 ) -> ProjectTable:
@@ -63,7 +77,7 @@ async def project_for(
         NoProject: they have none.
         ChooseProject: they have several and none of them is chosen.
     """
-    projects = await project_service.list_projects(session)
+    projects = await project_service.list_projects(session, await local_owner(session))
     if not projects:
         raise NoProject(
             "You don't have a VISTA project yet. Create one in the desktop app first."
@@ -134,6 +148,7 @@ async def conversation_for(
         project_id=project.id,
         payload=ChatSessionCreate(title=_title(message.prompt)),
         origin="slack",
+        user=await local_owner(session),
     )
     chat_id = chat.id
     session.add(

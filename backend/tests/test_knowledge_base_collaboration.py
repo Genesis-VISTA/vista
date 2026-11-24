@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from harness.users import LOCAL
 from vista_backend.services.collaboration import PUBLIC_TEAM_ID
 from sqlmodel import select
 
@@ -734,7 +735,7 @@ async def test_two_imports_of_one_knowledge_base_do_not_interleave(
 
     async def one():
         async with AsyncSession(engine) as s:
-            return await import_knowledge_base(s, local_row, item_id)
+            return await import_knowledge_base(s, local_row, item_id, user=LOCAL)
 
     results = await asyncio.gather(one(), one(), return_exceptions=True)
     statuses = sorted(

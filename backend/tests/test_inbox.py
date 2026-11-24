@@ -14,6 +14,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import say, seed_project
 from test_chat_run import Env, env  # noqa: F401  (the registry fixture)
+from harness.users import LOCAL
 from vista_backend.db.schemas import ChatSessionTable
 from vista_backend.services import chat_run
 from vista_backend.services import chat_session as chat_session_service
@@ -35,7 +36,9 @@ def quiet_inbox(monkeypatch):
 
 async def _chat(session) -> uuid.UUID:
     project = await seed_project(session)
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     row_id = row.id
     await session.commit()
     return row_id

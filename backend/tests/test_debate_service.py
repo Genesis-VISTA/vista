@@ -11,6 +11,7 @@ import uuid
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.db.schemas import ProjectTable
 from vista_backend.services import debate as debate_service
 from vista_backend.services.forum_git import Participant, Post, Thread, ThreadHeader
@@ -54,7 +55,7 @@ def _post(pid: str, kind: str, body: str, sender: str, role: str, **extra) -> di
 
 
 async def _make_run(session, **overrides):
-    project = ProjectTable(name=f"debate-{overrides.pop('slug', 'p')}")
+    project = ProjectTable(user_id="local", name=f"debate-{overrides.pop('slug', 'p')}")
     session.add(project)
     await session.flush()
     return await debate_service.create_debate(
@@ -93,16 +94,16 @@ async def test_lookup_by_thread_id(session):
 @pytest.mark.anyio
 async def test_project_scoping_is_the_access_boundary(session):
     run = await _make_run(session)
-    other = ProjectTable(name="someone-elses")
+    other = ProjectTable(user_id="local", name="someone-elses")
     session.add(other)
     await session.flush()
 
     with pytest.raises(ValueError):
         await debate_service.require_debate_in_project(
-            session, run_id=run.id, project_id=other.id
+            session, run_id=run.id, project_id=other.id, user=LOCAL
         )
     assert await debate_service.require_debate_in_project(
-        session, run_id=run.id, project_id=run.project_id
+        session, run_id=run.id, project_id=run.project_id, user=LOCAL
     )
 
 
@@ -397,7 +398,7 @@ def forum_client(client):
 
 
 async def _live_run(session, client, *, topic="does the knee move?"):
-    project = ProjectTable(name=f"refresh-{uuid.uuid4().hex[:8]}")
+    project = ProjectTable(user_id="local", name=f"refresh-{uuid.uuid4().hex[:8]}")
     session.add(project)
     await session.flush()
     thread_id = await client.create_thread(topic, body="Debate it.")

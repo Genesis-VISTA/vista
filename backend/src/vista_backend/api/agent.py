@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 from sse_starlette.sse import EventSourceResponse
 from sse_starlette.event import ServerSentEvent
+from ..services.current_user import CurrentUser
 from ..agents.agents import ProjectAgentResult
 from ..db.db import SessionDep
 from ..db.schemas import InboxItemPublic, ProjectPublic
@@ -53,6 +54,7 @@ async def agent_run(
     body: AgentRunRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> ProjectAgentResult | Response:
     """
     Session-backed chat completion that runs the full agent loop for one turn.
@@ -85,7 +87,7 @@ async def agent_run(
     The client must POST the response to /projects/{project_name}/elicitation. For URL mode, "accept" means the
     user consented to navigate to the URL; the out-of-band interaction completes separately.
     """
-    project_row = await project_service.get_project_by_name(session, project_name)
+    project_row = await project_service.get_project_by_name(session, project_name, user)
     project = ProjectPublic.model_validate(project_row)
     # One lookup gives the chat's model and its pooled agent's key; an id that
     # is not a chat in this project is a 404 before anything else.
@@ -94,6 +96,7 @@ async def agent_run(
             session,
             project_id=project.id,
             chat_session_id=body.chat_session_id,
+            user=user,
         )
         if body.chat_session_id
         else None
@@ -115,6 +118,7 @@ async def agent_run(
         project_id=project.id,
         fallback_history=body.message_history,
         chat_session_id=body.chat_session_id,
+        user=user,
     )
 
     if body.stream and body.chat_session_id is None:

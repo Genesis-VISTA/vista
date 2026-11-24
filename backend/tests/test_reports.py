@@ -16,6 +16,7 @@ from harness import FakeAgentPool, api_client, seed_project
 from pydantic_ai.messages import ModelRequest, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from harness.users import LOCAL
 from vista_backend.agents import report_authoring
 from vista_backend.services import files as files_service
 from vista_backend.services import reports as reports_service
@@ -276,7 +277,7 @@ async def _chat(session, project, model=None):
     from vista_backend.services import chat_session as chat_session_service
 
     chat = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     if model is not None:
         await chat_session_service.update_chat_session(
@@ -284,6 +285,7 @@ async def _chat(session, project, model=None):
             project_id=project.id,
             chat_session_id=chat.id,
             updates=ChatSessionUpdate(inference_model=model),
+            user=LOCAL,
         )
     return chat
 

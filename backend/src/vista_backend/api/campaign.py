@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..db.db import SessionDep
 from ..db.schemas import (
+    UserTable,
     CampaignCreate,
     CampaignRunPublic,
     CampaignStatePublic,
@@ -21,6 +22,7 @@ from ..db.schemas import (
 )
 from ..services import campaign as campaign_service
 from ..services import project as project_service
+from ..services.current_user import CurrentUser
 
 
 router = APIRouter(prefix="/projects", tags=["campaigns"])
@@ -28,9 +30,9 @@ router = APIRouter(prefix="/projects", tags=["campaigns"])
 
 @router.post("/{project_name}/campaigns")
 async def create_campaign(
-    project_name: str, body: CampaignCreate, session: SessionDep
+    project_name: str, body: CampaignCreate, session: SessionDep, user: CurrentUser
 ) -> CampaignRunPublic:
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     run = await campaign_service.create_campaign(
         session,
         project_id=project.id,
@@ -46,21 +48,22 @@ async def create_campaign(
 async def list_campaigns(
     project_name: str,
     session: SessionDep,
+    user: CurrentUser,
     chat_session_id: uuid.UUID | None = None,
 ) -> list[CampaignRunPublic]:
-    project = await project_service.get_project_by_name(session, project_name)
-    runs = await campaign_service.list_campaigns(
-        session, project_id=project.id, session_id=chat_session_id
+    project = await project_service.get_project_by_name(session, project_name, user)
+    runs = await campaign_service.list_campaigns_for(
+        session, user, project_id=project.id, session_id=chat_session_id
     )
     return [CampaignRunPublic.model_validate(r) for r in runs]
 
 
 @router.get("/{project_name}/campaigns/{run_id}")
 async def get_campaign(
-    project_name: str, run_id: uuid.UUID, session: SessionDep
+    project_name: str, run_id: uuid.UUID, session: SessionDep, user: CurrentUser
 ) -> CampaignStatePublic:
-    project = await project_service.get_project_by_name(session, project_name)
-    run = await _require_in_project(session, run_id, project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    run = await _require_in_project(session, run_id, project.id, user)
     steps = await campaign_service.list_steps(session, run_id=run.id)
     jobs = await campaign_service.list_jobs_for_run(session, run_id=run.id)
     return CampaignStatePublic(
@@ -76,17 +79,20 @@ async def patch_campaign(
     run_id: uuid.UUID,
     body: CampaignUpdate,
     session: SessionDep,
+    user: CurrentUser,
 ) -> CampaignRunPublic:
-    project = await project_service.get_project_by_name(session, project_name)
-    await _require_in_project(session, run_id, project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    await _require_in_project(session, run_id, project.id, user)
     run = await campaign_service.patch_campaign(session, run_id=run_id, updates=body)
     return CampaignRunPublic.model_validate(run)
 
 
-async def _require_in_project(session, run_id: uuid.UUID, project_id: uuid.UUID):
+async def _require_in_project(
+    session, run_id: uuid.UUID, project_id: uuid.UUID, user: UserTable
+):
     try:
         return await campaign_service.require_campaign_in_project(
-            session, run_id=run_id, project_id=project_id
+            session, run_id=run_id, project_id=project_id, user=user
         )
     except ValueError:
         raise HTTPException(status_code=404, detail="Campaign not found")

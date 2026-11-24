@@ -5,7 +5,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import ProjectCreate, ProjectTable
+from ..db.ownership import owned, uid
+from ..db.schemas import ProjectCreate, ProjectTable, UserTable
 from .project_agent import invalidate_agents
 from .teams import check_references, current_url, set_team, team_for_new, team_of
 
@@ -20,32 +21,47 @@ def project_content(project: ProjectTable) -> dict[str, Any]:
     )
 
 
-async def list_projects(session: AsyncSession) -> list[ProjectTable]:
-    return list((await session.exec(select(ProjectTable))).all())
+async def list_projects(session: AsyncSession, user: UserTable) -> list[ProjectTable]:
+    return list((await session.exec(owned(select(ProjectTable), user))).all())
 
 
 async def get_project_by_name_optional(
-    session: AsyncSession, name: str
+    session: AsyncSession, name: str, user: UserTable
 ) -> ProjectTable | None:
+    """`user`'s project called `name`: the one name lookup every name-keyed route goes through."""
     return (
-        await session.exec(select(ProjectTable).where(ProjectTable.name == name))
+        await session.exec(
+            owned(select(ProjectTable).where(ProjectTable.name == name), user)
+        )
     ).first()
 
 
-async def get_project_by_name(session: AsyncSession, name: str) -> ProjectTable:
-    project = await get_project_by_name_optional(session, name)
+async def get_project_by_name(
+    session: AsyncSession, name: str, user: UserTable
+) -> ProjectTable:
+    project = await get_project_by_name_optional(session, name, user)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
 
-async def create_project(session: AsyncSession, payload: ProjectCreate) -> ProjectTable:
+def _name_taken(name: str) -> HTTPException:
+    return HTTPException(
+        status_code=409, detail=f"A project named {name!r} already exists."
+    )
+
+
+async def create_project(
+    session: AsyncSession, payload: ProjectCreate, user: UserTable
+) -> ProjectTable:
     # `modified` by default: never published, so all of it is local.
-    new = ProjectTable.model_validate(payload)
+    new = ProjectTable.model_validate(payload, update={"user_id": uid(user)})
+    if await get_project_by_name_optional(session, payload.name, user) is not None:
+        raise _name_taken(payload.name)
     team, url = await team_for_new(session)
     set_team(new, team, url)
     await check_references(
-        session, payload.name, team, payload.skills, payload.knowledge_bases
+        session, payload.name, team, payload.skills, payload.knowledge_bases, user
     )
     session.add(new)
     try:
@@ -60,9 +76,13 @@ async def create_project(session: AsyncSession, payload: ProjectCreate) -> Proje
 
 
 async def update_project(
-    session: AsyncSession, name: str, updates: ProjectCreate
+    session: AsyncSession, name: str, updates: ProjectCreate, user: UserTable
 ) -> ProjectTable:
-    project = await get_project_by_name(session, name)
+    project = await get_project_by_name(session, name, user)
+    if updates.name != name and (
+        await get_project_by_name_optional(session, updates.name, user) is not None
+    ):
+        raise _name_taken(updates.name)
     # Only what it gains: what it used already was checked when it was added.
     await check_references(
         session,
@@ -70,6 +90,7 @@ async def update_project(
         team_of(project, await current_url(session)),
         [s for s in updates.skills if s not in project.skills],
         [k for k in updates.knowledge_bases if k not in project.knowledge_bases],
+        user,
     )
     before = project_content(project)
     for key, value in updates.model_dump().items():
@@ -90,8 +111,8 @@ async def update_project(
     return project
 
 
-async def delete_project(session: AsyncSession, name: str) -> None:
-    project = await get_project_by_name(session, name)
+async def delete_project(session: AsyncSession, name: str, user: UserTable) -> None:
+    project = await get_project_by_name(session, name, user)
     project_id = project.id
     await session.delete(project)
     invalidate_agents(session, project_id=project_id)

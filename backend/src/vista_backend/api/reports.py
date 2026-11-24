@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
 from ..agents.report_authoring import ConversationReport
+from ..services.current_user import CurrentUser
 from ..db.db import SessionDep
 from ..services import reports as reports_service
 from ..services.local_settings import LocalSettingsDep
@@ -39,6 +40,7 @@ async def generate_report(
     body: ReportGenerateRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> ConversationReport:
     """
     Draft a report from a chat conversation. Does NOT persist anything — the
@@ -50,17 +52,18 @@ async def generate_report(
         body.message_history,
         body.hint,
         local,
+        user,
         body.chat_session_id,
     )
 
 
 @router.post("/projects/{project_name}/reports", status_code=201)
 async def save_report(
-    project_name: str, payload: ReportSave, session: SessionDep
+    project_name: str, payload: ReportSave, session: SessionDep, user: CurrentUser
 ) -> ReportSaved:
     """
     Save a report to the project's uploads under `reports/`, replacing the
     report previously saved from the same chat.
     """
-    path = await reports_service.save_report(session, project_name, payload)
+    path = await reports_service.save_report(session, project_name, payload, user=user)
     return ReportSaved(path=path)

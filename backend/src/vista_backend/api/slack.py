@@ -12,6 +12,7 @@ import uuid
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..services.current_user import CurrentUser
 from ..db.db import SessionDep
 from ..db.schemas import SlackLinkTable
 from ..services import project as project_service
@@ -202,12 +203,12 @@ async def create_slack_link(
 
 @router.put("/links/{link_id}")
 async def update_slack_link(
-    link_id: uuid.UUID, body: SlackLinkUpdate, session: SessionDep
+    link_id: uuid.UUID, body: SlackLinkUpdate, session: SessionDep, user: CurrentUser
 ) -> SlackLinkView:
     link = await _link(session, link_id)
     if "project_id" in body.model_fields_set:
         if body.project_id is not None:
-            mine = {p.id for p in await project_service.list_projects(session)}
+            mine = {p.id for p in await project_service.list_projects(session, user)}
             if body.project_id not in mine:
                 raise HTTPException(status_code=400, detail="No such project.")
         link.project_id = body.project_id

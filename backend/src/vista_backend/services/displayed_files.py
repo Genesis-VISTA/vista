@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import ChatSessionTable, DisplayedFileTable
+from ..db.schemas import ChatSessionTable, DisplayedFileTable, UserTable
 from ..utils.misc import path_is_under
 from . import chat_session as chat_session_service
 from . import project as project_service
@@ -104,12 +104,15 @@ class ShownIn(BaseModel):
 
 
 async def list_displayed_files(
-    session: AsyncSession, project_name: str, chat_session_id: uuid.UUID
+    session: AsyncSession,
+    project_name: str,
+    chat_session_id: uuid.UUID,
+    user: UserTable,
 ) -> list[DisplayedFileInfo]:
     """A chat's records, newest first, each with the status of its file now."""
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     chat = await chat_session_service.get_chat_session(
-        session, project_id=project.id, chat_session_id=chat_session_id
+        session, project_id=project.id, chat_session_id=chat_session_id, user=user
     )
     result = await session.exec(
         select(DisplayedFileTable)
@@ -120,7 +123,7 @@ async def list_displayed_files(
     if not rows:
         return []
 
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     async with project_agent_pool.get(agent_key) as agent:
         dirs: dict[str, Path] = {
             "uploads": agent.uploads_dir,

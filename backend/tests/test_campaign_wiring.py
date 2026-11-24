@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.agents.campaign.manifest import CampaignManifest
 from vista_backend.agents.campaign.mcp_invoke import project_paths_for
 from vista_backend.agents.campaign.planner import CampaignPlanner, build_subagents
@@ -48,11 +49,11 @@ class _FakeHpc:
 
 
 async def _make_run_step_job(session, *, planner_skill="mock-planner"):
-    project = ProjectTable(name=f"wiring-{planner_skill}")
+    project = ProjectTable(user_id="local", name=f"wiring-{planner_skill}")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     run = await campaign_service.create_campaign(
         session,
@@ -240,7 +241,7 @@ async def test_build_collector_routes_to_run_planner(session):
     )
     planner = CampaignPlanner(manifest=manifest, subagents=subagents)
 
-    project = ProjectTable(name="wiring-collector")
+    project = ProjectTable(user_id="local", name="wiring-collector")
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(
@@ -272,14 +273,14 @@ async def test_two_sessions_in_one_project_share_the_project_volume(session):
     main keys the sandbox volume by project, not by chat session, so conversations in a
     project share it. session_id still drives orphan/resume decisions — just not the volume path.
     """
-    project = ProjectTable(name="multi-session-iso")
+    project = ProjectTable(user_id="local", name="multi-session-iso")
     session.add(project)
     await session.flush()
     chat_a = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     chat_b = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     assert chat_a.id != chat_b.id
 
@@ -390,11 +391,11 @@ async def test_collector_fetches_declared_files_and_parser_receives_them(session
 @pytest.mark.anyio
 async def test_collector_without_declared_files_fetches_nothing(session):
     """A role that declares no collect_files behaves exactly as before the change."""
-    project = ProjectTable(name="wiring-gamma")
+    project = ProjectTable(user_id="local", name="wiring-gamma")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     run = await campaign_service.create_campaign(
         session,

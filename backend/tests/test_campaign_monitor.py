@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.db.db import _retire_i2_choices
 from vista_backend.db.schemas import CampaignRunPublic, ProjectTable
 from vista_backend.services import campaign as campaign_service
@@ -20,11 +21,11 @@ from vista_backend.services.campaign_monitor import (
 
 
 async def _make_job(session, *, kind="neutronics", job_id="job-1", notified=False):
-    project = ProjectTable(name=f"monitor-{job_id}")
+    project = ProjectTable(user_id="local", name=f"monitor-{job_id}")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     run = await campaign_service.create_campaign(
         session,
@@ -364,7 +365,7 @@ async def test_a_debate_job_resolves_its_paths_without_a_chat_session(session):
     from vista_backend.agents.campaign.wiring import _job_context
     from vista_backend.agents.forum.simulation import DEBATE_DOMAIN
 
-    project = ProjectTable(name=f"debate-poll-{uuid.uuid4().hex[:8]}")
+    project = ProjectTable(user_id="local", name=f"debate-poll-{uuid.uuid4().hex[:8]}")
     session.add(project)
     await session.flush()
     run = await campaign_service.create_campaign(
@@ -447,6 +448,7 @@ async def test_a_run_is_rebuilt_on_the_model_it_launched_on(session, monkeypatch
         project_id=run.project_id,
         chat_session_id=run.session_id,
         updates=ChatSessionUpdate(inference_model="openai:c"),
+        user=LOCAL,
     )
 
     asked = await _planner_model(session, job, monkeypatch)

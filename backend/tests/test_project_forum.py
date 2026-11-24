@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.agents.forum import project_forum
 from vista_backend.agents.forum.project_forum import (
     ForumSetupError,
@@ -83,7 +84,7 @@ async def app_client(session):
 
 
 def _project(url: str | None = "https://example.invalid/forum.git", name="salt"):
-    return ProjectTable(name=name, forum_repo_url=url)
+    return ProjectTable(name=name, forum_repo_url=url, user_id="local")
 
 
 def _settings(**tokens) -> LocalSettingsTable:
@@ -398,13 +399,13 @@ def _forum_token(project, local=None) -> str | None:
     ],
 )
 def test_which_token_a_forum_pushes_with(forum_home, url, tokens, expected):
-    project = ProjectTable(name="t", forum_repo_url=url)
+    project = ProjectTable(user_id="local", name="t", forum_repo_url=url)
     assert _forum_token(project, _settings(**tokens)) == expected
 
 
 def test_without_settings_a_forum_config_carries_no_token(forum_home):
     """Only `lab_enabled` asks without the settings, and it never reaches the remote."""
-    project = ProjectTable(name="t", forum_repo_url=GITHUB_FORUM)
+    project = ProjectTable(user_id="local", name="t", forum_repo_url=GITHUB_FORUM)
     assert _forum_token(project) is None
 
 
@@ -806,7 +807,9 @@ async def _forum_of(install, project_name: str):
     """(the project's row, the forum client of this install on it); the install is active."""
     from vista_backend.services import local_settings, project as project_service
 
-    row = await project_service.get_project_by_name(install.session, project_name)
+    row = await project_service.get_project_by_name(
+        install.session, project_name, LOCAL
+    )
     return row, build_client_for(row, await local_settings.get(install.session))
 
 
@@ -851,7 +854,10 @@ async def test_two_installs_on_one_hosted_forum(
     # --- Bob imports it, and sees Alice's thread, by her verified name ------
     async with bob.active() as session:
         result = await project_collaboration.import_project(
-            session, await local_settings.get_public(session), uuid.UUID(item_id)
+            session,
+            await local_settings.get_public(session),
+            uuid.UUID(item_id),
+            user=LOCAL,
         )
         assert result.forum_error is None
         assert result.project.forum_repo_url == url, "the same forum"
@@ -968,7 +974,7 @@ async def test_moving_a_forge_forum_onto_the_server(
     refs_before = _forge_refs(forge)
     async with alice.active() as session:
         project = await project_service.create_project(
-            session, ProjectCreate(name="salt", forum_repo_url=str(forge))
+            session, ProjectCreate(name="salt", forum_repo_url=str(forge)), LOCAL
         )
         await session.commit()
         await session.refresh(project)
@@ -1014,7 +1020,7 @@ async def test_a_move_that_fails_leaves_the_project_on_its_forum(
     monkeypatch.setattr(ForumClient, "push_threads_for_import", refuse)
     async with alice.active() as session:
         project = await project_service.create_project(
-            session, ProjectCreate(name="salt", forum_repo_url=str(forge))
+            session, ProjectCreate(name="salt", forum_repo_url=str(forge)), LOCAL
         )
         await session.commit()
         await session.refresh(project)
@@ -1041,7 +1047,7 @@ async def test_a_project_with_no_forum_gets_an_empty_hosted_one(
     alice, _ = installs
     async with alice.active() as session:
         project = await project_service.create_project(
-            session, ProjectCreate(name="salt")
+            session, ProjectCreate(name="salt"), LOCAL
         )
         await session.commit()
         await session.refresh(project)
@@ -1071,7 +1077,10 @@ async def _alice_and_bob_on_a_published_forum(installs, loopback_server):
             item_id = published.json()["project"]["remote_id"]
     async with bob.active() as session:
         await project_collaboration.import_project(
-            session, await local_settings.get_public(session), uuid.UUID(item_id)
+            session,
+            await local_settings.get_public(session),
+            uuid.UUID(item_id),
+            user=LOCAL,
         )
         await session.commit()
         b_row, b_client = await _forum_of(bob, "salt")

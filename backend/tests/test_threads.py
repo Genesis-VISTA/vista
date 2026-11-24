@@ -66,7 +66,7 @@ def _thread(*posts: Post, lanes: dict[str, str] | None = None) -> Thread:
 
 
 async def _project(session) -> ProjectTable:
-    project = ProjectTable(name=f"threads-{uuid.uuid4().hex[:6]}")
+    project = ProjectTable(user_id="local", name=f"threads-{uuid.uuid4().hex[:6]}")
     session.add(project)
     await session.flush()
     return project

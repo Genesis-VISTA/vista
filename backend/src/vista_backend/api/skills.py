@@ -5,11 +5,12 @@ from fastapi import APIRouter, Form, UploadFile
 from pydantic import BaseModel, Field
 from pydantic_ai.messages import ModelMessage
 
+from ..services.current_user import CurrentUser
 from ..agents.skill_authoring import SkillDraft
 from ..agents.skills import Skill, skill_hpc_jobs
 from ..config import settings
 from ..db.db import SessionDep
-from ..db.schemas import ProjectTable, SkillPublic, SkillTable, SkillUpdate
+from ..db.schemas import ProjectTable, SkillPublic, SkillTable, SkillUpdate, UserTable
 from ..services import project as project_service
 from ..services import skill_collaboration
 from ..services import skills as skills_service
@@ -142,14 +143,16 @@ def list_item(skill: SkillTable) -> SkillListItem:
     )
 
 
-async def target_project(session: SessionDep, name: str | None) -> ProjectTable | None:
+async def target_project(
+    session: SessionDep, name: str | None, user: UserTable
+) -> ProjectTable | None:
     """
     The project a new skill is loaded into, checked before anything is written so
     a missing or forbidden project leaves no skill behind.
     """
     if name is None:
         return None
-    return await project_service.get_project_by_name(session, name)
+    return await project_service.get_project_by_name(session, name, user)
 
 
 def _detail(skill, body: str) -> SkillDetail:
@@ -159,31 +162,38 @@ def _detail(skill, body: str) -> SkillDetail:
 
 
 @router.get("/skills")
-async def list_skills(session: SessionDep) -> list[SkillListItem]:
+async def list_skills(session: SessionDep, user: CurrentUser) -> list[SkillListItem]:
     """List skill metadata from the DB (no SKILL.md reads), plus each skill's HPC jobs."""
-    rows = await skills_service.list_skills(session)
+    rows = await skills_service.list_skills(session, user)
     return [list_item(row) for row in rows]
 
 
 @router.get("/skills/{name}")
-async def get_skill(name: str, session: SessionDep) -> SkillDetail:
-    skill, body = await skills_service.get_skill_detail(session, name)
+async def get_skill(name: str, session: SessionDep, user: CurrentUser) -> SkillDetail:
+    skill, body = await skills_service.get_skill_detail(session, name, user)
     return _detail(skill, body)
 
 
 @router.post("/skills", status_code=201)
-async def create_skill(payload: SkillCreate, session: SessionDep) -> SkillDetail:
+async def create_skill(
+    payload: SkillCreate, session: SessionDep, user: CurrentUser
+) -> SkillDetail:
     """Create a new skill, loaded into `payload.project` if given."""
-    project = await target_project(session, payload.project)
-    skill = await skills_service.create_skill(session, spec=payload, project=project)
+    project = await target_project(session, payload.project, user=user)
+    skill = await skills_service.create_skill(
+        session, spec=payload, project=project, user=user
+    )
     # Read the body back from the written SKILL.md rather than echoing the raw request
-    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name, user)
     return _detail(skill, body_text)
 
 
 @router.post("/skills/generate")
 async def generate_skill(
-    body: SkillGenerateRequest, session: SessionDep, local: LocalSettingsDep
+    body: SkillGenerateRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation. Does NOT persist anything — the
@@ -195,45 +205,51 @@ async def generate_skill(
         local,
         session=session,
         chat_session_id=body.chat_session_id,
+        user=user,
     )
 
 
 @router.post("/skills/import", status_code=201)
-async def import_skill(body: SkillImportRequest, session: SessionDep) -> SkillDetail:
+async def import_skill(
+    body: SkillImportRequest, session: SessionDep, user: CurrentUser
+) -> SkillDetail:
     """
     Import the one skill a repository URL names, loaded into `body.project` if
     given. A repository with several skills is refused (400) with their names;
     scan it and import through `/skills/import/batch`. Private repositories need
     `body.token`, or the Settings token for github.com or gitlab.com.
     """
-    project = await target_project(session, body.project)
+    project = await target_project(session, body.project, user=user)
     skill = await skills_service.import_skill(
         session,
         body.url,
+        user,
         project,
         token=body.token,
         on_conflict=body.on_conflict,
         rename_to=body.rename_to,
     )
-    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name, user)
     return _detail(skill, body_text)
 
 
 @router.post("/skills/import/scan")
 async def scan_skill_repository(
-    body: SkillScanRequest, session: SessionDep
+    body: SkillScanRequest, session: SessionDep, user: CurrentUser
 ) -> skills_service.RepoScan:
     """
     List the skills in a repository, or in the folder of it the URL links to:
     name, description and what each reaches outside its folder, and whether its
     name is taken. Imports nothing.
     """
-    return await skills_service.scan_repository(session, body.url, token=body.token)
+    return await skills_service.scan_repository(
+        session, body.url, token=body.token, user=user
+    )
 
 
 @router.post("/skills/import/batch")
 async def import_skill_batch(
-    body: SkillBatchImportRequest, session: SessionDep
+    body: SkillBatchImportRequest, session: SessionDep, user: CurrentUser
 ) -> list[SkillImportResultOut]:
     """
     Import the chosen skills of a scanned repository, each with what to do if
@@ -241,11 +257,12 @@ async def import_skill_batch(
     rename). One result
     per skill, in order; a failure does not stop the rest.
     """
-    project = await target_project(session, body.project)
+    project = await target_project(session, body.project, user=user)
     results = await skills_service.import_repository_skills(
         session,
         body.url,
         body.skills,
+        user,
         project,
         token=body.token,
         commit=body.commit,
@@ -267,6 +284,7 @@ async def import_skill_upload(
     files: list[UploadFile],
     paths: Annotated[list[str], Form()],
     session: SessionDep,
+    user: CurrentUser,
     project: Annotated[str | None, Form()] = None,
 ) -> SkillDetail:
     """
@@ -276,21 +294,23 @@ async def import_skill_upload(
     the folder's root. An optional `project` field names a project to load the
     skill into.
     """
-    target = await target_project(session, project)
-    skill = await skills_service.import_skill_upload(session, files, paths, target)
-    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    target = await target_project(session, project, user=user)
+    skill = await skills_service.import_skill_upload(
+        session, files, paths, user, target
+    )
+    _, body_text = await skills_service.get_skill_detail(session, skill.name, user)
     return _detail(skill, body_text)
 
 
 @router.get("/projects/{project_name}/skills/from-output")
 async def list_output_skills(
-    project_name: str, session: SessionDep
+    project_name: str, session: SessionDep, user: CurrentUser
 ) -> list[skills_service.OutputSkill]:
     """
     The skills the agent wrote to the output folder in this project:
     top-level folders of `/mnt/data/output` that hold a SKILL.md.
     """
-    return await skills_service.list_output_skills(session, project_name)
+    return await skills_service.list_output_skills(session, project_name, user=user)
 
 
 @router.post("/projects/{project_name}/skills/from-output", status_code=201)
@@ -298,24 +318,27 @@ async def import_output_skill(
     project_name: str,
     body: SkillFromOutputRequest,
     session: SessionDep,
+    user: CurrentUser,
 ) -> SkillDetail:
     """
     Import a skill from the output folder in this project, with the
     same checks as a folder upload, and load it into the project.
     """
     skill = await skills_service.import_skill_from_output(
-        session, project_name, body.folder, replace=body.replace
+        session, project_name, body.folder, replace=body.replace, user=user
     )
-    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    _, body_text = await skills_service.get_skill_detail(session, skill.name, user)
     return _detail(skill, body_text)
 
 
 @router.patch("/skills/{name}")
 async def patch_skill(
-    name: str, payload: SkillPatch, session: SessionDep
+    name: str, payload: SkillPatch, session: SessionDep, user: CurrentUser
 ) -> SkillDetail:
-    skill = await skills_service.update_skill(session, name, payload, body=payload.body)
-    _, body_text = await skills_service.get_skill_detail(session, skill.name)
+    skill = await skills_service.update_skill(
+        session, name, payload, body=payload.body, user=user
+    )
+    _, body_text = await skills_service.get_skill_detail(session, skill.name, user)
     return _detail(skill, body_text)
 
 
@@ -325,6 +348,7 @@ async def publish_skill(
     body: SkillPublishRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> SkillListItem:
     """
     Publish the skill to the collaboration server: its next version there, or a
@@ -333,7 +357,7 @@ async def publish_skill(
     (`remote_missing`); 503 without a server that answers.
     """
     skill = await skill_collaboration.publish_skill(
-        session, local, name, on_top_of=body.on_top_of, as_new=body.as_new
+        session, local, name, on_top_of=body.on_top_of, as_new=body.as_new, user=user
     )
     return list_item(skill)
 
@@ -346,7 +370,11 @@ class TeamPublishRequest(BaseModel):
 
 @router.post("/skills/{name}/publish-to-team")
 async def publish_skill_to_team(
-    name: str, body: TeamPublishRequest, session: SessionDep, local: LocalSettingsDep
+    name: str,
+    body: TeamPublishRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> team_publish.TeamPublishResult:
     """
     Publish a private skill into a team on the collaboration server, its first
@@ -354,10 +382,12 @@ async def publish_skill_to_team(
     sends its new versions to. Used by a project here, it stays private and
     the team's skill is imported beside it under a free name.
     """
-    return await team_publish.publish_skill_to_team(session, local, name, body.team_id)
+    return await team_publish.publish_skill_to_team(
+        session, local, name, body.team_id, user=user
+    )
 
 
 @router.delete("/skills/{name}", status_code=204)
-async def delete_skill(name: str, session: SessionDep) -> None:
+async def delete_skill(name: str, session: SessionDep, user: CurrentUser) -> None:
     """Delete a skill"""
-    await skills_service.delete_skill(session, name)
+    await skills_service.delete_skill(session, name, user)

@@ -667,7 +667,9 @@ async def test_preview_reads_the_mcp_preview(db, session, monkeypatch):
     project_id = p.id
     from vista_backend.db.schemas import ChatSessionTable
 
-    chat = ChatSessionTable(project_id=project_id, message_history=[], messages=[])
+    chat = ChatSessionTable(
+        user_id="local", project_id=project_id, message_history=[], messages=[]
+    )
     chat_id = chat.id
     session.add(chat)
     await session.commit()

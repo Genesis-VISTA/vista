@@ -10,7 +10,7 @@ from pathlib import Path
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 
-from vista_backend.db.schemas import KnowledgeBaseTable
+from vista_backend.db.schemas import LOCAL_USER_ID, KnowledgeBaseTable
 from vista_backend.services.collaboration import PUBLIC_TEAM_ID, CollaborationClient
 from vista_backend.services.knowledge_base_collaboration import (
     KB_KIND,
@@ -87,6 +87,7 @@ def write_pdf(path: Path, body: bytes = b"%PDF-1.4 test") -> None:
 def kb_row(kb_dir: Path, slug: str, **fields) -> KnowledgeBaseTable:
     """A knowledge base row on `kb_dir/{pdfs,rag_db}`, indexed and never published."""
     return KnowledgeBaseTable(
+        user_id=fields.pop("user_id", LOCAL_USER_ID),
         slug=slug,
         name=fields.pop("name", f"The {slug} papers"),
         pdfs_dir=str(kb_dir / "pdfs"),

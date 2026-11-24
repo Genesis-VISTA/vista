@@ -49,7 +49,9 @@ def answers(engine, monkeypatch):
 
 async def _chat(session) -> uuid.UUID:
     p = await project(session)
-    row = ChatSessionTable(project_id=p.id, message_history=[], messages=[])
+    row = ChatSessionTable(
+        user_id="local", project_id=p.id, message_history=[], messages=[]
+    )
     session.add(row)
     await session.commit()
     await session.refresh(row)

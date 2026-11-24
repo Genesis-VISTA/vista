@@ -37,6 +37,7 @@ def db(engine, monkeypatch):
 async def _chat(session) -> uuid.UUID:
     p = await project(session)
     row = ChatSessionTable(
+        user_id="local",
         project_id=p.id,
         message_history=[],
         messages=[],

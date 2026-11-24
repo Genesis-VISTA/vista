@@ -15,6 +15,7 @@ from typing import Any
 from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..db.ownership import get_owned, inherited_owner, owned
 from ..db.schemas import (
     CampaignRunTable,
     CampaignStatus,
@@ -23,6 +24,8 @@ from ..db.schemas import (
     CampaignUpdate,
     HpcJobTable,
     InferenceProvider,
+    ProjectTable,
+    UserTable,
 )
 from ..utils.misc import now_iso
 
@@ -74,6 +77,7 @@ async def create_campaign(
     """
     now = now_iso()
     run = CampaignRunTable(
+        user_id=await inherited_owner(session, ProjectTable, project_id),
         project_id=project_id,
         session_id=session_id,
         domain=domain,
@@ -113,10 +117,14 @@ async def require_campaign(
 
 
 async def require_campaign_in_project(
-    session: AsyncSession, *, run_id: uuid.UUID, project_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    run_id: uuid.UUID,
+    project_id: uuid.UUID,
+    user: UserTable,
 ) -> CampaignRunTable:
-    """Load a run and confirm it belongs to `project_id` (the API's access boundary)."""
-    run = await get_campaign(session, run_id)
+    """Load `user`'s run and confirm it belongs to `project_id` (the API's access boundary)."""
+    run = await get_owned(session, CampaignRunTable, run_id, user)
     if run is None or run.project_id != project_id:
         raise ValueError(f"Campaign {run_id} not found in project {project_id}")
     return run
@@ -152,6 +160,22 @@ async def list_campaigns(
         stmt = stmt.where(CampaignRunTable.session_id == session_id)
     if statuses is not None:
         stmt = stmt.where(col(CampaignRunTable.status).in_(statuses))
+    return list((await session.exec(stmt)).all())
+
+
+async def list_campaigns_for(
+    session: AsyncSession,
+    user: UserTable,
+    *,
+    project_id: uuid.UUID | None = None,
+    session_id: uuid.UUID | None = None,
+) -> list[CampaignRunTable]:
+    """`user`'s runs, optionally of one project or one chat; what a route lists."""
+    stmt = owned(select(CampaignRunTable), user)
+    if project_id is not None:
+        stmt = stmt.where(CampaignRunTable.project_id == project_id)
+    if session_id is not None:
+        stmt = stmt.where(CampaignRunTable.session_id == session_id)
     return list((await session.exec(stmt)).all())
 
 
@@ -305,7 +329,10 @@ async def record_job(
     state: str = "submitted",
 ) -> HpcJobTable:
     """Record a submitted HPC job against the step that launched it."""
+    step = await session.get(CampaignStepTable, step_id)
+    owner = await session.get(CampaignRunTable, step.run_id) if step else None
     job = HpcJobTable(
+        user_id=owner.user_id if owner else None,
         job_id=job_id,
         step_id=step_id,
         cluster=cluster,

@@ -17,6 +17,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from .schema_check import schema_problems
+from .schemas import LOCAL_USER_ID
 from .seed import (
     AI_SAFETY_KB_ID,
     AI_SAFETY_PROJECT_ID,
@@ -176,6 +177,44 @@ def _retire_i2_choices(conn: Connection) -> None:
         ).rowcount
         if moved:
             log.info("Moved %d %s row(s) off the retired i2 provider", moved, name)
+
+
+def _backfill_owners(conn: Connection) -> None:
+    """
+    Give everything made before multi-user to the implicit user `local`.
+
+    Fills `user_id` where it is NULL, on every start: cheap, and a no-op once
+    nothing is NULL. Rows that belong to nobody stay NULL, readable by all and
+    writable by none: the skills VISTA bundles and the OLCF docs corpus. Child
+    rows have no owner of their own; the HPC job and background task rows,
+    which the app reaches without their parent, are filled the same way.
+    """
+    log = logging.getLogger(__name__)
+    for name in OWNED_TABLES:
+        table = SQLModel.metadata.tables[name]
+        stmt = update(table).where(table.c.user_id.is_(None))
+        if name == "skill":
+            stmt = stmt.where(table.c.bundled.is_(False))
+        elif name == "knowledge_base":
+            stmt = stmt.where(table.c.id != OLCF_DOCS_KB_ID)
+        moved = conn.execute(stmt.values(user_id=LOCAL_USER_ID)).rowcount
+        if moved:
+            log.info("Gave %d %s row(s) to the local user", moved, name)
+
+
+OWNED_TABLES = (
+    "project",
+    "chat_session",
+    "campaign_run",
+    "hpc_job",
+    "debate_run",
+    "background_task",
+    "skill",
+    "knowledge_base",
+)
+"""
+The tables with a `user_id`. `slack_link` joins them in group 12.
+"""
 
 
 DATABASE_INCOMPATIBLE = "database-incompatible"
@@ -384,6 +423,9 @@ async def init_db() -> None:
     await sync_default_projects(engine)
     # seed_db is first-run only; this picks up skills bundled since then.
     await sync_bundled_skills(engine)
+    # Last, so what the seeders just added to a desktop install is `local`'s too.
+    async with engine.begin() as conn:
+        await conn.run_sync(_backfill_owners)
 
 
 EngineDep = A[AsyncEngine, Depends(get_engine)]

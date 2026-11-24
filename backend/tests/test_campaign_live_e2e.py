@@ -29,6 +29,7 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from harness.users import LOCAL
 from vista_backend.agents.campaign.agent_tools import (
     CampaignDriverDeps,
     register_campaign_tools,
@@ -148,11 +149,11 @@ async def test_live_path_dispatch_then_monitor_resume(session, tmp_path, monkeyp
     monkeypatch.setattr(settings, "data_dir", tmp_path)
 
     user_email = await _set_email(session)
-    project = ProjectTable(name="live-e2e")
+    project = ProjectTable(user_id="local", name="live-e2e")
     session.add(project)
     await session.flush()
     chat = await chat_session_service.get_or_create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
 
     # Materialize the planner skill's campaign.yaml in the session's volume skills dir.

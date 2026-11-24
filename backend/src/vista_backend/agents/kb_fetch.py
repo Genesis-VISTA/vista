@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic_ai.exceptions import ModelRetry
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..db.schemas import UserTable
 from ..services.knowledge_base import get_kb_optional
 
 
@@ -40,6 +41,7 @@ async def copy_kb_file(
     kb_slug: str,
     filename: str,
     work_dir: Path,
+    user: UserTable,
 ) -> tuple[Path, int]:
     """
     Copy `filename` from knowledge base `kb_slug` to `work_dir/kb/<slug>/<filename>`.
@@ -54,7 +56,7 @@ async def copy_kb_file(
             else "no knowledge bases are attached to this project"
         )
         raise ModelRetry(f"Knowledge base {kb_slug!r} is not attached; {have}.")
-    kb = await get_kb_optional(session, kb_slug)
+    kb = await get_kb_optional(session, kb_slug, user)
     if kb is None:
         raise ModelRetry(f"Knowledge base {kb_slug!r} no longer exists.")
 

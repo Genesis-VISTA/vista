@@ -709,7 +709,7 @@ async def _write_row(
     quiet: bool | None = None,
 ) -> None:
     async with session_factory() as db:
-        row = await chat_session_service.get_chat_session_optional(
+        row = await chat_session_service.get_run_chat_session(
             db,
             project_id=run.project_id,
             chat_session_id=run.chat_session_id,

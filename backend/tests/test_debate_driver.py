@@ -92,7 +92,9 @@ def scripted(*payloads: dict, capture: list[str] | None = None) -> FunctionModel
 
 
 async def _project(session):
-    project = ProjectTable(name=f"debate-driver-{uuid.uuid4().hex[:8]}")
+    project = ProjectTable(
+        user_id="local", name=f"debate-driver-{uuid.uuid4().hex[:8]}"
+    )
     session.add(project)
     await session.flush()
     return project

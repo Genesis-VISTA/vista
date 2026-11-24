@@ -9,6 +9,7 @@ import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import FakeSandbox, api_client, seed_project
+from harness.users import LOCAL
 from vista_backend.config import settings
 from vista_backend.services import background_tasks, inbox
 from vista_backend.services import chat_session as chat_session_service
@@ -30,7 +31,9 @@ def env(session, monkeypatch, tmp_path):
 
 
 async def _conversation(session, project) -> uuid.UUID:
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     row_id = row.id
     await session.commit()
     return row_id

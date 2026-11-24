@@ -31,6 +31,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from ..services.current_user import CurrentUser
 from ..agents.inference import citation_credentials
 from ..services.local_settings import LocalSettingsDep
 from ..config import settings
@@ -41,6 +42,7 @@ from ..db.schemas import (
     KnowledgeBaseTable,
     KnowledgeBaseUpdate,
     Publication,
+    UserTable,
 )
 from ..services import knowledge_base as kb_service
 from ..services import knowledge_base_collaboration as kb_collaboration
@@ -642,8 +644,9 @@ def _schedule_persist(
 async def list_knowledge_bases(
     session: SessionDep,
     background_tasks: BackgroundTasks,
+    user: CurrentUser,
 ) -> list[dict[str, Any]]:
-    rows = await kb_service.list_kbs(session)
+    rows = await kb_service.list_kbs(session, user)
     out: list[dict[str, Any]] = []
     for row in rows:
         # Reconcile disk first (cheap walk of pdfs_dir), then chroma
@@ -689,8 +692,9 @@ async def get_knowledge_base(
     slug: str,
     session: SessionDep,
     background_tasks: BackgroundTasks,
+    user: CurrentUser,
 ) -> dict[str, Any]:
-    kb = await kb_service.get_kb(session, slug)
+    kb = await kb_service.get_kb(session, slug, user)
     pubs_after_disk, changed_disk = _reconcile_with_disk(
         kb.pdfs_dir,
         kb.publications,
@@ -717,8 +721,9 @@ async def get_knowledge_base(
 async def create_knowledge_base(
     payload: KnowledgeBaseCreate,
     session: SessionDep,
+    user: CurrentUser,
 ) -> dict[str, Any]:
-    row = await kb_service.create_kb(session, payload)
+    row = await kb_service.create_kb(session, payload, user)
     return _public_with_progress(row)
 
 
@@ -727,13 +732,16 @@ async def update_knowledge_base(
     slug: str,
     updates: KnowledgeBaseUpdate,
     session: SessionDep,
+    user: CurrentUser,
 ) -> dict[str, Any]:
-    kb = await kb_service.update_kb(session, slug, updates)
+    kb = await kb_service.update_kb(session, slug, updates, user)
     return _public_with_progress(kb)
 
 
 @router.delete("/{slug}", status_code=204)
-async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
+async def delete_knowledge_base(
+    slug: str, session: SessionDep, user: CurrentUser
+) -> None:
     """
     Delete a knowledge base end-to-end:
       - drop the SQL row (vista.db)
@@ -756,12 +764,14 @@ async def delete_knowledge_base(slug: str, session: SessionDep) -> None:
     # Its files may be being packed or replaced: deleting them meanwhile would
     # fail the publish or import and leave its folder half there.
     async with kb_service.kb_writing(slug, "delete it"):
-        await _delete_knowledge_base(slug, session)
+        await _delete_knowledge_base(slug, session, user=user)
 
 
-async def _delete_knowledge_base(slug: str, session: SessionDep) -> None:
+async def _delete_knowledge_base(
+    slug: str, session: SessionDep, user: UserTable
+) -> None:
     """`delete_knowledge_base` under the slug's lock."""
-    pdfs_dir_str, rag_db_path_str = await kb_service.delete_kb(session, slug)
+    pdfs_dir_str, rag_db_path_str = await kb_service.delete_kb(session, slug, user)
     if not await commit_with_retry(session, context="delete_knowledge_base"):
         raise HTTPException(
             status_code=503, detail="Database is busy; try the delete again."
@@ -840,6 +850,7 @@ async def publish_knowledge_base(
     body: KnowledgeBasePublishRequest,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> kb_collaboration.KnowledgeBasePublishResult:
     """
     Publish the knowledge base's PDFs and index to the collaboration server.
@@ -848,13 +859,17 @@ async def publish_knowledge_base(
     (`remote_missing`).
     """
     return await kb_collaboration.publish_knowledge_base(
-        session, local, slug, on_top_of=body.on_top_of, as_new=body.as_new
+        session, local, slug, on_top_of=body.on_top_of, as_new=body.as_new, user=user
     )
 
 
 @router.post("/{slug}/publish-to-team")
 async def publish_knowledge_base_to_team(
-    slug: str, body: TeamPublishRequest, session: SessionDep, local: LocalSettingsDep
+    slug: str,
+    body: TeamPublishRequest,
+    session: SessionDep,
+    local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> team_publish.TeamPublishResult:
     """
     Publish a private knowledge base into a team on the collaboration server,
@@ -863,7 +878,7 @@ async def publish_knowledge_base_to_team(
     beside it under a free slug.
     """
     return await team_publish.publish_knowledge_base_to_team(
-        session, local, slug, body.team_id
+        session, local, slug, body.team_id, user=user
     )
 
 
@@ -879,11 +894,14 @@ async def add_publications(
     background_tasks: BackgroundTasks,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: CurrentUser,
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
     async with kb_service.kb_writing(slug, "add papers"):
-        return await _add_publications(slug, files, background_tasks, session, local)
+        return await _add_publications(
+            slug, files, background_tasks, session, local, user=user
+        )
 
 
 async def _add_publications(
@@ -892,9 +910,10 @@ async def _add_publications(
     background_tasks: BackgroundTasks,
     session: SessionDep,
     local: LocalSettingsDep,
+    user: UserTable,
 ) -> dict[str, Any]:
     """`add_publications` under the slug's lock."""
-    kb = await kb_service.get_kb(session, slug)
+    kb = await kb_service.get_kb_writable(session, slug, user)
     pdfs_dir = Path(kb.pdfs_dir)
     pdfs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -999,8 +1018,9 @@ async def download_publication(
     slug: str,
     filename: str,
     session: SessionDep,
+    user: CurrentUser,
 ) -> FileResponse:
-    kb = await kb_service.get_kb(session, slug)
+    kb = await kb_service.get_kb(session, slug, user)
     # Reject anything with path-separator chars; the lookup is by basename only.
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
@@ -1041,6 +1061,7 @@ async def delete_publication(
     slug: str,
     filename: str,
     session: SessionDep,
+    user: CurrentUser,
 ) -> None:
     """
     Delete a PDF, its passages and citation from the index, and its entry,
@@ -1048,12 +1069,14 @@ async def delete_publication(
     is indexing, which writes the same index, or being published or imported.
     """
     async with kb_service.kb_writing(slug, "delete the paper"):
-        await _delete_publication(slug, filename, session)
+        await _delete_publication(slug, filename, session, user=user)
 
 
-async def _delete_publication(slug: str, filename: str, session: SessionDep) -> None:
+async def _delete_publication(
+    slug: str, filename: str, session: SessionDep, user: UserTable
+) -> None:
     """`delete_publication` under the slug's lock."""
-    kb = await kb_service.get_kb(session, slug)
+    kb = await kb_service.get_kb_writable(session, slug, user)
     if filename != Path(filename).name or filename in ("", ".", ".."):
         raise HTTPException(status_code=400, detail="Invalid filename.")
     pubs = [

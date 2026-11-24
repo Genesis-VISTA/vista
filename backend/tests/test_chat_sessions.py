@@ -3,6 +3,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import SQLModel
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 
+from harness.users import LOCAL
 from vista_backend.db.schemas import (
     ChatSessionCreate,
     ChatSessionPublic,
@@ -24,22 +25,24 @@ async def test_create_and_list_chat_sessions_support_multiple_per_project(sessio
     project = await project_service.create_project(
         session,
         ProjectCreate(name="session-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     first = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title="First"),
+        user=LOCAL,
     )
     second = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title="Second"),
+        user=LOCAL,
     )
 
     listed = await chat_session_service.list_chat_sessions(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     assert first.id != second.id
@@ -53,11 +56,11 @@ async def test_update_chat_session_persists_messages_but_ignores_history(session
     project = await project_service.create_project(
         session,
         ProjectCreate(name="persist-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     created = await chat_session_service.create_chat_session(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     updated = await chat_session_service.update_chat_session(
@@ -93,12 +96,11 @@ async def test_update_chat_session_persists_messages_but_ignores_history(session
                 "ui": {"kind": "html", "html": "<div>plot</div>"},
             },
         ),
+        user=LOCAL,
     )
 
     reloaded = await chat_session_service.get_or_create_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=updated.id,
+        session, project_id=project.id, chat_session_id=updated.id, user=LOCAL
     )
 
     assert updated.id == reloaded.id
@@ -112,11 +114,11 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
     project = await project_service.create_project(
         session,
         ProjectCreate(name="rename-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     created = await chat_session_service.create_chat_session(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     await chat_session_service.save_message_history(
@@ -124,6 +126,7 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
         project_id=project.id,
         chat_session_id=created.id,
         message_history=[ModelRequest(parts=[UserPromptPart(content="hello")])],
+        user=LOCAL,
     )
     created = await chat_session_service.update_chat_session(
         session,
@@ -138,6 +141,7 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
                 }
             ],
         ),
+        user=LOCAL,
     )
 
     renamed = await chat_session_service.update_chat_session(
@@ -145,6 +149,7 @@ async def test_update_chat_session_title_only_preserves_existing_history(session
         project_id=project.id,
         chat_session_id=created.id,
         updates=ChatSessionUpdate(title="Renamed conversation"),
+        user=LOCAL,
     )
 
     assert renamed.title == "Renamed conversation"
@@ -157,6 +162,7 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(se
     project = await project_service.create_project(
         session,
         ProjectCreate(name="history-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     fallback = [
@@ -166,22 +172,18 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(se
         }
     ]
     effective = await chat_session_service.get_effective_message_history(
-        session,
-        project_id=project.id,
-        fallback_history=fallback,
+        session, project_id=project.id, fallback_history=fallback, user=LOCAL
     )
     assert len(effective) == 1
     assert _kind(effective[0]) == "request"
 
     listed = await chat_session_service.list_chat_sessions(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
     assert listed == []
 
     persisted_session = await chat_session_service.create_chat_session(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
     await chat_session_service.save_message_history(
         session,
@@ -193,12 +195,14 @@ async def test_effective_message_history_is_stateless_without_chat_session_id(se
                 "parts": [{"part_kind": "text", "content": "persisted"}],
             }
         ],
+        user=LOCAL,
     )
     persisted = await chat_session_service.get_effective_message_history(
         session,
         project_id=project.id,
         chat_session_id=persisted_session.id,
         fallback_history=fallback,
+        user=LOCAL,
     )
     assert len(persisted) == 1
     assert _kind(persisted[0]) == "response"
@@ -209,6 +213,7 @@ async def test_append_message_history_extends_existing_session_history(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="append-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     prior_history = [
@@ -225,8 +230,7 @@ async def test_append_message_history_extends_existing_session_history(session):
     ]
 
     created = await chat_session_service.create_chat_session(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     await chat_session_service.append_message_history(
@@ -235,12 +239,11 @@ async def test_append_message_history_extends_existing_session_history(session):
         prior_history=prior_history,
         new_messages=new_messages,
         chat_session_id=created.id,
+        user=LOCAL,
     )
 
     reloaded = await chat_session_service.get_or_create_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=created.id,
+        session, project_id=project.id, chat_session_id=created.id, user=LOCAL
     )
     assert [message["kind"] for message in reloaded.message_history] == [
         "request",
@@ -253,28 +256,28 @@ async def test_delete_chat_session_removes_only_target_session(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="delete-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     first = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title="First"),
+        user=LOCAL,
     )
     second = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title="Second"),
+        user=LOCAL,
     )
 
     await chat_session_service.delete_chat_session(
-        session,
-        project_id=project.id,
-        chat_session_id=first.id,
+        session, project_id=project.id, chat_session_id=first.id, user=LOCAL
     )
 
     listed = await chat_session_service.list_chat_sessions(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     assert [row.id for row in listed] == [second.id]
@@ -285,8 +288,11 @@ async def test_ack_run_clears_the_unseen_flag_and_stored_events(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="ack-project", description=None, system_prompt=None),
+        LOCAL,
     )
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     row.run_state, row.run_unseen, row.run_events = "done", True, [{"event": "x"}]
     session.add(row)
     await session.flush()
@@ -296,6 +302,7 @@ async def test_ack_run_clears_the_unseen_flag_and_stored_events(session):
         project_id=project.id,
         chat_session_id=row.id,
         updates=ChatSessionUpdate(ack_run=True),
+        user=LOCAL,
     )
 
     assert (acked.run_state, acked.run_unseen, acked.run_events) == (
@@ -310,8 +317,11 @@ async def test_ack_run_leaves_a_running_turn_alone(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="ack-running", description=None, system_prompt=None),
+        LOCAL,
     )
-    row = await chat_session_service.create_chat_session(session, project_id=project.id)
+    row = await chat_session_service.create_chat_session(
+        session, project_id=project.id, user=LOCAL
+    )
     row.run_state = "running"
     session.add(row)
     await session.flush()
@@ -321,6 +331,7 @@ async def test_ack_run_leaves_a_running_turn_alone(session):
         project_id=project.id,
         chat_session_id=row.id,
         updates=ChatSessionUpdate(ack_run=True),
+        user=LOCAL,
     )
 
     assert acked.run_state == "running"
@@ -331,9 +342,10 @@ async def test_chat_model_set_clear_and_untouched_round_trip(session):
     project = await project_service.create_project(
         session,
         ProjectCreate(name="chat-model-project", description=None, system_prompt=None),
+        LOCAL,
     )
     chat = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     assert chat.inference_model is None
 
@@ -343,6 +355,7 @@ async def test_chat_model_set_clear_and_untouched_round_trip(session):
             project_id=project.id,
             chat_session_id=chat.id,
             updates=ChatSessionUpdate(**fields),
+            user=LOCAL,
         )
 
     row = await update(inference_model="openai:gpt-oss")
@@ -418,12 +431,19 @@ async def test_deleting_a_chat_deletes_its_displayed_rows_not_its_files(
     project = await project_service.create_project(
         session,
         ProjectCreate(name="shown-project", description=None, system_prompt=None),
+        LOCAL,
     )
     gone = await chat_session_service.create_chat_session(
-        session, project_id=project.id, payload=ChatSessionCreate(title="Gone")
+        session,
+        project_id=project.id,
+        payload=ChatSessionCreate(title="Gone"),
+        user=LOCAL,
     )
     kept = await chat_session_service.create_chat_session(
-        session, project_id=project.id, payload=ChatSessionCreate(title="Kept")
+        session,
+        project_id=project.id,
+        payload=ChatSessionCreate(title="Kept"),
+        user=LOCAL,
     )
     plot = tmp_path / "plot.png"
     plot.write_bytes(b"data")
@@ -445,7 +465,7 @@ async def test_deleting_a_chat_deletes_its_displayed_rows_not_its_files(
     await session.commit()
 
     await chat_session_service.delete_chat_session(
-        session, project_id=project_id, chat_session_id=gone_id
+        session, project_id=project_id, chat_session_id=gone_id, user=LOCAL
     )
 
     rows = (await session.exec(select(DisplayedFileTable))).all()

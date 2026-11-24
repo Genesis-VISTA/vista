@@ -3,6 +3,7 @@
 import pytest
 from pydantic_ai.exceptions import ModelRetry
 
+from harness.users import LOCAL
 from vista_backend.agents.kb_fetch import copy_kb_file, kb_prompt_block
 from vista_backend.db.schemas import KnowledgeBaseTable
 
@@ -40,6 +41,7 @@ async def test_copies_attached_file_byte_identical(session, kb, work):
         kb_slug="salts",
         filename="salts.csv",
         work_dir=work,
+        user=LOCAL,
     )
     assert dest == work / "kb" / "salts" / "salts.csv"
     assert dest.read_bytes() == CSV
@@ -54,6 +56,7 @@ async def test_unattached_slug_lists_attached(session, kb, work):
             kb_slug="other",
             filename="salts.csv",
             work_dir=work,
+            user=LOCAL,
         )
     assert not work.exists()
 
@@ -61,7 +64,12 @@ async def test_unattached_slug_lists_attached(session, kb, work):
 async def test_no_attached_kbs(session, kb, work):
     with pytest.raises(ModelRetry, match="no knowledge bases"):
         await copy_kb_file(
-            session, attached=[], kb_slug="salts", filename="salts.csv", work_dir=work
+            session,
+            attached=[],
+            kb_slug="salts",
+            filename="salts.csv",
+            work_dir=work,
+            user=LOCAL,
         )
 
 
@@ -71,7 +79,12 @@ async def test_no_attached_kbs(session, kb, work):
 async def test_missing_or_escaping_file_fails(session, kb, work, name):
     with pytest.raises(ModelRetry):
         await copy_kb_file(
-            session, attached=["salts"], kb_slug="salts", filename=name, work_dir=work
+            session,
+            attached=["salts"],
+            kb_slug="salts",
+            filename=name,
+            work_dir=work,
+            user=LOCAL,
         )
     assert not work.exists()
 

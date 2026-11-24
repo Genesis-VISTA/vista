@@ -42,6 +42,7 @@ from sqlmodel import col, func, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.db import get_engine
+from ..db.ownership import inherited_owner
 from ..db.schemas import BackgroundTaskTable, ChatSessionTable
 from ..utils.misc import now_iso
 from . import inbox as inbox_service
@@ -230,6 +231,7 @@ async def _create_command(
         )
     ).one()
     record = BackgroundTaskTable(
+        user_id=await inherited_owner(db, ChatSessionTable, chat_session_id),
         chat_session_id=chat_session_id,
         project_id=project_id,
         label=f"bg-{count + 1}",
@@ -510,6 +512,7 @@ async def _create_watch(
         )
     ).one()
     record = BackgroundTaskTable(
+        user_id=await inherited_owner(db, ChatSessionTable, chat_session_id),
         chat_session_id=chat_session_id,
         project_id=project_id,
         label=f"watch-{count + 1}",

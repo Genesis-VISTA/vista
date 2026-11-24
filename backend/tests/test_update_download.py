@@ -372,11 +372,12 @@ async def test_activity_lists_runs_debates_and_watched_jobs(session, monkeypatch
 
     from vista_backend.api import debate, updates
 
-    project = ProjectTable(name="activity-project")
+    project = ProjectTable(user_id="local", name="activity-project")
     session.add(project)
     await session.flush()
     now = now_iso()
     run = CampaignRunTable(
+        user_id="local",
         domain="splash",
         planner_skill="splash-planner",
         project_id=project.id,
@@ -391,15 +392,31 @@ async def test_activity_lists_runs_debates_and_watched_jobs(session, monkeypatch
     session.add(step)
     await session.flush()
     session.add(
-        HpcJobTable(job_id="42", step_id=step.id, cluster="frontier", job_name="n")
+        HpcJobTable(
+            user_id="local",
+            job_id="42",
+            step_id=step.id,
+            cluster="frontier",
+            job_name="n",
+        )
     )
     session.add(
-        HpcJobTable(job_id="43", step_id=step.id, cluster="odo", result_collected=True)
+        HpcJobTable(
+            user_id="local",
+            job_id="43",
+            step_id=step.id,
+            cluster="odo",
+            result_collected=True,
+        )
     )
     await session.flush()
 
     conversation = ChatSessionTable(
-        project_id=project.id, title="Li6 enrichment", created_at=now, updated_at=now
+        user_id="local",
+        project_id=project.id,
+        title="Li6 enrichment",
+        created_at=now,
+        updated_at=now,
     )
     session.add(conversation)
     await session.flush()

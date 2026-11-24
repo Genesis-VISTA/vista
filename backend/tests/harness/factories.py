@@ -4,7 +4,13 @@ import uuid
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from vista_backend.db.schemas import ProjectCreate, ProjectPublic, LocalSettingsPublic
+from vista_backend.db.schemas import (
+    LOCAL_USER_ID,
+    LocalSettingsPublic,
+    ProjectCreate,
+    ProjectPublic,
+    UserTable,
+)
 from vista_backend.services import project as project_service
 
 
@@ -57,8 +63,11 @@ async def seed_project(
     knowledge_bases: list[str] | None = None,
     tools: list[str] | None = None,
     usage_limits: dict | None = None,
+    user: UserTable | None = None,
 ) -> ProjectPublic:
-    """Insert a project row and return its public view."""
+    """Insert a project row, owned by `user` (default: `local`), and return its public view."""
+    owner = user or await session.get(UserTable, LOCAL_USER_ID)
+    assert owner is not None
     row = await project_service.create_project(
         session,
         ProjectCreate(
@@ -69,5 +78,6 @@ async def seed_project(
             tools=tools if tools is not None else ["*"],
             usage_limits=usage_limits or {},
         ),
+        owner,
     )
     return ProjectPublic.model_validate(row)

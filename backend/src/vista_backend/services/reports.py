@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from pydantic_ai.messages import ModelMessage
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..db.schemas import UserTable
 from ..agents.report_authoring import ConversationReport, generate_report_draft
 from ..config import settings
 from ..utils.misc import path_is_under, write_file_unique
@@ -47,6 +48,7 @@ async def generate_draft(
     message_history: list[ModelMessage],
     hint: str | None,
     local: LocalSettingsPublic,
+    user: UserTable,
     chat_session_id: uuid.UUID | None = None,
 ) -> ConversationReport:
     """
@@ -54,17 +56,17 @@ async def generate_draft(
 
     With `chat_session_id`, the draft is written on that chat's own model.
     """
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     model = None
     if chat_session_id is not None:
         model = await chat_session_service.get_chat_model(
-            session, chat_session_id=chat_session_id, project_id=project.id
+            session, chat_session_id=chat_session_id, project_id=project.id, user=user
         )
     return await generate_report_draft(message_history, hint, local, model)
 
 
 async def save_report(
-    session: AsyncSession, project_name: str, report: ReportSave
+    session: AsyncSession, project_name: str, report: ReportSave, user: UserTable
 ) -> str:
     """
     Write `report` into the project's uploads and return its path relative
@@ -74,8 +76,8 @@ async def save_report(
     under its existing filename; otherwise a new file is created, suffixed if
     another chat's report already has the name.
     """
-    project = await project_service.get_project_by_name(session, project_name)
-    agent_key = await get_project_agent_key(session, project_id=project.id)
+    project = await project_service.get_project_by_name(session, project_name, user)
+    agent_key = await get_project_agent_key(session, project_id=project.id, user=user)
     contents = _render(report).encode("utf-8")
     if len(contents) > settings.max_upload_size:
         raise HTTPException(

@@ -9,6 +9,7 @@ import uuid
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.db.schemas import CampaignUpdate, ProjectCreate
 from vista_backend.services import campaign as campaign_service
 from vista_backend.services import chat_session as chat_session_service
@@ -16,7 +17,9 @@ from vista_backend.services import project as project_service
 
 
 async def _project(session, name="api-campaign"):
-    return await project_service.create_project(session, ProjectCreate(name=name))
+    return await project_service.create_project(
+        session, ProjectCreate(name=name), LOCAL
+    )
 
 
 @pytest.mark.anyio
@@ -24,10 +27,10 @@ async def test_list_campaigns_filters_by_chat_session(session):
     """The campaign UI lists campaigns for the active conversation via the session_id filter."""
     project = await _project(session)
     chat_a = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     chat_b = await chat_session_service.create_chat_session(
-        session, project_id=project.id
+        session, project_id=project.id, user=LOCAL
     )
     run_a = await campaign_service.create_campaign(
         session,
@@ -66,19 +69,19 @@ async def test_require_campaign_in_project_enforces_project_scope(session):
     )
 
     found = await campaign_service.require_campaign_in_project(
-        session, run_id=run.id, project_id=project.id
+        session, run_id=run.id, project_id=project.id, user=LOCAL
     )
     assert found.id == run.id
 
     # Same run, wrong project -> not found.
     with pytest.raises(ValueError):
         await campaign_service.require_campaign_in_project(
-            session, run_id=run.id, project_id=other.id
+            session, run_id=run.id, project_id=other.id, user=LOCAL
         )
     # Unknown run -> not found.
     with pytest.raises(ValueError):
         await campaign_service.require_campaign_in_project(
-            session, run_id=uuid.uuid4(), project_id=project.id
+            session, run_id=uuid.uuid4(), project_id=project.id, user=LOCAL
         )
 
 

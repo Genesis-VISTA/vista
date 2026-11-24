@@ -19,7 +19,7 @@ from fastapi import HTTPException, UploadFile
 from pydantic import BaseModel, ValidationError
 from pydantic_ai.messages import ModelMessage
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import select
+from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..agents.skill_authoring import SkillDraft, generate_skill_draft
@@ -49,7 +49,14 @@ from ..agents.skills import (
     write_skill,
 )
 from ..config import settings
-from ..db.schemas import LocalSettingsPublic, ProjectTable, SkillTable, SkillUpdate
+from ..db.ownership import visible, uid
+from ..db.schemas import (
+    LocalSettingsPublic,
+    ProjectTable,
+    SkillTable,
+    SkillUpdate,
+    UserTable,
+)
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
 from ._helpers import new_storage_path
@@ -67,12 +74,15 @@ def build_skill_row(
     repo_url: str | None,
     now: str,
     bundled: bool = False,
+    user: UserTable | None = None,
 ) -> SkillTable:
     """
     Build a SkillTable row, mirroring spec metadata from the parsed skill. A
     new skill is `modified`, all of it being local, unless it is bundled.
+    `user` owns it; a bundled skill has none, so it belongs to nobody.
     """
     return SkillTable(
+        user_id=uid(user) if user is not None else None,
         name=skill.name,
         path=path,
         description=skill.description,
@@ -97,26 +107,36 @@ def mirror_spec(row: SkillTable, skill: Skill) -> None:
     row.skill_metadata = skill.metadata
 
 
-async def list_skills(session: AsyncSession) -> list[SkillTable]:
-    return list((await session.exec(select(SkillTable))).all())
+async def list_skills(session: AsyncSession, user: UserTable) -> list[SkillTable]:
+    """`user`'s skills and the global (bundled) ones."""
+    return list((await session.exec(visible(select(SkillTable), user))).all())
 
 
-async def get_skill_optional(session: AsyncSession, name: str) -> SkillTable | None:
-    return (
-        await session.exec(select(SkillTable).where(SkillTable.name == name))
-    ).first()
+async def get_skill_optional(
+    session: AsyncSession, name: str, user: UserTable
+) -> SkillTable | None:
+    """
+    The skill `user` means by `name`: their own, else a global (bundled) one.
+    Another user's is not found.
+    """
+    stmt = visible(select(SkillTable).where(SkillTable.name == name), user)
+    # Their own first: a NULL `user_id` sorts last.
+    stmt = stmt.order_by(col(SkillTable.user_id).is_(None))
+    return (await session.exec(stmt)).first()
 
 
-async def get_skill(session: AsyncSession, name: str) -> SkillTable:
-    skill = await get_skill_optional(session, name)
+async def get_skill(session: AsyncSession, name: str, user: UserTable) -> SkillTable:
+    skill = await get_skill_optional(session, name, user)
     if skill is None:
         raise HTTPException(status_code=404, detail=f"Skill not found: {name}")
     return skill
 
 
-async def get_skill_detail(session: AsyncSession, name: str) -> tuple[SkillTable, str]:
+async def get_skill_detail(
+    session: AsyncSession, name: str, user: UserTable
+) -> tuple[SkillTable, str]:
     """Return the row plus its SKILL.md body (read from disk)."""
-    skill = await get_skill(session, name)
+    skill = await get_skill(session, name, user)
     return skill, read_skill(settings.data_dir / skill.path).body
 
 
@@ -145,14 +165,17 @@ def load_into(
     invalidate_agents(session, project_id=project.id)
 
 
-async def invalidate_loading_projects(session: AsyncSession, name: str) -> None:
+async def invalidate_loading_projects(
+    session: AsyncSession, name: str, owner_id: str | None
+) -> None:
     """
-    Rebuild, once the transaction commits, the agents of every project that
-    loads skill `name`: their skills volume holds its old files.
+    Rebuild, once the transaction commits, the agents of every project of
+    `owner_id` that loads skill `name`: their skills volume holds its old files.
     """
     from .project_agent import invalidate_agents
 
-    for loaded in (await session.exec(select(ProjectTable))).all():
+    stmt = select(ProjectTable).where(col(ProjectTable.user_id) == owner_id)
+    for loaded in (await session.exec(stmt)).all():
         if name in loaded.skills:
             invalidate_agents(session, project_id=loaded.id)
 
@@ -188,7 +211,7 @@ async def commit_skill_files(
     if old_path is not None:
         # Asked before the row is added: the query would flush it, outside the
         # cleanup below.
-        await invalidate_loading_projects(session, row.name)
+        await invalidate_loading_projects(session, row.name, row.user_id)
     url = await current_url(session) if project is not None else None
     session.add(row)
     try:
@@ -241,6 +264,7 @@ async def create_skill(
     session: AsyncSession,
     *,
     spec: Skill,
+    user: UserTable,
     project: ProjectTable | None = None,
 ) -> SkillTable:
     """
@@ -248,12 +272,12 @@ async def create_skill(
     frontmatter from its fields). `spec.body` is markdown only. Given a
     `project`, the skill is loaded into it.
     """
-    if await get_skill_optional(session, spec.name) is not None:
+    if await get_skill_optional(session, spec.name, user) is not None:
         raise name_in_use(spec.name)
 
     path = new_storage_path()
     skill = write_skill(settings.data_dir / path, spec)
-    row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
+    row = build_skill_row(skill, path=path, repo_url=None, now=now_iso(), user=user)
     set_team(row, *await team_for_new(session, project))
     await _insert_skill_row(session, row, project)
     return row
@@ -358,7 +382,7 @@ def _scan(
 
 
 async def scan_repository(
-    session: AsyncSession, url: str, token: str | None = None
+    session: AsyncSession, url: str, user: UserTable, token: str | None = None
 ) -> RepoScan:
     """List the skills a repository URL holds, without importing any."""
     sent = await _import_token(session, url, token)
@@ -369,7 +393,7 @@ async def scan_repository(
             )
         except SkillRepoError as e:
             raise _repo_error(e, sent)
-    library = {row.name: row for row in await list_skills(session)}
+    library = {row.name: row for row in await list_skills(session, user)}
     counts = Counter(info.name for info, _ in staged if info.name and not info.error)
     skills = []
     for info, _ in staged:
@@ -431,6 +455,7 @@ async def _install_staged(
     *,
     repo_url: str,
     project: ProjectTable | None,
+    user: UserTable,
 ) -> SkillImportResult:
     """Install one staged skill, applying the choice for a taken name. Commits."""
 
@@ -454,14 +479,14 @@ async def _install_staged(
         (choice.rename_to or "").strip() if choice.on_conflict == "rename" else ""
     )
     if new_name:
-        if await get_skill_optional(session, new_name) is not None:
+        if await get_skill_optional(session, new_name, user) is not None:
             return result("failed", f"{new_name} is taken too.", name=new_name)
         try:
             await asyncio.to_thread(skill_repo.rename_skill, staged, new_name)
         except SkillRepoError as e:
             return result("failed", str(e), name=new_name)
         name, status = new_name, "renamed"
-    existing = await get_skill_optional(session, name)
+    existing = await get_skill_optional(session, name, user)
     if existing is not None:
         if choice.on_conflict == "skip":
             return result("skipped", f"A skill named {name} is already installed.")
@@ -489,7 +514,9 @@ async def _install_staged(
 
     old_path: str | None = None
     if existing is None:
-        row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
+        row = build_skill_row(
+            skill, path=path, repo_url=repo_url, now=now_iso(), user=user
+        )
         set_team(row, *await team_for_new(session, project))
     else:
         row = existing
@@ -512,6 +539,7 @@ async def import_repository_skills(
     session: AsyncSession,
     url: str,
     choices: list[SkillChoice],
+    user: UserTable,
     project: ProjectTable | None = None,
     *,
     token: str | None = None,
@@ -574,6 +602,7 @@ async def import_repository_skills(
                     c,
                     repo_url=fetched.url.tree_url(fetched.commit, info.path),
                     project=project,
+                    user=user,
                 )
             )
     # Each skill committed on its own, which expired the rows installed before it.
@@ -586,6 +615,7 @@ async def import_repository_skills(
 async def import_skill(
     session: AsyncSession,
     url: str,
+    user: UserTable,
     project: ProjectTable | None = None,
     *,
     token: str | None = None,
@@ -619,7 +649,7 @@ async def import_skill(
         if (
             on_conflict is None
             and info.name
-            and await get_skill_optional(session, info.name)
+            and await get_skill_optional(session, info.name, user)
         ):
             raise HTTPException(
                 status_code=409, detail=f"Name already in use: {info.name}"
@@ -631,6 +661,7 @@ async def import_skill(
             SkillChoice(path=info.path, on_conflict=on_conflict, rename_to=rename_to),
             repo_url=url,
             project=project,
+            user=user,
         )
     if result.skill is None:
         code = 409 if result.status == "skipped" else 400
@@ -642,6 +673,7 @@ async def import_skill_upload(
     session: AsyncSession,
     files: list[UploadFile],
     paths: list[str],
+    user: UserTable,
     project: ProjectTable | None = None,
 ) -> SkillTable:
     """
@@ -663,7 +695,7 @@ async def import_skill_upload(
     except SkillImportError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return await _register_imported(
-        session, skill, path, repo_url=None, project=project
+        session, skill, path, repo_url=None, project=project, user=user
     )
 
 
@@ -674,15 +706,16 @@ async def _register_imported(
     *,
     repo_url: str | None,
     project: ProjectTable | None,
+    user: UserTable,
 ) -> SkillTable:
     """Record a skill already copied to `path`; remove the copy on a name clash."""
-    if await get_skill_optional(session, skill.name) is not None:
+    if await get_skill_optional(session, skill.name, user) is not None:
         shutil.rmtree(settings.data_dir / path, ignore_errors=True)
         raise HTTPException(
             status_code=409, detail=f"Name already in use: {skill.name}"
         )
 
-    row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso())
+    row = build_skill_row(skill, path=path, repo_url=repo_url, now=now_iso(), user=user)
     set_team(row, *await team_for_new(session, project))
     await _insert_skill_row(session, row, project)
     return row
@@ -707,14 +740,14 @@ _OUTPUT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 async def _project_output_dir(
-    session: AsyncSession, project_name: str
+    session: AsyncSession, project_name: str, user: UserTable
 ) -> tuple[ProjectTable, Path]:
     """The project, and its output folder (the sandbox's `/mnt/data/output`)."""
     # Imported here: the agent modules import the seed, which imports this module.
     from ..agents.agents import agent_volume_root
     from . import project as project_service
 
-    project = await project_service.get_project_by_name(session, project_name)
+    project = await project_service.get_project_by_name(session, project_name, user)
     output = agent_volume_root(project.id) / "data" / "output"
     # The sandbox can replace either with a symlink to anywhere on this machine.
     if output.parent.is_symlink() or output.is_symlink():
@@ -725,16 +758,16 @@ async def _project_output_dir(
 
 
 async def list_output_skills(
-    session: AsyncSession, project_name: str
+    session: AsyncSession, project_name: str, user: UserTable
 ) -> list[OutputSkill]:
     """
     The top-level folders of the project's output folder in `project_name` that
     hold a SKILL.md, i.e. the skills the agent wrote to `/mnt/data/output/<skill>/`.
     """
-    _, output = await _project_output_dir(session, project_name)
+    _, output = await _project_output_dir(session, project_name, user)
     if not output.is_dir():
         return []
-    library = {row.name: row for row in await list_skills(session)}
+    library = {row.name: row for row in await list_skills(session, user)}
     found: list[OutputSkill] = []
     for folder in sorted(output.iterdir()):
         if (
@@ -780,6 +813,7 @@ async def import_skill_from_output(
     session: AsyncSession,
     project_name: str,
     folder: str,
+    user: UserTable,
     *,
     replace: bool = False,
 ) -> SkillTable:
@@ -794,7 +828,7 @@ async def import_skill_from_output(
     is not bundled; then the row is kept, its files are swapped and it is
     marked modified, and every project that loads it is rebuilt.
     """
-    project, output = await _project_output_dir(session, project_name)
+    project, output = await _project_output_dir(session, project_name, user)
     source = output / folder
     if (
         # The name is one plain path part, so `source` is lexically inside
@@ -812,9 +846,9 @@ async def import_skill_from_output(
         raise HTTPException(status_code=400, detail=str(e))
 
     old_path: str | None = None
-    existing = await get_skill_optional(session, skill.name)
+    existing = await get_skill_optional(session, skill.name, user)
     if existing is None:
-        row = build_skill_row(skill, path=path, repo_url=None, now=now_iso())
+        row = build_skill_row(skill, path=path, repo_url=None, now=now_iso(), user=user)
         set_team(row, *await team_for_new(session, project))
     elif replace and not existing.bundled:
         row = existing
@@ -846,6 +880,7 @@ async def generate_draft(
     *,
     session: AsyncSession | None = None,
     chat_session_id: uuid.UUID | None = None,
+    user: UserTable | None = None,
 ) -> SkillDraft:
     """
     Draft a SKILL.md from a chat conversation. Persists nothing.
@@ -856,10 +891,10 @@ async def generate_draft(
     """
     model = None
     if chat_session_id is not None:
-        if session is None:
+        if session is None or user is None:
             raise HTTPException(status_code=404, detail="Chat session not found")
         model = await chat_session_service.get_chat_model(
-            session, chat_session_id=chat_session_id
+            session, chat_session_id=chat_session_id, user=user
         )
     return await generate_skill_draft(message_history, hint, local, model)
 
@@ -868,13 +903,16 @@ async def update_skill(
     session: AsyncSession,
     name: str,
     updates: SkillUpdate,
+    user: UserTable,
     *,
     body: str | None = None,
 ) -> SkillTable:
     """
     Partial update of the SKILL.md. Any change marks the skill modified.
+    A bundled skill is refused: it is global and writable by none.
     """
-    skill = await get_skill(session, name)
+    skill = await get_skill(session, name, user)
+    refuse_bundled(skill, "edited")
     data = updates.model_dump(exclude_unset=True)
 
     # Rejected up front, before touching disk, so a rejected PATCH never leaves
@@ -932,7 +970,17 @@ async def update_skill(
     return skill
 
 
-async def delete_skill(session: AsyncSession, name: str) -> None:
+def refuse_bundled(skill: SkillTable, what: str) -> None:
+    """409 for a skill bundled with VISTA: it is the same for every user, so nobody may change it."""
+    if skill.bundled:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{skill.name} is bundled with VISTA and cannot be {what}; "
+            "import a copy under another name instead.",
+        )
+
+
+async def delete_skill(session: AsyncSession, name: str, user: UserTable) -> None:
     """
     Delete the skill row, and remove its on-disk directory. What was published
     of it stays on the collaboration server.
@@ -942,7 +990,7 @@ async def delete_skill(session: AsyncSession, name: str) -> None:
     (`SKILL_ASSETS`) is only ever fetched by the first seeding, so it would
     never come back.
     """
-    skill = await get_skill(session, name)
+    skill = await get_skill(session, name, user)
     if skill.bundled:
         raise HTTPException(
             status_code=409,

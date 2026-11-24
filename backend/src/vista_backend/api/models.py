@@ -9,6 +9,7 @@ from ..agents.inference import (
 )
 from ..db.db import SessionDep
 from ..services import project as project_service
+from ..services.current_user import CurrentUser
 from ..services.local_settings import LocalSettingsDep
 
 router = APIRouter()
@@ -48,7 +49,7 @@ def _models_urls(base_url: str) -> tuple[str, str]:
 
 @router.get("/projects/{project_name}/models", response_model=ModelsListResponse)
 async def list_models(
-    project_name: str, session: SessionDep, local: LocalSettingsDep
+    project_name: str, session: SessionDep, local: LocalSettingsDep, user: CurrentUser
 ) -> ModelsListResponse:
     """
     List the models available through the caller's configured inference
@@ -59,7 +60,7 @@ async def list_models(
     configuration, not the project -- `project_name` here is only checked to
     exist (the same 404 every other project route gives), not a filter.
     """
-    await project_service.get_project_by_name(session, project_name)
+    await project_service.get_project_by_name(session, project_name, user)
 
     target = resolve_inference_target(local)
     if not target.uses_configured_endpoint:

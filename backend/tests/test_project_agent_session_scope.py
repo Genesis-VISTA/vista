@@ -3,6 +3,7 @@ import uuid
 
 import pytest
 
+from harness.users import LOCAL
 from vista_backend.db.schemas import (
     ChatSessionCreate,
     ChatSessionUpdate,
@@ -18,17 +19,16 @@ async def test_get_project_agent_key_is_stateless_without_chat_session_id(sessio
     project = await project_service.create_project(
         session,
         ProjectCreate(name="agent-scope-project", description=None, system_prompt=None),
+        LOCAL,
     )
 
     key = await project_agent_service.get_project_agent_key(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
 
     assert key == (None, project.id)
     listed = await chat_session_service.list_chat_sessions(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
     assert listed == []
 
@@ -42,10 +42,10 @@ async def test_invalidate_agents_matches_project_inside_session_scoped_keys(
         ProjectCreate(
             name="agent-invalidate-project", description=None, system_prompt=None
         ),
+        LOCAL,
     )
     key = await project_agent_service.get_project_agent_key(
-        session,
-        project_id=project.id,
+        session, project_id=project.id, user=LOCAL
     )
     other_key = (key[0], uuid.uuid4())
 
@@ -88,17 +88,17 @@ async def test_get_project_agent_key_uses_selected_chat_session_id(session):
         ProjectCreate(
             name="agent-selected-session-project", description=None, system_prompt=None
         ),
+        LOCAL,
     )
     selected = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title="Selected"),
+        user=LOCAL,
     )
 
     key = await project_agent_service.get_project_agent_key(
-        session,
-        project_id=project.id,
-        chat_session_id=selected.id,
+        session, project_id=project.id, chat_session_id=selected.id, user=LOCAL
     )
 
     assert key == (selected.id, project.id)
@@ -106,11 +106,12 @@ async def test_get_project_agent_key_uses_selected_chat_session_id(session):
 
 async def _two_chats(session, name):
     project = await project_service.create_project(
-        session,
-        ProjectCreate(name=name, description=None, system_prompt=None),
+        session, ProjectCreate(name=name, description=None, system_prompt=None), LOCAL
     )
     chats = [
-        await chat_session_service.create_chat_session(session, project_id=project.id)
+        await chat_session_service.create_chat_session(
+            session, project_id=project.id, user=LOCAL
+        )
         for _ in range(2)
     ]
     return project, chats
@@ -122,6 +123,7 @@ async def _set_chat_model(session, project, chat, model):
         project_id=project.id,
         chat_session_id=chat.id,
         updates=ChatSessionUpdate(inference_model=model),
+        user=LOCAL,
     )
     await session.commit()
 

@@ -41,9 +41,9 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 6. Ownership and data-layer filtering (wave 2; needs 4)
 
-- [ ] 6.1 Nullable `user_id` on project, chat_session, chat_run, campaign_run, hpc_job, debate_run, background_task, skill, knowledge_base; startup backfill to `local`; verify `db/schema_check.py` accepts a pre-change DB and the backfill test passes
-- [ ] 6.2 `db/ownership.py` (`owned`, `get_owned`); every owned query uses it, including the name lookup in `services/project.py:31`; per-owner unique constraints for new DBs; verify with `backend/tests/test_ownership.py`
-- [ ] 6.3 Bundled/seeded skills and the docs corpus readable by all, writable by none; verify with tests editing a bundled skill as two users
+- [x] 6.1 Nullable `user_id` on project, chat_session, chat_run, campaign_run, hpc_job, debate_run, background_task, skill, knowledge_base; startup backfill to `local`; verify `db/schema_check.py` accepts a pre-change DB and the backfill test passes
+- [x] 6.2 `db/ownership.py` (`owned`, `get_owned`); every owned query uses it, including the name lookup in `services/project.py:31`; per-owner unique constraints for new DBs; verify with `backend/tests/test_ownership.py`
+- [x] 6.3 Bundled/seeded skills and the docs corpus readable by all, writable by none; verify with tests editing a bundled skill as two users
 
 ## 7. Authorization and background owners (wave 3; needs 6)
 

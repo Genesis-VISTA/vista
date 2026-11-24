@@ -23,7 +23,13 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.models import Model
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ...db.schemas import CampaignRunTable, InferenceProvider, LocalSettingsPublic
+from ...db.schemas import (
+    LOCAL_USER_ID,
+    CampaignRunTable,
+    InferenceProvider,
+    LocalSettingsPublic,
+    UserTable,
+)
 from ...services import campaign as campaign_service
 from ..inference import build_model_for, resolve_inference_target
 from ...slack.gate import READ_ONLY
@@ -76,6 +82,8 @@ class CampaignDriverDeps:
     """ The launching agent's resolved `provider:name`, recorded on each run it starts. """
     provider: InferenceProvider | None = None
     """ The provider `model` was resolved on, recorded beside it. """
+    owner_id: str = LOCAL_USER_ID
+    """ The project's owner, whose runs these tools may touch. """
 
 
 def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
@@ -92,9 +100,12 @@ def register_campaign_tools(agent: Agent, deps: CampaignDriverDeps) -> None:
             run_id = uuid.UUID(run_id_str)
         except ValueError:
             raise ModelRetry(f"Invalid run_id {run_id_str!r}.")
+        owner = await session.get(UserTable, deps.owner_id)
+        if owner is None:
+            raise ModelRetry("This project has no owner.")
         try:
             return await campaign_service.require_campaign_in_project(
-                session, run_id=run_id, project_id=deps.project_id
+                session, run_id=run_id, project_id=deps.project_id, user=owner
             )
         except ValueError:
             raise ModelRetry(f"Campaign {run_id_str} not found in this project.")

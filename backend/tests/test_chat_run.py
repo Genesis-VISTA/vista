@@ -29,6 +29,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from harness import call, make_local_settings, make_project, say, seed_project
 from harness import scripted_model, step_model
+from harness.users import LOCAL
 from vista_backend.agents.agents import ProjectAgent
 from vista_backend.config import settings
 from vista_backend.db.schemas import (
@@ -74,7 +75,7 @@ class Env:
 
     async def conversation(self, steps, history=None) -> tuple[ChatSessionTable, tuple]:
         row = await chat_session_service.create_chat_session(
-            self.session, project_id=self.project.id
+            self.session, project_id=self.project.id, user=LOCAL
         )
         if history:
             row.message_history = chat_session_service.dump_message_history(history)

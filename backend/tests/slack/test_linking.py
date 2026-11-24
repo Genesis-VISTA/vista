@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
+from harness.users import LOCAL
 from vista_backend.api.slack import (
     SlackLinkCreate,
     SlackLinkUpdate,
@@ -190,7 +191,7 @@ async def test_a_link_is_changed_and_removed(session, local):
     )
 
     updated = await update_slack_link(
-        view.id, SlackLinkUpdate(project_id=None), session
+        view.id, SlackLinkUpdate(project_id=None), session, LOCAL
     )
     assert updated.project_id is None
     await delete_slack_link(view.id, session)
@@ -201,7 +202,7 @@ async def test_a_link_is_changed_and_removed(session, local):
 async def test_an_unknown_link_is_not_found(session):
     missing = uuid.uuid4()
     for call in (
-        update_slack_link(missing, SlackLinkUpdate(project_id=None), session),
+        update_slack_link(missing, SlackLinkUpdate(project_id=None), session, LOCAL),
         delete_slack_link(missing, session),
     ):
         with pytest.raises(HTTPException) as err:
@@ -217,12 +218,12 @@ async def test_a_link_runs_in_an_existing_project_only(session, local):
 
     with pytest.raises(HTTPException) as err:
         await update_slack_link(
-            view.id, SlackLinkUpdate(project_id=uuid.uuid4()), session
+            view.id, SlackLinkUpdate(project_id=uuid.uuid4()), session, LOCAL
         )
     assert err.value.status_code == 400
 
     project_id = (await project(session)).id
     updated = await update_slack_link(
-        view.id, SlackLinkUpdate(project_id=project_id), session
+        view.id, SlackLinkUpdate(project_id=project_id), session, LOCAL
     )
     assert updated.project_id == project_id
