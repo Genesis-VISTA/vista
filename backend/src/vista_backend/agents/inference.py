@@ -49,7 +49,7 @@ _CONFIGURED_ENDPOINT_PROVIDERS = frozenset(
     {"openai", "openai-chat", "openai-responses"}
 )
 
-ProviderId = Literal["mag", "olcf", "custom"]
+ProviderId = Literal["mag", "olcf", "custom", "server"]
 TargetSource = Literal["user", "config", "default"]
 
 DEFAULT_PROVIDER: ProviderId = "mag"
@@ -72,9 +72,12 @@ class ProviderPreset:
     key_field: str
     """The `local_settings` column holding this provider's API key."""
 
+    server: bool = False
+    """The hosted deployment's own endpoint, read from server settings; offered only when hosted."""
+
     @property
     def takes_url(self) -> bool:
-        return self.base_url is None
+        return self.base_url is None and not self.server
 
 
 # The one definition of the providers. The interface reads these through
@@ -105,7 +108,44 @@ PROVIDER_PRESETS: dict[ProviderId, ProviderPreset] = {
         default_model=None,
         key_field="inference_custom_api_key",
     ),
+    # Endpoint, model and key come from `Settings` at resolve time.
+    "server": ProviderPreset(
+        id="server",
+        name="Server model",
+        base_url=None,
+        default_model=None,
+        key_field="",
+        server=True,
+    ),
 }
+
+
+def offered_presets() -> dict[ProviderId, ProviderPreset]:
+    """
+    The providers this deployment offers: `server` only when hosted, `custom`
+    only when not. A provider a stored row names outside this is ignored.
+    """
+    from ..services.hosted import is_hosted
+
+    hosted = is_hosted()
+    return {
+        k: p
+        for k, p in PROVIDER_PRESETS.items()
+        if (hosted and k != "custom") or (not hosted and not p.server)
+    }
+
+
+def _server_target(model: str | None, source: "TargetSource") -> "InferenceTarget":
+    key = settings.server_inference_key
+    return InferenceTarget(
+        model=model or _qualify(settings.server_inference_model),
+        base_url=settings.server_inference_url,
+        # The server's key is optional; the SDK wants some string.
+        api_key=(key.get_secret_value() if key else None) or "not-needed",
+        provider="server",
+        source=source,
+        model_is_default=model is None,
+    )
 
 
 def _qualify(model: str) -> str:
@@ -457,8 +497,16 @@ def _resolve_from_settings(
     row_model = row("inference_model")
     provider = row("inference_provider")
 
-    if provider in PROVIDER_PRESETS:
+    from ..services.hosted import is_hosted
+
+    if is_hosted() and provider not in offered_presets():
+        # Hosted: the server model, also for a row naming Custom or nothing.
+        return _server_target(row_model, "default")
+
+    if provider in offered_presets():
         preset = PROVIDER_PRESETS[provider]  # type: ignore[index]
+        if preset.server:
+            return _server_target(row_model, "user")
         default = _qualify(preset.default_model) if preset.default_model else None
         key = row(preset.key_field)
         if preset.id == DEFAULT_PROVIDER:

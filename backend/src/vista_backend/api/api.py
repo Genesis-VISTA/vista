@@ -18,6 +18,7 @@ from ..agents.inference import (
     RejectedInferenceCredential,
 )
 from ..config import settings
+from ..services.inference_probe import ServerModelUnavailable
 from ..db.db import DatabaseIncompatible, get_engine, init_db
 from ..db.schemas import server_in_effect
 from ..services.chat_run import chat_run_registry, sweep_interrupted_runs
@@ -217,6 +218,17 @@ async def _missing_inference_credential(
     return JSONResponse(
         status_code=409,
         content={"detail": exc.detail, "code": "inference_not_configured"},
+    )
+
+
+@app.exception_handler(ServerModelUnavailable)
+async def _server_model_unavailable(
+    request: Request, exc: ServerModelUnavailable
+) -> JSONResponse:
+    """The hosted server's model is down: 503 with the reason, other providers unaffected."""
+    return JSONResponse(
+        status_code=503,
+        content={"detail": exc.detail, "code": "server_model_unavailable"},
     )
 
 

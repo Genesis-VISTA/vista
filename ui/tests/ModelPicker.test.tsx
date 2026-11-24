@@ -505,3 +505,28 @@ describe("RoleModelSelects", () => {
     expect(modelFetches).toBe(2);
   });
 });
+
+describe("the hosted Server model", () => {
+  it("is shown as unavailable, with the reason, when its endpoint is down", async () => {
+    inference = view({
+      providers: [
+        {
+          id: "server",
+          name: "Server model",
+          takes_url: false,
+          default_model: "beam-model",
+          available: false,
+          unavailable_reason: "The server model is not answering right now.",
+        },
+        PROVIDERS[0],
+      ],
+      provider: "server",
+      model: "openai:beam-model",
+    });
+    render(<ModelPicker />);
+    await openPicker();
+    expect(
+      await screen.findByText(/Server model is unavailable\. The server model is not answering/),
+    ).toBeInTheDocument();
+  });
+});

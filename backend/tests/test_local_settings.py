@@ -614,12 +614,16 @@ async def test_inference_view_has_no_secrets(session, default_settings):
         "name": "AmSC MAG",
         "takes_url": False,
         "default_model": "claude-sonnet-5-5",
+        "available": True,
+        "unavailable_reason": None,
     }
     assert view["providers"][1] == {
         "id": "olcf",
         "name": "OLCF Inference",
         "takes_url": False,
         "default_model": "gpt-oss-120b",
+        "available": True,
+        "unavailable_reason": None,
     }
     assert view["providers"][2]["takes_url"] is True
     assert view["provider"] == "mag"

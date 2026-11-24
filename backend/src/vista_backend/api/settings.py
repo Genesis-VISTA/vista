@@ -3,7 +3,9 @@ from typing import Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from ..agents.inference import PROVIDER_PRESETS, resolve_inference_target
+from ..agents.inference import offered_presets, resolve_inference_target
+from ..services import inference_probe
+from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import (
     SECRET_SETTINGS_FIELDS,
@@ -12,7 +14,7 @@ from ..db.schemas import (
     LocalSettingsUpdate,
 )
 from ..services import globus_auth, hpc_status, local_settings
-from ..services.hosted import is_hosted, refuse_when_hosted
+from ..services.hosted import refuse_when_hosted
 from ..services.local_settings import LocalSettingsDep
 from ..utils.misc import now_iso
 
@@ -69,6 +71,9 @@ class InferenceProviderOption(BaseModel):
     """ Only Custom asks for an endpoint; the others use their preset's. """
     default_model: str | None
     """ Bare model name used when none is chosen; `None` means one must be. """
+    available: bool = True
+    """ False when the provider's endpoint is known to be down (the hosted Server model). """
+    unavailable_reason: str | None = None
 
 
 class InferenceView(BaseModel):
@@ -99,16 +104,29 @@ class InferenceView(BaseModel):
 @router.get("/inference")
 async def get_inference(local: LocalSettingsDep) -> InferenceView:
     target = resolve_inference_target(local)
+    presets = offered_presets()
+    server_status = (
+        await inference_probe.server_model_status()
+        if any(p.server for p in presets.values())
+        else None
+    )
     return InferenceView(
         providers=[
             InferenceProviderOption(
                 id=p.id,
                 name=p.name,
                 takes_url=p.takes_url,
-                default_model=p.default_model,
+                default_model=(
+                    settings.server_inference_model if p.server else p.default_model
+                ),
+                available=server_status.available
+                if p.server and server_status
+                else True,
+                unavailable_reason=server_status.reason
+                if p.server and server_status
+                else None,
             )
-            for p in PROVIDER_PRESETS.values()
-            if not (is_hosted() and p.id == "custom")
+            for p in presets.values()
         ],
         provider=target.provider,
         source=target.source,
@@ -117,7 +135,8 @@ async def get_inference(local: LocalSettingsDep) -> InferenceView:
         model_is_default=target.model_is_default,
         has_credential=target.has_credential,
         keys_set={
-            p.id: bool(getattr(local, p.key_field)) for p in PROVIDER_PRESETS.values()
+            p.id: bool(p.key_field and getattr(local, p.key_field))
+            for p in presets.values()
         },
         config_key_set=bool(local.inference_api_key),
     )

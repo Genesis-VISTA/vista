@@ -67,6 +67,8 @@ describe("agent settings store", () => {
       name: "AmSC MAG",
       takesUrl: false,
       defaultModel: "claude-sonnet-5-5",
+      available: true,
+      unavailableReason: null,
     });
   });
 

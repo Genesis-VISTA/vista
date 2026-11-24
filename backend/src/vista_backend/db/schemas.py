@@ -518,7 +518,7 @@ class SkillUpdate(BaseModel):
 HpcCluster = Literal["frontier", "odo", "perlmutter", "lux"]
 """The clusters the NavRail can show an availability card for."""
 
-InferenceProvider = Literal["mag", "olcf", "custom"]
+InferenceProvider = Literal["mag", "olcf", "custom", "server"]
 """The inference providers Settings offers; see `agents.inference.PROVIDER_PRESETS`."""
 
 PreferredUnits = Literal["si", "source"]
