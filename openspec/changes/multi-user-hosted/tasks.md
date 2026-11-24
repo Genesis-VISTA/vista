@@ -35,9 +35,9 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 5. Settings split (wave 2; needs 1, 4)
 
-- [ ] 5.1 `user_settings` table; per-user fields per the `user-accounts` spec; one-time copy from `local_settings` for `local` on desktop; verify with `backend/tests/test_settings_split.py` including a pre-change `vista.db` fixture
-- [ ] 5.2 `SettingsView` (server + current user's) replaces `LocalSettingsDep` at every call site; it raises outside a user context; verify with the full backend suite
-- [ ] 5.3 Hosted server settings from the environment, read-only through the API with the reason; verify with tests for `PUT /settings` when hosted
+- [x] 5.1 `user_settings` table; per-user fields per the `user-accounts` spec; one-time copy from `local_settings` for `local` on desktop; verify with `backend/tests/test_settings_split.py` including a pre-change `vista.db` fixture
+- [x] 5.2 `SettingsView` (server + current user's) replaces `LocalSettingsDep` at every call site; it raises outside a user context; verify with the full backend suite
+- [x] 5.3 Hosted server settings from the environment, read-only through the API with the reason; verify with tests for `PUT /settings` when hosted
 
 ## 6. Ownership and data-layer filtering (wave 2; needs 4)
 

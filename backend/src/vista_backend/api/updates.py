@@ -87,7 +87,8 @@ def _offered(row) -> Release | None:
 
 
 async def _version_info(session: SessionDep) -> VersionInfo:
-    row = await local_settings.get(session)
+    # `/version` is open, so no user: the installation's settings alone.
+    row = await local_settings.get_server(session)
     info = VersionInfo(
         version=settings.version,
         commit=settings.commit or None,
@@ -162,7 +163,7 @@ async def start_download(
     (`403`) when hosted.
     """
     refuse_when_hosted("Installing updates")
-    release = _offered(await local_settings.get(session))
+    release = _offered(await local_settings.get_server(session))
     if release is None or release.version != request.version:
         raise HTTPException(409, f"VISTA {request.version} is not the update on offer.")
     update_downloader.start(release)

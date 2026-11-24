@@ -16,6 +16,9 @@ Prior art: collaboration_server/src/vista_collaboration_server/services/identity
 (`TokenVerifier`, `get_user`), and `git show 301fba76^:backend/src/vista_backend/services/auth.py`.
 """
 
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from functools import cache
 from typing import Annotated as A, Any
@@ -162,14 +165,68 @@ async def _by_sub(session: AsyncSession, sub: str) -> UserTable | None:
     return (await session.exec(select(UserTable).where(UserTable.sub == sub))).first()
 
 
+class NoUserContext(RuntimeError):
+    """Hosted code that needs a user ran outside a request, with none set."""
+
+
+_current_user_id: ContextVar[str | None] = ContextVar("current_user_id", default=None)
+""" Who the code running now acts for; set by `get_current_user` and `use_user`. """
+
+
+@contextmanager
+def use_user(user_id: str) -> Iterator[None]:
+    """
+    Act as `user_id` for the block: what `get_current_user` does for a request,
+    for code that has none. Group 7's `as_user` wraps this.
+    """
+    token = _current_user_id.set(user_id)
+    try:
+        yield
+    finally:
+        _current_user_id.reset(token)
+
+
+def current_user_id() -> str:
+    """
+    The user the running code acts for: the request's, or the one `use_user`
+    set. With neither, a desktop install acts as `local` (it has no other), and
+    a hosted one raises: whose credentials and settings it would use is not
+    something to guess.
+    """
+    user_id = _current_user_id.get()
+    if user_id is not None:
+        return user_id
+    if settings.deployment != "hosted":
+        return LOCAL_USER_ID
+    raise NoUserContext(
+        "No user is set for this code: on a hosted deployment, background work "
+        "must run as the user whose row it acts on (`use_user`)."
+    )
+
+
 async def get_current_user(
     session: SessionDep,
     authorization: A[str | None, Header()] = None,
-) -> UserTable:
+) -> AsyncIterator[UserTable]:
     """
-    The current user, per the module docstring. Hosted: get-or-create the row
-    for the token's `sub`, refreshing `display_name`, `email` and
-    `last_seen_at`.
+    The current user, per the module docstring, also set as `current_user_id()`
+    for everything the request runs (both deployments). The previous value comes
+    back when the request ends, so a caller that shares one context across
+    requests (a test client) is not left acting as the last user.
+    """
+    user = await _resolve_user(session, authorization)
+    previous = _current_user_id.get()
+    _current_user_id.set(user.id)
+    try:
+        yield user
+    finally:
+        _current_user_id.set(previous)
+
+
+async def _resolve_user(session: AsyncSession, authorization: str | None) -> UserTable:
+    """
+    Hosted: get-or-create the row for the token's `sub`, refreshing
+    `display_name`, `email` and `last_seen_at`.
     """
     if settings.deployment != "hosted":
         # A desktop install has one user; a stray token changes nothing.

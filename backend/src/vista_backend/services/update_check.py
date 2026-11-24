@@ -316,7 +316,7 @@ class UpdateChecker:
     async def _check_now(self) -> bool | None:
         async with self._lock:
             async with self.session_factory() as db:
-                row = await local_settings.get(db)
+                row = await local_settings.get_server(db)
                 enabled, prereleases = row.update_checks, row.update_prereleases
             if not enabled:
                 self.status = UpdateStatus()
@@ -330,16 +330,16 @@ class UpdateChecker:
                 checked=True, latest=result.latest, prereleases=prereleases
             )
             async with self.session_factory() as db:
-                row = await local_settings.get(db)
+                row = await local_settings.get_server(db)
                 row.update_checked_at = self.now().isoformat()
-                db.add(row)
+                db.add(row.server_row)
                 await db.commit()
             return True
 
     async def step(self) -> timedelta:
         """One turn of the schedule: check if a check is due, and say how long until the next."""
         async with self.session_factory() as db:
-            row = await local_settings.get(db)
+            row = await local_settings.get_server(db)
             enabled, last = row.update_checks, _parse_time(row.update_checked_at)
         if not enabled:
             self.status = UpdateStatus()

@@ -253,12 +253,12 @@ async def test_a_saved_i2_choice_moves_to_the_default(session, default_settings)
     row.inference_api_key = "legacy-key"
     row.inference_mag_api_key = "mag-key"
     row.inference_base_url = "https://custom.example/v1"
-    session.add(row)
     await session.flush()
 
     for _ in range(2):
         await session.run_sync(lambda s: _retire_i2_choices(s.connection()))
-    await session.refresh(row)
+    await session.refresh(row.user_row)
+    await session.refresh(row.server_row)
 
     assert row.inference_provider is None
     assert row.inference_model is None

@@ -21,13 +21,16 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 from pydantic import SecretStr
 
 from ...config import ForumSettings, settings
-from ...db.schemas import LocalSettingsTable, ProjectTable
+from ...db.schemas import ProjectTable
+
+if TYPE_CHECKING:
+    from ...services.settings_view import SettingsView
 from ...services.collaboration import DISPLAY_NAME_HEADER, INSTALL_ID_HEADER
 from ...services.forum_git import (
     COLLABORATION_CREDENTIAL,
@@ -139,7 +142,7 @@ def sign_in_headers(local: Any) -> dict[str, SecretStr]:
 
 
 def forum_config_for(
-    project: ProjectTable, local: LocalSettingsTable | None = None
+    project: ProjectTable, local: "SettingsView | None" = None
 ) -> ForumSettings | None:
     """
     This project's forum settings, or None when the project has no lab.
@@ -182,7 +185,7 @@ def forum_config_for(
     )
 
 
-def build_client_for(project: ProjectTable, local: LocalSettingsTable) -> ForumClient:
+def build_client_for(project: ProjectTable, local: "SettingsView") -> ForumClient:
     """
     A forum client scoped to this project, sending the token the forum should
     use. Raises when the project has no lab. `local` is the settings row, not
@@ -212,7 +215,7 @@ def lab_enabled(project: ProjectTable, local: Any = None) -> bool:
     return forum_config_for(project, local) is not None
 
 
-async def ensure_forum(project: ProjectTable, local: LocalSettingsTable) -> None:
+async def ensure_forum(project: ProjectTable, local: "SettingsView") -> None:
     """
     Make this project's forum exist and point at its repository. Idempotent.
 

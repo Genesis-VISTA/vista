@@ -481,6 +481,12 @@ class Settings(BaseSettings):
     shown. A dev stack opts out of contacting the default server that way, or
     with the Collaboration switch in Settings.
     """
+    collaboration_enabled: bool = True
+    """
+    The Collaboration switch for a hosted deployment, where Settings does not
+    hold it (`VISTA_BACKEND_COLLABORATION_ENABLED`). A desktop install uses the
+    switch in Settings.
+    """
 
     mcp_url: str = Field(
         default="http://127.0.0.1:8000/mcp", validation_alias="VISTA_MCP_URL"
