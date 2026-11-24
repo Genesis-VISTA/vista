@@ -11,6 +11,7 @@
  * project's own `knowledgeBases` field — there is no per-session override.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import { useEffect, useReducer, useSyncExternalStore } from "react";
 import type { ProjectCreate, ProjectPublic } from "./agent-events";
 
@@ -179,7 +180,7 @@ export function refreshProjects(): Promise<Project[]> {
   if (inFlight) return inFlight;
   inFlight = (async () => {
     try {
-      const res = await fetch("/api/projects", {
+      const res = await fetch(apiUrl("/api/projects"), {
         headers: { accept: "application/json" },
       });
       if (!res.ok) throw new Error(`Failed to load projects (${res.status})`);
@@ -308,7 +309,7 @@ export async function createProject(
   input: ProjectCreate,
   { hostedForumWanted = true }: { hostedForumWanted?: boolean } = {},
 ): Promise<CreatedProject> {
-  const res = await fetch(`/api/projects${hostedForumWanted ? "" : "?hosted_forum_wanted=false"}`, {
+  const res = await fetch(apiUrl(`/api/projects${hostedForumWanted ? "" : "?hosted_forum_wanted=false"}`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -325,7 +326,7 @@ export async function createProject(
  * thread); a failure carries the server's sentence and leaves the old forum.
  */
 export async function hostForum(name: string): Promise<Project> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(name)}/forum/host`, {
+  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(name)}/forum/host`), {
     method: "POST",
   });
   if (!res.ok) throw new Error(await extractError(res));
@@ -338,7 +339,7 @@ export async function updateProject(
   name: string,
   input: ProjectCreate
 ): Promise<Project> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, {
+  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(name)}`), {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
@@ -350,7 +351,7 @@ export async function updateProject(
 }
 
 export async function deleteProject(name: string): Promise<void> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(name)}`, { method: "DELETE" });
+  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(name)}`), { method: "DELETE" });
   if (!res.ok && res.status !== 204) throw new Error(await extractError(res));
   await refreshProjects();
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl, basePathUrlTransform } from "@/lib/api-url";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -58,7 +59,7 @@ function fileUrl({ kind, path, projectName, version }: Props, preview: boolean):
   if (projectName) params.push(`project_name=${encodeURIComponent(projectName)}`);
   if (preview) params.push("preview=1");
   if (preview && version) params.push(`v=${encodeURIComponent(version)}`);
-  return `/api/files/${kind}/${encoded}${params.length ? `?${params.join("&")}` : ""}`;
+  return apiUrl(`/api/files/${kind}/${encoded}${params.length ? `?${params.join("&")}` : ""}`);
 }
 
 type Loaded = { text: string; bytesRead: number; truncated: boolean };
@@ -198,6 +199,7 @@ export default function FilePreview(props: Props) {
         <div className="file-preview-markdown">
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
+            urlTransform={basePathUrlTransform}
             components={{
               // A project file must not make VISTA fetch a remote URL by being
               // looked at, so an image is only a link to where it would be.

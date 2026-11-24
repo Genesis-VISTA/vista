@@ -48,6 +48,7 @@ import { CopyableLine } from "./CopyableLine";
 import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
+import { useDeployment } from "@/lib/deployment";
 import { filledNote, remoteDirFill } from "@/lib/remote-dir";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
@@ -749,7 +750,8 @@ function SettingsNav({
   // model, and Custom also needs an endpoint.
   const providerReady = Boolean(savedCredential && settings?.model && settings.baseUrl.trim());
   const providerNote = settings ? (providerReady ? "Ready" : "Not ready") : null;
-  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster));
+  const { hosted } = useDeployment();
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && !(hosted && cluster === "perlmutter"));
   const ready = visible.filter(
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
@@ -936,7 +938,8 @@ function AboutSection({
   errors: Partial<Record<string, string>>;
 }) {
   const { info, error } = useVersion();
-  const release = info && info.checks !== "dev_build";
+  const { hosted } = useDeployment();
+  const release = info && info.checks !== "dev_build" && !hosted;
   return (
     <section className="settings-section" aria-label="About">
       <SectionHeader title="About">
@@ -962,28 +965,32 @@ function AboutSection({
                 </a>
               )}
             </div>
-            <UpdateControls info={info} />
+            {!hosted && <UpdateControls info={info} />}
           </>
         )}
-        <UpdateSwitch
-          field="update_checks"
-          label="Check for updates"
-          hint="Once a day, VISTA asks GitHub whether a newer release is out. Nothing else is sent."
-          on={draft.updateChecks}
-          onChange={(on) => setSwitch("update_checks", on)}
-          mark={marks.update_checks}
-          error={errors.update_checks}
-        />
-        <UpdateSwitch
-          field="update_prereleases"
-          label="Include prereleases"
-          hint="Also offer release candidates, which are tested less."
-          on={draft.updatePrereleases}
-          disabled={!draft.updateChecks}
-          onChange={(on) => setSwitch("update_prereleases", on)}
-          mark={marks.update_prereleases}
-          error={errors.update_prereleases}
-        />
+        {!hosted && (
+          <>
+            <UpdateSwitch
+              field="update_checks"
+              label="Check for updates"
+              hint="Once a day, VISTA asks GitHub whether a newer release is out. Nothing else is sent."
+              on={draft.updateChecks}
+              onChange={(on) => setSwitch("update_checks", on)}
+              mark={marks.update_checks}
+              error={errors.update_checks}
+            />
+            <UpdateSwitch
+              field="update_prereleases"
+              label="Include prereleases"
+              hint="Also offer release candidates, which are tested less."
+              on={draft.updatePrereleases}
+              disabled={!draft.updateChecks}
+              onChange={(on) => setSwitch("update_prereleases", on)}
+              mark={marks.update_prereleases}
+              error={errors.update_prereleases}
+            />
+          </>
+        )}
       </div>
     </section>
   );
@@ -1329,7 +1336,8 @@ function ComputeSection({
   onChoose: (section: Section) => void;
 }) {
   const view = useHpcStatus();
-  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster));
+  const { hosted } = useDeployment();
+  const visible = HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && !(hosted && cluster === "perlmutter"));
   const ready = visible.filter(
     (cluster) => view.clusters?.find((entry) => entry.cluster === cluster)?.state === "ready",
   ).length;
@@ -1345,7 +1353,7 @@ function ComputeSection({
         <div className="settings-compute-list">
           {RESOURCE_TREE.flatMap((institution) =>
             institution.facilities.flatMap((facility) =>
-              facility.clusters.map((cluster) => (
+              facility.clusters.filter((cluster) => !(hosted && cluster === "perlmutter")).map((cluster) => (
                 <ComputeResourceRow
                   key={cluster}
                   cluster={cluster}
@@ -1476,6 +1484,7 @@ function AgentSection({
   providerError?: string;
 }) {
   const { settings, error } = useAgentSettings();
+  const { hosted } = useDeployment();
   // The installation's configuration is in effect only until the researcher
   // chooses a provider of their own.
   const configured = draft.provider === null && settings?.source === "config";
@@ -1540,7 +1549,7 @@ function AgentSection({
                 <span className="settings-provider-model">{settings?.baseUrl}</span>
               </button>
             )}
-            {settings?.providers.map((provider) => {
+            {settings?.providers.filter((p) => !(hosted && p.id === "custom")).map((provider) => {
               const keySet = settings.keysSet[provider.id];
               return (
                 <button

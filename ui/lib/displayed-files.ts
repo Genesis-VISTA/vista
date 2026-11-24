@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/api-url";
 import type { FileKind } from "./files-tree";
 
 /** One file `display_file` showed in a conversation, as the backend lists it. */
@@ -21,7 +22,7 @@ export async function fetchDisplayedFiles(
   signal?: AbortSignal,
 ): Promise<DisplayedFile[]> {
   const qs = new URLSearchParams({ project_name: projectName, chat_session_id: chatSessionId });
-  const res = await fetch(`/api/chat/displayed-files?${qs.toString()}`, {
+  const res = await fetch(apiUrl(`/api/chat/displayed-files?${qs.toString()}`), {
     headers: { accept: "application/json" },
     cache: "no-store",
     signal,

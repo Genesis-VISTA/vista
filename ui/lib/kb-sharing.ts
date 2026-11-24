@@ -10,6 +10,7 @@
  * says so. Controls read `useCollaboration()` first.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import { post, refusal, type SharingRefusal } from "@/lib/skill-sharing";
 import type { KnowledgeBase, Publication } from "@/lib/types";
 
@@ -86,7 +87,7 @@ export async function listRemoteKnowledgeBases(
   { manifests = true }: { manifests?: boolean } = {},
 ): Promise<RemoteKnowledgeBase[]> {
   const query = manifests ? "" : "?manifests=false";
-  const res = await fetch(`/api/collaboration/knowledge-bases${query}`, {
+  const res = await fetch(apiUrl(`/api/collaboration/knowledge-bases${query}`), {
     headers: { accept: "application/json" },
     cache: "no-store",
   });
@@ -103,7 +104,7 @@ export async function publishKnowledgeBase(
   slug: string,
   { onTopOf, asNew }: { onTopOf?: number; asNew?: boolean } = {},
 ): Promise<KnowledgeBasePublished | SharingRefusal> {
-  const res = await post(`/api/knowledge-bases/${encodeURIComponent(slug)}/publish`, {
+  const res = await post(apiUrl(`/api/knowledge-bases/${encodeURIComponent(slug)}/publish`), {
     on_top_of: onTopOf ?? null,
     as_new: asNew ?? false,
   });
@@ -121,7 +122,7 @@ export async function importRemoteKnowledgeBase(
   id: string,
   opts: { version?: number; renameTo?: string; replaceModified?: boolean } = {},
 ): Promise<KnowledgeBaseImported | SharingRefusal> {
-  const res = await post(`/api/collaboration/knowledge-bases/${encodeURIComponent(id)}/import`, {
+  const res = await post(apiUrl(`/api/collaboration/knowledge-bases/${encodeURIComponent(id)}/import`), {
     version: opts.version ?? null,
     rename_to: opts.renameTo ?? null,
     replace_modified: opts.replaceModified ?? false,

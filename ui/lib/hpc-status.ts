@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useSyncExternalStore } from "react";
 
 /**
@@ -165,7 +166,7 @@ async function load(opts: { fresh?: boolean; cluster?: HpcCluster } = {}): Promi
   const query = params.toString();
   set({ inFlight: opts.cluster ?? "all" });
   try {
-    const res = await fetch(`/api/settings/hpc-status${query ? `?${query}` : ""}`, {
+    const res = await fetch(apiUrl(`/api/settings/hpc-status${query ? `?${query}` : ""}`), {
       headers: { accept: "application/json" },
       cache: "no-store",
     });

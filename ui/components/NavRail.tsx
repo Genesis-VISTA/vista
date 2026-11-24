@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { BASE_PATH } from "@/lib/api-url";
+import { UserMenu } from "@/components/UserMenu";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
@@ -343,7 +345,7 @@ export function NavRail() {
           <div className="nav-rail-brand" title={`VISTA ${APP_VERSION}`}>
             <span className="nav-rail-lockup">
               <img
-                src="/genesis-amsc-lockup-horizontal-white-cropped.svg"
+                src={`${BASE_PATH}/genesis-amsc-lockup-horizontal-white-cropped.svg`}
                 alt="Genesis VISTA"
               />
             </span>
@@ -450,6 +452,9 @@ export function NavRail() {
         {/* A newer release: the only place outside About that says so. */}
         {updateReady && <span className="update-marker" data-testid="settings-update-marker" />}
       </button>
+
+      {/* Hosted only: who is signed in, and the gateway's sign-out. */}
+      <UserMenu collapsed={collapsed} />
 
       {/* Fixed rather than absolute: the entry list scrolls, and anything
           positioned inside it gets clipped at the rail's edge. */}

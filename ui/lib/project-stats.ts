@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useEffect, useState } from "react";
 
 export type ProjectStats = {
@@ -37,9 +38,9 @@ export function useProjectStats(projectName: string): ProjectStats | null {
     void (async () => {
       try {
         const [sessions, uploads, outputs] = await Promise.all([
-          countOf(`/api/chat/sessions${query}`),
-          countOf(`/api/files/uploads${query}`),
-          countOf(`/api/files/outputs${query}`),
+          countOf(apiUrl(`/api/chat/sessions${query}`)),
+          countOf(apiUrl(`/api/files/uploads${query}`)),
+          countOf(apiUrl(`/api/files/outputs${query}`)),
         ]);
         if (cancelled) return;
         const updatedAt = sessions

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useState } from "react";
 import Link from "next/link";
 import FilePreview from "@/components/FilePreview";
@@ -32,7 +33,7 @@ function fileSrc(item: DisplayedFile, projectName: string | null): string {
   if (projectName) params.set("project_name", projectName);
   params.set("preview", "1");
   params.set("v", item.tool_call_id);
-  return `/api/files/${item.kind}/${encoded}?${params.toString()}`;
+  return apiUrl(`/api/files/${item.kind}/${encoded}?${params.toString()}`);
 }
 
 function FeedItem({

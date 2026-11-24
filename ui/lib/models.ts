@@ -18,6 +18,7 @@
  *                             how to surface elsewhere in the app.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import { useEffect, useState } from "react";
 
 /**
@@ -89,7 +90,7 @@ async function extractError(res: Response): Promise<string> {
 export async function fetchAvailableModels(projectName: string): Promise<ModelsState> {
   let res: Response;
   try {
-    res = await fetch(`/api/projects/${encodeURIComponent(projectName)}/models`, {
+    res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectName)}/models`), {
       headers: { accept: "application/json" },
     });
   } catch (e) {

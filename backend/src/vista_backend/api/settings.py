@@ -7,6 +7,7 @@ from ..agents.inference import PROVIDER_PRESETS, resolve_inference_target
 from ..db.db import SessionDep
 from ..db.schemas import HpcCluster, LocalSettingsPublic, LocalSettingsUpdate
 from ..services import globus_auth, hpc_status, local_settings
+from ..services.hosted import is_hosted, refuse_when_hosted
 from ..services.local_settings import LocalSettingsDep
 from ..utils.misc import now_iso
 
@@ -19,10 +20,28 @@ async def get_settings(local: LocalSettingsDep) -> LocalSettingsPublic:
     return local
 
 
+# Fields a hosted deployment does not offer. Clearing one is still accepted, so
+# a form that sends every field back does not trip over them.
+_HOSTED_NERSC_FIELDS = ("nersc_account", "nersc_remote_dir", "nersc_iri_token")
+_HOSTED_CUSTOM_FIELDS = ("inference_base_url", "inference_custom_api_key")
+
+
+def _refuse_hosted_fields(updates: LocalSettingsUpdate) -> None:
+    for name in _HOSTED_NERSC_FIELDS:
+        if name in updates.model_fields_set and getattr(updates, name):
+            refuse_when_hosted("NERSC IRI")
+    if updates.inference_provider == "custom" or any(
+        name in updates.model_fields_set and getattr(updates, name)
+        for name in _HOSTED_CUSTOM_FIELDS
+    ):
+        refuse_when_hosted("The Custom inference provider")
+
+
 @router.put("")
 async def update_settings(
     updates: LocalSettingsUpdate, session: SessionDep, local: LocalSettingsDep
 ) -> LocalSettingsPublic:
+    _refuse_hosted_fields(updates)
     # A model chosen from one provider means nothing to another, and sending
     # it there fails confusingly. Cleared here rather than by the client so
     # every client agrees, and no second request can race the first. Compared
@@ -84,6 +103,7 @@ async def get_inference(local: LocalSettingsDep) -> InferenceView:
                 default_model=p.default_model,
             )
             for p in PROVIDER_PRESETS.values()
+            if not (is_hosted() and p.id == "custom")
         ],
         provider=target.provider,
         source=target.source,

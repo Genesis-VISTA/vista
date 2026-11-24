@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl, basePathUrlTransform } from "@/lib/api-url";
 import { Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
@@ -868,7 +869,7 @@ function ChatPage() {
     const projectName = readActiveProjectName();
     if (!projectName) return;
     try {
-      await fetch("/api/chat/elicitation", {
+      await fetch(apiUrl("/api/chat/elicitation"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ project_name: projectName, id, action, content })
@@ -894,7 +895,7 @@ function ChatPage() {
     let error: string | null = null;
     try {
       const resp = await fetch(
-        `/api/projects/${encodeURIComponent(projectName)}/reports/generate`,
+        apiUrl(`/api/projects/${encodeURIComponent(projectName)}/reports/generate`),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -938,7 +939,7 @@ function ChatPage() {
     if (!projectName || !activeChatSessionId) return;
     setReportError(null);
     try {
-      const resp = await fetch(`/api/projects/${encodeURIComponent(projectName)}/reports`, {
+      const resp = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectName)}/reports`), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ ...payload, chat_session_id: activeChatSessionId }),
@@ -971,7 +972,7 @@ function ChatPage() {
     setSkillSaveError(null);
     setShowSkillEditor(true);
     try {
-      const resp = await fetch("/api/skills/generate", {
+      const resp = await fetch(apiUrl("/api/skills/generate"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1015,7 +1016,7 @@ function ChatPage() {
 
   async function saveSkill(payload: SkillSavedPayload) {
     setSkillSaveError(null);
-    const resp = await fetch("/api/skills", {
+    const resp = await fetch(apiUrl("/api/skills"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -1311,7 +1312,7 @@ function ChatPage() {
     if (!projectName || !conversationId) return;
     setInput("");
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1440,7 +1441,7 @@ function ChatPage() {
     });
 
     try {
-      const response = await fetch("/api/chat", {
+      const response = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1512,9 +1513,9 @@ function ChatPage() {
     setIsCheckingHealth(true);
     try {
       const response = await fetch(
-        `/api/mcp/health?project_name=${encodeURIComponent(projectName)}${
+        apiUrl(`/api/mcp/health?project_name=${encodeURIComponent(projectName)}${
           activeChatSessionId ? `&chat_session_id=${encodeURIComponent(activeChatSessionId)}` : ""
-        }`
+        }`)
       );
       const data = (await response.json()) as McpHealth;
       setMcpHealth(data);
@@ -1542,9 +1543,9 @@ function ChatPage() {
     setIsLoadingTools(true);
     try {
       const response = await fetch(
-        `/api/mcp/tools?project_name=${encodeURIComponent(projectName)}${
+        apiUrl(`/api/mcp/tools?project_name=${encodeURIComponent(projectName)}${
           activeChatSessionId ? `&chat_session_id=${encodeURIComponent(activeChatSessionId)}` : ""
-        }`
+        }`)
       );
       const data = (await response.json()) as McpToolsResponse;
       setMcpTools(data);
@@ -1907,7 +1908,7 @@ function ChatPage() {
                         <pre>{msg.event.text}</pre>
                       </details>
                     ) : msg.role === "assistant" ? (
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={basePathUrlTransform}>{msg.content}</ReactMarkdown>
                     ) : (
                       msg.content
                     )}
@@ -2176,13 +2177,13 @@ function ChatPage() {
                         </button>
                         {expanded && (
                           <div className="activity-step-detail">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                            <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={basePathUrlTransform}>{step.content}</ReactMarkdown>
                           </div>
                         )}
                       </>
                     ) : (
                       <div className="activity-step-line">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{step.content}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={basePathUrlTransform}>{step.content}</ReactMarkdown>
                       </div>
                     )}
                   </div>

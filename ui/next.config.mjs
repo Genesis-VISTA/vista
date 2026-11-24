@@ -3,8 +3,17 @@ import path from 'path';
 
 env.loadEnvConfig(path.resolve(process.cwd(), '..'), undefined, undefined, true);
 
+// Serve the UI under a path (`VISTA_BASE_PATH=/vista/ui`), as the hosted
+// deployment does behind its gateway. Fixed at build time. Next prefixes pages,
+// assets and <Link>; client `fetch`/`EventSource` go through `lib/api-url.ts`,
+// which reads the same value from NEXT_PUBLIC_BASE_PATH below. Not the
+// deployment flag, which the backend reports at runtime.
+const basePath = (process.env.VISTA_BASE_PATH ?? '').replace(/\/+$/, '');
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  ...(basePath ? { basePath } : {}),
+  env: { NEXT_PUBLIC_BASE_PATH: basePath },
   reactStrictMode: true,
   // VISTA Dev.app already exposes Chromium DevTools through its View menu.
   // Keep Next.js development behaviour without its floating on-screen button.

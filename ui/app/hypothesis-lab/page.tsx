@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -92,7 +93,7 @@ function useThreadStream(
     if (!projectName || !threadId || !open) return;
 
     const params = new URLSearchParams({ project_name: projectName, thread_id: threadId });
-    const source = new EventSource(`/api/debates/events?${params}`);
+    const source = new EventSource(apiUrl(`/api/debates/events?${params}`));
 
     source.addEventListener("post", (event) => {
       try {

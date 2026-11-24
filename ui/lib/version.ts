@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useSyncExternalStore } from "react";
 import { HPC_CLUSTER_TITLES } from "@/lib/hpc-status";
 import { extractError } from "@/lib/settings";
@@ -19,6 +20,10 @@ import { extractError } from "@/lib/settings";
 export type VersionInfo = {
   version: string;
   commit: string | null;
+  /** Where this VISTA runs; absent from a backend that predates it, which is desktop. */
+  deployment?: "desktop" | "hosted";
+  /** Hosted only: the gateway's logout page, when one is configured. */
+  sign_out_url?: string | null;
   /** `dev_build`: a checkout or local build, which never checks. */
   checks: "on" | "off" | "dev_build";
   checked_at: string | null;
@@ -140,18 +145,18 @@ async function load(path: string, init?: RequestInit): Promise<void> {
 
 /** Ask the backend again what it knows. Every subscriber follows. */
 export function refreshVersion(): Promise<void> {
-  return load("/api/version");
+  return load(apiUrl("/api/version"));
 }
 
 /** About's "Check now": the backend asks GitHub, then answers as `refreshVersion`. */
 export function checkNow(): Promise<void> {
-  return load("/api/updates/check", { method: "POST" });
+  return load(apiUrl("/api/updates/check"), { method: "POST" });
 }
 
 async function pollDownload(): Promise<void> {
   polling = null;
   try {
-    const res = await fetch("/api/updates/download", { headers: { accept: "application/json" }, cache: "no-store" });
+    const res = await fetch(apiUrl("/api/updates/download"), { headers: { accept: "application/json" }, cache: "no-store" });
     if (!res.ok) throw new Error(await extractError(res));
     const download = (await res.json()) as DownloadStatus;
     set({ download });
@@ -171,7 +176,7 @@ export async function startDownload(version: string): Promise<void> {
   if (polling) clearTimeout(polling);
   set({ download: { ...emptyDownload(), state: "downloading", version } });
   try {
-    const res = await fetch("/api/updates/download", {
+    const res = await fetch(apiUrl("/api/updates/download"), {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ version }),
@@ -189,7 +194,7 @@ export async function startDownload(version: string): Promise<void> {
 
 /** What restarting now would interrupt. */
 export async function fetchActivity(): Promise<Activity> {
-  const res = await fetch("/api/activity", { headers: { accept: "application/json" }, cache: "no-store" });
+  const res = await fetch(apiUrl("/api/activity"), { headers: { accept: "application/json" }, cache: "no-store" });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()) as Activity;
 }

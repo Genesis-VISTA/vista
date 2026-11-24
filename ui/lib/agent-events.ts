@@ -8,6 +8,8 @@
  * most fields are optional — because the frontend only reads a subset; the
  * backend remains the source of truth for the full schema.
  */
+import { withBasePath } from "@/lib/api-url";
+
 
 /* ------------------------------------------------------------------ */
 /*  Message history (opaque)                                           */
@@ -253,7 +255,7 @@ export function fileFromToolReturnContent(
 
   if (typeof content.uri === "string" && content.uri.length > 0) {
     return {
-      url: content.uri,
+      url: withBasePath(content.uri),
       mimeType: typeof content.mime_type === "string" ? content.mime_type : undefined,
       name: typeof content.filename === "string" ? content.filename : undefined,
     };
@@ -306,7 +308,7 @@ export function htmlFromToolReturnContent(
     }
   }
   if (kind === "image-url" && typeof content.url === "string") {
-    return `<img src="${content.url}" style="max-width:100%" />`;
+    return `<img src="${withBasePath(content.url)}" style="max-width:100%" />`;
   }
   if (kind === "text-content" && typeof content.text === "string") {
     return htmlFromString(content.text);

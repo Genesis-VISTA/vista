@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { refreshProjects, toCreate, updateProject, useActiveProject } from "@/lib/projects";
@@ -182,8 +183,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       const projectName =
         scopedToProject && activeProject ? activeProject.name : null;
       const path = projectName
-        ? `/api/knowledge-bases?project_name=${encodeURIComponent(projectName)}`
-        : "/api/knowledge-bases";
+        ? apiUrl(`/api/knowledge-bases?project_name=${encodeURIComponent(projectName)}`)
+        : apiUrl("/api/knowledge-bases");
       const res = await fetch(path);
       const data = (await res.json()) as KnowledgeBaseSummary[];
       setList(Array.isArray(data) ? data : []);
@@ -200,8 +201,8 @@ export function KnowledgeBaseExplorer({ scoped }: { scoped: boolean }) {
       const projectName =
         scopedToProject && activeProject ? activeProject.name : null;
       const path = projectName
-        ? `/api/knowledge-bases/${encodeURIComponent(slug)}?project_name=${encodeURIComponent(projectName)}`
-        : `/api/knowledge-bases/${encodeURIComponent(slug)}`;
+        ? apiUrl(`/api/knowledge-bases/${encodeURIComponent(slug)}?project_name=${encodeURIComponent(projectName)}`)
+        : apiUrl(`/api/knowledge-bases/${encodeURIComponent(slug)}`);
       const res = await fetch(path);
       if (!res.ok) {
         setSelected(null);
@@ -760,7 +761,7 @@ function KbDetailView({
   const refetch = useCallback(async () => {
     try {
       const res = await fetch(
-        `/api/knowledge-bases/${encodeURIComponent(kb.slug)}`,
+        apiUrl(`/api/knowledge-bases/${encodeURIComponent(kb.slug)}`),
         { cache: "no-store" }
       );
       if (!res.ok) return;
@@ -896,7 +897,7 @@ function KbDetailView({
     setSavingMeta(true);
     try {
       const res = await fetch(
-        `/api/knowledge-bases/${encodeURIComponent(kb.slug)}`,
+        apiUrl(`/api/knowledge-bases/${encodeURIComponent(kb.slug)}`),
         {
           method: "PUT",
           headers: { "content-type": "application/json" },
@@ -931,7 +932,7 @@ function KbDetailView({
       const form = new FormData();
       for (const f of arr) form.append("files", f);
       const res = await fetch(
-        `/api/knowledge-bases/${encodeURIComponent(kb.slug)}/publications`,
+        apiUrl(`/api/knowledge-bases/${encodeURIComponent(kb.slug)}/publications`),
         { method: "POST", body: form }
       );
       const data = await res.json();
@@ -956,9 +957,9 @@ function KbDetailView({
     setDeletingFile(filename);
     try {
       const res = await fetch(
-        `/api/knowledge-bases/${encodeURIComponent(
+        apiUrl(`/api/knowledge-bases/${encodeURIComponent(
           kb.slug
-        )}/publications/${encodeURIComponent(filename)}`,
+        )}/publications/${encodeURIComponent(filename)}`),
         { method: "DELETE" }
       );
       const data = await res.json();
@@ -984,7 +985,7 @@ function KbDetailView({
     if (!ok) return;
     try {
       const res = await fetch(
-        `/api/knowledge-bases/${encodeURIComponent(kb.slug)}`,
+        apiUrl(`/api/knowledge-bases/${encodeURIComponent(kb.slug)}`),
         { method: "DELETE" }
       );
       const data = await res.json();
@@ -1705,9 +1706,9 @@ function PublicationItem({
               <>
                 <a
                   className="button ghost button-sm"
-                  href={`/api/knowledge-bases/${encodeURIComponent(
+                  href={apiUrl(`/api/knowledge-bases/${encodeURIComponent(
                     slug
-                  )}/publications/${encodeURIComponent(publication.filename)}`}
+                  )}/publications/${encodeURIComponent(publication.filename)}`)}
                   {...(isFile
                     ? fileLinkProps("/")
                     : { target: "_blank", rel: "noreferrer" })}
@@ -1862,7 +1863,7 @@ function CreateKbModal({
       // a JSON body (`KnowledgeBaseCreate`) — this is a separate
       // request from the publication upload, mirroring how project
       // creation works.
-      const createRes = await fetch("/api/knowledge-bases", {
+      const createRes = await fetch(apiUrl("/api/knowledge-bases"), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -1887,7 +1888,7 @@ function CreateKbModal({
         const form = new FormData();
         for (const f of files) form.append("files", f);
         const uploadRes = await fetch(
-          `/api/knowledge-bases/${encodeURIComponent(kb.slug)}/publications`,
+          apiUrl(`/api/knowledge-bases/${encodeURIComponent(kb.slug)}/publications`),
           { method: "POST", body: form }
         );
         const uploadData = await uploadRes.json();

@@ -264,6 +264,8 @@ export const COLLABORATION_STATUS = {
 export const VERSION = {
   version: "dev",
   commit: "0123456789abcdef0123456789abcdef01234567",
+  deployment: "desktop",
+  sign_out_url: null,
   checks: "dev_build",
   checked_at: null,
   latest: null,

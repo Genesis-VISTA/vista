@@ -8,6 +8,7 @@
  * `fetchSettings`.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import { useEffect, useReducer } from "react";
 
 /** The first-boot tour's progress, as the backend's `OnboardingTourState` checks it on writes. */
@@ -197,7 +198,7 @@ export function refreshSettings(
   let settled: Promise<LocalSettings | null>;
   const fetcher = async (): Promise<LocalSettings | null> => {
     try {
-      const res = await fetch("/api/settings", {
+      const res = await fetch(apiUrl("/api/settings"), {
         headers: { accept: "application/json" },
         cache: "no-store",
       });
@@ -255,7 +256,7 @@ export function useSettings(): UseSettingsResult {
  * modal calls this on open and keeps the response in its local state.
  */
 export async function fetchSettings(): Promise<LocalSettings> {
-  const res = await fetch("/api/settings", {
+  const res = await fetch(apiUrl("/api/settings"), {
     headers: { accept: "application/json" },
     cache: "no-store",
   });
@@ -272,7 +273,7 @@ export async function fetchSettings(): Promise<LocalSettings> {
 export async function updateSettings(
   updates: LocalSettingsUpdate,
 ): Promise<LocalSettings> {
-  const res = await fetch("/api/settings", {
+  const res = await fetch(apiUrl("/api/settings"), {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(updates),
@@ -323,7 +324,7 @@ export type GlobusConnected = {
 export async function startGlobusLogin(
   cluster: GlobusCluster,
 ): Promise<GlobusLoginStarted> {
-  const res = await fetch(`/api/settings/globus/${cluster}/login`, {
+  const res = await fetch(apiUrl(`/api/settings/globus/${cluster}/login`), {
     method: "POST",
     headers: { accept: "application/json" },
   });
@@ -339,7 +340,7 @@ export async function completeGlobusLogin(
   cluster: GlobusCluster,
   code: string,
 ): Promise<GlobusConnected> {
-  const res = await fetch(`/api/settings/globus/${cluster}/code`, {
+  const res = await fetch(apiUrl(`/api/settings/globus/${cluster}/code`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ code }),

@@ -11,6 +11,7 @@
  * `useCollaboration()` first.
  */
 
+import { apiUrl } from "@/lib/api-url";
 import type { ProjectPublic } from "@/lib/agent-events";
 import { fromPublic, type Project } from "@/lib/projects";
 import { post, refusal, type SharingRefusal } from "@/lib/skill-sharing";
@@ -103,7 +104,7 @@ export async function listRemoteProjects(
   { manifests = true }: { manifests?: boolean } = {},
 ): Promise<RemoteProject[]> {
   const query = manifests ? "" : "?manifests=false";
-  const res = await fetch(`/api/collaboration/projects${query}`, {
+  const res = await fetch(apiUrl(`/api/collaboration/projects${query}`), {
     headers: { accept: "application/json" },
     cache: "no-store",
   });
@@ -120,7 +121,7 @@ export async function publishProject(
   name: string,
   { onTopOf, asNew }: { onTopOf?: number; asNew?: boolean } = {},
 ): Promise<ProjectPublished | SharingRefusal> {
-  const res = await post(`/api/projects/${encodeURIComponent(name)}/publish`, {
+  const res = await post(apiUrl(`/api/projects/${encodeURIComponent(name)}/publish`), {
     on_top_of: onTopOf ?? null,
     as_new: asNew ?? false,
   });
@@ -151,7 +152,7 @@ export async function importRemoteProject(
   id: string,
   opts: { version?: number; renameTo?: string; replaceModified?: boolean } = {},
 ): Promise<ProjectImported | SharingRefusal> {
-  const res = await post(`/api/collaboration/projects/${encodeURIComponent(id)}/import`, {
+  const res = await post(apiUrl(`/api/collaboration/projects/${encodeURIComponent(id)}/import`), {
     version: opts.version ?? null,
     rename_to: opts.renameTo ?? null,
     replace_modified: opts.replaceModified ?? false,

@@ -9,9 +9,10 @@ from pydantic import (
     ByteSize,
     PrivateAttr,
     SecretStr,
+    field_validator,
     model_validator,
 )
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from dotenv import load_dotenv, dotenv_values
 import logging
 from .utils.types import OptionalHttpUrl, ResolvedPath, LogLevel
@@ -318,6 +319,28 @@ class Settings(BaseSettings):
     than an OS store and has no window. Override via
     `VISTA_BACKEND_DEPLOYMENT=hosted`.
     """
+
+    sign_out_url: str = ""
+    """
+    Hosted only: where the UI's sign-out control goes. The gateway in front of
+    a hosted VISTA owns the session, so VISTA only links to its logout page.
+    Empty: no sign-out link. Reported with `GET /version`. Override via
+    `VISTA_BACKEND_SIGN_OUT_URL`.
+    """
+
+    skill_import_allowed_hosts: A[list[str], NoDecode] = []
+    """
+    Hosted only: the hosts a skill may be imported from (`agents/skill_repo.py`),
+    comma-separated in `VISTA_BACKEND_SKILL_IMPORT_ALLOWED_HOSTS`. Empty allows
+    none. Desktop ignores it and accepts any https host.
+    """
+
+    @field_validator("skill_import_allowed_hosts", mode="before")
+    @classmethod
+    def _split_hosts(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [h.strip().lower() for h in v.split(",") if h.strip()]
+        return v
 
     host: str = "127.0.0.1"
     port: int = 8001

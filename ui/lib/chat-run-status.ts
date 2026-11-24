@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/api-url";
 import { useCallback, useSyncExternalStore } from "react";
 
 /**
@@ -80,7 +81,7 @@ async function load(project: string): Promise<void> {
   store.inFlight = true;
   try {
     const res = await fetch(
-      `/api/chat/runs/status?project_name=${encodeURIComponent(project)}`,
+      apiUrl(`/api/chat/runs/status?project_name=${encodeURIComponent(project)}`),
       { headers: { accept: "application/json" }, cache: "no-store" },
     );
     if (!res.ok) throw new Error(`Chat run status request failed (${res.status})`);
