@@ -79,6 +79,7 @@ from .knowledge_base import (
     get_kb,
     slug_taken,
     kb_content,
+    check_slug_free_of_user_ids,
     kb_folder,
     kb_lock,
     read_current,
@@ -494,7 +495,7 @@ async def publish_knowledge_base(
     published here: it is first published into a team (`team_publish`).
     """
     url = required_url(local)
-    async with kb_lock(slug):
+    async with kb_lock(uid(user), slug):
         return await _publish(
             session,
             local,
@@ -652,6 +653,7 @@ def _check_slug(slug: str, *, chosen: bool) -> None:
     it; otherwise it is the item's, and they are asked for one (`name_invalid`).
     """
     if is_valid_slug(slug):
+        check_slug_free_of_user_ids(slug)
         return
     if chosen:
         raise HTTPException(
@@ -778,7 +780,7 @@ async def import_knowledge_base(
             chosen = (rename_to or "").strip()
             slug = chosen or item_name
             _check_slug(slug, chosen=bool(chosen))
-        async with kb_lock(slug):
+        async with kb_lock(uid(user), slug):
             # What another request committed while this one waited.
             session.expire_all()
             existing = await linked_knowledge_base(session, url, item_id, user)
@@ -836,13 +838,13 @@ async def _import(
         before = kb_content(existing)
         old = [Path(existing.pdfs_dir), Path(existing.rag_db_path)]
     else:
-        if await slug_taken(session, slug):
+        if await slug_taken(session, slug, user):
             raise _name_taken(slug)
         before, old = None, []
 
     await check_importable(manifest)
     check_space(manifest.archive_size, f"Importing {manifest.name}")
-    kb_dir = kb_folder(slug)
+    kb_dir = kb_folder(uid(user), slug)
     async with _incoming() as tmp:
         archive = tmp / ARCHIVE_NAME
         await client.download_blob(
@@ -872,7 +874,7 @@ async def _import(
         if existing is None:
             # Asked again: a knowledge base created (not imported) here while
             # downloading takes no lock.
-            if await slug_taken(session, slug):
+            if await slug_taken(session, slug, user):
                 raise _name_taken(slug)
             # An id of its own, never one from elsewhere: the seeded knowledge
             # bases have fixed ids.

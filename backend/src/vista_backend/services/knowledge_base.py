@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
 from ..db.ownership import visible, uid
 from ..db.schemas import (
+    LOCAL_USER_ID,
     KnowledgeBaseCreate,
     KnowledgeBaseTable,
     KnowledgeBaseUpdate,
@@ -40,26 +42,39 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def kb_folder(slug: str) -> Path:
-    """A knowledge base's own folder: `<knowledge_bases_dir>/<slug>`."""
-    return settings.knowledge_bases_dir / slug
+def kb_folder(user_id: str | None, slug: str) -> Path:
+    """
+    The one place a knowledge base's directory is decided, from its owner and
+    slug: `<knowledge_bases_dir>/<slug>` for `local` (nothing moves on desktop)
+    and for a global one (`user_id` None, the docs corpus);
+    `<knowledge_bases_dir>/<user_id>/<slug>` for any other user. The MCP server
+    resolves the same layout (`rag_mcp._kb_dir`).
+    """
+    if user_id is None or user_id == LOCAL_USER_ID:
+        return settings.knowledge_bases_dir / slug
+    return settings.knowledge_bases_dir / user_id / slug
+
+
+def kb_dir_of(kb: KnowledgeBaseTable) -> Path:
+    """`kb_folder` for a row."""
+    return kb_folder(kb.user_id, kb.slug)
 
 
 _locks: dict[str, asyncio.Lock] = {}
 
 
-def kb_lock(slug: str) -> asyncio.Lock:
+def kb_lock(user_id: str | None, slug: str) -> asyncio.Lock:
     """
     The lock a publish or import of the knowledge base with `slug` holds from
     its checks to its commit, and an import until the store it replaced is
     removed: two interleaved, an import's `CURRENT` and row could name
     different stores, and each would remove the other's.
     """
-    return _locks.setdefault(slug, asyncio.Lock())
+    return _locks.setdefault(str(kb_folder(user_id, slug)), asyncio.Lock())
 
 
 @asynccontextmanager
-async def kb_writing(slug: str, doing: str) -> AsyncIterator[None]:
+async def kb_writing(user_id: str | None, slug: str, doing: str) -> AsyncIterator[None]:
     """
     Hold the slug's lock (`kb_lock`) for any other change to the knowledge
     base's row or files, through its commit, so a publish or import cannot
@@ -68,7 +83,7 @@ async def kb_writing(slug: str, doing: str) -> AsyncIterator[None]:
     Refused (409) while a publish or import holds it, rather than waited for,
     as those take minutes. `doing` is a verb phrase ("delete it").
     """
-    lock = kb_lock(slug)
+    lock = kb_lock(user_id, slug)
     # Nothing is awaited between the check and taking the lock, which an
     # unheld asyncio.Lock gives at once: no publish or import can come between.
     if lock.locked():
@@ -140,19 +155,35 @@ async def get_kb(
     return kb
 
 
-async def slug_taken(session: AsyncSession, slug: str) -> bool:
+async def slug_taken(session: AsyncSession, slug: str, user: UserTable) -> bool:
     """
-    Whether any user has a knowledge base called `slug`. Its store is keyed on disk
-    by the slug alone (`knowledge_bases_dir/<slug>`, which the MCP server also reads
-    by slug), so a slug another user holds cannot be reused without writing over
-    their files.
+    Whether `user` already has a knowledge base called `slug`. Stores are keyed
+    on disk by owner and slug (`kb_folder`), so another user's slug is free.
     """
     row = (
         await session.exec(
-            select(KnowledgeBaseTable.id).where(KnowledgeBaseTable.slug == slug)
+            select(KnowledgeBaseTable.id).where(
+                KnowledgeBaseTable.slug == slug,
+                KnowledgeBaseTable.user_id == uid(user),
+            )
         )
     ).first()
     return row is not None
+
+
+_UUID_SLUG = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def check_slug_free_of_user_ids(slug: str) -> None:
+    """400 for a uuid-shaped slug: it could be a user's folder under `knowledge_bases_dir`."""
+    if _UUID_SLUG.match(slug):
+        raise HTTPException(
+            status_code=400,
+            detail="A knowledge base's slug cannot look like an id (uuid); "
+            "choose a name with some words in it.",
+        )
 
 
 def require_writable(kb: KnowledgeBaseTable) -> KnowledgeBaseTable:
@@ -160,7 +191,8 @@ def require_writable(kb: KnowledgeBaseTable) -> KnowledgeBaseTable:
     if kb.user_id is None:
         raise HTTPException(
             status_code=409,
-            detail=f"{kb.slug} comes with VISTA and is read-only.",
+            detail=f"{kb.slug} comes with VISTA and is read-only. "
+            "Make your own knowledge base to add papers of your own.",
         )
     return kb
 
@@ -183,21 +215,18 @@ async def create_kb(
                 "1-80 chars, must start and end with an alphanumeric character."
             ),
         )
-    # Stores are keyed on disk by slug alone (`knowledge_bases_dir/<slug>`, which the
-    # MCP server also looks up by slug), so a slug another user holds cannot be
-    # reused without writing over their files: any owner's slug is taken, until
-    # storage is keyed per owner.
-    if await slug_taken(session, payload.slug):
+    check_slug_free_of_user_ids(payload.slug)
+    if await slug_taken(session, payload.slug, user):
         raise HTTPException(
             status_code=409, detail=f"Slug already in use: {payload.slug}"
         )
-    if kb_lock(payload.slug).locked():
+    if kb_lock(uid(user), payload.slug).locked():
         raise HTTPException(
             status_code=409,
             detail=f"A knowledge base is being imported as {payload.slug}.",
         )
 
-    kb_dir = settings.knowledge_bases_dir / payload.slug
+    kb_dir = kb_folder(uid(user), payload.slug)
     pdfs_dir = kb_dir / "pdfs"
     rag_db_path = kb_dir / "rag_db"
     # What a deletion could not remove (on Windows, a store the MCP server

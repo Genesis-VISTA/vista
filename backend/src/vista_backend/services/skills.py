@@ -108,8 +108,13 @@ def mirror_spec(row: SkillTable, skill: Skill) -> None:
 
 
 async def list_skills(session: AsyncSession, user: UserTable) -> list[SkillTable]:
-    """`user`'s skills and the global (bundled) ones."""
-    return list((await session.exec(visible(select(SkillTable), user))).all())
+    """
+    `user`'s skills and the global (bundled) ones, their own copy of a global
+    one (see `copy_on_write`) standing in for it.
+    """
+    rows = (await session.exec(visible(select(SkillTable), user))).all()
+    mine = {r.name for r in rows if r.user_id is not None}
+    return [r for r in rows if r.user_id is not None or r.name not in mine]
 
 
 async def get_skill_optional(
@@ -911,8 +916,7 @@ async def update_skill(
     Partial update of the SKILL.md. Any change marks the skill modified.
     A bundled skill is refused: it is global and writable by none.
     """
-    skill = await get_skill(session, name, user)
-    refuse_bundled(skill, "edited")
+    skill = await copy_on_write(session, await get_skill(session, name, user), user)
     data = updates.model_dump(exclude_unset=True)
 
     # Rejected up front, before touching disk, so a rejected PATCH never leaves
@@ -968,6 +972,54 @@ async def update_skill(
         raise
     await session.refresh(skill)
     return skill
+
+
+async def copy_on_write(
+    session: AsyncSession, skill: SkillTable, user: UserTable
+) -> SkillTable:
+    """
+    The skill `user` may write to: `skill` itself when it is theirs, else (a
+    global, bundled one, the same for everybody) their own copy of it, made now:
+    same name, owned by them, its files copied into a folder of its own and
+    marked modified. Name resolution prefers it to the global one for them only.
+    Deleting it brings the global one back.
+    """
+    if skill.user_id is not None:
+        return skill
+    path = new_storage_path()
+    src = settings.data_dir / skill.path
+    await asyncio.to_thread(shutil.copytree, src, settings.data_dir / path)
+    now = now_iso()
+    copy = build_skill_row(
+        Skill.model_validate(
+            {
+                "name": skill.name,
+                "description": skill.description,
+                "license": skill.license,
+                "compatibility": skill.compatibility,
+                "allowed_tools": skill.allowed_tools,
+                "metadata": skill.skill_metadata,
+                "body": "",  # only the spec metadata is mirrored onto a row
+            }
+        ),
+        path=path,
+        repo_url=skill.repo_url,
+        now=now,
+        user=user,
+    )
+    try:
+        await commit_skill_files(session, copy)
+    except IntegrityError as e:
+        if is_name_clash(e):
+            raise HTTPException(
+                status_code=409,
+                detail=f"{skill.name} is bundled with VISTA, and this database "
+                "cannot hold a copy of it under the same name; import a copy "
+                "under another name instead.",
+            ) from e
+        raise
+    await invalidate_loading_projects(session, copy.name, copy.user_id)
+    return copy
 
 
 def refuse_bundled(skill: SkillTable, what: str) -> None:

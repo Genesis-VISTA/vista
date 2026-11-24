@@ -319,8 +319,8 @@ async def _science_enabled(client) -> bool:
     the science projects need both the molten-salt corpus and MSTDB. From a
     token, the `seed_science_projects` setting decides. With no client, never.
     """
-    if client is None:
-        return False
+    if client is None or settings.deployment == "hosted":
+        return False  # a hosted deployment never runs the science seeds
     if _from_payload():
         return await client.has("molten-salt-papers") and await client.has("mstdb")
     return settings.seed_science_projects

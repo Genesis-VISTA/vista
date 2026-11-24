@@ -42,13 +42,14 @@ from typing import Annotated as A, Any, Optional
 
 import chromadb
 from chromadb.config import Settings as ChromaSettings
-from fastmcp import FastMCP
+from fastmcp import Context, FastMCP
 from fastmcp.server.lifespan import lifespan
 from mcp.types import ToolAnnotations
 from sentence_transformers import SentenceTransformer
 
 from .bm25 import BM25Okapi
 from .config import settings
+from .lib.user_config import get_vista_meta
 from .hybrid_search import RetrievalResult, merge_retrievals
 from .metrics import stage as metrics_stage
 
@@ -72,6 +73,39 @@ logger = logging.getLogger(__name__)
 # an alphanumeric character. Kept in lockstep with the regex in the
 # backend's schemas module — see comment there for the rationale.
 _SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,78}[a-z0-9])?$")
+
+# A hosted user's id, as the backend sends it in the tool metadata. Validated
+# before it reaches a path: a stray `/` or `..` must never leave the user's folder.
+_USER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,63}$")
+_LOCAL_USER = "local"
+
+
+def _owner(user_id: str | None) -> str | None:
+    """
+    The user whose own folder to look in: None for `local`, for a backend that
+    sends no user (older, or the desktop), and for an id that is not a plain id.
+    """
+    if not user_id or user_id == _LOCAL_USER or not _USER_ID_RE.match(user_id):
+        return None
+    return user_id
+
+
+def _kb_key(user_id: str | None, slug: str) -> str:
+    """
+    The registry key (and path below `knowledge_bases_dir`) of a KB: `<slug>` for
+    `local` and the global ones, `<user_id>/<slug>` for another user's.
+    Kept in lockstep with `vista_backend.services.knowledge_base.kb_folder`.
+    """
+    owner = _owner(user_id)
+    return f"{owner}/{slug}" if owner else slug
+
+
+def _kb_dir(user_id: str | None, slug: str) -> Path | None:
+    """The folder of `user_id`'s KB `slug`; None for a slug that is not one."""
+    if not _SLUG_RE.match(slug):
+        return None
+    return settings.knowledge_bases_dir / _kb_key(user_id, slug)
+
 
 _Stamp = tuple[int, int, int, int] | None
 """ What a file is right now (device, inode, size, mtime), or None if absent. """
@@ -163,6 +197,13 @@ def _discover_kb_paths() -> list[tuple[str, Path]]:
             store = _store_path(child)
             if store is not None:
                 discovered.append((slug, store))
+            elif _USER_ID_RE.match(slug):
+                # A hosted user's folder: `<user_id>/<slug>/`.
+                for own in sorted(child.iterdir()):
+                    if own.is_dir() and _SLUG_RE.match(own.name):
+                        own_store = _store_path(own)
+                        if own_store is not None:
+                            discovered.append((f"{slug}/{own.name}", own_store))
 
     return discovered
 
@@ -263,7 +304,7 @@ def _register_new_kbs() -> list[str]:
         if slug in _kbs:
             continue
         logger.info("RAG: opening ChromaDB for %s at %s", slug, db_path)
-        handle = _open_kb(slug, db_path)
+        handle = _open_kb(slug.rpartition("/")[2], db_path)
         if handle is not None:
             _kbs[slug] = handle
             added.append(slug)
@@ -402,9 +443,27 @@ def _load_bm25_corpus(slug: str, db_path: Path) -> BM25Okapi | None:
     return bm25
 
 
-def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
+def _visible_kbs(user_id: str | None) -> dict[str, str]:
     """
-    Look up the KB handle for `kb_slug`. Returns (handle, error_message).
+    {slug as the user names it: registry key} of the KBs `user_id` may search:
+    their own, and the global ones (and `local`'s, which on a desktop is all).
+    Another user's are not in it, whatever slug is asked for.
+    """
+    owner = _owner(user_id)
+    out = {key: key for key in _kbs if "/" not in key}
+    if owner:
+        for key in _kbs:
+            if key.startswith(owner + "/"):
+                out[key.partition("/")[2]] = key  # their own wins over a global one
+    return out
+
+
+def _resolve_kb(
+    kb_slug: str | None, user_id: str | None = None
+) -> tuple[_KbHandle | None, str | None]:
+    """
+    Look up the KB handle for `kb_slug`, as `user_id` sees it (their own KB of
+    that slug, else a global one). Returns (handle, error_message).
 
     A slug that isn't registered triggers one rescan first: the KB may have
     been created and indexed in the UI since the server started. One that is
@@ -413,18 +472,25 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
     the KB that would be searched is reopened; the others need only still be
     there, for the list of choices.
     """
+    if kb_slug and _kb_dir(user_id, kb_slug) is None:
+        return None, f"ERROR: {kb_slug!r} is not a Knowledge Base slug."
     if kb_slug:
-        _refresh_kb(kb_slug)
+        for key in {_kb_key(user_id, kb_slug), kb_slug}:
+            _refresh_kb(key)
     else:
-        for slug in list(_kbs):
-            if _store_path(settings.knowledge_bases_dir / slug) is None:
-                _refresh_kb(slug)  # drops it
-        if len(_kbs) == 1:
-            _refresh_kb(next(iter(_kbs)))
-    if not _kbs or (kb_slug and kb_slug not in _kbs):
+        for key in list(_visible_kbs(user_id).values()):
+            if _store_path(settings.knowledge_bases_dir / key) is None:
+                _refresh_kb(key)  # drops it
+        visible = _visible_kbs(user_id)
+        if len(visible) == 1:
+            _refresh_kb(next(iter(visible.values())))
+    if not _visible_kbs(user_id) or (
+        kb_slug and kb_slug not in _visible_kbs(user_id)
+    ):
         _register_new_kbs()
+    visible = _visible_kbs(user_id)
 
-    if not _kbs:
+    if not visible:
         return None, (
             "ERROR: no Knowledge Bases are available on this MCP server. "
             f"The discovery scan under {settings.knowledge_bases_dir} "
@@ -433,21 +499,21 @@ def _resolve_kb(kb_slug: str | None) -> tuple[_KbHandle | None, str | None]:
         )
 
     if not kb_slug:
-        if len(_kbs) == 1:
-            return next(iter(_kbs.values())), None
-        choices = ", ".join(sorted(_kbs))
+        if len(visible) == 1:
+            return _kbs[next(iter(visible.values()))], None
+        choices = ", ".join(sorted(visible))
         return None, (
             "ERROR: this MCP server hosts multiple Knowledge Bases; pass "
             f"`kb_slug` as one of: {choices}."
         )
 
-    handle = _kbs.get(kb_slug)
-    if handle is None:
-        choices = ", ".join(sorted(_kbs))
+    key = visible.get(kb_slug)
+    if key is None:
+        choices = ", ".join(sorted(visible))
         return None, (
             f"ERROR: unknown kb_slug {kb_slug!r}. Available KBs: {choices}."
         )
-    return handle, None
+    return _kbs[key], None
 
 
 def _get_citation_for_source(
@@ -546,6 +612,7 @@ async def rag_search(
         "when `hybrid=False`. Default 0.5 matches the Semantic "
         "Chameleon paper's reported configuration.",
     ] = 0.5,
+    ctx: Context | None = None,
 ) -> str:
     """
     Search an indexed Knowledge Base for passages relevant to the query.
@@ -588,18 +655,26 @@ async def rag_search(
     # In a thread: finding the KB may reopen its store or reload its BM25
     # corpus, and embedding and searching are blocking too. One search at a
     # time, as before, now off the event loop the other tools share.
-    return await asyncio.to_thread(_search, query, kb_slug, n_results, hybrid, alpha)
+    user_id = get_vista_meta(ctx).user_id if ctx is not None else None
+    return await asyncio.to_thread(
+        _search, query, kb_slug, n_results, hybrid, alpha, user_id
+    )
 
 
 _search_lock = threading.Lock()
 
 
 def _search(
-    query: str, kb_slug: str | None, n_results: int, hybrid: bool, alpha: float
+    query: str,
+    kb_slug: str | None,
+    n_results: int,
+    hybrid: bool,
+    alpha: float,
+    user_id: str | None = None,
 ) -> str:
     """`rag_search`'s work, blocking: under `_search_lock`, so `_kbs` has one writer."""
     with _search_lock:
-        handle, err = _resolve_kb(kb_slug)
+        handle, err = _resolve_kb(kb_slug, user_id)
         if err is not None or handle is None:
             return err or "ERROR: unable to resolve a Knowledge Base."
 

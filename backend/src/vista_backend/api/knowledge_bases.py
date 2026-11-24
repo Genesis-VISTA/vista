@@ -35,6 +35,7 @@ from ..services.current_user import CurrentUser
 from ..agents.inference import citation_credentials
 from ..services.local_settings import LocalSettingsDep
 from ..config import settings
+from ..db.ownership import uid
 from ..db.db import SessionDep, commit_with_retry, get_engine
 from ..db.schemas import (
     KnowledgeBaseCreate,
@@ -763,7 +764,7 @@ async def delete_knowledge_base(
     """
     # Its files may be being packed or replaced: deleting them meanwhile would
     # fail the publish or import and leave its folder half there.
-    async with kb_service.kb_writing(slug, "delete it"):
+    async with kb_service.kb_writing(uid(user), slug, "delete it"):
         await _delete_knowledge_base(slug, session, user=user)
 
 
@@ -792,7 +793,7 @@ async def _delete_knowledge_base(
         except ValueError:
             return False
 
-    for target in (pdfs_dir, rag_db_path, kb_root / slug):
+    for target in (pdfs_dir, rag_db_path, kb_service.kb_folder(uid(user), slug)):
         if not target.exists():
             continue
         if not _is_safe(target):
@@ -898,7 +899,7 @@ async def add_publications(
 ) -> dict[str, Any]:
     if not files:
         raise HTTPException(status_code=400, detail="No files were provided.")
-    async with kb_service.kb_writing(slug, "add papers"):
+    async with kb_service.kb_writing(uid(user), slug, "add papers"):
         return await _add_publications(
             slug, files, background_tasks, session, local, user=user
         )
@@ -1068,7 +1069,7 @@ async def delete_publication(
     so `rag_search` no longer returns it. Refused while the knowledge base
     is indexing, which writes the same index, or being published or imported.
     """
-    async with kb_service.kb_writing(slug, "delete the paper"):
+    async with kb_service.kb_writing(uid(user), slug, "delete the paper"):
         await _delete_publication(slug, filename, session, user=user)
 
 
