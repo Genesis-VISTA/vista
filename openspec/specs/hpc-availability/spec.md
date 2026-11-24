@@ -258,8 +258,8 @@ asks for a fresh check of all clusters or of one named cluster.
 
 ### Requirement: Cluster visibility setting
 The researcher SHALL be able to choose which clusters appear in the NavRail.
-The choice SHALL persist per user, and all clusters SHALL be shown by default,
-including a cluster added after the researcher last changed the setting.
+The choice SHALL persist in the installation's settings, and all clusters SHALL be shown by
+default, including a cluster added after the researcher last changed the setting.
 Hiding a cluster SHALL NOT delete or change any of its credentials.
 
 #### Scenario: Hide Perlmutter

@@ -82,7 +82,7 @@ under `openspec/changes/milestone-*`.
 
 - **WHEN** a testing-roadmap change is proposed or applied
 - **THEN** it MUST NOT add VISTAGuard gate tests or red-team harnesses
-- **AND** existing tenant / volume isolation tests MAY remain as multi-tenancy coverage
+- **AND** existing volume isolation tests MAY remain as isolation coverage between projects
 
 ### Requirement: Milestone delivery conventions
 
