@@ -19,7 +19,7 @@ and find their work there after a reboot or an upgrade.
   `vista.db` and the stores.
 - **Beam as a soft dependency** (`Wants=`/`After=`), so freeing the GPUs stops only the server
   model.
-- **The Obsidian route**: `/vista/ui` (or a host of its own, O1) with browser-mode
+- **The Obsidian route**: `/vista/ui` (settled with Jesse) with browser-mode
   `openid-connect`, the token passed upstream, no response buffering and long timeouts for
   streams; a Keycloak redirect URI; certificate verification for both Holly upstreams.
 - **Operations**: an upgrade runbook (announce, drain, restart; startup recovery resumes
@@ -47,7 +47,7 @@ None.
 ## Impact
 
 `deploy/image/` (TLS front, base path build argument, release tag), `deploy/holly/` (units,
-env, README runbook, Ansible handoff note), and other teams' queues: Lawrence (firewall, ZFS
-snapshots now; Ansible as the follow-up), Jesse's APISIX image repo and the Obsidian Keycloak
-admins (route, redirect URI, certificate verification). Acceptance needs `multi-user-hosted`
-complete.
+env, README runbook, and a living Ansible handoff note recording every host change made by
+hand with sudo: units, storage, account, firewall, ZFS), Jesse's APISIX image repo and the
+Obsidian Keycloak admins (route, redirect URI, certificate verification), and Lawrence for the
+Ansible follow-up only. Acceptance needs `multi-user-hosted` complete.

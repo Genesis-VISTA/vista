@@ -27,15 +27,17 @@ unreachable without more plumbing).
 
 ### D2. By hand now, Ansible as a follow-up
 
-This change installs on Holly by hand from `deploy/holly/README.md`: units copied to
-`/etc/containers/systemd/` and `/etc/systemd/system/`, podman's `graphroot` on `/scratch`
-through `/etc/containers/storage.conf`, the `vista` account, and the firewall rule (Lawrence
-opens `:8443` to Obsidian; it is one rule, needed for the route to work at all). Everything on
-the tmpfs root is listed in `deploy/holly/ANSIBLE-HANDOFF.md`: each file with its source in
-the repo and target path, the account, the firewall rule, `nvidia-fabricmanager`, and the
-collaboration server's unit. The README's reinstall steps cover a reboot until Lawrence's
-follow-up lands. *Alternative:* Ansible inside this change (rejected by Sam: it would gate the
-change on another team's queue; get it working first).
+This change installs on Holly by hand with sudo, from `deploy/holly/README.md`: units copied
+to `/etc/containers/systemd/` and `/etc/systemd/system/`, podman's `graphroot` on `/scratch`
+through `/etc/containers/storage.conf`, the `vista` account, the firewall rule for `:8443`, and
+the data dataset and its snapshots. `deploy/holly/ANSIBLE-HANDOFF.md` is a living file, started
+in group 1: every host change gets an entry (what, the exact command or file with its repo
+source and target, how to check it after a reboot) in the same commit as the step that makes
+it, so nothing done by hand exists only on Holly. Group 3 adds `nvidia-fabricmanager` and the
+collaboration server's unit, checks it against the README, and it goes to Lawrence. The
+README's reinstall steps cover a reboot until his follow-up lands. *Alternative:* Ansible
+inside this change, or Lawrence making each host change (rejected by Sam: it would gate the
+change on another team's queue; get it working first, keep the record in git).
 
 ### D3. Service account and release image
 
@@ -50,8 +52,9 @@ probe (`multi-user-hosted` D10) reports Beam down.
 
 ### D5. Base path
 
-`build-image.sh --base-path /vista/ui` passes `VISTA_BASE_PATH` to the UI build; empty for a
-host of its own. O1's answer picks the value; nothing else changes.
+`build-image.sh --base-path /vista/ui` passes `VISTA_BASE_PATH` to the UI build. O1 is
+settled at `/vista/ui` (Sam with Jesse, 2026-11-24); a host of its own later would only build
+with an empty base path.
 
 ### D6. Route
 
@@ -69,15 +72,15 @@ copy to `/proj` for off-box restore. Restore steps in the README, rehearsed once
 ## Delivery plan
 
 ```
-needs multi-user-hosted G1, G2 ──► H1 unit + image ──► H2 TLS front (+ firewall rule ◆ Lawrence)
-ask now ───────────────────────────────────────────► H5 route ◆ Obsidian admins (O1, redirect URI, cert)
-H1 ──► H4 data + backups (◆ Lawrence for ZFS)      H1 ──► H6 runbook + metrics
+needs multi-user-hosted G1, G2 ──► H1 unit + image + handoff file ──► H2 TLS front + firewall (sudo)
+ask now ───────────────────────────────────────────► H5 route at /vista/ui ◆ Jesse / Obsidian admins
+H1 ──► H4 data + backups (sudo)                    H1 ──► H6 runbook + metrics
 multi-user-hosted complete + H1–H6 ──► H7 two-user acceptance through Obsidian ◆ Sam
-H7 ──► H3 Ansible handoff note for Lawrence ──► ◆ change 2 done ──► follow-up: Ansible (Lawrence)
+H7 ──► H3 finish the handoff note ──► ◆ change 2 done ──► follow-up: Ansible (Lawrence)
 ```
 
-The route request (H5) and the firewall rule are asked for as soon as the change is approved,
-because they are other people's queues; the Ansible work waits for the handoff note.
+Only the route (H5) is another team's queue inside this change, so it is asked for now; host
+changes on Holly are ours, recorded as they are made.
 
 ## Risks / Trade-offs
 
@@ -92,9 +95,5 @@ because they are other people's queues; the Ansible work waits for the handoff n
 ## Migration Plan
 
 Fresh data folder (pilot data stays where it is). Cut-over: stop the pilot unit, install the
-Ansible-managed units, start, check `/version` through Obsidian. Rollback: stop `vista`, start
+units from the README, start, check `/version` through Obsidian. Rollback: stop `vista`, start
 the pilot unit from `holly-staging` again.
-
-## Open Questions
-
-- O1 (path or host), answered by the Obsidian admins; it sets only a build argument (D5).
