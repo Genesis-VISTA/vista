@@ -10,15 +10,36 @@
 
 const DEFAULT_BACKEND_URL = "http://127.0.0.1:8001";
 
+import { headers } from "next/headers";
+
 /**
- * The headers for an upstream backend request: the per-call extras (e.g.
- * `content-type`). The backend needs no identity, so nothing is forwarded from
- * the incoming request; this stays the one place that would change if that did.
+ * The researcher's access token on a request: `X-Access-Token` (what Obsidian's
+ * gateway sets after signing them in), else an incoming `Authorization: Bearer`.
+ * Null on the desktop, where nothing signs anyone in. Never log the result.
+ */
+export function accessToken(incoming: Headers): string | null {
+  const direct = incoming.get("x-access-token")?.trim();
+  if (direct) return direct;
+  const match = /^Bearer\s+(\S+)\s*$/i.exec(incoming.get("authorization") ?? "");
+  return match ? match[1] : null;
+}
+
+/** `Authorization: Bearer <token>` for the backend, or nothing without a token. */
+export function identityHeaders(incoming: Headers): Record<string, string> {
+  const token = accessToken(incoming);
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+/**
+ * The headers for an upstream backend request: the researcher's identity from
+ * the current request, merged with any per-call extras (e.g. `content-type`).
+ * Reads the incoming request via `next/headers`, so it works in every route
+ * handler without threading the `Request` through.
  */
 export async function backendHeaders(
   extra: Record<string, string> = {}
 ): Promise<Record<string, string>> {
-  return { ...extra };
+  return { ...identityHeaders(await headers()), ...extra };
 }
 
 export function getBackendBaseUrl(): string {
