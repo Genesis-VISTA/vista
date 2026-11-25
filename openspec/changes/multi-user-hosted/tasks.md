@@ -91,5 +91,5 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 14. Docs and desktop regression (wave 5; needs 1–12)
 
-- [ ] 14.1 AGENTS.md (identity, ownership helpers, hosted flag rules) and a `docs/hosted.md` listed or excluded in `docs/site.toml`; verify with `./scripts/ci-local.sh docs`
+- [x] 14.1 AGENTS.md (identity, ownership helpers, hosted flag rules) and a `docs/hosted.md` listed or excluded in `docs/site.toml`; verify with `./scripts/ci-local.sh docs`
 - [ ] 14.2 Desktop regression: upgrade a pre-change `vista.db`, and run `scripts/build_local_package.sh` smoke test; verify the researcher sees unchanged data and no reset prompt (hands-on)

@@ -55,9 +55,11 @@ class SlackSettings(BaseModel):
     """
     Timings for the Slack integration (`vista_backend.slack`, `docs/slack.md`).
 
-    Whether Slack is on, its tokens, allowlists and limits are the researcher's
-    and are set in the desktop app (the `slack_config` row and the OS secret
-    store), not here. These are the install's fixed behaviour; override via
+    On a desktop, whether Slack is on, its tokens, allowlists and limits are the
+    researcher's, set in the app (the `slack_config` row and the OS secret
+    store), not here. Hosted, they are the operator's: the `hosted_*` fields
+    below, laid over that row (`slack/store.get_config`), and the secrets
+    directory. The rest are fixed behaviour; override via
     `VISTA_BACKEND_SLACK__<FIELD>=...`, mostly so tests can shorten them.
     """
 
