@@ -24,6 +24,7 @@ from vista_backend.db.schemas import (
     UserTable,
 )
 from vista_backend.services import current_user, local_settings
+from vista_backend.services.hpc_status import hpc_status_service
 from vista_backend.services.settings_view import SERVER_FIELDS, USER_FIELDS
 
 pytestmark = pytest.mark.anyio
@@ -61,7 +62,12 @@ async def _as(client, who, method, path, **kwargs):
     return await client.request(method, path, headers=bearer(who), **kwargs)
 
 
-async def test_alices_odo_token_is_not_in_bobs_settings(session, hosted):
+async def test_alices_odo_token_is_not_in_bobs_settings(session, hosted, monkeypatch):
+    # A hosted S3M save is checked with S3M first (hpc-availability); fake an open token.
+    async def _open(client, url, token):
+        return 200, {"securityEnclave": "open"}
+
+    monkeypatch.setattr(hpc_status_service, "_introspect", _open)
     alice = hosted.token(sub="alice-sub", name="Alice")
     bob = hosted.token(sub="bob-sub", name="Bob")
     with api_client(session) as (client, _):

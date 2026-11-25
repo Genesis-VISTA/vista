@@ -2,7 +2,8 @@ import { render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateControls } from "@/components/UpdateControls";
 import { UserMenu } from "@/components/UserMenu";
-import { deploymentOf, useDeployment } from "@/lib/deployment";
+import { clusterAllowed, deploymentOf, useDeployment } from "@/lib/deployment";
+import { HPC_CLUSTERS } from "@/lib/hpc-status";
 import type { VersionInfo } from "@/lib/version";
 
 const { useVersionMock } = vi.hoisted(() => ({ useVersionMock: vi.fn() }));
@@ -32,6 +33,19 @@ function view(info: Partial<VersionInfo> | null) {
 
 beforeEach(() => {
   useVersionMock.mockReturnValue(view({}));
+});
+
+describe("allowed clusters", () => {
+  it("lists only the clusters a hosted backend reports", () => {
+    const hosted = deploymentOf({ deployment: "hosted", allowed_clusters: ["odo"] });
+    expect(HPC_CLUSTERS.filter((c) => clusterAllowed(hosted, c))).toEqual(["odo"]);
+  });
+
+  it("allows every cluster when the backend says nothing", () => {
+    const desktop = deploymentOf({ deployment: "desktop" });
+    expect(HPC_CLUSTERS.filter((c) => clusterAllowed(desktop, c))).toEqual([...HPC_CLUSTERS]);
+    expect(clusterAllowed(deploymentOf(null), "frontier")).toBe(true);
+  });
 });
 
 describe("deploymentOf", () => {

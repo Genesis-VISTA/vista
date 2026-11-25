@@ -19,7 +19,7 @@ from ..services import campaign as campaign_service
 from ..services.current_user import CurrentUser
 from ..services import local_settings
 from ..services.chat_run import chat_run_registry
-from ..services.hosted import refuse_when_hosted
+from ..services.hosted import allowed_clusters, refuse_when_hosted
 from ..services.update_check import (
     Release,
     is_dev_build,
@@ -45,6 +45,8 @@ class VersionInfo(BaseModel):
     """
     sign_out_url: str | None = None
     """ Hosted only: the gateway's logout page, when one is configured. """
+    allowed_clusters: list[str] = []
+    """ The HPC clusters this deployment supports; the UI shows only these. """
     checks: Literal["on", "off", "dev_build"]
     """
     Whether this install checks for updates: `dev_build` for a build no release
@@ -98,6 +100,7 @@ async def _version_info(session: SessionDep) -> VersionInfo:
         sign_out_url=(settings.sign_out_url or None)
         if settings.deployment == "hosted"
         else None,
+        allowed_clusters=allowed_clusters(),
         checks=_checks(row),
     )
     if info.checks != "on":

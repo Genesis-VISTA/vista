@@ -17,6 +17,7 @@ import { useSettings } from "@/lib/settings";
 import { HpcStatusSection } from "./HpcStatusSection";
 import { RUN_STATUS_LABELS, RunStatusDot } from "./RunStatusDot";
 import { closeSettings, openSettings, useSettingsModal } from "@/lib/settings-modal";
+import { clusterAllowed, useDeployment } from "@/lib/deployment";
 import { updateAvailable, useVersion } from "@/lib/version";
 import { UserSettingsModal } from "./UserSettingsModal";
 import { useTour } from "./TourProvider";
@@ -319,9 +320,10 @@ export function NavRail() {
     : "Chat";
 
   // Nothing until the settings have loaded, so a hidden cluster never flashes in.
+  const deployment = useDeployment();
   const hidden = new Set(settings?.hpc_hidden_clusters ?? []);
   const visibleClusters: HpcCluster[] = settings
-    ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster))
+    ? HPC_CLUSTERS.filter((cluster) => !hidden.has(cluster) && clusterAllowed(deployment, cluster))
     : [];
 
   function openSettingsFor(cluster: HpcCluster) {

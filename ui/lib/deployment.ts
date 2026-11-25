@@ -22,6 +22,8 @@ export type DeploymentView = {
   hosted: boolean;
   /** The gateway's logout page, when a hosted backend reports one. */
   signOutUrl: string | null;
+  /** The HPC clusters this deployment supports; null (unknown, or an older backend) means all. */
+  allowedClusters: string[] | null;
   /**
    * The signed-in user's name.
    * TODO(groups 4/5): there is no `/me` route yet; once `CurrentUser` lands,
@@ -32,17 +34,27 @@ export type DeploymentView = {
 
 /** The pure part, for tests: what `useDeployment` makes of a version answer. */
 export function deploymentOf(
-  info: { deployment?: Deployment; sign_out_url?: string | null } | null,
+  info: {
+    deployment?: Deployment;
+    sign_out_url?: string | null;
+    allowed_clusters?: string[];
+  } | null,
 ): DeploymentView {
   const deployment = info?.deployment === "hosted" ? "hosted" : "desktop";
   return {
     deployment,
     hosted: deployment === "hosted",
     signOutUrl: deployment === "hosted" ? (info?.sign_out_url ?? null) : null,
+    allowedClusters: info?.allowed_clusters ?? null,
     userName: null,
   };
 }
 
 export function useDeployment(): DeploymentView {
   return deploymentOf(useVersion().info);
+}
+
+/** Whether this deployment supports `cluster`; every cluster until the answer says otherwise. */
+export function clusterAllowed(view: DeploymentView, cluster: string): boolean {
+  return view.allowedClusters === null || view.allowedClusters.includes(cluster);
 }

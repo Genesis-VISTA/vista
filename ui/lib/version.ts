@@ -24,6 +24,8 @@ export type VersionInfo = {
   deployment?: "desktop" | "hosted";
   /** Hosted only: the gateway's logout page, when one is configured. */
   sign_out_url?: string | null;
+  /** The HPC clusters this deployment supports; absent from an older backend, which supports all. */
+  allowed_clusters?: string[];
   /** `dev_build`: a checkout or local build, which never checks. */
   checks: "on" | "off" | "dev_build";
   checked_at: string | null;

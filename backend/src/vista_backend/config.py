@@ -351,6 +351,21 @@ class Settings(BaseSettings):
             return [h.strip().lower() for h in v.split(",") if h.strip()]
         return v
 
+    allowed_clusters: A[list[str] | None, NoDecode] = None
+    """
+    The HPC clusters this deployment supports (`odo`, `frontier`, `lux`,
+    `perlmutter`), comma-separated in `VISTA_BACKEND_ALLOWED_CLUSTERS`. Unset:
+    Odo alone when hosted, every cluster on desktop. Read through
+    `services/hosted.allowed_clusters`, never directly.
+    """
+
+    @field_validator("allowed_clusters", mode="before")
+    @classmethod
+    def _split_clusters(cls, v: object) -> object:
+        if isinstance(v, str):
+            return [c.strip().lower() for c in v.split(",") if c.strip()]
+        return v
+
     oidc_issuer: str = "https://obsidian.ccs.ornl.gov/auth/realms/obsidian"
     """
     When hosted: the Keycloak realm whose access tokens sign researchers in. Its
