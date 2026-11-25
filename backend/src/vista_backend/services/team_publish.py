@@ -48,7 +48,7 @@ from .knowledge_base import get_kb
 from .project import get_project_by_name
 from .project_agent import invalidate_agents
 from .skill_collaboration import reread
-from .skills import get_skill
+from .skills import copy_on_write, get_skill
 from .teams import (
     Teamed,
     remembers_teams,
@@ -385,7 +385,13 @@ async def publish_skill_to_team(
     team_id: uuid.UUID,
     user: UserTable,
 ) -> TeamPublishResult:
-    """Publish private skill `name` into `team_id`; imported beside it when it is bundled, or a project of another team here uses it."""
+    """
+    Publish private skill `name` into `team_id`; imported beside it when a
+    project of another team here uses it. A bundled skill is published as the
+    publisher's own copy, made now (a project's publish leaves the bundled
+    skills it merely loads private).
+    """
+    await copy_on_write(session, await get_skill(session, name, user), user)
     return await _publish_one(session, local, SKILL, name, team_id, user)
 
 

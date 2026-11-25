@@ -205,6 +205,8 @@ class VistaMeta(BaseModel):
     """ The `vista` metadata object sent by the backend on every MCP tool call. """
     user: UserConfig = Field(default_factory=UserConfig)
     project_paths: ProjectPaths = Field(default_factory=ProjectPaths)
+    user_id: str | None = None
+    """ The VISTA user the call is for; absent from an older backend (treated as `local`). """
     uri_map: dict[str, str] = Field(default_factory=dict)
     """
     Maps sandbox `file://` prefixes (e.g. `file:///mnt/data/output/`) to download URL templates

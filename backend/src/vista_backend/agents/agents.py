@@ -1045,6 +1045,7 @@ class ProjectAgent:
         project_name = quote(self.project.name, safe="")
         metadata: dict[str, Any] = {
             "vista": {
+                "user_id": self.owner_id,
                 "project_paths": {
                     "skills_dir": str(self.skills_volume_dir),
                     "output_dir": str(self.output_dir),

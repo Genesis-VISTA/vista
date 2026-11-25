@@ -880,10 +880,12 @@ class TestScanAndBatch:
         old = await _skill(session, "vllm-skill")
         assert old is not None and old.description == "The old one."
 
-    async def test_a_bundled_skill_cannot_be_overwritten(self, session, installed):
+    async def test_a_bundled_skill_is_overwritten_in_the_callers_own_copy(
+        self, session, installed
+    ):
         row = await _skill(session, "vllm-skill")
         assert row is not None
-        row.bundled = True
+        row.bundled, row.user_id = True, None
         session.add(row)
         await session.commit()
         with api_client(session) as (client, _):
@@ -897,8 +899,15 @@ class TestScanAndBatch:
                 },
             )
         [result] = response.json()
-        assert result["status"] == "failed"
-        assert "bundled" in result["detail"]
+        assert result["status"] == "overwritten", result
+        session.expire_all()
+        rows = (
+            await session.exec(
+                select(SkillTable).where(SkillTable.name == "vllm-skill")
+            )
+        ).all()
+        assert sorted(r.user_id is None for r in rows) == [False, True]
+        assert all(r.modified for r in rows if r.user_id is not None)
 
     async def test_two_choices_with_one_name_are_refused(self, session, monkeypatch):
         FakeHost(

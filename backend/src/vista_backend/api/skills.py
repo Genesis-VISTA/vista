@@ -109,7 +109,7 @@ class SkillFromOutputRequest(BaseModel):
 
     folder: str
     replace: bool = False
-    """ Swap the files of an existing skill of the same name, unless it is bundled. """
+    """ Swap the files of an existing skill of the same name, a bundled one in the caller's own copy. """
 
 
 class SkillPublishRequest(BaseModel):
@@ -253,7 +253,7 @@ async def import_skill_batch(
 ) -> list[SkillImportResultOut]:
     """
     Import the chosen skills of a scanned repository, each with what to do if
-    its name is taken (skip, overwrite a skill not bundled with VISTA, or
+    its name is taken (skip, overwrite a skill, a bundled one in your own copy, or
     rename). One result
     per skill, in order; a failure does not stop the rest.
     """

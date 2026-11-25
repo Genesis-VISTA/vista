@@ -8,10 +8,13 @@ Two hosted users, Alice and Bob, through the real routes; the desktop backfill
 and a pre-change database through `db.db` directly.
 """
 
+import shutil
 import sqlite3
 import uuid
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import MetaData, Table
 from sqlalchemy.schema import CreateTable
 from sqlmodel import SQLModel, select
@@ -227,39 +230,62 @@ async def test_skills_are_per_owner_and_not_visible_to_others(session, alice, bo
     assert dup.status_code == 409
 
 
-async def test_a_bundled_skill_is_read_by_both_and_edited_by_neither(
-    session, alice, bob
-):
+async def test_editing_a_bundled_skill_makes_the_editors_own_copy(session, alice, bob):
+    folder = settings.data_dir / "skills" / "hello-odo"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Ships with VISTA.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
     session.add(_bundled_skill("hello-odo"))
     await session.commit()
     with api_client(session) as (client, _):
         for who in (alice, bob):
-            listed = {
+            listed = [
                 s["name"] for s in (await client.get("/skills", headers=who)).json()
-            }
-            assert "hello-odo" in listed
-        # The directory a bundled skill's files are read from does not exist in this
-        # test; the row is what is asserted on, so read the metadata route is skipped.
-        for who in (alice, bob):
-            patch = await client.patch(
-                "/skills/hello-odo", json={"description": "changed"}, headers=who
-            )
-            delete = await client.delete("/skills/hello-odo", headers=who)
-            assert patch.status_code == 409, patch.text
-            assert "bundled" in patch.json()["detail"]
-            assert delete.status_code == 409, delete.text
-        # And a user may not shadow it by creating one of the same name.
-        shadow = await client.post("/skills", json=_skill("hello-odo"), headers=bob)
-    assert shadow.status_code == 409
-    row = (
+            ]
+            assert listed.count("hello-odo") == 1
+        # Bob edits: he gets his own copy; Alice still sees the bundled one.
+        patch = await client.patch(
+            "/skills/hello-odo", json={"description": "Bob's take."}, headers=bob
+        )
+        assert patch.status_code == 200, patch.text
+        bobs = (await client.get("/skills", headers=bob)).json()
+        alices = (await client.get("/skills", headers=alice)).json()
+        # The bundled skill itself still cannot be deleted; Bob's copy can.
+        refused = await client.delete("/skills/hello-odo", headers=alice)
+        deleted = await client.delete("/skills/hello-odo", headers=bob)
+        after = (await client.get("/skills", headers=bob)).json()
+    assert [s["description"] for s in bobs if s["name"] == "hello-odo"] == [
+        "Bob's take."
+    ]
+    assert [s["description"] for s in alices if s["name"] == "hello-odo"] == [
+        "Ships with VISTA."
+    ]
+    assert refused.status_code == 409 and deleted.status_code in (200, 204)
+    assert [s["description"] for s in after if s["name"] == "hello-odo"] == [
+        "Ships with VISTA."
+    ]
+    rows = (
         await session.exec(select(SkillTable).where(SkillTable.name == "hello-odo"))
-    ).one()
-    assert row.description == "Ships with VISTA." and row.user_id is None
+    ).all()
+    assert [r.user_id for r in rows] == [None]
+    assert (folder / "SKILL.md").read_text(encoding="utf-8").count("Ships") == 1
 
 
 # ---------------------------------------------------------------------------
 # Knowledge bases
 # ---------------------------------------------------------------------------
+
+
+async def test_a_uuid_shaped_kb_slug_is_refused(session, alice):
+    with api_client(session) as (client, _):
+        made = await client.post(
+            "/knowledge-bases",
+            json={"slug": "11111111-1111-4111-8111-111111111111", "name": "x"},
+            headers=alice,
+        )
+    assert made.status_code == 400
 
 
 async def test_knowledge_bases_are_the_owners(session, alice, bob):
@@ -291,17 +317,24 @@ async def test_knowledge_bases_are_the_owners(session, alice, bob):
             files=[("files", ("x.pdf", b"%PDF-1.4", "application/pdf"))],
             headers=bob,
         )
-        # A store is keyed on disk by its slug alone, so Bob cannot take Alice's slug.
+        # Stores are keyed on disk by owner and slug, so Bob may use Alice's slug.
         clash = await client.post(
             "/knowledge-bases", json={"slug": "alice-kb", "name": "Bob's"}, headers=bob
         )
     assert alices == ["alice-kb"] and bobs == []
     assert (get.status_code, put.status_code, delete.status_code) == (404, 404, 404)
     assert (publish.status_code, add.status_code) == (404, 404)
-    assert clash.status_code == 409
+    assert clash.status_code == 201, clash.text
     alice_id = (await _user(session, "alice")).id
-    row = (await session.exec(select(KnowledgeBaseTable))).one()
-    assert row.user_id == alice_id and row.name == "Alice's"
+    bob_id = (await _user(session, "bob")).id
+    rows = {
+        r.user_id: r for r in (await session.exec(select(KnowledgeBaseTable))).all()
+    }
+    assert rows[alice_id].name == "Alice's" and rows[bob_id].name == "Bob's"
+    assert rows[alice_id].rag_db_path != rows[bob_id].rag_db_path
+    assert (
+        bob_id in rows[bob_id].rag_db_path and bob_id not in rows[alice_id].rag_db_path
+    )
 
 
 async def test_the_docs_corpus_is_read_by_all_and_written_by_none(session, alice, bob):
@@ -599,3 +632,78 @@ async def test_provisioning_gives_a_new_user_their_own_default_project(session):
 
 async def test_unused():  # pragma: no cover - keeps the module's imports honest
     assert CampaignRunTable and DebateRunTable and db_module
+
+
+async def test_replacing_files_of_a_bundled_skill_is_the_editors_copy_only(
+    session, alice, bob
+):
+    folder = settings.data_dir / "skills" / "hello-odo"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Ships with VISTA.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    session.add(_bundled_skill("hello-odo"))
+    await session.commit()
+    from vista_backend.services import skills as skills_service
+
+    with api_client(session) as (client, _):
+        for who in (alice, bob):  # a first request provisions each user
+            await client.get("/skills", headers=who)
+    alice_user = await _user(session, "alice")
+    bob_user = await _user(session, "bob")
+    bob_id = bob_user.id
+    staged = settings.data_dir / "staged"
+    staged.mkdir()
+    (staged / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Bob's files.\n---\n\nBob.\n",
+        encoding="utf-8",
+    )
+    new_path = "skills/bobs-files"
+    shutil.copytree(staged, settings.data_dir / new_path)
+    spec = skills_service.read_skill(staged)
+    row = await skills_service.copy_on_write(
+        session,
+        await skills_service.get_skill(session, "hello-odo", bob_user),
+        bob_user,
+    )
+    skills_service.replace_files(row, spec, new_path)
+    await skills_service.commit_skill_files(session, row)
+    assert row.modified and row.user_id == bob_id
+    mine = await skills_service.get_skill(session, "hello-odo", alice_user)
+    assert mine.user_id is None and mine.description == "Ships with VISTA."
+    assert "Bob" not in (folder / "SKILL.md").read_text(encoding="utf-8")
+    bobs = await skills_service.get_skill(session, "hello-odo", bob_user)
+    assert bobs.description == "Bob's files."
+
+
+async def test_a_database_with_the_old_global_name_key_refuses_the_copy_clearly(
+    session, alice, bob
+):
+    """A desktop DB made before multi-user keeps `uq_skill_name`: no copy fits."""
+    from sqlalchemy.exc import IntegrityError
+
+    from vista_backend.services import skills as skills_service
+
+    folder = settings.data_dir / "skills" / "hello-odo"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Ships.\n---\n\nBody.\n", encoding="utf-8"
+    )
+    session.add(_bundled_skill("hello-odo"))
+    await session.commit()
+    with api_client(session) as (client, _):
+        await client.get("/skills", headers=bob)
+    bob_user = await _user(session, "bob")
+    glob = await skills_service.get_skill(session, "hello-odo", bob_user)
+
+    async def clash(*a, **k):
+        raise IntegrityError(
+            "INSERT", {}, Exception("UNIQUE constraint failed: skill.name")
+        )
+
+    with patch.object(skills_service, "commit_skill_files", clash):
+        with pytest.raises(HTTPException) as err:
+            await skills_service.copy_on_write(session, glob, bob_user)
+    assert err.value.status_code == 409
+    assert "cannot hold a copy of it under the same name" in err.value.detail

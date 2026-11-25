@@ -73,6 +73,7 @@ from .teams import (
 from .skills import (
     build_skill_row,
     commit_skill_files,
+    copy_on_write,
     get_skill,
     get_skill_optional,
     is_name_clash,
@@ -362,7 +363,8 @@ async def publish_skill(
     content-addressed, so one a lost publish leaves behind is reused by its
     retry. A write to the skill while it is published leaves it modified.
     """
-    row = await get_skill(session, name, user)
+    # A bundled skill is published as the publisher's own copy, made now.
+    row = await copy_on_write(session, await get_skill(session, name, user), user)
     url = required_url(local)
     linked = row.remote_id is not None and row.origin_server == url and not as_new
     if linked and not row.modified and on_top_of is None:

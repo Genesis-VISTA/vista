@@ -33,7 +33,11 @@ from harness.knowledge_bases import (
     write_pdf,
 )
 from vista_backend.config import settings
-from vista_backend.db.schemas import KnowledgeBaseTable, LocalSettingsUpdate
+from vista_backend.db.schemas import (
+    LOCAL_USER_ID,
+    KnowledgeBaseTable,
+    LocalSettingsUpdate,
+)
 from vista_backend.services import local_settings
 from vista_backend.services.collaboration import CollaborationClient
 from vista_backend.services.knowledge_base import CURRENT_STORE_FILE, read_current
@@ -877,7 +881,7 @@ async def test_a_knowledge_base_being_imported_or_published_is_not_deleted(sessi
     from vista_backend.services.knowledge_base import kb_lock
 
     kb_dir = await _seed_kb(session)
-    async with kb_lock("salt-papers"):
+    async with kb_lock(LOCAL_USER_ID, "salt-papers"):
         with api_client(session) as (client, _):
             res = await client.delete("/knowledge-bases/salt-papers")
     assert res.status_code == 409
@@ -890,7 +894,7 @@ async def test_papers_are_not_changed_while_publishing_or_importing(session):
     from vista_backend.services.knowledge_base import kb_lock
 
     kb_dir = await _seed_kb(session)
-    async with kb_lock("salt-papers"):
+    async with kb_lock(LOCAL_USER_ID, "salt-papers"):
         with api_client(session) as (client, _):
             added = await client.post(
                 "/knowledge-bases/salt-papers/publications",
@@ -916,7 +920,7 @@ async def test_deleting_a_paper_holds_the_lock_until_it_is_committed(
     held: list[bool] = []
 
     async def delete_source(rag_db_path, filename):
-        held.append(kb_lock("salt-papers").locked())
+        held.append(kb_lock(LOCAL_USER_ID, "salt-papers").locked())
 
     monkeypatch.setattr(indexer, "delete_source", delete_source)
     await _seed_kb(session)
@@ -924,7 +928,7 @@ async def test_deleting_a_paper_holds_the_lock_until_it_is_committed(
         res = await client.delete("/knowledge-bases/salt-papers/publications/a.pdf")
     assert res.status_code == 204, res.text
     assert held == [True]
-    assert not kb_lock("salt-papers").locked()
+    assert not kb_lock(LOCAL_USER_ID, "salt-papers").locked()
     # Committed by the route itself, inside the lock.
     kb = await _kb(session, "salt-papers")
     assert kb is not None and kb.publications == []

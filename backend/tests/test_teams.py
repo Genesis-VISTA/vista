@@ -782,3 +782,27 @@ async def test_a_forum_left_with_a_team_one_has_left_is_reported(
         again = await _publish_to(client, "projects", "salt-lab", new["id"])
     assert first["forum_error"] is None
     assert "cannot read or post" in again["forum_error"]
+
+
+async def test_publishing_a_bundled_skill_publishes_the_publishers_own_copy(
+    collab_server, session
+):
+    await _use_server(session)
+    with api_client(session) as (client, _):
+        await _skill(client, "salt-analysis")
+        row = await _row(session, SkillTable, name="salt-analysis")
+        row.bundled, row.user_id = True, None
+        session.add(row)
+        team = await _team(client)
+        await session.commit()
+        result = await _publish_to(client, "skills", "salt-analysis", team["id"])
+    assert result["published"][0]["how"] == "published"
+    session.expire_all()
+    rows = (
+        await session.exec(select(SkillTable).where(SkillTable.name == "salt-analysis"))
+    ).all()
+    mine = [r for r in rows if r.user_id is not None]
+    glob = [r for r in rows if r.user_id is None]
+    assert len(mine) == 1 and len(glob) == 1
+    assert str(mine[0].team_id) == team["id"] and mine[0].remote_id is not None
+    assert glob[0].team_id is None and glob[0].remote_id is None

@@ -523,7 +523,7 @@ class TestImportFromOutput:
         assert replaced.status_code == 201, replaced.text
         assert {project.id, other.id} <= set(rebuilt)
 
-    async def test_bundled_skill_is_never_replaced(self, session):
+    async def test_replacing_a_bundled_skill_writes_the_callers_own_copy(self, session):
         _, output, url = await self._setup(session)
         _agent_writes_skill(output)
         with api_client(session) as (client, _):
@@ -534,17 +534,28 @@ class TestImportFromOutput:
                     select(SkillTable).where(SkillTable.name == "demo-hpc")
                 )
             ).one()
-            row.bundled = True
+            # Make it a global, bundled skill, as the seed leaves one.
+            row.bundled, row.user_id, row.modified = True, None, False
+            global_path = row.path
             session.add(row)
             await session.commit()
             listed = await client.get(url)
-            assert listed.json()[0]["replaceable"] is False
-            before = (await client.get("/skills/demo-hpc")).json()
+            assert listed.json()[0]["replaceable"] is True
+            plain = await client.post(url, json={"folder": "demo-hpc"})
             again = await client.post(url, json={"folder": "demo-hpc", "replace": True})
-            after = (await client.get("/skills/demo-hpc")).json()
-        assert again.status_code == 409, again.text
-        assert "bundled" in again.json()["detail"]
-        assert after == before
+        assert plain.status_code == 409, plain.text
+        assert again.status_code == 201, again.text
+        session.expire_all()
+        rows = (
+            await session.exec(select(SkillTable).where(SkillTable.name == "demo-hpc"))
+        ).all()
+        mine = [r for r in rows if r.user_id is not None]
+        theirs = [r for r in rows if r.user_id is None]
+        assert len(mine) == 1 and len(theirs) == 1
+        assert mine[0].modified and not mine[0].bundled
+        assert mine[0].path != global_path
+        assert theirs[0].path == global_path and theirs[0].bundled
+        assert not theirs[0].modified
 
 
 def test_the_sandbox_cannot_write_its_skills(tmp_path, monkeypatch):
