@@ -663,9 +663,41 @@ def client_for(
         install_id=local.install_id,
         display_name=local.display_name,
         # Never over plain http to another machine, where anyone could read it.
-        token=local.collaboration_token if _private_channel(url) else None,
+        token=_token_for(local) if _private_channel(url) else None,
         timeout=timeout,
     )
+
+
+NEEDS_WEB_APP = (
+    "Publishing and importing need the web app: they act as you with your "
+    "sign-in, which only a request from the web app carries."
+)
+""" Why collaboration is off for hosted code running outside a request. """
+
+
+def hosted_token() -> str | None:
+    """
+    Hosted (D11): the access token of the request being served, which
+    signs the researcher in to the collaboration server. Never saved, and
+    Keycloak's expire in minutes, so each call reads it afresh.
+    """
+    from .current_user import request_access_token
+
+    return request_access_token()
+
+
+def _token_for(local: LocalSettingsPublic) -> str | None:
+    """
+    The token a call sends. Hosted: the request's, and raises
+    `CollaborationUnavailable(NEEDS_WEB_APP)` outside one; the saved
+    `collaboration_token` is not used. Desktop: the saved one.
+    """
+    if settings.deployment != "hosted":
+        return local.collaboration_token
+    token = hosted_token()
+    if token is None:
+        raise CollaborationUnavailable(NEEDS_WEB_APP)
+    return token
 
 
 def _private_channel(url: str) -> bool:
@@ -775,17 +807,29 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
             url=None,
             source=None,
         )
+    hosted = settings.deployment == "hosted"
+    if hosted and hosted_token() is None:
+        return CollaborationStatus(
+            configured=True,
+            reachable=False,
+            reason=NEEDS_WEB_APP,
+            url=url,
+            source=source,
+            default_server=url == DEFAULT_COLLABORATION_SERVER_URL,
+        )
     status = CollaborationStatus(
         configured=True,
         reachable=False,
         reason=None,
         url=url,
         source=source,
-        sign_in_url=sign_in_page(url) if _private_channel(url) else None,
+        sign_in_url=(
+            sign_in_page(url) if _private_channel(url) and not hosted else None
+        ),
         default_server=url == DEFAULT_COLLABORATION_SERVER_URL,
         # A saved token means the researcher has signed in here once: from
         # then on the controls stay, disabled with the reason when it fails.
-        shown=bool(local.collaboration_token),
+        shown=hosted or bool(local.collaboration_token),
     )
     try:
         async with client_for(local, timeout=STATUS_TIMEOUT) as client:
@@ -809,7 +853,7 @@ async def status(local: LocalSettingsPublic) -> CollaborationStatus:
     status.shown = True
     status.user = RemoteUser(sub=me.sub, email=me.email, name=me.name)
     status.teams = me.teams
-    if not local.collaboration_token:
+    if hosted or not local.collaboration_token:
         # A dev-headers server, which takes no token and has no page.
         status.sign_in_url = None
     return status
