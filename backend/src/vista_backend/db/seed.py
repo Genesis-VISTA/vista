@@ -13,6 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
 from .schemas import (
+    LOCAL_USER_ID,
     KnowledgeBaseTable,
     ProjectTable,
     SkillTable,
@@ -350,6 +351,15 @@ def _seeded_kb(kb_id: uuid.UUID, kb_dir: Path, **fields: Any) -> KnowledgeBaseTa
     )
 
 
+async def _ensure_local_user(engine: AsyncEngine) -> None:
+    """The user `local` the seeded projects belong to, made if missing (their foreign key)."""
+    from ..services.current_user import ensure_local
+
+    async with AsyncSession(engine) as session:
+        await ensure_local(session)
+        await session.commit()
+
+
 async def seed_db(engine: AsyncEngine) -> None:
     """
     Seed the DB with default data on first run, and a no-op thereafter.
@@ -361,6 +371,7 @@ async def seed_db(engine: AsyncEngine) -> None:
         if count > 0:
             return  # Already seeded
 
+    await _ensure_local_user(engine)
     logging.info(
         "Seeding database and data dir with initial data (this can take a bit)..."
     )
@@ -418,6 +429,7 @@ async def seed_db(engine: AsyncEngine) -> None:
         projects = [
             ProjectTable(
                 id=ALLOY_DESIGN_PROJECT_ID,
+                user_id=LOCAL_USER_ID,
                 name="alloy-design",
                 description=(
                     "High Entropy Alloy Design — runs the alloy Tc campaign "
@@ -449,6 +461,7 @@ async def seed_db(engine: AsyncEngine) -> None:
             ),
             ProjectTable(
                 id=MOLTEN_SALT_PROJECT_ID,
+                user_id=LOCAL_USER_ID,
                 name="molten-salt",
                 description=(
                     "Molten salt thermophysical properties assistant — querying the MSTDB-TP "
@@ -618,6 +631,7 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
     A deleted default project comes back on the next startup, since there is no
     record of the deletion to tell it apart from a project never seeded.
     """
+    await _ensure_local_user(engine)
     async with AsyncSession(engine) as session:
         project = await session.get(ProjectTable, HELLO_OLCF_PROJECT_ID)
         kb = (
@@ -659,6 +673,7 @@ async def sync_default_projects(engine: AsyncEngine) -> None:
             session.add(
                 ProjectTable(
                     id=HELLO_OLCF_PROJECT_ID,
+                    user_id=LOCAL_USER_ID,
                     name=HELLO_OLCF_PROJECT_NAME,
                     description=(
                         "A first look at OLCF: ask the OLCF user documentation "
