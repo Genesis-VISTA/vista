@@ -433,6 +433,7 @@ async def test_activity_lists_runs_debates_and_watched_jobs(session, monkeypatch
     monkeypatch.setattr(updates.chat_run_registry, "active", lambda: [chat, done])
     debate_task = asyncio.create_task(asyncio.sleep(60))
     monkeypatch.setattr(debate, "_BACKGROUND", {debate_task})
+    monkeypatch.setattr(debate, "_OWNERS", {debate_task: "local"})
     try:
         with api_client(session) as (client, _):
             resp = await client.get("/activity")

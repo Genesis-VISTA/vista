@@ -49,6 +49,7 @@ from ..db.schemas import (
 )
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
+from .current_user import as_user
 from .job_records import SubmitWatcher
 from . import inbox as inbox_service
 from .displayed_files import sandbox_path_to_file
@@ -338,6 +339,7 @@ class ChatRunRegistry:
                     return None
                 # Read before the take commits and expires the row.
                 project_id = row.project_id
+                owner = row.user_id
                 channel = channel_of(row)
                 history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
                     row.message_history
@@ -349,16 +351,19 @@ class ChatRunRegistry:
                 "researcher" if any(i.kind == "message" for i in items) else "task"
             )
             try:
-                return await self.start(
-                    chat_session_id=chat_session_id,
-                    project_id=project_id,
-                    agent_key=(chat_session_id, project_id),
-                    user_prompt="\n\n".join(i.text for i in items),
-                    prior_history=history,
-                    channel=channel,
-                    origin=origin,
-                    items=items,
-                )
+                # The run's task copies this context: its settings, agent and
+                # credentials are the conversation owner's, whoever woke it.
+                with as_user(owner):
+                    return await self.start(
+                        chat_session_id=chat_session_id,
+                        project_id=project_id,
+                        agent_key=(chat_session_id, project_id),
+                        user_prompt="\n\n".join(i.text for i in items),
+                        prior_history=history,
+                        channel=channel,
+                        origin=origin,
+                        items=items,
+                    )
             except BaseException:
                 async with session_factory() as db:
                     await asyncio.shield(inbox_service.requeue(db, items))

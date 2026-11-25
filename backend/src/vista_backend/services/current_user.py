@@ -186,6 +186,15 @@ def use_user(user_id: str) -> Iterator[None]:
         _current_user_id.reset(token)
 
 
+def as_user(user_id: str | None):
+    """
+    Background work's entry: run the block as the user whose row it acts on
+    (`inherited_owner`, or the row's `user_id`). A row with no owner (NULL, a
+    pre-ownership one) is `local`'s.
+    """
+    return use_user(user_id or LOCAL_USER_ID)
+
+
 def current_user_id() -> str:
     """
     The user the running code acts for: the request's, or the one `use_user`

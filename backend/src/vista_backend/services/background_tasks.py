@@ -46,6 +46,7 @@ from ..db.ownership import inherited_owner
 from ..db.schemas import BackgroundTaskTable, ChatSessionTable
 from ..utils.misc import now_iso
 from . import inbox as inbox_service
+from .current_user import as_user
 
 log = logging.getLogger(__name__)
 
@@ -687,7 +688,11 @@ class BackgroundTaskRegistry:
         """Follow a job until it reaches a final state, reporting its start and its end."""
         watch = _Watch(record=record)
         self._watches[record.id] = watch
-        watch.task = asyncio.create_task(self._watch_job(watch, read, clock or Clock()))
+        # The task copies this context: the watch reads as the task's owner.
+        with as_user(record.user_id):
+            watch.task = asyncio.create_task(
+                self._watch_job(watch, read, clock or Clock())
+            )
 
     async def _watch_job(self, watch: _Watch, read: StateReader, clock: Clock) -> None:
         record = watch.record
@@ -810,9 +815,12 @@ class BackgroundTaskRegistry:
             await stack.enter_async_context(hold)
         watch = _Watch(record=record)
         self._watches[record.id] = watch
-        watch.task = asyncio.create_task(
-            self._watch_command(watch, call=call, volume_root=volume_root, stack=stack)
-        )
+        with as_user(record.user_id):
+            watch.task = asyncio.create_task(
+                self._watch_command(
+                    watch, call=call, volume_root=volume_root, stack=stack
+                )
+            )
 
     async def stop(self, task_id: uuid.UUID) -> BackgroundTaskTable | None:
         """

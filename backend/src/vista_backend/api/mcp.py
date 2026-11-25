@@ -73,9 +73,14 @@ async def mcp_elicitation(
     """
     Resolve a pending MCP elicitation request (such as emitted by /projects/{id}/agent/run)
     """
-    await project_service.get_project_by_name(session, project_name, user)
+    project = await project_service.get_project_by_name(session, project_name, user)
     # A Slack conversation's prompts are answered in Slack, by its requester.
     run = run_for_prompt(submit.id)
+    if run is not None and run.project_id != project.id:
+        # Another user's prompt answers as one that is not there.
+        raise HTTPException(
+            status_code=404, detail="Elicitation not found or already resolved"
+        )
     if run is not None and run.channel != "app":
         raise HTTPException(status_code=409, detail=ELSEWHERE)
     if not await resolve_prompt(submit.id, submit.action, submit.content):
