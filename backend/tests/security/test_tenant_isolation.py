@@ -375,6 +375,20 @@ def test_only_version_and_the_api_docs_are_open():
     assert open_routes == {k for k, c in _table().items() if c.kind == PUBLIC}
 
 
+async def test_hosted_serves_no_api_docs(session, hosted):
+    """The docs and schema map every route for anyone: hosted answers 404; `/version` stays."""
+    with api_client(session) as (client, _):
+        for path in ("/docs", "/docs/oauth2-redirect", "/redoc", "/openapi.json"):
+            assert (await client.get(path)).status_code == 404, path
+        assert (await client.get("/version")).status_code == 200
+
+
+async def test_a_desktop_still_serves_the_api_docs(session):
+    with api_client(session) as (client, _):
+        assert (await client.get("/openapi.json")).status_code == 200
+        assert (await client.get("/docs")).status_code == 200
+
+
 def _walk(dependant: Any):
     for d in dependant.dependencies:
         yield d
