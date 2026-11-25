@@ -200,16 +200,33 @@ API_DOCS_PATHS = frozenset(
 """ FastAPI's own pages: open by design, so a hosted deployment does not serve them. """
 
 
-@app.middleware("http")
-async def _no_api_docs_when_hosted(request: Request, call_next):
+class _NoApiDocsWhenHosted:
     """
     Hosted: the API docs and schema answer 404. They hold no data, but they map
     every route for anyone who reaches the server, signed in or not. Decided
     per request (not when `app` is built) so the deployment can be read late.
+
+    Plain ASGI, not `@app.middleware("http")`: that wraps every response in
+    `BaseHTTPMiddleware`, which changes how a cancelled request reaches a route
+    (`test_project_forum`'s cancelled hosted continue caught it).
     """
-    if settings.deployment == "hosted" and request.url.path in API_DOCS_PATHS:
-        return JSONResponse(status_code=404, content={"detail": "Not Found"})
-    return await call_next(request)
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send) -> None:
+        if (
+            scope["type"] == "http"
+            and settings.deployment == "hosted"
+            and scope["path"] in API_DOCS_PATHS
+        ):
+            response = JSONResponse(status_code=404, content={"detail": "Not Found"})
+            await response(scope, receive, send)
+            return
+        await self.inner(scope, receive, send)
+
+
+app.add_middleware(_NoApiDocsWhenHosted)
 
 
 @app.exception_handler(MissingInferenceCredential)
