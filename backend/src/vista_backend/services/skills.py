@@ -908,7 +908,7 @@ async def update_skill(
 ) -> SkillTable:
     """
     Partial update of the SKILL.md. Any change marks the skill modified.
-    A bundled skill is refused: it is global and writable by none.
+    A bundled skill is edited in the caller's own copy of it (`copy_on_write`).
     """
     skill = await copy_on_write(session, await get_skill(session, name, user), user)
     data = updates.model_dump(exclude_unset=True)
