@@ -19,6 +19,10 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 from ..utils.crypto import EncryptedStr
 from ..utils.types import OptionalHttpUrl
 
+
+LOCAL_USER_ID = "local"
+""" The implicit user of a desktop install: owns everything there, and matches no token. """
+
 # TODO: Remove SQLModel and simplify the duplicate models
 
 
@@ -172,7 +176,14 @@ class ProjectTable(ProjectBase, ProjectSharing, table=True):
     """Project SQL model"""
 
     __tablename__: str = "project"
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
 
@@ -831,10 +842,6 @@ class LocalSettingsPublic(SQLModel):
         return [] if v is None else v
 
 
-LOCAL_USER_ID = "local"
-""" The implicit user of a desktop install: owns everything there, and matches no token. """
-
-
 class UserTable(SQLModel, table=True):
     """
     Someone VISTA serves. A desktop install has exactly one, `local`, made by
@@ -1371,7 +1378,14 @@ class ChatSessionPublic(ChatSessionBase):
 
 class ChatSessionTable(ChatSessionBase, table=True):
     __tablename__: str = "chat_session"
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -1437,7 +1451,14 @@ class BackgroundTaskTable(SQLModel, table=True):
 
     __tablename__: str = "background_task"
     __table_args__ = (Index("ix_background_task_chat", "chat_session_id"),)
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -1597,7 +1618,14 @@ class CampaignRunPublic(CampaignRunBase):
 
 class CampaignRunTable(CampaignRunBase, table=True):
     __tablename__: str = "campaign_run"
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -1686,7 +1714,14 @@ class HpcJobPublic(HpcJobBase):
 
 class HpcJobTable(HpcJobBase, table=True):
     __tablename__: str = "hpc_job"
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     job_id: str = Field(primary_key=True)
@@ -1818,7 +1853,14 @@ class DebateRunPublic(DebateRunBase):
 
 class DebateRunTable(DebateRunBase, table=True):
     __tablename__: str = "debate_run"
-    user_id: str | None = Field(default=None, foreign_key="app_user.id", index=True)
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Its owner; never NULL (`db/ownership.require_owner`). None only before the insert. """
     """ The owner (`app_user.id`); None is global (bundled or seeded), readable by all. Filled with `local` at startup. """
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

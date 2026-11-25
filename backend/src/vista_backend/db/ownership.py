@@ -20,7 +20,8 @@ are reached through their owned parent.
 import uuid
 from typing import Any, TypeVar
 
-from sqlalchemy import inspect as sa_inspect, or_
+from sqlalchemy import event, inspect as sa_inspect, or_
+from sqlalchemy.orm import Session
 from sqlmodel import col
 from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel.sql.expression import SelectOfScalar
@@ -90,3 +91,43 @@ async def inherited_owner(session: AsyncSession, table: Any, row_id: Any) -> str
     """
     parent = await session.get(table, row_id)
     return getattr(parent, "user_id", None)
+
+
+REQUIRED_OWNER_TABLES = frozenset(
+    {
+        "project",
+        "chat_session",
+        "background_task",
+        "campaign_run",
+        "hpc_job",
+        "debate_run",
+    }
+)
+""" Owned tables whose rows always have an owner (skills and knowledge bases may be nobody's). """
+
+
+class OwnerMissing(RuntimeError):
+    """A hosted insert into an owned table named no owner: a bug, never guessed at."""
+
+
+@event.listens_for(Session, "before_flush")
+def require_owner(session: Session, _context: Any, _instances: Any) -> None:
+    """
+    Every new row of `REQUIRED_OWNER_TABLES` has its `user_id`. On a desktop a
+    missing one is `local`'s, its only user (what the column's server default
+    says too); a hosted deployment refuses the insert, so the default can never
+    quietly hand a user's row to `local`.
+    """
+    from ..config import settings
+    from .schemas import LOCAL_USER_ID
+
+    for obj in session.new:
+        table = getattr(obj, "__tablename__", None)
+        if table not in REQUIRED_OWNER_TABLES or obj.user_id is not None:
+            continue
+        if settings.deployment == "hosted":
+            raise OwnerMissing(
+                f"A new {table} row has no owner; on a hosted deployment every "
+                "one must name the user it belongs to."
+            )
+        obj.user_id = LOCAL_USER_ID

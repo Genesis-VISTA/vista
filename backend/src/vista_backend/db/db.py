@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 from ..config import settings
+from . import ownership  # noqa: F401 - registers `require_owner` on every session
 from .schema_check import schema_problems
 from .schemas import LOCAL_USER_ID
 from .seed import (

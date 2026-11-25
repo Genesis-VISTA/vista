@@ -707,3 +707,36 @@ async def test_a_database_with_the_old_global_name_key_refuses_the_copy_clearly(
             await skills_service.copy_on_write(session, glob, bob_user)
     assert err.value.status_code == 409
     assert "cannot hold a copy of it under the same name" in err.value.detail
+
+
+# --- Every owned row has an owner (decision 6 B, 2026-11-25) -----------------
+
+
+async def test_a_hosted_row_without_an_owner_is_refused(session, hosted):
+    """The column's `local` default never quietly hands a hosted user's row to `local`."""
+    from vista_backend.db.ownership import OwnerMissing
+    from vista_backend.db.schemas import ProjectTable
+
+    session.add(ProjectTable(name="ownerless"))
+    with pytest.raises(OwnerMissing):
+        await session.flush()
+    await session.rollback()
+
+
+async def test_a_desktop_row_without_an_owner_is_locals(session):
+    from vista_backend.db.schemas import ProjectTable
+
+    row = ProjectTable(name="ownerless")
+    session.add(row)
+    await session.flush()
+    assert row.user_id == LOCAL_USER_ID
+
+
+def test_owned_columns_are_required_but_skills_and_kbs_may_be_nobodys():
+    tables = SQLModel.metadata.tables
+    for name in ("project", "chat_session", "background_task", "campaign_run",
+                 "hpc_job", "debate_run"):  # fmt: skip
+        column = tables[name].c.user_id
+        assert not column.nullable and column.server_default.arg == LOCAL_USER_ID
+    assert tables["skill"].c.user_id.nullable
+    assert tables["knowledge_base"].c.user_id.nullable
