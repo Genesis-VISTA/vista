@@ -18,7 +18,7 @@ from sqlmodel import col, select
 
 from ..db.schemas import HpcJobRecordTable, SlackConfigTable, SlackLinkTable
 from ..services import chat_run as chat_run_module
-from . import credentials, store
+from . import credentials, limits, store
 from .credentials import Expiry
 from .format import context, section
 from .transport import SlackTransport
@@ -134,6 +134,12 @@ class Home:
                 return False
             config = await store.get_config(db)
             snapshot = SlackConfigTable.model_validate(config.model_dump())
+            assert link.user_id is not None
+            if await limits.user_locked(db, link.user_id):
+                # Hosted: this user's own lock, shown as the lock.
+                snapshot.locked = True
+                snapshot.locked_at = snapshot.locked_at or link.locked_at
+            user_id = link.user_id
             jobs = [
                 HpcJobRecordTable.model_validate(j.model_dump())
                 for j in (
@@ -141,6 +147,7 @@ class Home:
                         select(HpcJobRecordTable)
                         .where(
                             HpcJobRecordTable.origin == "slack",
+                            limits.submitted_by(user_id),
                         )
                         .order_by(col(HpcJobRecordTable.submitted_at).desc())
                         .limit(RECENT)
@@ -154,7 +161,7 @@ class Home:
                 online=online,
                 host=self._host,
                 config=snapshot,
-                expiries=credentials.known(),
+                expiries=credentials.known(user_id),
                 jobs=jobs,
                 as_of=store.now_iso(),
             ),

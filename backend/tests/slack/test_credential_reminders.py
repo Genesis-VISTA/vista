@@ -28,7 +28,7 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture(autouse=True)
 def fresh_known(monkeypatch):
-    monkeypatch.setattr(credentials, "_known", [])
+    monkeypatch.setattr(credentials, "_known", {})
 
 
 @pytest.fixture

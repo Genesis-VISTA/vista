@@ -30,12 +30,13 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import col, select
 
-from ..db.schemas import SlackLinkTable, SlackReminderTable
+from ..db.schemas import LOCAL_USER_ID, SlackLinkTable, SlackReminderTable
 
 if TYPE_CHECKING:
     from ..services.settings_view import SettingsView
 from ..services import chat_run as chat_run_module
 from ..services import local_settings
+from ..services.current_user import as_user, current_user_id
 from . import store
 from .store import now
 from .transport import SlackTransport
@@ -141,24 +142,24 @@ def reminder_text(kind: str, items: list[Expiry]) -> str:
     return "\n".join(lines)
 
 
-_known: list[Expiry] = []
-""" The last expiries worked out for the install's researcher, for the gate and the prompt. """
+_known: dict[str, list[Expiry]] = {}
+""" User id → the last expiries worked out for them, for the gate, the prompt and Home. """
 
 
-def known() -> list[Expiry]:
-    """The expiries last worked out (for Home)."""
-    return list(_known)
+def known(user_id: str | None = None) -> list[Expiry]:
+    """The expiries last worked out (for Home) for `user_id`, else the current user."""
+    return list(_known.get(user_id or current_user_id(), []))
 
 
-def set_known(expiries: list[Expiry]) -> None:
-    _known[:] = expiries
+def set_known(expiries: list[Expiry], user_id: str | None = None) -> None:
+    _known[user_id or current_user_id()] = list(expiries)
 
 
 def expired_clusters() -> dict[str, list[str]]:
-    """Cluster → what has expired, as of now."""
+    """The current user's cluster → what has expired, as of now."""
     out: dict[str, list[str]] = {}
     moment = now()
-    for e in _known:
+    for e in known():
         if e.expires_at <= moment:
             out.setdefault(e.cluster, []).append(e.what)
     return out
@@ -208,31 +209,47 @@ class CredentialReminder:
 
     async def run_once(self) -> int:
         """
-        Remind the researcher if a reminder is due. Returns how many messages
-        went. The reminder goes to the first Slack account linked: every link
-        is the same researcher, so one copy is enough.
+        Remind each linked user if a reminder is due. Returns how many messages
+        went. A user's reminder goes to the first Slack account they linked and
+        is about their own credentials; one user's never reaches another's DM.
         """
         async with chat_run_module.session_factory() as db:
-            link = (
+            links = (
                 await db.exec(
                     select(SlackLinkTable).order_by(col(SlackLinkTable.created_at))
                 )
-            ).first()
-            local = await local_settings.get(db)
-            db.expunge(local)
-        if link is None:
-            return 0
-        try:
-            return await self._remind(local, link.dm_channel_id, link.slack_user_id)
-        except Exception:
-            log.exception("Credential reminder failed")
-            return 0
+            ).all()
+            first: dict[str, SlackLinkTable] = {}
+            for link in links:
+                assert link.user_id is not None
+                first.setdefault(link.user_id, link)
+            settings_of = {}
+            for user_id in first:
+                settings_of[user_id] = await local_settings.get(db, user_id)
+                db.expunge(settings_of[user_id])
+        sent = 0
+        for user_id, link in first.items():
+            with as_user(user_id):
+                try:
+                    sent += await self._remind(
+                        settings_of[user_id],
+                        link.dm_channel_id,
+                        link.slack_user_id,
+                        user_id,
+                    )
+                except Exception:
+                    log.exception("Credential reminder failed")
+        return sent
 
     async def _remind(
-        self, local: "SettingsView", dm: str | None, slack_user_id: str
+        self,
+        local: "SettingsView",
+        dm: str | None,
+        slack_user_id: str,
+        user_id: str,
     ) -> int:
         expiries = await self._expiries(local)
-        set_known(expiries)
+        set_known(expiries, user_id)
         moment = now()
         due: dict[str, list[Expiry]] = {}
         for e in expiries:
@@ -240,7 +257,7 @@ class CredentialReminder:
             if left <= timedelta(0):
                 continue
             kind = next((k for k, w in WINDOWS if left <= w), None)
-            if kind is not None and await self._claim(e, kind):
+            if kind is not None and await self._claim(e, kind, user_id):
                 due.setdefault(kind, []).append(e)
         if not due:
             return 0
@@ -249,12 +266,18 @@ class CredentialReminder:
             await self._slack.post(channel, reminder_text(kind, items))
         return len(due)
 
-    async def _claim(self, e: Expiry, kind: str) -> bool:
-        """Record the reminder; False if it was already sent."""
+    async def _claim(self, e: Expiry, kind: str, user_id: str) -> bool:
+        """
+        Record the reminder; False if it was already sent. The record's key is
+        unique per (cluster, kind, time), so another user's credential that
+        expires at the same moment is named apart: `local` keeps the bare name
+        (rows from before users), everyone else is prefixed with their id.
+        """
+        who = "" if user_id == LOCAL_USER_ID else f"{user_id}/"
         async with chat_run_module.session_factory() as db:
             db.add(
                 SlackReminderTable(
-                    cluster=f"{e.cluster}:{e.what}",
+                    cluster=f"{who}{e.cluster}:{e.what}",
                     kind=kind,
                     expires_at=e.expires_at.isoformat(timespec="seconds"),
                     sent_at=store.now_iso(),

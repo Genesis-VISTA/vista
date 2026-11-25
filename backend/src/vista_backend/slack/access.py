@@ -20,7 +20,8 @@ from sqlmodel import col, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import settings
-from ..db.schemas import SlackConfigTable, SlackLinkTable
+from ..db.ownership import owned
+from ..db.schemas import SlackConfigTable, SlackLinkTable, UserTable
 from .events import Action, Event, HomeOpened, Message, keyword
 
 log = logging.getLogger("vista.slack.access")
@@ -38,7 +39,7 @@ LINK_IN_DM = "To link your account, send `link` to me in a direct message."
 
 @dataclass(frozen=True)
 class Linked:
-    """A linked Slack account: it acts as this installation's researcher."""
+    """A linked Slack account: it acts as the VISTA user in `link.user_id`."""
 
     link: SlackLinkTable
 
@@ -88,12 +89,15 @@ async def find_link(
     return Linked(link=link) if link is not None else None
 
 
-async def all_links(session: AsyncSession) -> list[SlackLinkTable]:
-    """Every linked Slack account, oldest first. All act as this install's researcher."""
+async def all_links(session: AsyncSession, user: UserTable) -> list[SlackLinkTable]:
+    """The Slack accounts `user` linked, oldest first."""
     return list(
         (
             await session.exec(
-                select(SlackLinkTable).order_by(col(SlackLinkTable.created_at))
+                owned(
+                    select(SlackLinkTable).order_by(col(SlackLinkTable.created_at)),
+                    user,
+                )
             )
         ).all()
     )

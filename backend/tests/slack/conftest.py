@@ -98,11 +98,17 @@ async def slack_config(session) -> SlackConfigTable:
 
 
 async def link(
-    session, slack_user_id: str, *, team_id: str = TEAM, collab_sub: str | None = None
+    session,
+    slack_user_id: str,
+    *,
+    team_id: str = TEAM,
+    collab_sub: str | None = None,
+    user_id: str = "local",
 ) -> SlackLinkTable:
     row = SlackLinkTable(
         team_id=team_id,
         slack_user_id=slack_user_id,
+        user_id=user_id,
         collab_sub=collab_sub,
         dm_channel_id=f"D{slack_user_id}",
         created_at=store.now_iso(),
@@ -112,10 +118,10 @@ async def link(
     return row
 
 
-async def project(session, name: str = "molten-salts"):
+async def project(session, name: str = "molten-salts", user_id: str = "local"):
     from vista_backend.db.schemas import ProjectTable
 
-    row = ProjectTable(user_id="local", name=name, skills=[], knowledge_bases=[])
+    row = ProjectTable(user_id=user_id, name=name, skills=[], knowledge_bases=[])
     session.add(row)
     await session.commit()
     await session.refresh(row)

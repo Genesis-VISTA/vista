@@ -82,6 +82,18 @@ class SlackSettings(BaseModel):
     unlinked_reply_interval: float = 3600.0
     """ An unlinked user is told how to link at most this often. """
 
+    # -- Hosted: the one Slack app is the server's (openspec multi-user-hosted, D12) --
+    # None leaves the saved `slack_config` row's value; set, the value is the
+    # operator's and no researcher can change it (`slack/store.get_config`).
+    # The tokens are the secrets directory's (`utils/secret_store`), as always.
+    hosted_enabled: bool | None = None
+    hosted_allowed_team_ids: list[str] | None = None
+    hosted_allowed_channel_ids: list[str] | None = None
+    hosted_max_nodes: int | None = None
+    hosted_max_walltime_minutes: int | None = None
+    hosted_max_jobs_per_day: int | None = None
+    """ Each of the above applies only when `deployment` is `hosted`; `VISTA_BACKEND_SLACK__HOSTED_<FIELD>`. """
+
 
 class SecretSettings(BaseModel):
     """

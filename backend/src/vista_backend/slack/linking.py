@@ -76,11 +76,14 @@ async def redeem_code(
     session: AsyncSession,
     *,
     code: str,
+    user_id: str,
     collab_sub: str | None = None,
     collab_name: str | None = None,
 ) -> SlackLinkTable:
     """
-    Link the Slack user the code was issued to, to this installation. One use only.
+    Link the Slack user the code was issued to, to `user_id`, the user entering
+    the code. One use only. Entering it again as someone else moves the link to
+    them: the code went to that Slack account, so its holder decides whose it is.
 
     `collab_sub`/`collab_name` are who the researcher is on the collaboration
     server, when they are signed in there: recorded, never checked.
@@ -105,8 +108,12 @@ async def redeem_code(
         link = SlackLinkTable(
             team_id=pending.team_id,
             slack_user_id=pending.slack_user_id,
+            user_id=user_id,
             created_at=now_iso(),
         )
+    elif link.user_id != user_id:
+        link.user_id = user_id
+        link.project_id = None  # The old user's project is not the new one's.
     link.collab_sub = collab_sub
     link.collab_name = collab_name
     link.dm_channel_id = pending.dm_channel_id

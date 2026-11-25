@@ -213,9 +213,10 @@ OWNED_TABLES = (
     "background_task",
     "skill",
     "knowledge_base",
+    "slack_link",
 )
 """
-The tables with a `user_id`. `slack_link` joins them in group 12.
+The tables with a `user_id`.
 """
 
 

@@ -4,12 +4,15 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from vista_backend.db.schemas import HpcJobRecordTable, SlackConfigTable
 from vista_backend.services import chat_run
 from vista_backend.slack import confirm, limits, store
 from vista_backend.slack.limits import LOCKED, check, minutes, refusal
+
+from .conftest import TEAM, link
 
 pytestmark = pytest.mark.anyio
 
@@ -31,11 +34,18 @@ def db(engine, monkeypatch):
     return engine
 
 
-async def _jobs(session, n, *, origin="slack", hours_ago=1):
+async def _jobs(session, n, *, origin="slack", hours_ago=1, asker="U1"):
+    """`n` job records submitted by Slack user `asker`, linked to the local user if not yet."""
+    from vista_backend.db.schemas import SlackLinkTable
+
+    if (await session.exec(select(SlackLinkTable))).first() is None:
+        await link(session, asker)
     for i in range(n):
         session.add(
             HpcJobRecordTable(
                 origin=origin,
+                slack_team_id=TEAM,
+                slack_user_id=asker,
                 cluster="frontier",
                 job_id=uuid.uuid4().hex,
                 job="flibe-md",
@@ -111,8 +121,8 @@ async def test_refusal_reads_the_saved_settings(db, session):
 
 
 async def test_lock_from_slack_holds_until_the_desktop(db, engine):
-    await limits.lock("U1")
-    await limits.lock("U1")  # Again: still locked, by the first.
+    await limits.lock("U1", user_id="local")
+    await limits.lock("U1", user_id="local")  # Again: still locked, by the first.
 
     async with AsyncSession(engine) as s:
         row = await s.get(SlackConfigTable, 1)
