@@ -250,9 +250,14 @@ async def update_slack_link(
             if body.project_id not in mine:
                 raise HTTPException(status_code=400, detail="No such project.")
         link.project_id = body.project_id
-    if body.locked is False and link.locked:
-        link.locked = False
-        link.locked_at = None
+    if body.locked is False:
+        # `lock` locks every one of the user's links, and any one locked counts,
+        # so undoing it unlocks them all.
+        for row in await access.all_links(session, user):
+            if row.locked:
+                row.locked = False
+                row.locked_at = None
+                session.add(row)
     session.add(link)
     await session.commit()
     await session.refresh(link)

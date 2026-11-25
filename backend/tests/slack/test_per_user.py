@@ -343,6 +343,24 @@ async def test_a_user_unlocks_their_own_link_only(session, local, hosted_slack):
     assert [v.locked for v in await list_slack_links(session, ALICE)] == [False]
 
 
+async def test_unlocking_one_link_unlocks_all_of_the_users(
+    session, local, hosted_slack
+):
+    """`lock` locks each of the user's links, and any one locked counts."""
+    a = await create_slack_link(
+        SlackLinkCreate(code=await _code(session, "U1")), session, local, ALICE
+    )
+    await create_slack_link(
+        SlackLinkCreate(code=await _code(session, "U3")), session, local, ALICE
+    )
+    await limits.lock("U1", user_id="alice")
+    assert await limits.user_locked(session, "alice")
+
+    await update_slack_link(a.id, SlackLinkUpdate(locked=False), session, ALICE)
+
+    assert not await limits.user_locked(session, "alice")
+
+
 async def test_the_app_is_the_servers_when_hosted(session, monkeypatch, hosted_slack):
     monkeypatch.setattr(settings.slack, "hosted_enabled", True)
     monkeypatch.setattr(settings.slack, "hosted_allowed_team_ids", [TEAM])
