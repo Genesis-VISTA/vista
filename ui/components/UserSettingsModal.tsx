@@ -1809,6 +1809,7 @@ function CollaborationSection({
   error?: string;
 }) {
   const view = useCollaboration();
+  const { hosted } = useDeployment();
   const { status, checking, available, reason, error, refresh } = view;
   const binding = bind("collaboration_server_url", "on-blur");
   const fromConfig = status?.source === "config" && !binding.inputProps.value;
@@ -1879,7 +1880,8 @@ function CollaborationSection({
             {/* The backend offers the sign-in page only where a token would be sent and is
                 wanted, whatever the server answered: a gateway's redirect to its login or
                 an error can be the token's absence too. */}
-            {(status?.sign_in_url || user.has_collaboration_token) && (
+            {/* Hosted: the backend signs in with the request's own access token. */}
+            {!hosted && (status?.sign_in_url || user.has_collaboration_token) && (
               <TokenField
                 label="Token"
                 field="collaboration_token"

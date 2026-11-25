@@ -495,6 +495,16 @@ describe("UserSettingsModal collaboration", () => {
     expect(updateSettingsMock).toHaveBeenCalledWith({ collaboration_token: "" });
   });
 
+  it("offers no token field on a hosted deployment, where the request signs in", async () => {
+    useVersionMock.mockReturnValue(versionView({ deployment: "hosted" }));
+    useCollaborationMock.mockReturnValue(signIn({ default_server: true }));
+    fetchSettingsMock.mockResolvedValue(settingsRow({ has_collaboration_token: true }));
+    render(<UserSettingsModal onClose={() => {}} />);
+    const section = await openOn("Collaboration");
+    expect(within(section).getByRole("switch", { name: "Collaboration" })).toBeInTheDocument();
+    expect(within(section).queryByLabelText("Token")).toBeNull();
+  });
+
   it("asks for a token when the gateway answers with a redirect", async () => {
     useCollaborationMock.mockReturnValue(
       collaborationView({

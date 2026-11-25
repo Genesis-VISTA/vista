@@ -72,7 +72,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 11. Collaboration auto sign-in (wave 4; needs 3, 5)
 
-- [ ] 11.1 When hosted, the collab client uses the request's access token; status signed in; token field hidden; outside a request reports "needs the web app"; verify with the `collab_server` fixture and test-minted tokens (`--extra dev`)
+- [x] 11.1 When hosted, the collab client uses the request's access token; status signed in; token field hidden; outside a request reports "needs the web app"; verify with the `collab_server` fixture and test-minted tokens (`--extra dev`)
 
 ## 12. Slack per user (wave 4; needs 6, 7)
 

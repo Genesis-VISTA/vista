@@ -47,6 +47,11 @@ def _refuse_hosted_fields(updates: LocalSettingsUpdate) -> None:
         for name in _HOSTED_CUSTOM_FIELDS
     ):
         refuse_when_hosted("The Custom inference provider")
+    if "collaboration_token" in updates.model_fields_set and (
+        updates.collaboration_token
+    ):
+        # Hosted signs in to the collaboration server with the request's own token (D11).
+        refuse_when_hosted("A saved collaboration token")
 
 
 _CLUSTER_FIELDS = {

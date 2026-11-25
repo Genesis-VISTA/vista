@@ -26,9 +26,9 @@ from ..agents.forum.project_forum import (
     forum_url_of,
     hosted_forum_id,
 )
-from ..config import settings
 from ..db.schemas import LocalSettingsPublic, ProjectTable
 from . import local_settings
+from .hosted import FORUM_OFF_WHEN_HOSTED, forum_enabled, is_hosted
 from .collaboration import (
     CollaborationClient,
     CollaborationError,
@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 def lab_possible() -> bool:
     """This deployment runs labs and this machine has a usable git."""
-    return settings.forum.enabled and git_status().ok
+    return forum_enabled() and git_status().ok
 
 
 async def _delete_quietly(local: LocalSettingsPublic, forum_id: uuid.UUID) -> None:
@@ -178,8 +178,12 @@ async def move_to_hosted(session: AsyncSession, project: ProjectTable) -> Projec
             detail="No collaboration server is set. Add its address under Settings "
             "→ Collaboration first.",
         )
+    if is_hosted():
+        raise HTTPException(
+            status_code=403, detail=f"Not here: {FORUM_OFF_WHEN_HOSTED}."
+        )
     git = git_status()
-    if not settings.forum.enabled or not git.ok:
+    if not forum_enabled() or not git.ok:
         raise HTTPException(
             status_code=503,
             detail=f"The Hypothesis Lab needs git. {git.reason or ''}".strip(),
