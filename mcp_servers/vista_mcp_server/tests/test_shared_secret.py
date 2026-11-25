@@ -1,17 +1,24 @@
 """The HTTP app refuses a request without the secret it shares with the backend."""
 
+from fastmcp import FastMCP
 from pydantic import SecretStr
 from starlette.testclient import TestClient
 
 from vista_mcp_server import shared_secret
-from vista_mcp_server.server import mcp
 
 
 def _app(monkeypatch, secret):
+    """
+    The middleware on a bare server: the real one's lifespan loads the RAG
+    embedding model, which reaches Hugging Face (and, in CI, a cached token
+    file read without an encoding) for a test about one header.
+    """
     monkeypatch.setattr(
         shared_secret.settings, "secret", SecretStr(secret) if secret else None
     )
-    return mcp.http_app(middleware=shared_secret.http_middleware())
+    return FastMCP("shared-secret-test").http_app(
+        middleware=shared_secret.http_middleware()
+    )
 
 
 _INIT = {
