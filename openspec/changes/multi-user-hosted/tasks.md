@@ -80,9 +80,9 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 15. Per-owner stores and copy-on-write bundled skills (wave 3; needs 6; Sam's wave-2 review, 2026-11-24)
 
-- [ ] 15.1 Knowledge-base stores keyed by owner on disk: `local` keeps `knowledge_bases/<slug>/` (nothing moves on desktop), other users `knowledge_bases/<user_id>/<slug>/`; create, import, publish and the MCP server's store lookup (`rag_mcp._store_path`, told the owner through the tool metadata) all follow it; drop the server-wide `slug_taken` 409 so a name another user holds is free; verify with `backend/tests/test_ownership.py` (two users, same slug, separate stores, no 409) and an MCP test for the lookup
-- [ ] 15.2 Copy-on-write for bundled skills: an edit of a global skill creates the editor's own copy (same name, `user_id` set), which name resolution prefers over the global one for that user only; publishing a global skill publishes the publisher's copy; the docs KB stays read-only with the reason; verify with tests for two users (Bob edits, Alice unchanged; Bob publishes his copy) and a desktop edit of a bundled skill
-- [ ] 15.3 Hosted never runs the science seeds (`seed_science_projects`); verify with a hosted startup test
+- [x] 15.1 Knowledge-base stores keyed by owner on disk: `local` keeps `knowledge_bases/<slug>/` (nothing moves on desktop), other users `knowledge_bases/<user_id>/<slug>/`; create, import, publish and the MCP server's store lookup (`rag_mcp._store_path`, told the owner through the tool metadata) all follow it; drop the server-wide `slug_taken` 409 so a name another user holds is free; verify with `backend/tests/test_ownership.py` (two users, same slug, separate stores, no 409) and an MCP test for the lookup
+- [x] 15.2 Copy-on-write for bundled skills: an edit of a global skill creates the editor's own copy (same name, `user_id` set), which name resolution prefers over the global one for that user only; publishing a global skill publishes the publisher's copy; the docs KB stays read-only with the reason; verify with tests for two users (Bob edits, Alice unchanged; Bob publishes his copy) and a desktop edit of a bundled skill
+- [x] 15.3 Hosted never runs the science seeds (`seed_science_projects`); verify with a hosted startup test
 
 ## 13. Isolation suite and end-to-end check (wave 5; needs 7–12, 15)
 

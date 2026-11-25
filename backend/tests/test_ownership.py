@@ -8,10 +8,13 @@ Two hosted users, Alice and Bob, through the real routes; the desktop backfill
 and a pre-change database through `db.db` directly.
 """
 
+import shutil
 import sqlite3
 import uuid
+from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import MetaData, Table
 from sqlalchemy.schema import CreateTable
 from sqlmodel import SQLModel, select
@@ -629,3 +632,78 @@ async def test_provisioning_gives_a_new_user_their_own_default_project(session):
 
 async def test_unused():  # pragma: no cover - keeps the module's imports honest
     assert CampaignRunTable and DebateRunTable and db_module
+
+
+async def test_replacing_files_of_a_bundled_skill_is_the_editors_copy_only(
+    session, alice, bob
+):
+    folder = settings.data_dir / "skills" / "hello-odo"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Ships with VISTA.\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    session.add(_bundled_skill("hello-odo"))
+    await session.commit()
+    from vista_backend.services import skills as skills_service
+
+    with api_client(session) as (client, _):
+        for who in (alice, bob):  # a first request provisions each user
+            await client.get("/skills", headers=who)
+    alice_user = await _user(session, "alice")
+    bob_user = await _user(session, "bob")
+    bob_id = bob_user.id
+    staged = settings.data_dir / "staged"
+    staged.mkdir()
+    (staged / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Bob's files.\n---\n\nBob.\n",
+        encoding="utf-8",
+    )
+    new_path = "skills/bobs-files"
+    shutil.copytree(staged, settings.data_dir / new_path)
+    spec = skills_service.read_skill(staged)
+    row = await skills_service.copy_on_write(
+        session,
+        await skills_service.get_skill(session, "hello-odo", bob_user),
+        bob_user,
+    )
+    skills_service.replace_files(row, spec, new_path)
+    await skills_service.commit_skill_files(session, row)
+    assert row.modified and row.user_id == bob_id
+    mine = await skills_service.get_skill(session, "hello-odo", alice_user)
+    assert mine.user_id is None and mine.description == "Ships with VISTA."
+    assert "Bob" not in (folder / "SKILL.md").read_text(encoding="utf-8")
+    bobs = await skills_service.get_skill(session, "hello-odo", bob_user)
+    assert bobs.description == "Bob's files."
+
+
+async def test_a_database_with_the_old_global_name_key_refuses_the_copy_clearly(
+    session, alice, bob
+):
+    """A desktop DB made before multi-user keeps `uq_skill_name`: no copy fits."""
+    from sqlalchemy.exc import IntegrityError
+
+    from vista_backend.services import skills as skills_service
+
+    folder = settings.data_dir / "skills" / "hello-odo"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        "---\nname: hello-odo\ndescription: Ships.\n---\n\nBody.\n", encoding="utf-8"
+    )
+    session.add(_bundled_skill("hello-odo"))
+    await session.commit()
+    with api_client(session) as (client, _):
+        await client.get("/skills", headers=bob)
+    bob_user = await _user(session, "bob")
+    glob = await skills_service.get_skill(session, "hello-odo", bob_user)
+
+    async def clash(*a, **k):
+        raise IntegrityError(
+            "INSERT", {}, Exception("UNIQUE constraint failed: skill.name")
+        )
+
+    with patch.object(skills_service, "commit_skill_files", clash):
+        with pytest.raises(HTTPException) as err:
+            await skills_service.copy_on_write(session, glob, bob_user)
+    assert err.value.status_code == 409
+    assert "cannot hold a copy of it under the same name" in err.value.detail

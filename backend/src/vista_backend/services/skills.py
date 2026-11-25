@@ -346,7 +346,7 @@ class ScannedSkill(BaseModel):
     exists: bool = False
     """ A skill with this name is already in the library. """
     replaceable: bool = False
-    """ It exists and is not bundled with VISTA, so it may be overwritten. """
+    """ It exists, so it may be overwritten (a bundled one in your own copy). """
     duplicate: bool = False
     """ Another skill in this scan has the same name: import one, or rename. """
 
@@ -415,7 +415,7 @@ async def scan_repository(
                 hpc_jobs=info.hpc_jobs,
                 files=info.files,
                 exists=existing is not None,
-                replaceable=existing is not None and not existing.bundled,
+                replaceable=existing is not None,
                 duplicate=counts[info.name] > 1 if info.name else False,
             )
         )
@@ -498,12 +498,8 @@ async def _install_staged(
         if choice.on_conflict == "rename":
             return result("failed", "Give a new name to rename it to.")
         if choice.on_conflict == "overwrite":
-            if existing.bundled:
-                return result(
-                    "failed",
-                    f"{name} is bundled with VISTA and cannot be overwritten; "
-                    "skip it or rename this one.",
-                )
+            # A bundled skill is overwritten in the researcher's own copy of it.
+            existing = await copy_on_write(session, existing, user)
             status = "overwritten"
         else:
             return result(
@@ -738,7 +734,7 @@ class OutputSkill(BaseModel):
     exists: bool = False
     """ A skill with this name is already in the library. """
     replaceable: bool = False
-    """ It exists and is not bundled, so importing with `replace` swaps its files. """
+    """ It exists, so importing with `replace` swaps its files (a bundled one in your own copy). """
 
 
 _OUTPUT_FOLDER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -808,7 +804,7 @@ async def list_output_skills(
                 error=error,
                 hpc_jobs=skill_hpc_jobs(folder),
                 exists=existing is not None,
-                replaceable=existing is not None and not existing.bundled,
+                replaceable=existing is not None,
             )
         )
     return found
@@ -829,9 +825,9 @@ async def import_skill_from_output(
     Same validation and limits as a folder upload, plus no symlinks. Loading
     means adding it to `Project.skills`, the list the agent's skills volume is
     built from, and evicting the project's agents so the next message stages
-    it. A name already in use is refused unless `replace` is set and that skill
-    is not bundled; then the row is kept, its files are swapped and it is
-    marked modified, and every project that loads it is rebuilt.
+    it. A name already in use is refused unless `replace` is set; then the row is
+    kept (a bundled skill's: the caller's own copy of it, made now), its files
+    are swapped and it is marked modified, and every project that loads it is rebuilt.
     """
     project, output = await _project_output_dir(session, project_name, user)
     source = output / folder
@@ -855,19 +851,17 @@ async def import_skill_from_output(
     if existing is None:
         row = build_skill_row(skill, path=path, repo_url=None, now=now_iso(), user=user)
         set_team(row, *await team_for_new(session, project))
-    elif replace and not existing.bundled:
-        row = existing
+    elif replace:
+        # A bundled skill is replaced in the researcher's own copy of it.
+        row = await copy_on_write(session, existing, user)
         old_path = replace_files(row, skill, path)
     else:
         shutil.rmtree(settings.data_dir / path, ignore_errors=True)
-        if existing.bundled:
-            detail = f"Name already in use by a skill bundled with VISTA: {skill.name}"
-        else:
-            detail = (
-                f"Name already in use: {skill.name}. Import it with Replace to "
-                "swap the existing skill's files for these."
-            )
-        raise HTTPException(status_code=409, detail=detail)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Name already in use: {skill.name}. Import it with Replace to "
+            "swap the existing skill's files for these.",
+        )
 
     try:
         await commit_skill_files(session, row, old_path=old_path, project=project)
