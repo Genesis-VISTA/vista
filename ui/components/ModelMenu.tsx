@@ -9,7 +9,7 @@ import {
   displayModelName,
   type UseAvailableModelsResult,
 } from "@/lib/models";
-import { providerName, useAgentSettings } from "@/lib/agent-settings";
+import { providerName, unavailableReason, useAgentSettings } from "@/lib/agent-settings";
 
 /**
  * A model menu that chooses for whatever it is given: it shows `value`, offers
@@ -234,6 +234,12 @@ export function ModelMenu({
             <div className="model-picker-hint" data-tone="ask" role="status">
               Choose a model first.
               {settings ? ` ${providerName(settings)} has no default model.` : ""}
+            </div>
+          )}
+
+          {settings && unavailableReason(settings) && (
+            <div className="model-picker-hint" data-tone="ask" role="alert">
+              {providerName(settings)} is unavailable. {unavailableReason(settings)}
             </div>
           )}
 

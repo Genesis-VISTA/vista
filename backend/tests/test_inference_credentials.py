@@ -146,7 +146,7 @@ def default_settings(monkeypatch):
 
 def test_presets():
     mag, olcf, custom = (PROVIDER_PRESETS[p] for p in ("mag", "olcf", "custom"))
-    assert list(PROVIDER_PRESETS) == ["mag", "olcf", "custom"]
+    assert list(PROVIDER_PRESETS) == ["mag", "olcf", "custom", "server"]
     assert mag.base_url == "https://mag.genesis.americansciencecloud.org/v1"
     assert mag.default_model == "claude-sonnet-5-5"
     assert olcf.name == "OLCF Inference"

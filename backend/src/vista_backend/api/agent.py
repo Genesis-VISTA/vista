@@ -18,6 +18,7 @@ from ..services import inbox as inbox_service
 from ..services.chat_run import ELSEWHERE, channel_of, chat_run_registry
 from ..services.project_agent import ProjectAgentKey, project_agent_pool
 from ..agents.inference import require_inference_credential
+from ..services.inference_probe import require_server_model
 from ..services.local_settings import LocalSettingsDep
 
 router = APIRouter()
@@ -108,7 +109,10 @@ async def agent_run(
     # A conversation from Slack is answered in Slack only (read-only here).
     if chat_row is not None and channel_of(chat_row) != "app":
         raise HTTPException(status_code=409, detail=ELSEWHERE)
-    require_inference_credential(local, chat_row.inference_model if chat_row else None)
+    target = require_inference_credential(
+        local, chat_row.inference_model if chat_row else None
+    )
+    await require_server_model(target.provider)
     agent_key: ProjectAgentKey = (
         user.id,
         chat_row.id if chat_row else None,

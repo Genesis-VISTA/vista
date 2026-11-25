@@ -24,6 +24,10 @@ export type ProviderOption = {
   takesUrl: boolean;
   /** Bare model name used when none is chosen; null means one must be. */
   defaultModel: string | null;
+  /** False while the provider's endpoint is down (the hosted Server model). */
+  available?: boolean;
+  /** Why it is unavailable. */
+  unavailableReason?: string | null;
 };
 
 export type AgentSettings = {
@@ -44,7 +48,14 @@ export type AgentSettings = {
 };
 
 type InferenceView = {
-  providers: { id: string; name: string; takes_url: boolean; default_model: string | null }[];
+  providers: {
+    id: string;
+    name: string;
+    takes_url: boolean;
+    default_model: string | null;
+    available?: boolean;
+    unavailable_reason?: string | null;
+  }[];
   provider: string;
   source: AgentSettings["source"];
   base_url: string;
@@ -83,6 +94,8 @@ function fromView(v: InferenceView): AgentSettings {
       name: p.name,
       takesUrl: p.takes_url,
       defaultModel: p.default_model,
+      available: p.available ?? true,
+      unavailableReason: p.unavailable_reason ?? null,
     })),
     provider: v.provider,
     source: v.source,
@@ -167,4 +180,10 @@ export type AgentSettingsView = Snapshot & { refresh: () => Promise<void> };
 export function useAgentSettings(): AgentSettingsView {
   const s = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   return { ...s, refresh: refreshAgentSettings };
+}
+
+/** The reason the provider in effect is unavailable, or null when it is not. */
+export function unavailableReason(s: AgentSettings): string | null {
+  const p = s.providers.find((o) => o.id === s.provider);
+  return p && p.available === false ? (p.unavailableReason ?? "") : null;
 }
