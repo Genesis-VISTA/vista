@@ -194,11 +194,18 @@ def use_user(user_id: str) -> Iterator[None]:
     """
     Act as `user_id` for the block: what `get_current_user` does for a request,
     for code that has none. Group 7's `as_user` wraps this.
+
+    It also drops the request's access token for the block: a task started in
+    it (a woken turn, a job watch) copies the context and outlives the request,
+    and may act for someone other than the request's user, so it must carry no
+    token of theirs (D11: background work has none).
     """
     token = _current_user_id.set(user_id)
+    no_access_token = _request_access_token.set(None)
     try:
         yield
     finally:
+        _request_access_token.reset(no_access_token)
         _current_user_id.reset(token)
 
 

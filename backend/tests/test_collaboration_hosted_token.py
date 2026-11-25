@@ -103,3 +103,34 @@ async def test_desktop_keeps_the_saved_token(collab_server, session):
     )
     async with collaboration.client_for(local) as client:
         assert client._http.headers["authorization"] == "Bearer pasted"
+
+
+async def test_work_started_as_a_user_carries_no_request_token():
+    """
+    A task copies the context it starts in and outlives the request, maybe for
+    another user (a turn `wake` starts as its conversation's owner): `use_user`
+    leaves no token in it.
+    """
+    import asyncio
+
+    async def seen() -> str | None:
+        return current_user.request_access_token()
+
+    outer = current_user._request_access_token.set("alices-token")
+    try:
+        with current_user.as_user("bob-id"):
+            task = asyncio.create_task(seen())
+        assert await task is None
+        assert current_user.request_access_token() == "alices-token"
+    finally:
+        current_user._request_access_token.reset(outer)
+
+
+async def test_a_hosted_save_of_a_collaboration_token_is_refused(hosted, session):
+    with api_client(session) as (client, _):
+        r = await client.put(
+            "/settings",
+            json={"collaboration_token": "pasted"},
+            headers=bearer(hosted.token()),
+        )
+    assert r.status_code == 403
