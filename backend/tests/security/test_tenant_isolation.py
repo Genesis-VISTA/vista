@@ -288,6 +288,7 @@ ROUTES: dict[tuple[str, str], Case] = {
     ("DELETE", "/slack/links/{link_id}"): child(),
     # --- settings and the rest of what is the caller's own ------------------
     ("GET", "/settings"): user(a=frozenset({200})),
+    ("GET", "/me"): user(a=frozenset({200})),
     ("PUT", "/settings"): user(json={"odo_remote_dir": "/bobs"}, a=frozenset({200})),
     ("GET", "/settings/inference"): user(a=frozenset({200})),
     ("GET", "/settings/hpc-status"): user(modes="", why="asks the clusters; reads only the caller's credentials"),

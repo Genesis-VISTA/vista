@@ -225,3 +225,21 @@ async def test_hosted_version_needs_no_token(session, hosted):
 async def test_desktop_app_routes_need_no_token(session):
     with api_client(session) as (http, _):
         assert (await http.get("/projects")).status_code == 200
+
+
+async def test_me_is_whoever_the_token_names(session, hosted):
+    """`GET /me`: what Settings shows as who is signed in, each user their own."""
+    alice = bearer(hosted.token(sub="a", name="Alice", email="alice@ornl.gov"))
+    bob = bearer(hosted.token(sub="b", name="Bob", email="bob@ornl.gov"))
+    with api_client(session) as (http, _):
+        assert (await http.get("/me")).status_code == 401
+        assert (await http.get("/me", headers=alice)).json() == {
+            "display_name": "Alice",
+            "email": "alice@ornl.gov",
+        }
+        assert (await http.get("/me", headers=bob)).json()["display_name"] == "Bob"
+
+
+async def test_desktops_local_has_no_name(session):
+    with api_client(session) as (http, _):
+        assert (await http.get("/me")).json() == {"display_name": None, "email": None}

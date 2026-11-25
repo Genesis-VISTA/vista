@@ -24,12 +24,7 @@ export type DeploymentView = {
   signOutUrl: string | null;
   /** The HPC clusters this deployment supports; null (unknown, or an older backend) means all. */
   allowedClusters: string[] | null;
-  /**
-   * The signed-in user's name.
-   * TODO(groups 4/5): there is no `/me` route yet; once `CurrentUser` lands,
-   * read it from there. Until then a hosted menu shows no name.
-   */
-  userName: string | null;
+  // Who is signed in is `lib/me.ts` (`GET /api/me`), not the version answer.
 };
 
 /** The pure part, for tests: what `useDeployment` makes of a version answer. */
@@ -49,7 +44,6 @@ export function deploymentOf(
     allowedClusters:
       info?.allowed_clusters ??
       (deployment === "hosted" ? ["odo", "frontier", "lux"] : null),
-    userName: null,
   };
 }
 

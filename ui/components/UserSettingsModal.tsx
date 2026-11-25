@@ -49,6 +49,7 @@ import { TeamsModal } from "./TeamsModal";
 import { UpdateControls } from "./UpdateControls";
 import { checkNow, refreshVersion, updateAvailable, useVersion } from "@/lib/version";
 import { clusterAllowed, useDeployment } from "@/lib/deployment";
+import { useMe } from "@/lib/me";
 import { filledNote, remoteDirFill } from "@/lib/remote-dir";
 
 /** What the modal can show: the top-level areas, or one cluster's section. */
@@ -802,17 +803,6 @@ function SettingsNav({
         <span className="settings-nav-name">Research profile</span>
         <span className="settings-nav-note">{personalize ? "On" : "Off"}</span>
       </NavEntry>
-      {/* Hosted only: the gateway owns the session, so this is a link to its logout. */}
-      {deployment.hosted && deployment.signOutUrl && (
-        <a className="settings-nav-entry settings-nav-signout" href={deployment.signOutUrl}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-            <polyline points="16 17 21 12 16 7" />
-            <line x1="21" y1="12" x2="9" y2="12" />
-          </svg>
-          <span className="settings-nav-name">Sign out</span>
-        </a>
-      )}
       <NavEntry
         label={["Models and providers", providerNote?.toLowerCase()].filter(Boolean).join(", ")}
         current={section === "agent"}
@@ -1084,6 +1074,39 @@ function AppearanceSection() {
   );
 }
 
+/**
+ * Hosted only: who is signed in, from their sign-in (`GET /api/me`), and Sign
+ * out, a link to the gateway's logout (it owns the session). Desktop draws nothing.
+ */
+function SignedIn() {
+  const { hosted, signOutUrl } = useDeployment();
+  const me = useMe(hosted);
+  if (!hosted) return null;
+  const name = me?.displayName || me?.email;
+  return (
+    <div className="settings-profile-group settings-signed-in" data-testid="signed-in">
+      <div>
+        <h3 className="settings-profile-heading">Signed in</h3>
+        <p className="user-settings-hint">
+          {name ? (
+            <>
+              as <strong>{name}</strong>
+              {me?.displayName && me.email ? ` · ${me.email}` : null}
+            </>
+          ) : (
+            "Checking who you are…"
+          )}
+        </p>
+      </div>
+      {signOutUrl && (
+        <a className="button ghost" href={signOutUrl}>
+          Sign out
+        </a>
+      )}
+    </div>
+  );
+}
+
 function ResearchProfileSection({
   draft,
   bind,
@@ -1130,6 +1153,7 @@ function ResearchProfileSection({
         </span>
       </SectionHeader>
       <div className="settings-section-body settings-profile-body">
+        <SignedIn />
         <div className="settings-profile-group">
           <div>
             <h3 className="settings-profile-heading">About you</h3>

@@ -54,6 +54,10 @@ vi.mock("@/lib/collaboration", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/me", () => ({
+  useMe: (enabled: boolean) => (enabled ? { displayName: "Alice", email: "alice@ornl.gov" } : null),
+}));
+
 const { useVersionMock } = vi.hoisted(() => ({ useVersionMock: vi.fn() }));
 vi.mock("@/lib/version", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/version")>()),
@@ -173,10 +177,12 @@ beforeEach(() => {
   useAgentSettingsMock.mockReturnValue({ settings: agentSettings(), error: null, modelChoiceRequest: 0 });
 });
 
-it("has no Sign out when hosted with no sign-out address configured", () => {
+it("names the user but has no Sign out when hosted with no sign-out address", async () => {
   useVersionMock.mockReturnValue(versionView({ deployment: "hosted", sign_out_url: null }));
   render(<UserSettingsModal onClose={() => {}} />);
-  expect(within(nav()).queryByRole("link", { name: "Sign out" })).toBeNull();
+  const profile = await screen.findByRole("region", { name: "Research profile" });
+  expect(within(profile).getByText("Alice")).toBeInTheDocument();
+  expect(within(profile).queryByRole("link", { name: "Sign out" })).toBeNull();
 });
 
 const nav = () => screen.getByRole("navigation", { name: "Settings sections" });
@@ -205,20 +211,26 @@ describe.each(["desktop", "hosted"] as const)("UserSettingsModal on a %s deploym
     else expect(check).toBeInTheDocument();
   });
 
-  it(hosted ? "offers Sign out under Research profile" : "has no Sign out", async () => {
-    useVersionMock.mockReturnValue(versionView({ deployment, sign_out_url: "https://gw.example/logout" }));
-    render(<UserSettingsModal onClose={() => {}} />);
-    const signOut = within(nav()).queryByRole("link", { name: "Sign out" });
-    if (!hosted) {
-      expect(signOut).toBeNull();
-      return;
-    }
-    expect(signOut).toHaveAttribute("href", "https://gw.example/logout");
-    // Right after Research profile in the section list.
-    const items = Array.from(nav().querySelectorAll(".settings-nav-entry"));
-    const profile = items.indexOf(entry("Research profile"));
-    expect(items[profile + 1]).toBe(signOut);
-  });
+  it(
+    hosted ? "says who is signed in, with Sign out, in Research profile" : "shows no sign-in",
+    async () => {
+      useVersionMock.mockReturnValue(versionView({ deployment, sign_out_url: "https://gw.example/logout" }));
+      render(<UserSettingsModal onClose={() => {}} />);
+      await userEvent.click(entry("Research profile"));
+      const profile = await screen.findByRole("region", { name: "Research profile" });
+      const signOut = within(profile).queryByRole("link", { name: "Sign out" });
+      // Never a section of its own.
+      expect(within(nav()).queryByRole("link", { name: "Sign out" })).toBeNull();
+      if (!hosted) {
+        expect(signOut).toBeNull();
+        expect(within(profile).queryByText("Signed in")).toBeNull();
+        return;
+      }
+      expect(within(profile).getByText("Alice")).toBeInTheDocument();
+      expect(within(profile).getByText(/alice@ornl\.gov/)).toBeInTheDocument();
+      expect(signOut).toHaveAttribute("href", "https://gw.example/logout");
+    },
+  );
 
   it(hosted ? "does not offer NERSC" : "offers NERSC", async () => {
     render(<UserSettingsModal onClose={() => {}} />);

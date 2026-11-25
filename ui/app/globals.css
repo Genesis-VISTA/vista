@@ -3670,11 +3670,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   background: var(--wash);
 }
 
-/* Hosted: Sign out is a link (to the gateway's logout) drawn as an entry. */
-.settings-nav-signout {
-  text-decoration: none;
-}
-
 .settings-nav-entry[aria-current="page"] {
   background: var(--brand-wash-strong);
   color: var(--brand);
@@ -3931,6 +3926,17 @@ button.chat-bubble.intermediate.collapsed:hover {
   gap: 10px;
   padding: 18px 0;
   border-bottom: 1px solid var(--line-soft);
+}
+
+/* Hosted: who is signed in, with Sign out beside it. */
+.settings-profile-group.settings-signed-in {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.settings-signed-in .button {
+  text-decoration: none;
 }
 
 .settings-profile-heading {
