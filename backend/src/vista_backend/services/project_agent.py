@@ -113,13 +113,24 @@ class SandboxCapReached(HTTPException):
         super().__init__(status_code=429, detail=detail)
 
 
+def sandboxes_per_user() -> int:
+    """
+    The per-user cap: `settings.sandboxes_per_user`, else 4 when hosted and the
+    server's total on a desktop, whose one user owns the machine.
+    """
+    if settings.sandboxes_per_user is not None:
+        return settings.sandboxes_per_user
+    return 4 if settings.deployment == "hosted" else settings.sandboxes_total
+
+
 class AgentPool(TTLPool[ProjectAgentKey, ProjectAgent]):
     """
-    The agent pool with the sandbox caps (`settings.sandboxes_per_user`, then
-    `sandboxes_total`). A new key at a cap closes the least recently used IDLE
-    entry (the requesting user's own, never another's); an entry something holds
-    (a running chat turn, a background command) is never closed. None idle:
-    `SandboxCapReached`, with the reason.
+    The agent pool with the sandbox caps (`sandboxes_per_user()`, then
+    `settings.sandboxes_total`). A new key at a cap closes the least recently
+    used IDLE entry: at the user's cap their own, at the server's anyone's (its
+    owner's next turn starts a new one; the files stay). An entry something
+    holds (a running chat turn, a background command, a request) is never
+    closed. None idle: `SandboxCapReached`, with the reason.
     """
 
     @asynccontextmanager
@@ -131,24 +142,28 @@ class AgentPool(TTLPool[ProjectAgentKey, ProjectAgent]):
 
     def _admit(self, user_id: str) -> None:
         self.expire()
-        for limit, mine, what in (
-            (settings.sandboxes_per_user, True, "You have"),
-            (settings.sandboxes_total, False, "This server has"),
+        for limit, whose, what in (
+            (sandboxes_per_user(), user_id, "You have"),
+            (settings.sandboxes_total, None, "This server has"),
         ):
-            while self.count(user_id if mine else None) >= limit:
-                if not self.evict_lru_idle(user_id):
+            while self.count(whose) >= limit:
+                if not self.evict_lru_idle(whose):
                     raise SandboxCapReached(
                         f"{what} {limit} sandboxes open, all busy. Wait for a "
                         "running task or turn to finish, or stop one, then try again."
                     )
 
     def count(self, user_id: str | None) -> int:
+        """`user_id`'s entries, or every entry for None."""
         return sum(1 for k in self._items if user_id is None or k[0] == user_id)
 
-    def evict_lru_idle(self, user_id: str) -> bool:
-        """Close `user_id`'s least recently used idle entry. False when none is idle."""
+    def evict_lru_idle(self, user_id: str | None) -> bool:
+        """
+        Close the least recently used idle entry of `user_id`, or of anyone for
+        None. False when none is idle.
+        """
         for key, entry in self._items.items():  # oldest first
-            if key[0] == user_id and entry.ref_count == 0:
+            if (user_id is None or key[0] == user_id) and entry.ref_count == 0:
                 self._delete(key)
                 return True
         return False

@@ -34,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.providers import Provider, infer_provider
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.exceptions import ModelHTTPError
+from starlette.exceptions import HTTPException
 
 from ..config import AMSC_MAG_BASE_URL, settings
 
@@ -309,6 +310,10 @@ def describe_run_failure(exc: Exception) -> str:
             ServerModelUnavailable,
         ),
     ):
+        ret = exc.detail
+    elif isinstance(exc, HTTPException) and isinstance(exc.detail, str):
+        # A refusal raised before the model is asked (no sandbox free): its
+        # reason, not `str(exc)`'s "429: ...".
         ret = exc.detail
     elif isinstance(exc, ModelHTTPError):
         ret = f"The provider answered {exc.status_code} for model '{exc.model_name}'"

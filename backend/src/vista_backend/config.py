@@ -315,8 +315,12 @@ class Settings(BaseSettings):
 
     env: A[Literal["dev", "prod"], Field(validation_alias="VISTA_ENV")] = "dev"
 
-    sandboxes_per_user: int = 4
-    """ Most pooled agents (each with a sandbox) one user may have; `VISTA_BACKEND_SANDBOXES_PER_USER`. """
+    sandboxes_per_user: int | None = None
+    """
+    Most pooled agents (each with a sandbox) one user may have;
+    `VISTA_BACKEND_SANDBOXES_PER_USER`. Unset: 4 when hosted, and
+    `sandboxes_total` on a desktop (`project_agent.sandboxes_per_user`).
+    """
     sandboxes_total: int = 40
     """ Most pooled agents in all; `VISTA_BACKEND_SANDBOXES_TOTAL`. """
 

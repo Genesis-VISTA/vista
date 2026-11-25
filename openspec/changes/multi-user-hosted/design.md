@@ -103,8 +103,10 @@ plus the server's allowed clusters, not the whole settings dump. Globus pending 
 keyed `(user_id, cluster)` (`services/globus_auth.py:171`). Sandbox volumes become
 `volumes/{user_id}/{project_id}`; desktop keeps `volumes/{project_id}` for `local` so existing
 sandboxes survive. The sandbox subprocess gets an allowlisted environment, not `**os.environ`
-(`agents/agents.py:402-430`). Caps (4 per user, 40 total) live in the pool's eviction:
-least-recently-used idle of that user first, refuse when none is idle.
+(`agents/agents.py:402-430`). Caps (4 per user when hosted, the total on a desktop; 40
+total) live in the pool's eviction: at the user's cap their least-recently-used idle one, at
+the server's anyone's (decided 2026-11-25: a newcomer is not locked out for the 30-minute TTL
+by others' idle ones), and refuse when none is idle. One code path; only the default differs.
 
 ### D7. The hosted flag in the UI
 

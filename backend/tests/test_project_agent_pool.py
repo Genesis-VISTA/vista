@@ -70,11 +70,49 @@ async def test_held_entry_is_never_evicted(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_total_cap_refuses_requester_without_idle(monkeypatch):
+async def test_total_cap_closes_anyones_lru_idle(monkeypatch):
+    """At the server's cap a newcomer gets the oldest idle sandbox, whoever's it was."""
+    monkeypatch.setattr(settings, "sandboxes_per_user", 4)
+    monkeypatch.setattr(settings, "sandboxes_total", 2)
+    pool, closed = make_pool()
+    alice, bob = key("alice"), key("bob")
+    for k in (alice, bob):
+        async with pool.get(k):
+            pass
+    async with pool.get(key("carol")):
+        pass
+    await pool.flush()
+    assert alice not in list(pool.keys()) and bob in list(pool.keys())
+    assert len(closed) == 1
+
+
+@pytest.mark.anyio
+async def test_total_cap_refuses_when_nobody_is_idle(monkeypatch):
     monkeypatch.setattr(settings, "sandboxes_per_user", 4)
     monkeypatch.setattr(settings, "sandboxes_total", 2)
     pool, _ = make_pool()
     async with pool.get(key("alice")), pool.get(key("bob")):
-        with pytest.raises(SandboxCapReached):
+        with pytest.raises(SandboxCapReached, match="This server has 2"):
             async with pool.get(key("carol")):
                 pass
+
+
+def test_per_user_cap_defaults_by_deployment(monkeypatch):
+    """One code path: a desktop's one user may use the whole total."""
+    from vista_backend.services.project_agent import sandboxes_per_user
+
+    monkeypatch.setattr(settings, "sandboxes_per_user", None)
+    monkeypatch.setattr(settings, "sandboxes_total", 40)
+    monkeypatch.setattr(settings, "deployment", "hosted")
+    assert sandboxes_per_user() == 4
+    monkeypatch.setattr(settings, "deployment", "desktop")
+    assert sandboxes_per_user() == 40
+    monkeypatch.setattr(settings, "sandboxes_per_user", 6)
+    assert sandboxes_per_user() == 6
+
+
+def test_a_refused_turn_says_why_without_a_status_code():
+    from vista_backend.agents.inference import describe_run_failure
+
+    refused = SandboxCapReached("This server has 40 sandboxes open.")
+    assert describe_run_failure(refused) == "This server has 40 sandboxes open."
