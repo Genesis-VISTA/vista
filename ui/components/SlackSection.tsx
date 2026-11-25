@@ -67,6 +67,8 @@ export function SlackSection({
     );
   }
 
+  if (config.server_managed) return <ServerManagedSlack config={config} />;
+
   const field = (name: string) => ({ mark: marks[name], error: errors[name] });
 
   return (
@@ -192,6 +194,33 @@ export function SlackSection({
             onToggle={(on) => save("locked", { locked: on })}
             {...field("locked")}
           />
+        </Group>
+      </div>
+    </section>
+  );
+}
+
+/** Hosted: the Slack app is the server's operator's, so a researcher sees how it stands and links their own account. */
+function ServerManagedSlack({ config }: { config: SlackConfig }) {
+  return (
+    <section className="settings-section" aria-label="Slack">
+      <SectionHeader title="Slack" />
+      <div className="settings-section-body">
+        <span className="user-settings-hint">
+          The server&rsquo;s operator manages the Slack app: its tokens, who may use it and its
+          limits. You link your own Slack account below.
+        </span>
+        <ConnectionStatus config={config} />
+        <div className="user-settings-hint">Slack is {config.enabled ? "on" : "off"}.</div>
+        <Group title="Limits for Slack requests">
+          <ul className="user-settings-hint">
+            <li>Most nodes per job: {config.max_nodes}</li>
+            <li>Longest walltime (minutes): {config.max_walltime_minutes}</li>
+            <li>Jobs per day: {config.max_jobs_per_day}</li>
+          </ul>
+        </Group>
+        <Group title="Your Slack accounts">
+          <LinkedAccounts />
         </Group>
       </div>
     </section>
@@ -460,7 +489,23 @@ function LinkedAccounts() {
           <span className="slack-link-who">
             {link.slack_user_id} <span className="user-settings-hint">in {link.team_id}</span>
             {link.collab_name && <span className="user-settings-hint"> · linked as {link.collab_name}</span>}
+            {link.locked && <span className="user-settings-hint"> · Locked from Slack</span>}
           </span>
+          {link.locked && (
+            <button
+              type="button"
+              className="button ghost button-xs"
+              onClick={() =>
+                // Unlocking clears every one of your links, so reload them all.
+                void run(async () => {
+                  await updateSlackLink(link.id, { locked: false });
+                  setLinks(await fetchSlackLinks());
+                })
+              }
+            >
+              Unlock
+            </button>
+          )}
           <label className="user-settings-hint">
             New conversations in{" "}
             <select

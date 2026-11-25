@@ -23,6 +23,8 @@ export type SlackConfig = {
   connection: "off" | "connected" | "error";
   /** Why it is off, or what went wrong. */
   connection_detail: string | null;
+  /** Hosted: the app's tokens, allowlists and limits are the server's operator's; read-only here. */
+  server_managed?: boolean;
 };
 
 export type SlackConfigUpdate = Partial<
@@ -36,6 +38,7 @@ export type SlackConfigUpdate = Partial<
     | "locked_by"
     | "connection"
     | "connection_detail"
+    | "server_managed"
   >
 > & { bot_token?: string; app_token?: string };
 
@@ -48,6 +51,8 @@ export type SlackLink = {
   collab_name: string | null;
   /** The project new Slack conversations start in; null asks which one (unless there is only one). */
   project_id: string | null;
+  /** Hosted: this account's own lock, set from Slack and cleared here. */
+  locked?: boolean;
   created_at: string;
 };
 
@@ -69,7 +74,7 @@ export const fetchSlackLinks = () => call<SlackLink[]>("links");
 export const linkSlack = (code: string) => call<SlackLink>("links", "POST", { code });
 export const updateSlackLink = (
   id: string,
-  updates: Partial<Pick<SlackLink, "project_id">>,
+  updates: Partial<Pick<SlackLink, "project_id" | "locked">>,
 ) => call<SlackLink>(`links/${encodeURIComponent(id)}`, "PUT", updates);
 export const unlinkSlack = (id: string) =>
   call<void>(`links/${encodeURIComponent(id)}`, "DELETE");
