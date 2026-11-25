@@ -6,9 +6,9 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 ## 1. Fix-first hardening (wave 1; needs nothing)
 
 - [x] 1.1 `GET`/`PUT /settings` return `has_*` flags for every credential instead of values (`api/settings.py`, `db/schemas.py` `LocalSettingsPublic`, `services/local_settings.to_public`); verify with a new `backend/tests/test_settings_no_secrets.py` that saves each credential and asserts no response body contains it
-- [ ] 1.2 The settings modal and `ui/lib/settings.ts` use the flags: a set credential shows as saved with Replace/Clear, never its value; verify with `cd ui && npm run lint` and the UI lane's settings tests, plus a hands-on check in the running app
+- [x] 1.2 The settings modal and `ui/lib/settings.ts` use the flags: a set credential shows as saved with Replace/Clear, never its value; verify with `cd ui && npm run lint` and the UI lane's settings tests, plus a hands-on check in the running app
 - [x] 1.3 A hosted backend refuses to start without `VISTA_BACKEND_ENCRYPTION_KEY`, with the development key, or with a key file under the data folder (`config.py:491-499`); verify with `backend/tests/test_hosted_startup.py`
-- [ ] 1.4 Backend and VISTA MCP server bind `127.0.0.1`; the UI's `next start` binds loopback (`scripts/launch.sh` ~132); verify with a launch-script test or `ss -ltnp`/`lsof -iTCP -sTCP:LISTEN` on a dev stack (hands-on)
+- [x] 1.4 Backend and VISTA MCP server bind `127.0.0.1`; the UI's `next start` binds loopback (`scripts/launch.sh` ~132); verify with a launch-script test or `ss -ltnp`/`lsof -iTCP -sTCP:LISTEN` on a dev stack (hands-on)
 - [x] 1.5 MCP shared secret: `launch.sh` generates `VISTA_MCP_SECRET`; the backend sends `X-Vista-MCP-Secret`; the MCP HTTP app refuses requests without it; verify with `mcp_servers/vista_mcp_server/tests/test_shared_secret.py` and the backend's MCP health test
 - [x] 1.6 `POST /projects/{name}/mcp/call` answers `404` when hosted (`api/mcp.py:41-58`); verify with a test in `backend/tests/test_mcp_call.py`
 
@@ -31,7 +31,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 - [x] 4.1 Scaffold only (parent): `UserTable` (`app_user`) in `db/schemas.py`, `local` created in `init_db`, a stub `services/current_user.py` with `CurrentUser`'s signature, a token-minting fixture in `backend/tests/conftest.py`, failing `backend/tests/test_current_user.py` (desktop → `local`; hosted no/bad token → 401; ID token → 401; missing role → 403; new sub created once; JWKS down → 503), and a toolbox of PyJWT/`PyJWKClient` calls with examples from `collaboration_server/.../services/identity.py`
 - [x] 4.2 Sam implements `CurrentUser` and the verifier, and attaches it router-wide in `api/api.py` (health/version outside it); verify with `cd backend && uv run --extra dev pytest tests/test_current_user.py`
-- [ ] 4.3 Parent reviews Sam's diff like a teammate's; gate passes when the review's findings are settled
+- [x] 4.3 Parent reviews Sam's diff like a teammate's; gate passes when the review's findings are settled
 
 ## 5. Settings split (wave 2; needs 1, 4)
 
@@ -87,7 +87,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 ## 13. Isolation suite and end-to-end check (wave 5; needs 7–12, 15)
 
 - [x] 13.1 `backend/tests/security/test_tenant_isolation.py`, adapted from `git show 301fba76^:backend/tests/security/test_tenant_isolation.py`, enumerating routes from the app and failing on any owned route without a case; verify it passes in hermetic CI
-- [ ] 13.2 Two-browser check with `./launch.sh --hosted` as `alice` and `bob`: projects, chats, files, settings, skills isolated (hands-on, not in PR CI)
+- [x] 13.2 Two-browser check with `./launch.sh --hosted` as `alice` and `bob`: projects, chats, files, settings, skills isolated (hands-on, not in PR CI)
 
 ## 14. Docs and desktop regression (wave 5; needs 1–12)
 
