@@ -43,7 +43,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.db import get_engine
 from ..db.ownership import inherited_owner
-from ..db.schemas import BackgroundTaskTable, ChatSessionTable
+from ..db.schemas import LOCAL_USER_ID, BackgroundTaskTable, ChatSessionTable
 from ..utils.misc import now_iso
 from . import inbox as inbox_service
 from .current_user import as_user
@@ -1028,7 +1028,13 @@ async def recover_at_startup(read: StateReader | None = None) -> tuple[int, int]
         ended = await record_end(record.id, "interrupted")
         if ended is None:
             continue
-        tail = read_tail(host_log_path(agent_volume_root(ended.project_id), ended))
+        # No request here: the command's owner names its volume.
+        tail = read_tail(
+            host_log_path(
+                agent_volume_root(ended.project_id, ended.user_id or LOCAL_USER_ID),
+                ended,
+            )
+        )
         text, payload = end_event(ended, tail, reason=QUIT_REASON)
         async with session_factory() as db:
             await inbox_service.put(

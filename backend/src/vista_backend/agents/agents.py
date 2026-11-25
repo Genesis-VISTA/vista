@@ -1086,7 +1086,6 @@ class ProjectAgent:
                 metadata["vista"]["allowed_clusters"] = allowed
             # Still `user` on the wire: the MCP server's `VistaMeta` reads it.
             metadata["vista"]["user"] = self._hpc_user_fields()
-            # allowed_clusters: group 9
         if get_recorder().enabled:
             metadata["vista"]["metrics"] = {
                 "run_id": run_id_var.get(),

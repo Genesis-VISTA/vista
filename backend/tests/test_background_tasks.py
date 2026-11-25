@@ -356,3 +356,30 @@ async def test_a_command_lost_to_a_quit_is_noted_and_starts_no_turn(
 
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(records))
     assert await chat_run.ChatRunRegistry().wake(chat[0]) is None, "no turn at launch"
+
+
+async def test_a_hosted_users_lost_command_reads_its_owners_volume(
+    records, session, hosted, monkeypatch, tmp_path
+):
+    """Startup has no request: the record's owner, not the context, names the volume."""
+    from vista_backend.config import settings
+    from vista_backend.db.schemas import UserTable
+    from vista_backend.services.current_user import use_user
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    bob = UserTable(id="bob-id", sub="bob", created_at="2026-11-25T00:00:00+00:00")
+    session.add(bob)
+    await session.commit()
+    with use_user("bob-id"):  # as his requests would
+        project = await seed_project(session, user=bob)
+        row = await chat_session_service.create_chat_session(
+            session, project_id=project.id, user=bob
+        )
+        bobs_chat = (row.id, project.id)
+        await session.commit()
+        record = await _command(records, bobs_chat, command="python fit.py")
+    _log(tmp_path / "volumes" / "bob-id" / str(project.id), record, "bob's step\n")
+
+    assert await background_tasks.recover_at_startup() == (1, 0)
+    [note] = await _events(records, bobs_chat[0])
+    assert note.text.endswith("bob's step")
