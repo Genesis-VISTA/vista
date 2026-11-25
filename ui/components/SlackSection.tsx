@@ -495,7 +495,13 @@ function LinkedAccounts() {
             <button
               type="button"
               className="button ghost button-xs"
-              onClick={() => void run(async () => replace(await updateSlackLink(link.id, { locked: false })))}
+              onClick={() =>
+                // Unlocking clears every one of your links, so reload them all.
+                void run(async () => {
+                  await updateSlackLink(link.id, { locked: false });
+                  setLinks(await fetchSlackLinks());
+                })
+              }
             >
               Unlock
             </button>

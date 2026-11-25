@@ -35,10 +35,15 @@ const link = (over: Partial<SlackLink> = {}): SlackLink => ({
 });
 
 function mockFetch(links: SlackLink[]) {
+  let current = links;
   const fn = vi.fn(async (_url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
-    if (method === "PUT") return new Response(JSON.stringify(link({ locked: false })), { status: 200 });
-    return new Response(JSON.stringify(links), { status: 200 });
+    if (method === "PUT") {
+      // As the backend: unlocking clears every one of the user's links.
+      current = current.map((l) => ({ ...l, locked: false }));
+      return new Response(JSON.stringify(current[0]), { status: 200 });
+    }
+    return new Response(JSON.stringify(current), { status: 200 });
   });
   vi.stubGlobal("fetch", fn);
   return fn;
@@ -72,12 +77,14 @@ describe("SlackSection", () => {
     await waitFor(() => expect(screen.getByText("None yet.")).toBeInTheDocument());
   });
 
-  it("a locked link shows Unlock, which sends locked: false", async () => {
-    const fetchFn = mockFetch([link({ locked: true }), link({ id: "l2", slack_user_id: "U2" })]);
+  it("a locked link shows Unlock, which sends locked: false and clears all", async () => {
+    const fetchFn = mockFetch([
+      link({ locked: true }),
+      link({ id: "l2", slack_user_id: "U2", locked: true }),
+    ]);
     render(<SlackSection config={{ ...config, server_managed: true }} onChange={vi.fn()} />);
-    const unlock = await screen.findByRole("button", { name: "Unlock" });
-    expect(screen.getAllByRole("button", { name: "Unlock" })).toHaveLength(1);
-    await userEvent.click(unlock);
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Unlock" })).toHaveLength(2));
+    await userEvent.click(screen.getAllByRole("button", { name: "Unlock" })[0]);
     await waitFor(() => expect(screen.queryByRole("button", { name: "Unlock" })).toBeNull());
     const put = fetchFn.mock.calls.find(([, init]) => init?.method === "PUT")!;
     expect(String(put[0])).toContain("/slack/links/l1");
