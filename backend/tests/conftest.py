@@ -87,6 +87,21 @@ def _no_default_collaboration_server(monkeypatch):
     monkeypatch.setattr(settings, "collaboration_server_url", None)
 
 
+@pytest.fixture(autouse=True)
+def _a_named_server_model(monkeypatch):
+    """
+    A blank `server_inference_model` means "the model the server lists", which
+    a test would learn from whatever answers on the server's address (a Holly
+    tunnel on a laptop, nothing in CI). Tests name one, and the address is a
+    closed port, so a laptop answers as CI does; a test of the listing sets its
+    own endpoint (`test_inference_providers.server_endpoint`).
+    """
+    from vista_backend.config import settings
+
+    monkeypatch.setattr(settings, "server_inference_model", "test-server-model")
+    monkeypatch.setattr(settings, "server_inference_url", "http://127.0.0.1:9/v1")
+
+
 @pytest.fixture
 async def engine(tmp_path_factory):
     """
