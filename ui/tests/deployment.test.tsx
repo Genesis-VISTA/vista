@@ -1,7 +1,6 @@
 import { render, renderHook, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UpdateControls } from "@/components/UpdateControls";
-import { UserMenu } from "@/components/UserMenu";
 import { clusterAllowed, deploymentOf, useDeployment } from "@/lib/deployment";
 import { HPC_CLUSTERS } from "@/lib/hpc-status";
 import type { VersionInfo } from "@/lib/version";
@@ -72,26 +71,6 @@ describe("useDeployment", () => {
   it.each(["desktop", "hosted"] as const)("follows the backend: %s", (deployment) => {
     useVersionMock.mockReturnValue(view({ deployment }));
     expect(renderHook(() => useDeployment()).result.current.deployment).toBe(deployment);
-  });
-});
-
-describe("UserMenu", () => {
-  it("shows the sign-out link on a hosted deployment", () => {
-    useVersionMock.mockReturnValue(view({ deployment: "hosted", sign_out_url: "https://gw.example/logout" }));
-    render(<UserMenu collapsed={false} />);
-    expect(screen.getByRole("link", { name: "Sign out" })).toHaveAttribute("href", "https://gw.example/logout");
-  });
-
-  it("draws nothing on desktop, even if a sign-out address were reported", () => {
-    useVersionMock.mockReturnValue(view({ deployment: "desktop", sign_out_url: "https://gw.example/logout" }));
-    const { container } = render(<UserMenu collapsed={false} />);
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("draws nothing when hosted with no sign-out address configured", () => {
-    useVersionMock.mockReturnValue(view({ deployment: "hosted", sign_out_url: null }));
-    const { container } = render(<UserMenu collapsed={false} />);
-    expect(container).toBeEmptyDOMElement();
   });
 });
 

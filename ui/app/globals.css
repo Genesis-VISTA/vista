@@ -3020,32 +3020,6 @@ button.chat-bubble.intermediate.collapsed:hover {
   text-overflow: ellipsis;
 }
 
-.nav-rail-user {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 8px 22px 12px;
-  font-size: 12px;
-  color: var(--ink-2);
-  white-space: nowrap;
-}
-
-.nav-rail.collapsed .nav-rail-user {
-  justify-content: center;
-  padding: 8px 0 12px;
-}
-
-.nav-rail-user-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.nav-rail-user-signout {
-  color: inherit;
-  text-decoration: underline;
-}
-
 .nav-rail-list {
   display: flex;
   flex-direction: column;
@@ -3694,6 +3668,11 @@ button.chat-bubble.intermediate.collapsed:hover {
 
 .settings-nav-entry:hover {
   background: var(--wash);
+}
+
+/* Hosted: Sign out is a link (to the gateway's logout) drawn as an entry. */
+.settings-nav-signout {
+  text-decoration: none;
 }
 
 .settings-nav-entry[aria-current="page"] {

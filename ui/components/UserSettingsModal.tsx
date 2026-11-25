@@ -802,6 +802,17 @@ function SettingsNav({
         <span className="settings-nav-name">Research profile</span>
         <span className="settings-nav-note">{personalize ? "On" : "Off"}</span>
       </NavEntry>
+      {/* Hosted only: the gateway owns the session, so this is a link to its logout. */}
+      {deployment.hosted && deployment.signOutUrl && (
+        <a className="settings-nav-entry settings-nav-signout" href={deployment.signOutUrl}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          <span className="settings-nav-name">Sign out</span>
+        </a>
+      )}
       <NavEntry
         label={["Models and providers", providerNote?.toLowerCase()].filter(Boolean).join(", ")}
         current={section === "agent"}

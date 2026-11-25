@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { BASE_PATH } from "@/lib/api-url";
-import { UserMenu } from "@/components/UserMenu";
 import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 import {
@@ -454,9 +453,6 @@ export function NavRail() {
         {/* A newer release: the only place outside About that says so. */}
         {updateReady && <span className="update-marker" data-testid="settings-update-marker" />}
       </button>
-
-      {/* Hosted only: who is signed in, and the gateway's sign-out. */}
-      <UserMenu collapsed={collapsed} />
 
       {/* Fixed rather than absolute: the entry list scrolls, and anything
           positioned inside it gets clipped at the rail's edge. */}
