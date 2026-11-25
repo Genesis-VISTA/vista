@@ -81,8 +81,7 @@ Hosted turns these off:
   every cluster (each researcher connects their own; Odo's S3M token is checked to be for an
   open enclave);
 - **updates** in the app (you update the server) and the desktop window's own actions;
-- **linked folders** (a researcher's own folders cannot be linked to a server) and skill
-  import from hosts you have not allowed;
+- skill import from hosts you have not allowed;
 - the **saved collaboration token** (the gateway login is used instead);
 - calling an MCP tool by hand (`/projects/{name}/mcp/call`).
 

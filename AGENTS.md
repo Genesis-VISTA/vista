@@ -325,15 +325,17 @@ shortcut that skips the user.
   counts. Do not filter by hand in a route, and do not `session.get` a row by id from a
   request. Child rows (messages, files, posts) are reached through their parent. Names are
   unique per owner, so a lookup by name is owner-scoped too.
-- **A new owned table** gets a `user_id` column like the others (nullable, FK to `app_user`,
-  server default `local`, so it stays additive), an entry in `REQUIRED_OWNER_TABLES` if it can
-  never be ownerless (hosted refuses an insert with no owner: `OwnerMissing`), a place in
+- **A new owned table** gets a `user_id` column like the others (NOT NULL with server default
+  `local`, so an existing install gets it filled and it stays additive; FK to `app_user`;
+  `None` in Python only before the insert), an entry in `REQUIRED_OWNER_TABLES` (desktop fills
+  `local`, hosted refuses an insert with no owner: `OwnerMissing`; only skills and knowledge
+  bases, whose NULL means global, stay out of it and nullable), a place in
   `db.OWNED_TABLES`, which `_backfill_owners` fills with `local` on every start, and a case in
   the tenant isolation suite (`backend/tests/security/test_tenant_isolation.py`, which fails
   on an owned route with none).
 - **Background work acts as a row's owner.** Job watches, the campaign monitor, inbox wakes,
   startup recovery and Slack turns run inside `as_user(row.user_id)` (`inherited_owner` for a
-  row made on a parent's behalf); a row with no owner is `local`'s. Hosted, code that needs a
+  row made on a parent's behalf). Hosted, code that needs a
   user outside one raises `NoUserContext`, and `settings_view.load` is such code. `as_user`
   also drops the request's access token, so work started as a user carries none
   (`request_access_token()` is `None` there): nothing that needs the researcher's token can
@@ -351,7 +353,7 @@ shortcut that skips the user.
   `NEXT_PUBLIC_` variable). A hidden control called directly must still fail. Hosted turns
   off: the Custom inference provider (a `server` provider replaces it), NERSC and every
   cluster outside `allowed_clusters` (Odo alone by default), in-app updates, Electron-only
-  actions, linked folders, skill import from hosts outside `skill_import_allowed_hosts`,
+  actions, skill import from hosts outside `skill_import_allowed_hosts`,
   `/projects/{name}/mcp/call`, the shared Globus pair, a saved `collaboration_token`, and, for
   now, the Hypothesis Lab.
 - **Runtime is per user.** The agent pool key starts with the user
