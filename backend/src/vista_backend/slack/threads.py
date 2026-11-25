@@ -17,7 +17,6 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..db.schemas import (
-    LOCAL_USER_ID,
     ChatSessionCreate,
     ChatSessionTable,
     ProjectTable,
@@ -55,32 +54,32 @@ class Conversation:
     is_new: bool
 
 
-async def local_owner(session: AsyncSession) -> UserTable:
+async def owner_of(session: AsyncSession, user_id: str) -> UserTable:
     """
-    Whose projects a Slack message reaches. Slack is the desktop's, so the
-    implicit user `local`.
-
-    TODO(multi-user-hosted, group 12): the user the Slack link belongs to.
+    Whose projects a Slack message reaches: the user the Slack link belongs to
+    (`slack_link.user_id`), never one assumed.
     """
-    row = await session.get(UserTable, LOCAL_USER_ID)
-    assert row is not None, "init_db makes the local user"
+    row = await session.get(UserTable, user_id)
+    assert row is not None, "a Slack link's user exists (foreign key)"
     return row
 
 
 async def project_for(
-    session: AsyncSession, project_id: uuid.UUID | None
+    session: AsyncSession, project_id: uuid.UUID | None, user_id: str
 ) -> ProjectTable:
     """
-    The chosen project, if it still exists, else the researcher's only one.
+    The chosen project, if it is still one of `user_id`'s, else their only one.
 
     Raises:
         NoProject: they have none.
         ChooseProject: they have several and none of them is chosen.
     """
-    projects = await project_service.list_projects(session, await local_owner(session))
+    projects = await project_service.list_projects(
+        session, await owner_of(session, user_id)
+    )
     if not projects:
         raise NoProject(
-            "You don't have a VISTA project yet. Create one in the desktop app first."
+            "You don't have a VISTA project yet. Create one in the app first."
         )
     chosen = next((p for p in projects if p.id == project_id), None)
     if chosen is not None:
@@ -106,12 +105,14 @@ async def conversation_for(
     message: Message,
     *,
     project_id: uuid.UUID | None,
+    user_id: str,
 ) -> Conversation:
     """
     The conversation for `message`'s thread, started if it has none.
 
     `project_id` is the project to start one in: the link's, or the one the
-    researcher picked for this thread.
+    researcher picked for this thread. `user_id` is the link's user: the
+    conversation is theirs, and a thread that is another user's is not.
 
     Raises:
         NotYourThread: someone else started this thread.
@@ -134,6 +135,12 @@ async def conversation_for(
                 "Mention me in a new message to start your own."
             )
         chat = await session.get(ChatSessionTable, row.chat_session_id)
+        if chat is not None and chat.user_id != user_id:
+            # The Slack account was linked to someone else when this began.
+            raise NotYourThread(
+                "This thread is someone else's conversation with VISTA. "
+                "Mention me in a new message to start your own."
+            )
         if chat is not None:
             project = await session.get(ProjectTable, chat.project_id)
             if project is not None:
@@ -142,13 +149,13 @@ async def conversation_for(
         await session.delete(row)
         await session.flush()
 
-    project = await project_for(session, project_id)
+    project = await project_for(session, project_id, user_id)
     chat = await chat_session_service.create_chat_session(
         session,
         project_id=project.id,
         payload=ChatSessionCreate(title=_title(message.prompt)),
         origin="slack",
-        user=await local_owner(session),
+        user=await owner_of(session, user_id),
     )
     chat_id = chat.id
     session.add(

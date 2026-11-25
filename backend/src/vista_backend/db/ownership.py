@@ -101,6 +101,7 @@ REQUIRED_OWNER_TABLES = frozenset(
         "campaign_run",
         "hpc_job",
         "debate_run",
+        "slack_link",
     }
 )
 """ Owned tables whose rows always have an owner (skills and knowledge bases may be nobody's). """

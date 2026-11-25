@@ -46,6 +46,7 @@ from ..db.schemas import (
     SlackLinkTable,
 )
 from ..services import chat_run as chat_run_module
+from ..services.current_user import as_user
 from ..services import inbox, local_settings
 from ..services import project as project_service
 from . import access, audit, confirm, credentials, format, gate, limits, linking, store
@@ -59,7 +60,7 @@ from .threads import (
     NotYourThread,
     conversation_for,
     held_ask,
-    local_owner,
+    owner_of,
     thread_of,
 )
 from .transport import SlackCallError, SlackTransport
@@ -149,16 +150,25 @@ async def preview_job(
         chat = await db.get(ChatSessionTable, chat_session_id)
         if chat is None:
             return {}
-        local = await local_settings.get_public(db)
+        # The conversation's owner, whoever's code asks.
+        owner_id = chat.user_id
+        local = await local_settings.get_public(db, owner_id)
         project_id = chat.project_id
-    invoke = build_mcp_invoke(local, project_paths_for(project_id))
-    text = await invoke("preview_hpc_job", args)
+    with as_user(owner_id):
+        invoke = build_mcp_invoke(local, project_paths_for(project_id))
+        text = await invoke("preview_hpc_job", args)
     fields: dict[str, str] = {}
     for line in text.splitlines():
         key, sep, value = line.partition(":")
         if sep and key.strip() in PREVIEW_FIELDS:
             fields[PREVIEW_FIELDS[key.strip()]] = value.strip()
     return fields
+
+
+def _owner(link: SlackLinkTable) -> str:
+    """The VISTA user a link acts as (never None once stored)."""
+    assert link.user_id is not None
+    return link.user_id
 
 
 async def _config() -> SlackConfigTable:
@@ -349,13 +359,16 @@ class SlackService:
             await self._link(event)
             return
         assert link is not None
-        if isinstance(event, HomeOpened):
-            if self._home is not None:
-                await self._home.publish(event.team_id, event.user_id)
-        elif isinstance(event, Action):
-            await self._action(event, link)
-        elif isinstance(event, Message):
-            await self._message(event, link)
+        # Everything from here acts as the link's user: their settings, agent
+        # and credentials, their projects, their limits.
+        with as_user(_owner(link)):
+            if isinstance(event, HomeOpened):
+                if self._home is not None:
+                    await self._home.publish(event.team_id, event.user_id)
+            elif isinstance(event, Action):
+                await self._action(event, link)
+            elif isinstance(event, Message):
+                await self._message(event, link)
 
     async def _reply(self, event: Event, text: str, *, ephemeral: bool) -> None:
         assert self.slack is not None
@@ -389,7 +402,7 @@ class SlackService:
     ) -> None:
         word = keyword(message)
         if word == "lock":
-            await limits.lock(message.user_id)
+            await limits.lock(message.user_id, user_id=_owner(link))
             await audit.record(
                 "locked",
                 team_id=message.team_id,
@@ -424,7 +437,7 @@ class SlackService:
                     chat_id = None
                 else:
                     conversation = await conversation_for(
-                        db, message, project_id=link.project_id
+                        db, message, project_id=link.project_id, user_id=_owner(link)
                     )
                     chat_id = conversation.chat_session_id
                     chat = await db.get(ChatSessionTable, chat_id)
@@ -616,7 +629,9 @@ class SlackService:
                     ephemeral=True,
                 )
                 return
-            projects = await project_service.list_projects(db, await local_owner(db))
+            projects = await project_service.list_projects(
+                db, await owner_of(db, _owner(link))
+            )
             project = next((p for p in projects if p.id == project_key), None)
             if project is None:
                 await db.commit()
@@ -652,7 +667,9 @@ class SlackService:
                 await db.commit()
                 return
             await db.delete(ask)
-            conversation = await conversation_for(db, first, project_id=project_key)
+            conversation = await conversation_for(
+                db, first, project_id=project_key, user_id=_owner(link)
+            )
             chat_id = conversation.chat_session_id
         if picker_ts is not None:
             with contextlib.suppress(SlackCallError):
@@ -722,7 +739,10 @@ class SlackService:
     async def _follow(self, run: chat_run_module.ChatRun) -> None:
         """Post the run's progress and answer in its thread; offer its prompts there."""
         try:
-            await self._show(run)
+            # Whoever's turn it is, not whoever happened to be running when it
+            # was found: a run held at startup is followed outside any user.
+            with as_user(run.agent_key[0]):
+                await self._show(run)
         except asyncio.CancelledError:
             raise
         except Exception:

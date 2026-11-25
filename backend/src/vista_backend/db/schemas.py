@@ -2222,13 +2222,12 @@ class SlackConfigTable(SQLModel, table=True):
 
 class SlackLinkTable(SQLModel, table=True):
     """
-    A Slack user who may act through this installation, as its researcher.
-
-    VISTA has one researcher per installation, so a link names no VISTA user:
-    it admits a Slack account to this install. `collab_sub` is who the
-    researcher was on the collaboration server when the link was made (the
-    Keycloak `sub`), recorded so a hosted router can later route a Slack user
-    to their own VISTA by it. Nothing here decides access by it.
+    A Slack user who may act through this installation, as the VISTA user who
+    entered the link code (`user_id`): that user's turns, settings, credentials,
+    limits and reminders are the ones this Slack account acts with, and its
+    conversations are theirs. On a desktop that is always `local`.
+    `collab_sub` is who the researcher was on the collaboration server when the
+    link was made (the Keycloak `sub`), recorded for the audit log only.
     """
 
     __tablename__: str = "slack_link"
@@ -2237,6 +2236,20 @@ class SlackLinkTable(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     team_id: str
     slack_user_id: str
+    user_id: str | None = Field(
+        default=None,
+        foreign_key="app_user.id",
+        index=True,
+        nullable=False,
+        sa_column_kwargs={"server_default": LOCAL_USER_ID},
+    )
+    """ Whose this Slack account acts as; never NULL (`db/ownership.require_owner`). None only before the insert. """
+    locked: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default=false()),
+    )
+    """ Hosted only: this user's own lock (`slack/limits.lock`); a desktop keeps its lock on `slack_config`. """
+    locked_at: str | None = None
     collab_sub: str | None = None
     """ The researcher's collaboration-server identity when linked; None if not signed in. """
     collab_name: str | None = None

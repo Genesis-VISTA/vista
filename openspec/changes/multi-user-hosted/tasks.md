@@ -49,7 +49,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 - [x] 7.1 Chat-run streams, elicitations, project files and downloads check the owner and answer `404` (`api/chat_runs.py:31-58`, `services/project_agent.py:95`, `api/files.py`); verify with tests as two users
 - [x] 7.2 `as_user(user_id)` and its use in job watches, campaign monitor, inbox wakes and startup recovery (`services/background_tasks.py:1050`, `campaign_monitor.py:213`, `api/api.py:84-135`); verify with tests driving each entry point for two users
-- [ ] 7.3 Background work that has no owner yet: `/activity`'s debate count (in-memory `debate._BACKGROUND`) and Slack's `slack/threads.local_owner` record and report their owner; verify `/activity` counts only the caller's debates in a two-user test
+- [x] 7.3 Background work that has no owner yet: `/activity`'s debate count (in-memory `debate._BACKGROUND`) and Slack's `slack/threads.local_owner` record and report their owner; verify `/activity` counts only the caller's debates in a two-user test
 
 ## 8. Runtime per user and sandbox caps (wave 3; needs 5, 6)
 
@@ -76,7 +76,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 12. Slack per user (wave 4; needs 6, 7)
 
-- [ ] 12.1 `slack_link.user_id`, set on redeem; turns, confirmations, limits, notifications and reminders run as the link's user; server-level app settings when hosted; verify with `backend/tests/slack/` additions for two users
+- [x] 12.1 `slack_link.user_id`, set on redeem; turns, confirmations, limits, notifications and reminders run as the link's user; server-level app settings when hosted; verify with `backend/tests/slack/` additions for two users
 
 ## 15. Per-owner stores and copy-on-write bundled skills (wave 3; needs 6; Sam's wave-2 review, 2026-11-24)
 

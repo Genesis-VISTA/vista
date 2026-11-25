@@ -137,11 +137,13 @@ def test_offline_locked_and_expired():
 
 async def test_publish_for_a_linked_user_only(engine, session, monkeypatch):
     monkeypatch.setattr(chat_run, "session_factory", lambda: AsyncSession(engine))
-    monkeypatch.setattr(credentials, "_known", [])
+    monkeypatch.setattr(credentials, "_known", {})
     await link(session, "U1")
     session.add(
         HpcJobRecordTable(
             origin="slack",
+            slack_team_id=TEAM,
+            slack_user_id="U1",
             cluster="lux",
             job_id="9",
             job="lux-hello",

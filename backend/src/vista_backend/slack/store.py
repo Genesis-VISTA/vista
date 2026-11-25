@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from ..config import settings
 from ..db.schemas import SlackConfigTable
 from ..utils import secret_store
 
@@ -30,13 +31,33 @@ def now_iso() -> str:
     return now().isoformat(timespec="seconds")
 
 
+HOSTED_FIELDS = {
+    "enabled": "hosted_enabled",
+    "allowed_team_ids": "hosted_allowed_team_ids",
+    "allowed_channel_ids": "hosted_allowed_channel_ids",
+    "max_nodes": "hosted_max_nodes",
+    "max_walltime_minutes": "hosted_max_walltime_minutes",
+    "max_jobs_per_day": "hosted_max_jobs_per_day",
+}
+""" `slack_config` column -> the `SlackSettings` field that overrides it when hosted. """
+
+
 async def get_config(session: AsyncSession) -> SlackConfigTable:
-    """The settings row, created with every default on first use."""
+    """
+    The settings row, created with every default on first use. Hosted, the
+    environment's values (`SlackSettings.hosted_*`) are laid over it on every
+    read: the app is the server's, and the API cannot change them.
+    """
     row = await session.get(SlackConfigTable, 1)
     if row is None:
         row = SlackConfigTable(id=1, allowed_team_ids=[], allowed_channel_ids=[])
         session.add(row)
         await session.flush()
+    if settings.deployment == "hosted":
+        for column, field in HOSTED_FIELDS.items():
+            value = getattr(settings.slack, field)
+            if value is not None and getattr(row, column) != value:
+                setattr(row, column, value)
     return row
 
 

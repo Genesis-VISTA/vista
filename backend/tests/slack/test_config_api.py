@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 from keyring.backends.fail import Keyring as FailKeyring
 
+from harness.users import LOCAL
 from vista_backend.api.slack import (
     SlackConfigUpdate,
     get_slack_config,
@@ -21,12 +22,12 @@ APP = "xapp-1-A111-2222-notreal"
 
 
 async def _put(session, **fields):
-    return await update_slack_config(SlackConfigUpdate(**fields), session)
+    return await update_slack_config(SlackConfigUpdate(**fields), session, LOCAL)
 
 
 @pytest.mark.anyio
 async def test_a_default_install_has_slack_off(session):
-    view = await get_slack_config(session)
+    view = await get_slack_config(session, LOCAL)
 
     assert view.enabled is False
     assert view.has_bot_token is False and view.has_app_token is False
@@ -84,7 +85,7 @@ async def test_no_secret_store_refuses_and_says_so(session):
     with pytest.raises(HTTPException) as err:
         await _put(session, enabled=True)
     assert "secret store" in err.value.detail
-    assert (await get_slack_config(session)).secret_store_available is False
+    assert (await get_slack_config(session, LOCAL)).secret_store_available is False
 
 
 @pytest.mark.anyio
@@ -98,7 +99,7 @@ async def test_enabling_needs_both_tokens_and_a_workspace(session):
     with pytest.raises(HTTPException) as err:
         await _put(session, enabled=True)
     assert "workspace" in err.value.detail
-    assert (await get_slack_config(session)).enabled is False
+    assert (await get_slack_config(session, LOCAL)).enabled is False
 
     view = await _put(session, enabled=True, allowed_team_ids=[" t0123 "])
     assert view.enabled is True
@@ -117,7 +118,7 @@ async def test_removing_a_token_while_enabled_is_refused(session):
     with pytest.raises(HTTPException):
         await _put(session, app_token="")
     # A refused save changes nothing, the token included.
-    view = await get_slack_config(session)
+    view = await get_slack_config(session, LOCAL)
     assert view.enabled is True and view.has_app_token is True
 
     view = await _put(session, enabled=False, app_token="")

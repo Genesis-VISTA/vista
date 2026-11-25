@@ -15,7 +15,6 @@ import json
 import uuid
 from typing import Any, Awaitable, Callable
 
-from ...config import settings
 from ...db.schemas import LocalSettingsPublic
 from .hpc_tools import InvokeTool
 
@@ -24,16 +23,22 @@ from .hpc_tools import InvokeTool
 CallToolFn = Callable[[str, dict, dict | None], Awaitable[Any]]
 
 
-def project_paths_for(project_id: uuid.UUID) -> dict[str, str]:
+def project_paths_for(
+    project_id: uuid.UUID, user_id: str | None = None
+) -> dict[str, str]:
     """The sandbox-volume paths the HPC tools resolve log/output dirs against.
 
-    Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): a single
-    per-project `volume_root = data_dir/volumes/{project_id}` holding the skills volume plus
-    `data/output` and `data/uploads` (shared across the project's chat sessions). The monitor rebuilds these paths from a job's DB row, so they must match
-    what the dispatching agent wrote — `test_project_paths_for_matches_project_agent` pins the
-    two together.
+    Mirrors the volume layout in `ProjectAgent.__init__` (the source of truth): one
+    per-project, per-user `volume_root = agent_volume_root(project_id, user_id)` holding
+    the skills volume plus `data/output` and `data/uploads` (shared across the project's
+    chat sessions). `user_id` defaults to the current user's: the campaign monitor and
+    Slack's job preview call this as the row's owner (`as_user`). The monitor rebuilds
+    these paths from a job's DB row, so they must match what the dispatching agent wrote —
+    `test_project_paths_for_matches_project_agent` pins the two together.
     """
-    volume_root = settings.data_dir / "volumes" / str(project_id)
+    from ..agents import agent_volume_root  # agents.agents imports this module
+
+    volume_root = agent_volume_root(project_id, user_id)
     return {
         "skills_dir": str(volume_root / "skills"),
         "output_dir": str(volume_root / "data" / "output"),

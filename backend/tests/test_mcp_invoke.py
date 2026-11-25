@@ -31,6 +31,21 @@ def test_project_paths_for_matches_project_agent():
     }
 
 
+def test_project_paths_for_a_hosted_user_are_their_own():
+    """Another user's sandbox lives under their id: the monitor and Slack must agree."""
+    from vista_backend.services.current_user import as_user
+
+    project = ProjectPublic(id=uuid.uuid4(), name="paths")
+    agent = ProjectAgent(
+        project, make_local_settings(), uuid.uuid4(), owner_id="bob-id"
+    )
+    with as_user("bob-id"):
+        paths = project_paths_for(project.id)
+    assert paths["output_dir"] == str(agent.output_dir)
+    assert "bob-id" in paths["output_dir"]
+    assert project_paths_for(project.id, "bob-id") == paths
+
+
 @pytest.mark.anyio
 async def test_build_metadata_shape():
     local = make_local_settings(odo_s3m_token="s3m-odo")

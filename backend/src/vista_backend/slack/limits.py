@@ -22,10 +22,14 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import exists
 from sqlmodel import col, select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
-from ..db.schemas import HpcJobRecordTable, SlackConfigTable
+from ..db.schemas import HpcJobRecordTable, SlackConfigTable, SlackLinkTable
 from ..services import chat_run as chat_run_module
+from ..services.current_user import current_user_id
+from ..services.hosted import is_hosted
 from . import confirm, credentials, store
 
 log = logging.getLogger(__name__)
@@ -51,18 +55,33 @@ def _tail(tool_name: str) -> str:
     return tool_name.split("__")[-1]
 
 
+def submitted_by(user_id: str) -> Any:
+    """
+    A condition on `HpcJobRecordTable`: the job was submitted from a Slack
+    account linked to `user_id`. The record names its Slack asker, not a VISTA
+    user, so the link says whose it was.
+    """
+    return exists().where(
+        col(SlackLinkTable.team_id) == HpcJobRecordTable.slack_team_id,
+        col(SlackLinkTable.slack_user_id) == HpcJobRecordTable.slack_user_id,
+        col(SlackLinkTable.user_id) == user_id,
+    )
+
+
 async def _jobs_today() -> tuple[int, datetime | None]:
     """
-    Slack jobs in the last 24 hours, and when the oldest leaves the window.
-    Every linked Slack account acts as this install's one researcher, so the
-    limit is the install's.
+    The current user's Slack jobs in the last 24 hours, and when the oldest
+    leaves the window. The limit is per user: one researcher's jobs do not use
+    up another's.
     """
     since = store.now() - DAY
+    user_id = current_user_id()
     async with chat_run_module.session_factory() as db:
         times = (
             await db.exec(
                 select(HpcJobRecordTable.submitted_at).where(
                     HpcJobRecordTable.origin == "slack",
+                    submitted_by(user_id),
                     col(HpcJobRecordTable.submitted_at)
                     >= since.isoformat(timespec="seconds"),
                 )
@@ -148,6 +167,7 @@ async def refusal(
     async with chat_run_module.session_factory() as db:
         config = await store.get_config(db)
         snapshot = SlackConfigTable.model_validate(config.model_dump())
+        snapshot.locked = snapshot.locked or await user_locked(db, current_user_id())
         await db.commit()
     if snapshot.locked:
         return LOCKED
@@ -163,15 +183,42 @@ async def refusal(
     return await check(snapshot, tool_name, args, preview)
 
 
-async def lock(slack_user_id: str) -> None:
-    """`lock` from Slack. Only the desktop app can undo it."""
+async def user_locked(db: AsyncSession, user_id: str) -> bool:
+    """Whether `user_id` locked their own Slack access (hosted; a desktop uses the config's lock)."""
+    return (
+        await db.exec(
+            select(SlackLinkTable.id).where(
+                SlackLinkTable.user_id == user_id,
+                col(SlackLinkTable.locked).is_(True),
+            )
+        )
+    ).first() is not None
+
+
+async def lock(slack_user_id: str, *, user_id: str) -> None:
+    """
+    `lock` from Slack. Only the app can undo it. A desktop has one researcher,
+    so the lock is the install's (`slack_config`); a hosted deployment locks
+    only `user_id`'s own Slack accounts, never another user's.
+    """
     async with chat_run_module.session_factory() as db:
-        config = await store.get_config(db)
-        if not config.locked:
-            config.locked = True
-            config.locked_at = store.now_iso()
-            config.locked_by = f"slack:{slack_user_id}"
-            db.add(config)
+        if is_hosted():
+            for row in (
+                await db.exec(
+                    select(SlackLinkTable).where(SlackLinkTable.user_id == user_id)
+                )
+            ).all():
+                if not row.locked:
+                    row.locked = True
+                    row.locked_at = store.now_iso()
+                    db.add(row)
+        else:
+            config = await store.get_config(db)
+            if not config.locked:
+                config.locked = True
+                config.locked_at = store.now_iso()
+                config.locked_by = f"slack:{slack_user_id}"
+                db.add(config)
         await db.commit()
 
 
