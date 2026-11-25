@@ -276,6 +276,38 @@ async def test_a_failed_run_reports_why(env):
     assert (saved.run_events or [])[-1] == {"event": "run_finished", "data": finished}
 
 
+async def test_a_turn_on_the_server_model_while_it_is_down_fails_with_the_reason(
+    env, monkeypatch
+):
+    """
+    Every turn checks, not only the app's send: one a job watch or a queued
+    message starts fails before reaching the model, with the probe's reason.
+    """
+    from types import SimpleNamespace
+
+    from vista_backend.services import inference_probe
+
+    row, key = await env.conversation([say("never said")])
+    monkeypatch.setattr(
+        chat_run,
+        "resolve_inference_target",
+        lambda local, model=None: SimpleNamespace(provider="server"),
+    )
+
+    async def down():
+        return inference_probe.ServerModelStatus(False, "Beam is not answering.")
+
+    monkeypatch.setattr(inference_probe, "server_model_status", down)
+
+    run = await env.start(row, key)
+    seen = [event async for event in run.subscribe()]
+    await run.wait()
+
+    finished = json.loads(seen[-1].data)
+    assert finished["state"] == "failed"
+    assert finished["error"] == "Beam is not answering."
+
+
 async def test_saved_events_are_compacted_and_hold_no_prompts_or_deltas(env):
     row, key = await env.conversation([say("hello there")])
 

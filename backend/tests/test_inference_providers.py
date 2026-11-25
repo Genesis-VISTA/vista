@@ -87,6 +87,23 @@ async def test_probe_is_cached_and_reports_the_reason(server_endpoint):
 
 
 @pytest.mark.anyio
+async def test_a_debate_or_slack_start_is_refused_while_the_server_model_is_down(
+    monkeypatch, server_endpoint
+):
+    """`require_model_reachable`, which debates and Slack check before a turn."""
+    monkeypatch.setattr(settings, "deployment", "hosted")
+    target = await inference_probe.require_model_reachable(_Local(), None)
+    assert target.provider == "server"
+    inference_probe.reset_for_tests()
+    server_endpoint["up"] = False
+    with pytest.raises(inference.ServerModelUnavailable) as refused:
+        await inference_probe.require_model_reachable(_Local(), None)
+    assert "not answering" in inference.describe_run_failure(refused.value)
+    mine = _Local(inference_provider="mag", inference_mag_api_key="sk-mine")
+    assert (await inference_probe.require_model_reachable(mine, None)).provider == "mag"
+
+
+@pytest.mark.anyio
 async def test_the_picker_view_marks_the_server_model_unavailable(
     session, hosted, server_endpoint
 ):

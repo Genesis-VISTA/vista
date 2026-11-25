@@ -39,7 +39,7 @@ from ..agents.agents import (
     ProjectAgentResultEvent,
     RunCapture,
 )
-from ..agents.inference import describe_run_failure
+from ..agents.inference import describe_run_failure, resolve_inference_target
 from ..db.db import get_engine
 from ..db.schemas import (
     LOCAL_USER_ID,
@@ -51,6 +51,7 @@ from ..db.schemas import (
 from ..utils.misc import now_iso
 from . import chat_session as chat_session_service
 from .current_user import as_user
+from .inference_probe import require_server_model
 from .job_records import SubmitWatcher
 from . import inbox as inbox_service
 from .displayed_files import sandbox_path_to_file
@@ -430,6 +431,12 @@ class ChatRunRegistry:
         error_msg: str | None = None
         try:
             async with project_agent_pool.get(run.agent_key) as agent:
+                # Every turn, whoever started it (a job watch's, a command's, a
+                # queued message's): on the server's model while it is down,
+                # the turn fails with the reason rather than a provider error.
+                await require_server_model(
+                    resolve_inference_target(agent.local, agent.model_override).provider
+                )
                 async with session_factory() as db:
                     await run.append(
                         "run_started",

@@ -306,6 +306,7 @@ def describe_run_failure(exc: Exception) -> str:
             MissingInferenceCredential,
             MissingInferenceModel,
             RejectedInferenceCredential,
+            ServerModelUnavailable,
         ),
     ):
         ret = exc.detail
@@ -391,6 +392,19 @@ class RejectedInferenceCredential(Exception):
         self.model_name = model_name
         self.detail = rejected_credential_detail(model_name)
         super().__init__(self.detail)
+
+
+class ServerModelUnavailable(Exception):
+    """
+    The hosted server's own model (the `server` provider) does not answer
+    (`services/inference_probe`). Refused before a turn starts, wherever it
+    starts: the app's send (503), a debate, Slack, a background wake (the
+    turn fails with `detail` as its reason).
+    """
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
 
 
 @dataclass(frozen=True)

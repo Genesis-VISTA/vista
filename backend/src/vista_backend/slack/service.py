@@ -33,7 +33,7 @@ from ..agents.campaign.mcp_invoke import build_mcp_invoke, project_paths_for
 from ..agents.inference import (
     MissingInferenceCredential,
     MissingInferenceModel,
-    require_inference_credential,
+    ServerModelUnavailable,
 )
 from ..config import settings
 from ..db.schemas import (
@@ -435,7 +435,11 @@ class SlackService:
         except ChooseProject as exc:
             await self._ask_project(message, exc.choices)
             return
-        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+        except (
+            MissingInferenceCredential,
+            MissingInferenceModel,
+            ServerModelUnavailable,
+        ) as exc:
             await self._reply(message, format.plain(exc.detail).text, ephemeral=False)
             return
         if chat_id is None:
@@ -453,11 +457,16 @@ class SlackService:
 
     @staticmethod
     async def _check_model(model: str | None) -> None:
-        """Raise `MissingInference*` unless there is a model to send to, as the app checks."""
+        """
+        Raise `MissingInference*` unless there is a model to send to, or
+        `ServerModelUnavailable` while it is down, as the app checks.
+        """
+        from ..services.inference_probe import require_model_reachable
+
         async with chat_run_module.session_factory() as db:
             local = await local_settings.get_public(db)
             await db.commit()
-        require_inference_credential(local, model)
+        await require_model_reachable(local, model)
 
     async def _send(
         self,
@@ -541,7 +550,11 @@ class SlackService:
         assert self.slack is not None
         try:
             await self._check_model(None)
-        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+        except (
+            MissingInferenceCredential,
+            MissingInferenceModel,
+            ServerModelUnavailable,
+        ) as exc:
             await self._reply(message, format.plain(exc.detail).text, ephemeral=False)
             return
         async with chat_run_module.session_factory() as db:
@@ -615,7 +628,11 @@ class SlackService:
         team_id, channel, thread_ts, picker_ts = where
         try:
             await self._check_model(None)
-        except (MissingInferenceCredential, MissingInferenceModel) as exc:
+        except (
+            MissingInferenceCredential,
+            MissingInferenceModel,
+            ServerModelUnavailable,
+        ) as exc:
             # The question stays, to be answered once a model is set up.
             await self._reply(action, format.plain(exc.detail).text, ephemeral=True)
             return

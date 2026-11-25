@@ -12,9 +12,23 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+from typing import Any
+
 import httpx
 
+from ..agents.inference import (
+    InferenceTarget,
+    ServerModelUnavailable,
+    require_inference_credential,
+)
 from ..config import settings
+
+__all__ = [
+    "ServerModelUnavailable",
+    "require_model_reachable",
+    "require_server_model",
+    "server_model_status",
+]
 
 CACHE_SECONDS = 45.0
 TIMEOUT_SECONDS = 3.0
@@ -71,12 +85,15 @@ async def server_model_status() -> ServerModelStatus:
         return status
 
 
-class ServerModelUnavailable(Exception):
-    """The server's model does not answer; `detail` is the reason a researcher reads."""
-
-    def __init__(self, detail: str) -> None:
-        self.detail = detail
-        super().__init__(detail)
+async def require_model_reachable(local: Any, model: str | None) -> InferenceTarget:
+    """
+    `require_inference_credential`, then `require_server_model` for its
+    provider: what every place that starts a turn checks first (the app's send,
+    a debate, Slack).
+    """
+    target = require_inference_credential(local, model)
+    await require_server_model(target.provider)
+    return target
 
 
 async def require_server_model(provider: str) -> None:

@@ -38,7 +38,7 @@ from ..agents.forum.wiring import (
     models_for,
     run_debate_task,
 )
-from ..agents.inference import require_inference_credential
+from ..services.inference_probe import require_model_reachable
 from ..config import settings
 from ..db.db import SessionDep, get_engine
 from ..db.schemas import (
@@ -580,7 +580,7 @@ async def open_thread(
     """Open a thread, attach this install's roster, and start arguing."""
     project, client = await _lab(session, project_name, user=user)
     for role in ROSTER:
-        require_inference_credential(local, body.models.get(role))
+        await require_model_reachable(local, body.models.get(role))
 
     from ..agents.forum.wiring import build_orchestrator
 
@@ -733,7 +733,7 @@ async def continue_thread(
         )
     chosen = await models_for(session, ours)
     for role in ROSTER:
-        require_inference_credential(local, chosen.get(role))
+        await require_model_reachable(local, chosen.get(role))
 
     announced = False
     referee_identity: str | None = None
