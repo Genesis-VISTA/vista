@@ -34,6 +34,8 @@ from ..agents.inference import (
     MissingInferenceCredential,
     MissingInferenceModel,
     ServerModelUnavailable,
+    require_inference_credential,
+    resolve_inference_target,
 )
 from ..config import settings
 from ..db.schemas import (
@@ -461,12 +463,13 @@ class SlackService:
         Raise `MissingInference*` unless there is a model to send to, or
         `ServerModelUnavailable` while it is down, as the app checks.
         """
-        from ..services.inference_probe import require_model_reachable
+        from ..services.inference_probe import require_server_model
 
         async with chat_run_module.session_factory() as db:
             local = await local_settings.get_public(db)
             await db.commit()
-        await require_model_reachable(local, model)
+        require_inference_credential(local, model)
+        await require_server_model(resolve_inference_target(local, model).provider)
 
     async def _send(
         self,
