@@ -39,6 +39,7 @@ from ...services.forum_git import (
     ForumDisabled,
 )
 from ...services.git_check import git_status
+from ...services.hosted import FORUM_OFF_WHEN_HOSTED, forum_enabled, is_hosted
 from ...services.repo_tokens import repo_token
 
 
@@ -163,7 +164,7 @@ def forum_config_for(
     forum: only `lab_enabled` without settings relies on that.
     """
     url = forum_url_of(project)
-    if url is None or not settings.forum.enabled or not git_status().ok:
+    if url is None or not forum_enabled() or not git_status().ok:
         return None
     if hosted_while_off(project, local):
         return None
@@ -194,7 +195,9 @@ def build_client_for(project: ProjectTable, local: "SettingsView") -> ForumClien
     config = forum_config_for(project, local)
     if config is None:
         git = git_status()
-        if forum_url_of(project) and settings.forum.enabled and not git.ok:
+        if is_hosted():
+            why = FORUM_OFF_WHEN_HOSTED
+        elif forum_url_of(project) and forum_enabled() and not git.ok:
             why = git.reason
         elif hosted_while_off(project, local):
             why = (
@@ -227,7 +230,7 @@ async def ensure_forum(project: ProjectTable, local: "SettingsView") -> None:
     existing forum joins that conversation rather than starting an empty one
     beside it.
     """
-    if forum_url_of(project) is None or not settings.forum.enabled:
+    if forum_url_of(project) is None or not forum_enabled():
         return
     if hosted_while_off(project, local):
         # Out of reach until collaboration is on again; nothing to set up.

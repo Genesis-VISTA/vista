@@ -51,3 +51,18 @@ def refuse_cluster(cluster: str) -> None:
         raise HTTPException(
             403, f"{cluster.title()} is not available here: only {only} available."
         )
+
+
+FORUM_OFF_WHEN_HOSTED = (
+    "the Hypothesis Lab is not available on a hosted VISTA yet: its debates run "
+    "in the background, where there is no sign-in to post with"
+)
+
+
+def forum_enabled() -> bool:
+    """
+    Whether this deployment runs Hypothesis Labs: `settings.forum.enabled`, and
+    never when hosted (decided 2026-11-25; a server service token for hosted
+    forums is a follow-up). Read this, not the setting.
+    """
+    return settings.forum.enabled and not is_hosted()
