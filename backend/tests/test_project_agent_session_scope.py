@@ -26,7 +26,7 @@ async def test_get_project_agent_key_is_stateless_without_chat_session_id(sessio
         session, project_id=project.id, user=LOCAL
     )
 
-    assert key == (None, project.id)
+    assert key == ("local", None, project.id)
     listed = await chat_session_service.list_chat_sessions(
         session, project_id=project.id, user=LOCAL
     )
@@ -47,7 +47,7 @@ async def test_invalidate_agents_matches_project_inside_session_scoped_keys(
     key = await project_agent_service.get_project_agent_key(
         session, project_id=project.id, user=LOCAL
     )
-    other_key = (key[0], uuid.uuid4())
+    other_key = (key[0], key[1], uuid.uuid4())
 
     deleted: list[tuple] = []
     monkeypatch.setattr(
@@ -68,7 +68,7 @@ async def test_invalidate_agents_without_a_project_evicts_every_agent(
     session, monkeypatch
 ):
     """A settings change: every agent was built from the settings."""
-    keys = [(None, uuid.uuid4()), (uuid.uuid4(), uuid.uuid4())]
+    keys = [("local", None, uuid.uuid4()), ("local", uuid.uuid4(), uuid.uuid4())]
     deleted: list[tuple] = []
     monkeypatch.setattr(project_agent_service.project_agent_pool, "keys", lambda: keys)
     monkeypatch.setattr(
@@ -101,7 +101,7 @@ async def test_get_project_agent_key_uses_selected_chat_session_id(session):
         session, project_id=project.id, chat_session_id=selected.id, user=LOCAL
     )
 
-    assert key == (selected.id, project.id)
+    assert key == ("local", selected.id, project.id)
 
 
 async def _two_chats(session, name):
@@ -133,8 +133,8 @@ async def test_changing_a_chats_model_evicts_only_that_chats_agent(
     session, monkeypatch
 ):
     project, (chat, other) = await _two_chats(session, "chat-model-evict")
-    keys = [(c.id, project.id) for c in (chat, other)]
-    keys.append((None, project.id))
+    keys = [("local", c.id, project.id) for c in (chat, other)]
+    keys.append(("local", None, project.id))
 
     deleted: list[tuple] = []
     pool = project_agent_service.project_agent_pool
@@ -154,7 +154,7 @@ async def test_a_turn_in_flight_finishes_on_its_old_agent(session, monkeypatch):
     gets a new one.
     """
     project, (chat, _) = await _two_chats(session, "chat-model-in-flight")
-    key = (chat.id, project.id)
+    key = ("local", chat.id, project.id)
 
     built: list[object] = []
     cleaned: list[object] = []

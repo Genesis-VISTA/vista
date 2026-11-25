@@ -315,6 +315,11 @@ class Settings(BaseSettings):
 
     env: A[Literal["dev", "prod"], Field(validation_alias="VISTA_ENV")] = "dev"
 
+    sandboxes_per_user: int = 4
+    """ Most pooled agents (each with a sandbox) one user may have; `VISTA_BACKEND_SANDBOXES_PER_USER`. """
+    sandboxes_total: int = 40
+    """ Most pooled agents in all; `VISTA_BACKEND_SANDBOXES_TOTAL`. """
+
     deployment: Literal["desktop", "hosted"] = "desktop"
     """
     Where this VISTA runs. `desktop`: a researcher's own computer, the only kind

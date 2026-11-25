@@ -507,7 +507,7 @@ async def test_updating_the_key_evicts_the_pooled_agent(session, monkeypatch):
     from vista_backend.services import project_agent as project_agent_service
 
     pool = project_agent_service.project_agent_pool
-    key = (None, uuid.uuid4())
+    key = ("local", None, uuid.uuid4())
     # Populate the pool through its own API with a stand-in agent: building a
     # real one needs a live MCP server, and the eviction path under test does
     # not care what the value is.

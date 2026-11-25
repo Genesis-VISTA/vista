@@ -42,6 +42,7 @@ from ..agents.agents import (
 from ..agents.inference import describe_run_failure
 from ..db.db import get_engine
 from ..db.schemas import (
+    LOCAL_USER_ID,
     ChatSessionTable,
     DisplayedFileTable,
     InboxItemPublic,
@@ -339,7 +340,7 @@ class ChatRunRegistry:
                     return None
                 # Read before the take commits and expires the row.
                 project_id = row.project_id
-                owner = row.user_id
+                owner_id = row.user_id or LOCAL_USER_ID
                 channel = channel_of(row)
                 history = chat_session_service._MESSAGE_HISTORY_ADAPTER.validate_python(
                     row.message_history
@@ -353,11 +354,11 @@ class ChatRunRegistry:
             try:
                 # The run's task copies this context: its settings, agent and
                 # credentials are the conversation owner's, whoever woke it.
-                with as_user(owner):
+                with as_user(owner_id):
                     return await self.start(
                         chat_session_id=chat_session_id,
                         project_id=project_id,
-                        agent_key=(chat_session_id, project_id),
+                        agent_key=(owner_id, chat_session_id, project_id),
                         user_prompt="\n\n".join(i.text for i in items),
                         prior_history=history,
                         channel=channel,

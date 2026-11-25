@@ -92,7 +92,7 @@ async def test_agent_pool_key_includes_project_and_user(session, local):
                 json={"user_prompt": "hi"},
             )
 
-    assert pool.keys == [(None, project.id)]
+    assert pool.keys == [("local", None, project.id)]
 
 
 # ---------------------------------------------------------------------------

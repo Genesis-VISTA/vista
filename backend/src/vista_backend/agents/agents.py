@@ -12,7 +12,7 @@ import uuid
 import asyncio
 from contextlib import aclosing
 from typing import AsyncGenerator, AsyncIterator, Literal, Annotated as A, Any
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from urllib.parse import quote
 
@@ -267,12 +267,22 @@ def _add_mode(path: Path, bits: int) -> None:
         os.chmod(path, mode | bits)
 
 
-def agent_volume_root(project_id: uuid.UUID | str) -> Path:
+def agent_volume_root(project_id: uuid.UUID | str, user_id: str | None = None) -> Path:
     """
     The host folder mounted at `/mnt` in the sandbox of `project_id`'s agents.
     Its `data/output` is the sandbox's `/mnt/data/output`.
+
+    `volumes/{user_id}/{project_id}`; the desktop's implicit user `local` keeps
+    `volumes/{project_id}`, so existing sandboxes survive. `user_id` defaults to
+    the current user's.
     """
-    return settings.data_dir / "volumes" / str(project_id)
+    from ..services.current_user import current_user_id
+
+    user_id = user_id or current_user_id()
+    base = settings.data_dir / "volumes"
+    if user_id == LOCAL_USER_ID:
+        return base / str(project_id)
+    return base / user_id / str(project_id)
 
 
 def _remove(path: Path) -> None:
@@ -409,6 +419,31 @@ def get_vista_mcp_server(
     )
 
 
+SANDBOX_ENV_ALLOWLIST = frozenset(
+    {
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR", "TERM", "TZ",
+        "XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
+        "DOCKER_HOST", "CONTAINER_HOST", "PODMAN_HOST", "SYSTEMROOT", "COMSPEC",
+        "PATHEXT", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "TEMP", "TMP",
+        "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR",
+    }
+)  # fmt: skip
+""" What the dev MCP server (and the container runtime it starts) genuinely needs. """
+
+
+def sandbox_env(environ: Mapping[str, str]) -> dict[str, str]:
+    """
+    The sandbox subprocess's environment: only the allowlisted names (and
+    `LC_*`), never the backend's own (`VISTA_BACKEND_*`, the encryption key,
+    model and Slack keys, `VISTA_MCP_SECRET`).
+    """
+    return {
+        k: v
+        for k, v in environ.items()
+        if k in SANDBOX_ENV_ALLOWLIST or k.startswith(("LC_", "VISTA_DEV_MCP_"))
+    }
+
+
 def get_dev_mcp_server(
     volumes: list[tuple[str, str, Literal["r", "w"]]],
     elicitation_callback: mcp.client.session.ElicitationFnT | None = None,
@@ -429,7 +464,7 @@ def get_dev_mcp_server(
         env={
             # TODO: This is fine for dev server, but when we allow custom servers we'll need to rethink how env vars are set
             # and how the MCP server itself is sandboxed.
-            **os.environ,
+            **sandbox_env(os.environ),
             "VISTA_DEV_MCP_VOLUMES": json.dumps(volumes),
         },
         elicitation_callback=elicitation_callback,
@@ -493,7 +528,7 @@ class ProjectAgent:
         self.model_override = model_override
         # Id per project agent. A new ProjectAgent for the same project will have the same id
         self.id = str(project.id)
-        self.volume_root = agent_volume_root(project.id)
+        self.volume_root = agent_volume_root(project.id, owner_id)
         self.output_dir = self.volume_root / "data" / "output"
         self.uploads_dir = self.volume_root / "data" / "uploads"
         self.skills_volume_dir = self.volume_root / "skills"
@@ -966,6 +1001,21 @@ class ProjectAgent:
                 )
         raise KeyError(f"Tool {name!r} not found on any MCP server")
 
+    HPC_USER_FIELDS = (
+        "odo_s3m_token", "frontier_s3m_token", "lux_s3m_token", "nersc_iri_token",
+        "nersc_account", "nersc_remote_dir", "odo_remote_dir", "frontier_remote_dir",
+        "lux_remote_dir", "odo_globus_token", "frontier_globus_token", "globus_token",
+        "odo_globus_https_token", "frontier_globus_https_token", "globus_https_token",
+    )  # fmt: skip
+    """ The only settings fields the MCP server's `UserConfig` reads; nothing else is sent. """
+
+    def _hpc_user_fields(self) -> dict[str, Any]:
+        """The owner's HPC credentials and paths, not a settings dump."""
+        data = self.local.model_dump(mode="json")
+        out = {k: data[k] for k in self.HPC_USER_FIELDS if k in data}
+        out["id"] = self.owner_id if self.owner_id != LOCAL_USER_ID else data.get("id")
+        return out
+
     def _build_vista_metadata(self, name: str) -> dict[str, Any]:
         """
         Build the `vista` MCP request metadata for a tool call: project
@@ -1019,7 +1069,8 @@ class ProjectAgent:
         }
         if name in HPC_TOOLS:
             # Still `user` on the wire: the MCP server's `VistaMeta` reads it.
-            metadata["vista"]["user"] = self.local.model_dump(mode="json")
+            metadata["vista"]["user"] = self._hpc_user_fields()
+            # allowed_clusters: group 9
         if get_recorder().enabled:
             metadata["vista"]["metrics"] = {
                 "run_id": run_id_var.get(),

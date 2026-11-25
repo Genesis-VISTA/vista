@@ -50,7 +50,7 @@ async def mcp_call(
         # Calls any tool with the server's own credentials and no confirmation.
         raise HTTPException(status_code=404, detail="Not found")
     project = await project_service.get_project_by_name(session, project_name, user)
-    async with project_agent_pool.get((None, project.id)) as agent:
+    async with project_agent_pool.get((user.id, None, project.id)) as agent:
         try:
             return await agent.call_tool(req.name, req.arguments)
         except Exception as exc:
