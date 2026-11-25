@@ -15,6 +15,13 @@ export async function GET() {
     const upstream = await fetch(backendUrl("/projects"), {
       headers: await backendHeaders({ accept: "application/json" }),
     });
+    if (upstream.status === 401 || upstream.status === 403) {
+      // Hosted, signed out or without access: say so, rather than an empty list.
+      return new NextResponse(await upstream.text(), {
+        status: upstream.status,
+        headers: { "content-type": "application/json" },
+      });
+    }
     if (!upstream.ok) {
       return NextResponse.json([], { status: 200 });
     }

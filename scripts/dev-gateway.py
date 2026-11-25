@@ -22,8 +22,9 @@ It does what the gateway and its Keycloak realm do for VISTA:
 Two browsers (or one and a private window) signed in as `alice` and `bob` are
 two researchers. Listens on loopback only.
 
-Not supported: WebSocket upgrades, so `next dev`'s hot reload does not connect
-through it (the page works; reload by hand).
+Not supported: WebSocket upgrades. `next dev` (Next 16) does not start a page
+without its hot-reload socket, so behind this gateway the page renders and then
+does nothing: `launch.sh --hosted` always runs the built UI (`next start`).
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ def login_page(next_path: str, error: str = "") -> bytes:
 {note}
 <form method="post" action="/login">
   <input type="hidden" name="next" value="{html.escape(next_path, quote=True)}">
-  <input name="name" placeholder="alice" autofocus required pattern="[A-Za-z0-9][A-Za-z0-9._-]{{0,39}}">
+  <input name="name" placeholder="alice" autofocus required pattern="[A-Za-z0-9][A-Za-z0-9._\\-]{{0,39}}">
   <button>Sign in</button>
 </form>
 <p><small>Development only: this signs in anyone who types a name.</small></p>

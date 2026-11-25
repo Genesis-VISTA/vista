@@ -38,6 +38,14 @@ for arg in "$@"; do
     *) echo "Usage: $0 [tmux|terminal|logs] [--prod] [--no-build] [--no-electron] [--collab] [--hosted]" >&2; exit 1 ;;
   esac
 done
+# --hosted serves the UI through scripts/dev-gateway.py, which cannot carry a
+# WebSocket, and `next dev` will not start a page without its hot-reload socket:
+# through the gateway the page renders and then does nothing. So hosted is the
+# built UI (`next start`) always.
+if [[ "$HOSTED" == true && "$PROD" != true ]]; then
+  echo "--hosted runs the built UI (as --prod): next dev cannot work behind the dev gateway." >&2
+  PROD=true
+fi
 
 if [[ -n "$ELECTRON" && "$NO_ELECTRON" == true ]]; then
   echo "--electron and --no-electron contradict each other; pass one." >&2
@@ -147,6 +155,8 @@ if [[ "$HOSTED" == true ]]; then
   BACKEND_ENV+="VISTA_ENV=dev VISTA_BACKEND_DEPLOYMENT=hosted "
   BACKEND_ENV+="VISTA_BACKEND_OIDC_ISSUER='$GATEWAY_URL/realms/dev' "
   BACKEND_ENV+="VISTA_BACKEND_ENCRYPTION_KEY='$HOSTED_KEY' "
+  # The gateway's own logout, so the UI's user menu has a Sign out.
+  BACKEND_ENV+="VISTA_BACKEND_SIGN_OUT_URL='$GATEWAY_URL/logout' "
   GATEWAY_CMD="
     cd '$REPO_ROOT' &&
     echo 'Waiting for UI...' &&

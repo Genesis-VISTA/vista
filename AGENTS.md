@@ -374,7 +374,9 @@ shortcut that skips the user.
 - **Running it locally as several people.** `./launch.sh logs --no-electron --hosted` starts
   the stack hosted behind `scripts/dev-gateway.py` on `:3100`, a name picker standing in for
   Obsidian (type `alice` in one browser, `bob` in another; a name is one stable user). It is
-  the only way to see the hosted UI, and is never packaged.
+  the only way to see the hosted UI, and is never packaged. It always runs the built UI
+  (`--prod`): `next dev` will not start a page without its hot-reload WebSocket, which the
+  gateway cannot carry, so a dev UI behind it renders and then does nothing.
 
 ## Background tasks and the conversation inbox
 
