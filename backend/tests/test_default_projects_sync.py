@@ -104,10 +104,12 @@ async def kb_slugs(engine) -> list[str]:
 async def add_old_ai_safety(engine, data_dir):
     """The rows an earlier version seeded: the AI-safety project and its KB."""
     from vista_backend.db.seed import _seeded_kb
+    from vista_backend.services.current_user import ensure_local
 
     kb_dir = data_dir / "knowledge-bases" / "ai-safety"
     (kb_dir / "pdfs").mkdir(parents=True)
     async with AsyncSession(engine) as session:
+        await ensure_local(session)  # the owner its row gets now owners are required
         session.add(
             _seeded_kb(
                 AI_SAFETY_KB_ID,
