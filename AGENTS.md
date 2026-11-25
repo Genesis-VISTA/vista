@@ -46,6 +46,7 @@ Starts the vista_mcp_server, backend, and frontend, logging to logs/mcp.log, log
 ```bash
 ./launch.sh logs                # services + the VISTA window
 ./launch.sh logs --no-electron  # services only; use a browser (e.g. over SSH)
+./launch.sh logs --no-electron --hosted  # hosted, behind a dev sign-in on :3100 (several users)
 ```
 
 Note that the `./launch.sh` script will not terminate until the window is closed or the script is cancelled, and then will automatically clean up all 3 processes. With no display it fails and asks for `--no-electron` rather than falling back to a browser.
@@ -132,7 +133,7 @@ cd backend
 uv run vista-backend
 ```
 
-Keep `db/schemas.py` changes additive: a nullable column, or a NOT NULL one with a server default. A dropped, renamed or retyped column, or a NOT NULL column without a default, fails `db/schema_check.py` (run from `init_db`) on every existing install, and each researcher is prompted to back up and reset their data.
+Keep `db/schemas.py` changes additive (a new owned table: see [Multi-user and hosted](#multi-user-and-hosted)): a nullable column, or a NOT NULL one with a server default. A dropped, renamed or retyped column, or a NOT NULL column without a default, fails `db/schema_check.py` (run from `init_db`) on every existing install, and each researcher is prompted to back up and reset their data.
 
 ### Collaboration server
 Where researchers explicitly publish and import projects, skills and knowledge bases.
@@ -176,7 +177,12 @@ page (a login gateway in front of the server logs them in; Obsidian's APISIX on 
 and pastes the token it shows into Settings: `collaboration_token`, write-only like
 `github_token`. The backend sends it only over https (or loopback), forgets it when the server
 address changes, and keeps it out of every settings dump. Nothing in VISTA knows which login is
-behind the gateway, so a self-hosted server can use any. The UI's Publish and Import controls read `useCollaboration()`
+behind the gateway, so a self-hosted server can use any. Hosted, there is nothing to paste or
+save: `collaboration.hosted_token()` takes the token from the request being served (the
+researcher's own gateway token, short-lived, so never stored) and `shown` is always true. Code
+with no request, a background job or a Slack turn, has none, so collaboration reports that it
+needs the web app. The server's address and switch are the environment's
+(`VISTA_BACKEND_COLLABORATION_SERVER_URL`, `VISTA_BACKEND_COLLABORATION_ENABLED`). The UI's Publish and Import controls read `useCollaboration()`
 (`ui/lib/collaboration.ts`): drawn while `shown`, enabled when `available` (`reachable` and
 `signed_in`); the Skill Hub's sidebar entry follows `enabled`.
 Skills are items of kind `skill` (`services/skill_collaboration.py`): a version is the folder as
@@ -290,11 +296,83 @@ The credential is per-cluster and per-user, and is a *pair* of refresh tokens �
 per resource server, and the collection is its own. A researcher's own Odo or Frontier pair wins,
 falling back to one pair they connected for both. Lux has no collection of its own: it mounts
 Frontier's filesystem, so it uses Frontier's collection and pair (`require_globus_token("lux")`),
-and the settings modal shows one connection in both sections. There is no deployment-wide Globus login: every
+and the settings modal shows one connection in both sections. Hosted refuses the shared pair and
+turns that fallback off (`hosted.restricted_clusters()` reaches the MCP server, which refuses
+any cluster outside it), and supports Odo alone for now. There is no deployment-wide Globus login: every
 file operation acts as the researcher's own identity, so the facility decides what they may read
 and write. Each source counts only when it has both halves: one alone lists a directory it
 cannot read.
 Absent Globus is never fatal; it costs only the OLCF clusters' file operations, nothing else.
+
+## Multi-user and hosted
+
+One backend serves two deployments (openspec change `multi-user-hosted`; the operator's view is
+[`docs/hosted.md`](docs/hosted.md)): **desktop**, one researcher on their own computer, and
+**hosted** (`VISTA_BACKEND_DEPLOYMENT=hosted`), several behind a gateway. Both run the same
+code paths; desktop is hosted with one implicit user, `local`. Never write a desktop-only
+shortcut that skips the user.
+
+- **A request's user is `CurrentUser`** (`services/current_user.py`), a router-level dependency
+  in `api/api.py`, so no route is mounted without it (health and version are outside). Desktop:
+  the `local` row, no token. Hosted: the backend verifies the access token itself
+  (`TokenVerifier`: signature, issuer, `typ`, `azp`, role `apisix/vista`) and creates the user
+  on first sign-in; never trust a gateway header. The UI's proxy (`ui/app/api/_backend.ts` and
+  the catch-all `ui/app/api/[...path]/route.ts`) turns the gateway's `X-Access-Token` into
+  `Authorization: Bearer`. Code with no request reads `current_user_id()`.
+- **Every query on an owned table goes through `db/ownership`**: `owned(select(T), user)`,
+  `get_owned(session, T, id, user)` (another user's row is `None`, so `404`), and `visible` /
+  `get_visible` where a global row (`user_id` NULL: bundled skills, the OLCF docs corpus) also
+  counts. Do not filter by hand in a route, and do not `session.get` a row by id from a
+  request. Child rows (messages, files, posts) are reached through their parent. Names are
+  unique per owner, so a lookup by name is owner-scoped too.
+- **A new owned table** gets a `user_id` column like the others (nullable, FK to `app_user`,
+  server default `local`, so it stays additive), an entry in `REQUIRED_OWNER_TABLES` if it can
+  never be ownerless (hosted refuses an insert with no owner: `OwnerMissing`), a place in
+  `db.OWNED_TABLES`, which `_backfill_owners` fills with `local` on every start, and a case in
+  the tenant isolation suite (`backend/tests/security/test_tenant_isolation.py`, which fails
+  on an owned route with none).
+- **Background work acts as a row's owner.** Job watches, the campaign monitor, inbox wakes,
+  startup recovery and Slack turns run inside `as_user(row.user_id)` (`inherited_owner` for a
+  row made on a parent's behalf); a row with no owner is `local`'s. Hosted, code that needs a
+  user outside one raises `NoUserContext`, and `settings_view.load` is such code. `as_user`
+  also drops the request's access token, so work started as a user carries none
+  (`request_access_token()` is `None` there): nothing that needs the researcher's token can
+  run in the background.
+- **Settings are split** (`services/settings_view.py`): `USER_FIELDS` live on `user_settings`
+  (credentials, profile, per-cluster fields), `SERVER_FIELDS` on `local_settings`. Code reads a
+  `SettingsView`, which routes each field to its row; a response says `has_*` about a
+  credential, never the value. Hosted, the server fields come from the environment
+  (`HOSTED_SERVER_VALUES`, `config.Settings`), `PUT /settings` ignores them and says so, and
+  there is no admin UI. A new setting is a user field unless the operator, not the researcher,
+  should decide it.
+- **The hosted flag.** Refuse in the backend first, with `refuse_when_hosted("what")` (`403`)
+  or `services/hosted` (`allowed_clusters()`, `forum_enabled()`); then hide the control in the
+  UI with `useDeployment()` (`ui/lib/deployment.ts`, from `GET /version`, never a
+  `NEXT_PUBLIC_` variable). A hidden control called directly must still fail. Hosted turns
+  off: the Custom inference provider (a `server` provider replaces it), NERSC and every
+  cluster outside `allowed_clusters` (Odo alone by default), in-app updates, Electron-only
+  actions, linked folders, skill import from hosts outside `skill_import_allowed_hosts`,
+  `/projects/{name}/mcp/call`, the shared Globus pair, a saved `collaboration_token`, and, for
+  now, the Hypothesis Lab.
+- **Runtime is per user.** The agent pool key starts with the user
+  (`(user_id, chat_session_id, project_id)`, `services/project_agent.py`), and a settings
+  change evicts only that user's agents. Sandbox volumes are `volumes/{user_id}/{project_id}`;
+  `local` keeps `volumes/{project_id}` so desktop sandboxes survive. Knowledge-base stores
+  follow the same rule (`services/knowledge_base.kb_folder`). The pool caps sandboxes per user
+  (`sandboxes_per_user()`: 4 hosted, the total on a desktop) and in all (`sandboxes_total`,
+  40); at a cap it closes the least recently used idle one, and answers `429` when none is
+  idle. The sandbox gets an allowlisted environment, not the backend's. Editing a bundled
+  skill saves the editor's own copy; the OLCF docs knowledge base is read-only.
+- **Loopback and a shared secret.** The backend and the MCP server bind `127.0.0.1`; the MCP
+  server refuses a request without `VISTA_MCP_SECRET` (`launch.sh` makes one), and a hosted
+  backend will not start without it or without its own `VISTA_BACKEND_ENCRYPTION_KEY`.
+- **Tests.** `harness.tokens` mints tokens and `harness.hosted` / `harness.users` set up a
+  hosted app with several users: use them, not a header. `test_desktop_upgrade.py` runs a
+  pre-change `vista.db` through `init_db`; a schema change that is not additive fails it.
+- **Running it locally as several people.** `./launch.sh logs --no-electron --hosted` starts
+  the stack hosted behind `scripts/dev-gateway.py` on `:3100`, a name picker standing in for
+  Obsidian (type `alice` in one browser, `bob` in another; a name is one stable user). It is
+  the only way to see the hosted UI, and is never packaged.
 
 ## Background tasks and the conversation inbox
 
@@ -328,6 +406,12 @@ researcher's view is [`docs/background-tasks.md`](docs/background-tasks.md)).
 VISTA in Slack (openspec change slack-channel; the researcher's view is
 [`docs/slack.md`](docs/slack.md)). The code is `backend/src/vista_backend/slack/`.
 
+- **A link has an owner.** `slack_link.user_id` is whoever redeemed its code. The service
+  resolves it for every event and runs the turn in `as_user(owner)`, so the turn's settings,
+  credentials, projects and agents are that user's. Hosted, one Slack app serves the whole
+  server: its tokens come from the secrets directory, its team, channel and job limits from
+  `VISTA_BACKEND_SLACK__HOSTED_*` (`slack/store.get_config`; the API cannot change them), and
+  the lock is per link (`limits.user_locked`). A desktop keeps the config's one lock.
 - **A Slack message enters through the inbox**, like a send in the app: `SlackService._enqueue`
   puts it and calls `ChatRunRegistry.wake`. There is no other way into a Slack turn.
 - **A conversation's channel is its origin.** `chat_run.channel_of(row)` maps
@@ -360,7 +444,9 @@ project's `forum_repo_url`); the forge is the only server. The client is
 is [`docs/forum-git-format.md`](docs/forum-git-format.md), and hosting is
 [`docs/hypothesis-forum-hosting.md`](docs/hypothesis-forum-hosting.md).
 
-- **It needs system git ≥ 2.34** and `VISTA_BACKEND_FORUM__ENABLED=true`. Without
+- **It needs system git ≥ 2.34** and `VISTA_BACKEND_FORUM__ENABLED=true`, and is off when
+  hosted (`hosted.forum_enabled()`, which code reads instead of the setting): its debates run
+  in the background, where there is no sign-in to post with. A service token is the follow-up. Without
   git the lab is off with the reason on the page; nothing else in VISTA depends on
   it. `services/git_check.py` does the check without ever running macOS's
   `/usr/bin/git` install shim.

@@ -26,4 +26,5 @@ pages = [
   { file = "development.md", title = "Developing VISTA" },
   { file = "building-packages.md", title = "Building packages" },
   { file = "collaboration-server.md", title = "The collaboration server" },
+  { file = "hosted.md", title = "Running a hosted VISTA" },
 ]

@@ -2,8 +2,9 @@
 
 Talk to VISTA from Slack, on a phone or a desktop, while VISTA runs on your own machine. It is
 the same agent as the app: the same projects, tools, skills and HPC clusters, with your VISTA
-session doing the work. Slack is **off by default**, and every setting lives in the desktop app
-under **Settings → Slack**, never in Slack.
+session doing the work. Slack is **off by default**, and every setting lives in the app
+under **Settings → Slack**, never in Slack. (On a [hosted VISTA](hosted.md), the operator sets
+the Slack app itself, and you only link your account.)
 
 What Slack never gets: a cluster credential. Jobs run with the VISTA session already on your
 machine, and VISTA never asks for a password, passcode, MFA code or token in Slack. Anything
@@ -57,10 +58,13 @@ a workspace admin.
 Only linked accounts can use VISTA. Anyone else who messages it is told, politely and at most
 once in a while, that their account isn't linked and how to link it.
 
-A VISTA has one researcher, so a link admits a Slack account to *this* VISTA, and that account
-then acts as you, with your cluster credentials and your projects. Only someone at the desktop
-app can enter the code, so only you can complete a link. Link only your own accounts: one Slack
-app serves one researcher's VISTA.
+A link admits a Slack account to VISTA as *you*: that account then acts as you, with your cluster
+credentials and your projects. Only someone signed in to VISTA as you can enter the code, so
+only you can complete a link. Link only your own accounts. On the desktop one Slack app serves
+your VISTA alone. On a [hosted VISTA](hosted.md) one app serves everyone, and each link belongs
+to the researcher who entered its code: a Slack message acts as that researcher, never as
+another, and the app's workspaces, channels and limits are the server's, shown in Settings but
+not changeable there.
 
 ### The manifest
 
@@ -185,7 +189,8 @@ only in the app, so a lost or borrowed phone can't raise them.
 
 Say **lock** to VISTA in Slack (DM or @mention, as the whole message) to block every action
 that changes something until you unlock it. Questions still work. Unlocking is only possible with the *Locked* switch
-in the desktop app; saying `unlock` in Slack just says so.
+in the app; saying `unlock` in Slack just says so. On a hosted VISTA the lock is yours alone:
+locking blocks your linked accounts, and not anyone else's.
 
 ### Credentials
 
@@ -233,8 +238,10 @@ on iOS and Android.
 
 ### Running VISTA hosted
 
-`VISTA_BACKEND_DEPLOYMENT=hosted` is for a headless VISTA serving one researcher from a server.
-Its one effect on Slack is where the tokens live: one file per secret in `<data dir>/secrets`, or
-`VISTA_BACKEND_SECRETS__DIRECTORY`, instead of the OS keychain. The directory must be mode
+`VISTA_BACKEND_DEPLOYMENT=hosted` is for a VISTA serving many researchers from a server (see
+[Running a hosted VISTA](hosted.md)). The app is the server's: it has one Slack app, whose
+workspaces, channels and limits the operator sets in `VISTA_BACKEND_SLACK__HOSTED_*`, and the
+researchers only link their accounts and set their own lock. The tokens live in one file per
+secret in `<data dir>/secrets`, or `VISTA_BACKEND_SECRETS__DIRECTORY`, instead of the OS keychain. The directory must be mode
 `0700`, or VISTA refuses to use it, and an operator may provide a secret by mounting a file of
 that name. `VISTA_BACKEND_SECRETS__BACKEND` (`os`, `directory`) overrides the choice either way.
