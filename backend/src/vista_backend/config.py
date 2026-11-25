@@ -463,8 +463,12 @@ class Settings(BaseSettings):
     # -- Hosted: the server's own inference endpoint (openspec multi-user-hosted, D10)
     server_inference_url: str = "http://127.0.0.1:8100/v1"
     """ The hosted deployment's own OpenAI-compatible model server (the `server` provider). """
-    server_inference_model: str = "default"
-    """ The bare model name the `server` provider uses unless a researcher chooses another. """
+    server_inference_model: str = ""
+    """
+    The bare model name the `server` provider uses unless a researcher chooses
+    another. Blank: the first model the endpoint lists (`inference_probe`), so
+    a one-model server (vLLM's `--served-model-name`) needs no setting.
+    """
     server_inference_key: SecretStr | None = None
     """ Optional key for `server_inference_url`; a server with no auth needs none. """
 

@@ -42,11 +42,34 @@ class ServerModelStatus:
 
 _cached: tuple[float, ServerModelStatus] | None = None
 _lock = asyncio.Lock()
+_listed: str | None = None
+""" The first model the endpoint last listed: what `server` uses when no name is set. """
 
 
 def reset_for_tests() -> None:
-    global _cached
+    global _cached, _listed
     _cached = None
+    _listed = None
+
+
+def listed_model() -> str | None:
+    """
+    The first model the server's endpoint listed at the last successful probe,
+    kept past the cache (a model name does not change while it is down).
+    Every send probes first, so it is known before a turn is built.
+    """
+    return _listed
+
+
+def _remember_first_model(response: httpx.Response) -> None:
+    global _listed
+    try:
+        data = response.json().get("data") or []
+        first = data[0].get("id") if data and isinstance(data[0], dict) else None
+    except ValueError:
+        first = None
+    if isinstance(first, str) and first:
+        _listed = first
 
 
 async def _probe() -> ServerModelStatus:
@@ -68,6 +91,7 @@ async def _probe() -> ServerModelStatus:
             f"The server's model answered {response.status_code}. "
             "Choose another provider in Settings, or try again shortly.",
         )
+    _remember_first_model(response)
     return ServerModelStatus(True)
 
 

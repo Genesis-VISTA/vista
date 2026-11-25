@@ -4,9 +4,12 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..agents.inference import offered_presets, resolve_inference_target
+from ..agents.inference import (
+    offered_presets,
+    resolve_inference_target,
+    server_model_name,
+)
 from ..services import inference_probe
-from ..config import settings
 from ..db.db import SessionDep
 from ..db.schemas import (
     SECRET_SETTINGS_FIELDS,
@@ -172,22 +175,21 @@ class InferenceView(BaseModel):
 
 @router.get("/inference")
 async def get_inference(local: LocalSettingsDep) -> InferenceView:
-    target = resolve_inference_target(local)
     presets = offered_presets()
+    # Before resolving: a server with no model name set uses the one it lists.
     server_status = (
         await inference_probe.server_model_status()
         if any(p.server for p in presets.values())
         else None
     )
+    target = resolve_inference_target(local)
     return InferenceView(
         providers=[
             InferenceProviderOption(
                 id=p.id,
                 name=p.name,
                 takes_url=p.takes_url,
-                default_model=(
-                    settings.server_inference_model if p.server else p.default_model
-                ),
+                default_model=(server_model_name() if p.server else p.default_model),
                 available=server_status.available
                 if p.server and server_status
                 else True,

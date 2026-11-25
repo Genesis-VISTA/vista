@@ -65,6 +65,36 @@ def test_hosted_defaults_to_the_server_model(monkeypatch, server_endpoint):
         assert target.has_credential  # the server's key is optional
 
 
+@pytest.mark.anyio
+async def test_with_no_model_name_set_the_server_uses_the_one_it_lists(
+    monkeypatch, server_endpoint
+):
+    """vLLM serves one model under its `--served-model-name` (Beam: `beam`): no setting needed."""
+    monkeypatch.setattr(settings, "deployment", "hosted")
+    monkeypatch.setattr(settings, "server_inference_model", "")
+    assert inference.server_model_name() is None  # not probed yet
+    await inference_probe.server_model_status()
+    assert inference.server_model_name() == "m"  # the fake endpoint lists `m`
+    assert inference.resolve_inference_target(_Local()).model == "openai:m"
+
+
+@pytest.mark.anyio
+async def test_listing_models_while_the_server_is_down_is_503_not_500(
+    session, hosted, server_endpoint
+):
+    from harness import api_client
+    from harness.tokens import bearer
+
+    server_endpoint["up"] = False
+    with api_client(session) as (client, _):
+        me = bearer(hosted.token(sub="alice"))
+        assert (await client.get("/projects", headers=me)).status_code == 200
+        r = await client.get("/projects/hello-olcf/models", headers=me)
+    assert r.status_code == 503
+    assert r.json()["code"] == "server_model_unavailable"
+    assert "not answering" in r.json()["detail"]
+
+
 def test_hosted_users_keep_their_own_mag_key(monkeypatch):
     monkeypatch.setattr(settings, "deployment", "hosted")
     local = _Local(inference_provider="mag", inference_mag_api_key="sk-mine")

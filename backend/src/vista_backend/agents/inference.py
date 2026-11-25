@@ -136,10 +136,24 @@ def offered_presets() -> dict[ProviderId, ProviderPreset]:
     }
 
 
+def server_model_name() -> str | None:
+    """
+    The bare model the `server` provider uses when the researcher chose none:
+    `settings.server_inference_model`, else the first model its endpoint listed
+    (`inference_probe.listed_model`), else None while that is not known yet.
+    """
+    if settings.server_inference_model:
+        return settings.server_inference_model
+    from ..services.inference_probe import listed_model  # it imports this module
+
+    return listed_model()
+
+
 def _server_target(model: str | None, source: "TargetSource") -> "InferenceTarget":
     key = settings.server_inference_key
+    default = server_model_name()
     return InferenceTarget(
-        model=model or _qualify(settings.server_inference_model),
+        model=model or (_qualify(default) if default else None),
         base_url=settings.server_inference_url,
         # The server's key is optional; the SDK wants some string.
         api_key=(key.get_secret_value() if key else None) or "not-needed",

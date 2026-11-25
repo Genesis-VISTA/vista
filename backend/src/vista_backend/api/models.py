@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from ..agents.inference import (
     MissingInferenceCredential,
+    ServerModelUnavailable,
     rejected_credential_detail,
     resolve_inference_target,
 )
@@ -84,6 +85,16 @@ async def list_models(
                     detail=rejected_credential_detail(target.model),
                 ) from exc
             raise
+        except httpx.TransportError as exc:
+            # Not answering (refused, timed out): the picker says so, not a 500.
+            why = (
+                f"The model endpoint at {target.base_url} is not answering "
+                f"({type(exc).__name__}). Choose another provider in Settings, "
+                "or try again shortly."
+            )
+            if target.provider == "server":
+                raise ServerModelUnavailable(why) from exc
+            raise HTTPException(status_code=503, detail=why) from exc
 
     payload = response.json()
     models = [
