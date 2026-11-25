@@ -47,28 +47,28 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 7. Authorization and background owners (wave 3; needs 6)
 
-- [ ] 7.1 Chat-run streams, elicitations, project files and downloads check the owner and answer `404` (`api/chat_runs.py:31-58`, `services/project_agent.py:95`, `api/files.py`); verify with tests as two users
-- [ ] 7.2 `as_user(user_id)` and its use in job watches, campaign monitor, inbox wakes and startup recovery (`services/background_tasks.py:1050`, `campaign_monitor.py:213`, `api/api.py:84-135`); verify with tests driving each entry point for two users
+- [x] 7.1 Chat-run streams, elicitations, project files and downloads check the owner and answer `404` (`api/chat_runs.py:31-58`, `services/project_agent.py:95`, `api/files.py`); verify with tests as two users
+- [x] 7.2 `as_user(user_id)` and its use in job watches, campaign monitor, inbox wakes and startup recovery (`services/background_tasks.py:1050`, `campaign_monitor.py:213`, `api/api.py:84-135`); verify with tests driving each entry point for two users
 - [ ] 7.3 Background work that has no owner yet: `/activity`'s debate count (in-memory `debate._BACKGROUND`) and Slack's `slack/threads.local_owner` record and report their owner; verify `/activity` counts only the caller's debates in a two-user test
 
 ## 8. Runtime per user and sandbox caps (wave 3; needs 5, 6)
 
-- [ ] 8.1 Agent pool keyed by user; settings change evicts only that user's agents; verify with `backend/tests/test_project_agent_pool.py`
-- [ ] 8.2 HPC metadata carries only the current user's fields plus allowed clusters (`agents/agents.py:1002`); Globus pending keyed `(user, cluster)`; verify with tests
-- [ ] 8.3 Sandbox volumes per user (desktop `local` keeps today's path); allowlisted sandbox environment instead of `**os.environ` (`agents/agents.py:402-430`); verify with a unit test of the env builder, and `-m sandbox` with `VISTA_RUN_SANDBOX=1` (not in PR CI)
-- [ ] 8.4 Caps 4 per user / 40 total, LRU idle eviction within the user, refusal when none idle; verify with pool tests using `harness.FakeSandbox`
+- [x] 8.1 Agent pool keyed by user; settings change evicts only that user's agents; verify with `backend/tests/test_project_agent_pool.py`
+- [x] 8.2 HPC metadata carries only the current user's fields plus allowed clusters (`agents/agents.py:1002`); Globus pending keyed `(user, cluster)`; verify with tests
+- [x] 8.3 Sandbox volumes per user (desktop `local` keeps today's path); allowlisted sandbox environment instead of `**os.environ` (`agents/agents.py:402-430`); verify with a unit test of the env builder, and `-m sandbox` with `VISTA_RUN_SANDBOX=1` (not in PR CI)
+- [x] 8.4 Caps 4 per user / 40 total, LRU idle eviction within the user, refusal when none idle; verify with pool tests using `harness.FakeSandbox`
 
 ## 9. Odo-only on hosted (wave 3; needs 2, 5)
 
-- [ ] 9.1 `allowed_clusters` server setting; `hpc_status`, settings saves, Globus logins filtered; verify with backend tests
-- [ ] 9.2 MCP job and transfer tools refuse clusters outside the metadata's allowed list (`submit_job_mcp.py`, `transfer_mcp.py:47`); verify with `mcp_servers/vista_mcp_server/tests/` dry-run tests
-- [ ] 9.3 S3M save introspects and requires open enclave; shared Globus pair refused and its fallback off when hosted (`lib/user_config.py` `require_globus_token`); verify with a faked introspection endpoint
-- [ ] 9.4 Hosted agent instruction rule and UI showing Odo only; verify with a prompt snapshot test and a UI test
+- [x] 9.1 `allowed_clusters` server setting; `hpc_status`, settings saves, Globus logins filtered; verify with backend tests
+- [x] 9.2 MCP job and transfer tools refuse clusters outside the metadata's allowed list (`submit_job_mcp.py`, `transfer_mcp.py:47`); verify with `mcp_servers/vista_mcp_server/tests/` dry-run tests
+- [x] 9.3 S3M save introspects and requires open enclave; shared Globus pair refused and its fallback off when hosted (`lib/user_config.py` `require_globus_token`); verify with a faked introspection endpoint
+- [x] 9.4 Hosted agent instruction rule and UI showing Odo only; verify with a prompt snapshot test and a UI test
 
 ## 10. Inference server provider (wave 3; needs 2, 5)
 
-- [ ] 10.1 `server` preset from server settings, default when hosted; MAG/OLCF keys per user; Custom refused; verify with `backend/tests/test_inference_providers.py` additions
-- [ ] 10.2 Availability probe and picker state when Beam is down; verify with a fake endpoint test and a UI test
+- [x] 10.1 `server` preset from server settings, default when hosted; MAG/OLCF keys per user; Custom refused; verify with `backend/tests/test_inference_providers.py` additions
+- [x] 10.2 Availability probe and picker state when Beam is down; verify with a fake endpoint test and a UI test
 
 ## 11. Collaboration auto sign-in (wave 4; needs 3, 5)
 
