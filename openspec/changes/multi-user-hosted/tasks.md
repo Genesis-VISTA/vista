@@ -86,7 +86,7 @@ vfs-multi-user a group waits for. See design.md "Delivery plan" and the dashboar
 
 ## 13. Isolation suite and end-to-end check (wave 5; needs 7–12, 15)
 
-- [ ] 13.1 `backend/tests/security/test_tenant_isolation.py`, adapted from `git show 301fba76^:backend/tests/security/test_tenant_isolation.py`, enumerating routes from the app and failing on any owned route without a case; verify it passes in hermetic CI
+- [x] 13.1 `backend/tests/security/test_tenant_isolation.py`, adapted from `git show 301fba76^:backend/tests/security/test_tenant_isolation.py`, enumerating routes from the app and failing on any owned route without a case; verify it passes in hermetic CI
 - [ ] 13.2 Two-browser check with `./launch.sh --hosted` as `alice` and `bob`: projects, chats, files, settings, skills isolated (hands-on, not in PR CI)
 
 ## 14. Docs and desktop regression (wave 5; needs 1–12)
