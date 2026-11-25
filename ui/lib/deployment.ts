@@ -45,7 +45,10 @@ export function deploymentOf(
     deployment,
     hosted: deployment === "hosted",
     signOutUrl: deployment === "hosted" ? (info?.sign_out_url ?? null) : null,
-    allowedClusters: info?.allowed_clusters ?? null,
+    // A hosted backend from before the allow-list still never offered NERSC.
+    allowedClusters:
+      info?.allowed_clusters ??
+      (deployment === "hosted" ? ["odo", "frontier", "lux"] : null),
     userName: null,
   };
 }
